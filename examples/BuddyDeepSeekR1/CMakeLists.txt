@@ -55,7 +55,7 @@ add_custom_command(
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -cse
             -memref-expand
             -arith-expand
@@ -101,7 +101,7 @@ add_custom_command(
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -func-bufferize-dynamic-offset
             -cse
             -memref-expand
@@ -147,7 +147,7 @@ add_custom_command(
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -cse
             -memref-expand
             -arith-expand
@@ -186,14 +186,15 @@ add_custom_command(
             -ownership-based-buffer-deallocation
             -buffer-deallocation-simplification
             -bufferization-lower-deallocations
-            -matmul-vectorization-blis
+            -assume-tight-memref-layout
+            -matmul-vectorization-decode
             -batchmatmul-optimize
             -convert-linalg-to-affine-loops
             -affine-loop-fusion
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -func-bufferize-dynamic-offset
             -cse
             -memref-expand
@@ -237,7 +238,7 @@ add_custom_command(
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -cse
             -memref-expand
             -arith-expand
@@ -286,7 +287,7 @@ add_custom_command(
             -affine-parallelize
             -convert-vector-to-scf
             -lower-affine
-            -convert-scf-to-openmp=num-threads=32
+            -convert-scf-to-openmp=num-threads=48
             -func-bufferize-dynamic-offset
             -canonicalize
             -cse
