@@ -1278,6 +1278,39 @@ next-sgemm-unroll-vec-fixed-aot:
 		-o next-sgemm-unroll-vec-fixed.out
 	./next-sgemm-unroll-vec-fixed.out || true
 
+next-sgemm-unroll-vec-scalable-aot:
+	@${BUDDY_OPT} ./next-sgemm-unroll-vec-scalable.mlir \
+		-convert-linalg-to-affine-loops \
+		-affine-loop-fusion \
+		-affine-parallelize \
+		-lower-affine \
+		-convert-scf-to-openmp \
+		-func-bufferize-dynamic-offset \
+		-convert-vector-to-scf \
+		-expand-strided-metadata \
+		-lower-affine \
+		-cse \
+		-convert-vector-to-llvm \
+		-memref-expand \
+		-arith-expand \
+		-convert-arith-to-llvm \
+		-finalize-memref-to-llvm \
+		-convert-scf-to-cf \
+		-convert-cf-to-llvm \
+		-convert-openmp-to-llvm \
+		-convert-arith-to-llvm \
+		-convert-math-to-llvm \
+		-convert-math-to-libm \
+		-convert-func-to-llvm \
+		-reconcile-unrealized-casts | \
+    ${MLIR_TRANSLATE} -mlir-to-llvmir | \
+	${CLANG} -x ir - \
+		${MARCH_FLAG} -O3 \
+		-L${MLIR_LIB} -lmlir_runner_utils -lmlir_c_runner_utils -lomp -lm \
+		-Wl,-rpath,${MLIR_LIB} \
+		-o next-sgemm-unroll-vec-scalable.out
+	./next-sgemm-unroll-vec-scalable.out || true
+
 next-mmtb-aot:
 	@${BUDDY_OPT} ./next-mmtb.mlir \
 		-matmul-transpose-b-unroll-vec \
@@ -1937,24 +1970,20 @@ next-compass-run:
 		-shared-libs=${MLIR_C_RUNNER_UTILS}
 
 tosa-matmul-transpose2-lower:
-	@${BUDDY_OPT} ./tosa-matmultranspose2.mlir \
+	@${BUDDY_OPT} ./next-matmul-transpose2.mlir \
 			-transpose-fusion-vectorization \
 			-o log.mlir
 
 tosa-matmul-transpose2-run:
-	@${BUDDY_OPT} ./tosa-matmultranspose2.mlir \
-			-pass-pipeline "builtin.module(transpose-fusion-vectorization, func.func(tosa-to-linalg-named, tosa-to-linalg, tosa-to-tensor, tosa-to-arith))" | \
+	@${BUDDY_OPT} ./next-matmul-transpose2.mlir \
+			-pass-pipeline "builtin.module(func.func(tosa-to-linalg-named, tosa-to-linalg, tosa-to-tensor, tosa-to-arith))" | \
     ${BUDDY_OPT} \
 		-eliminate-empty-tensors \
 		-convert-tensor-to-linalg \
-		-linalg-bufferize \
+		-one-shot-bufferize="bufferize-function-boundaries" \
 		-convert-linalg-to-affine-loops \
 		-lower-affine \
-		-func-bufferize \
-		-arith-bufferize \
-		-tensor-bufferize \
 		-buffer-deallocation \
-		-finalizing-bufferize \
 		-convert-vector-to-scf \
 		-expand-strided-metadata \
 		-convert-vector-to-llvm \
@@ -1963,12 +1992,13 @@ tosa-matmul-transpose2-run:
 		-convert-scf-to-cf \
 		-convert-arith-to-llvm \
 		-convert-func-to-llvm \
+		-convert-cf-to-llvm \
 		-reconcile-unrealized-casts | \
 	${MLIR_CPU_RUNNER} ${OPT_FLAG} -e main -entry-point-result=void \
 		-shared-libs=${MLIR_RUNNER_UTILS} -shared-libs=${MLIR_C_RUNNER_UTILS}
 
 tosa-matmul-transpose2-vec-run:
-	@${BUDDY_OPT} ./tosa-matmultranspose2-vec.mlir\
+	@${BUDDY_OPT} ./next-matmul-transpose2-vec.mlir\
 		-convert-linalg-to-affine-loops \
 		-affine-parallelize \
 		-lower-affine \
