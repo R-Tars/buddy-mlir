@@ -83,7 +83,7 @@ $ ninja buddy-deepseek-r1-run
 $ ./bin/buddy-deepseek-r1-run
 
 // NUMA node binding
-numactl --cpunodebind=0,1 --membind=0,1 taskset -c 0-47 ./bin/buddy-deepseek-r1-run
+numactl --cpunodebind=0,1,2,3 --interleave=0,1,2,3 taskset -c 0-47 ./bin/buddy-deepseek-r1-run
 
 //f16
 $ ninja buddy-deepseek-r1-f16-run
@@ -94,7 +94,25 @@ $ ninja buddy-deepseek-r1-bf16-run
 $ ./bin/buddy-deepseek-r1-bf16-run
 ```
 
-5. Enjoy it!
+5. Streaming inference with buddy-deepseek-r1-cli
+
+`buddy-deepseek-r1-cli` reuses the inference flow from the example but focuses on a real-time streaming experience:
+
+```bash
+$ ninja buddy-deepseek-r1-cli
+$ echo "Hello." | ./bin/buddy-deepseek-r1-cli --max-tokens=128
+
+# Enter interactive conversation
+$ ./bin/buddy-deepseek-r1-cli --interactive --no-stats
+# Enter one user message at a time; the CLI streams a reply immediately. Type :exit or :quit to finish the session
+```
+
+- By default the CLI looks for `examples/BuddyDeepSeekR1/vocab.txt` and `build/examples/BuddyDeepSeekR1/arg0.data`. Override these with `--vocab` and `--model` if you use custom paths.
+- Provide prompts via `--prompt`, `--prompt-file`, or standard input. Generated text goes to STDOUT while logs and performance metrics go to STDERR.
+- Use options like `--max-tokens` and `--eos-id` to constrain the generation length/termination. Add `--no-stats` when you want pure text output without the performance summary.
+- `--interactive` starts a REPL similar to `buddy-deepseek-r1-main.cpp`, handling one prompt and one response at a time. `--prompt` can act as a system prefix prepended to every user entry.
+
+6. Enjoy it!
 
 ## How to run on RISC-V machine
 
