@@ -36,3 +36,6 @@ from .onednn_replace import (
 from .quantise import (
     quantise_graph
 )
+from .quantization import (
+  weight_only_channel_wise
+)
