@@ -68,10 +68,12 @@ def make_output_memref_descriptor(ranks, dtypes):
 
     return OutputDescriptor
 
+
 class NodeType(Enum):
     FakeNode = auto()
     InputNode = auto()
     OtherNode = auto()
+
 
 class Graph:
     """
@@ -181,7 +183,7 @@ class Graph:
     def get_input(self, i):
         return self._body[self._inputs[i]]
 
-    @property 
+    @property
     def inputs(self) -> list[Op]:
         return [self.get_input(i) for i in range(len(self._inputs))]
 
@@ -195,10 +197,12 @@ class Graph:
             if isinstance(input_tm_dict, TensorMeta):
                 tm_list.append(input_tm_dict)
                 continue
-            tm_list.append(TensorMeta(
-                shape=input_tm_dict["shape"],
-                dtype=input_tm_dict["dtype"],
-            ))
+            tm_list.append(
+                TensorMeta(
+                    shape=input_tm_dict["shape"],
+                    dtype=input_tm_dict["dtype"],
+                )
+            )
 
         return tm_list
 
@@ -208,7 +212,7 @@ class Graph:
     @property
     def params(self) -> list[Op]:
         return [self.get_fake_params(i) for i in range(len(self._fake_params))]
-    
+
     @property
     def params_shapes(self) -> list[TensorMeta]:
         tm_list = []
@@ -219,10 +223,12 @@ class Graph:
             if isinstance(param_tm_dict, TensorMeta):
                 tm_list.append(param_tm_dict)
                 continue
-            tm_list.append(TensorMeta(
-                shape=param_tm_dict["shape"],
-                dtype=param_tm_dict["dtype"],
-            ))
+            tm_list.append(
+                TensorMeta(
+                    shape=param_tm_dict["shape"],
+                    dtype=param_tm_dict["dtype"],
+                )
+            )
 
         return tm_list
 
@@ -270,7 +276,7 @@ class Graph:
         for i, ref_idx in enumerate(self._fake_params):
             if ref_idx > node_idx:
                 self._fake_params[i] -= 1
-            
+
         for i in parents:
             i._children.remove(node.name)
         node.args.clear()
@@ -315,7 +321,6 @@ class Graph:
         self.node_table.pop(node.name)
         self.node_table[newnode.name] = newnode
 
-    
     def displace_node_with_chain(self, node: Op, chain: list[Op]):
         """
         Replaces an existing node with a chain of new nodes.
@@ -323,7 +328,7 @@ class Graph:
             current node will have this node as their child instead of `node`
         - The last node is taken to be the "tail" of the chain, and all children of `node`
             will have this node as their parent instead.
-        
+
         Args:
             node (Op): The operation to be replaced.
             chain (list[Op]): The a list of nodes to be inserted instead of Op
@@ -354,9 +359,11 @@ class Graph:
         node._children.clear()
 
         node_idx = self._body.index(node)
-        self._body = self.body[:node_idx] + chain + self.body[node_idx+1:]
+        self._body = self.body[:node_idx] + chain + self.body[node_idx + 1 :]
 
-    def replace_as_child(self, parent_ops: list[Op] | Op, child_op: Op, new_op: Op):
+    def replace_as_child(
+        self, parent_ops: list[Op] | Op, child_op: Op, new_op: Op
+    ):
         """
         Replace `child_op`, a child of the `parent_ops` with `new_op`.
 
@@ -374,15 +381,19 @@ class Graph:
 
         for parent_name in parent_ops:
             parent_op = self.node_table[parent_name]
-            parent_op._children[parent_op._children.index(child_name)] = new_child_name
-            
-    def replace_as_parent(self, parent_op: Op, child_ops: list[Op] | Op, new_op: Op):
+            parent_op._children[parent_op._children.index(child_name)] = (
+                new_child_name
+            )
+
+    def replace_as_parent(
+        self, parent_op: Op, child_ops: list[Op] | Op, new_op: Op
+    ):
         """
         Replace `parent_op` with `new_op` as the the parent node of the `child_ops` list.
 
         Args:
             parent_op (Op): Parent to replace
-            child_ops (list[Op]): Child ops for which replace `parent_op` as their 
+            child_ops (list[Op]): Child ops for which replace `parent_op` as their
             new_op (Op): op to replace `parent_op` with
         """
 
@@ -396,10 +407,14 @@ class Graph:
             child_op = self.node_table[child_name]
 
             if parent_name in child_op._parents:
-                child_op._parents[child_op._parents.index(parent_name)] = new_parent_name
+                child_op._parents[child_op._parents.index(parent_name)] = (
+                    new_parent_name
+                )
 
             if parent_name in child_op._arguments:
-                child_op._arguments[child_op._arguments.index(parent_name)] = new_parent_name
+                child_op._arguments[child_op._arguments.index(parent_name)] = (
+                    new_parent_name
+                )
 
     def init_op_group(self):
         """
@@ -620,6 +635,7 @@ class GraphImporter:
         self._ops_registry = ops_registry
         self._current_param_pack_offset = None
         self._enable_external_calls = enable_external_calls
+        self._input_index_counter = 0
 
     def _str_to_mlir_dtype(self, dtype: str) -> ir.Type:
         """
@@ -825,7 +841,7 @@ class GraphImporter:
         Returns:
         None
         """
-        if self._num_input_visited < len(self._params_shapes) and self._do_param_pack:
+        if node.node_type == NodeType.FakeNode and self._do_param_pack:
             dtype = node.tensor_meta["dtype"]
             pack_of_dtype = None
             for pack in args_list:
@@ -840,20 +856,15 @@ class GraphImporter:
             self._current_param_pack_offset[dtype] += functools.reduce(
                 lambda x, y: x * y, list(node.tensor_meta["shape"]), 1
             )
-        elif self._do_param_pack:
-            if len(self._params_shapes) > 0:
-                placeholder_name = args_list[
-                    self._num_input_visited
-                    - len(self._params_shapes)
-                    + len(self._param_packs)
-                ]
-            else:
-                placeholder_name = args_list[self._num_input_visited]
+        elif node.node_type == NodeType.InputNode:
+            arg_index = len(self._param_packs) + node.input_index
+            placeholder_name = args_list[arg_index]
         else:
-            placeholder_name = args_list[self._num_input_visited]
+            # Fallback for cases where node_type might not be set or other types
+            placeholder_name = args_list[self._input_index_counter]
+            self._input_index_counter += 1
 
         self._symbol_table[(str(node.name), 0)] = placeholder_name
-        self._num_input_visited += 1
 
     def _generate_external_func_decl(self, call_node):
         """

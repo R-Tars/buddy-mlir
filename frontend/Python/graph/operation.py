@@ -75,7 +75,7 @@ class Op:
         The type of the operation node, as defined in the OpType enum.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, node_type=None) -> None:
         """
         Initialize a new instance of the Op class.
         """
@@ -87,6 +87,24 @@ class Op:
         self._children: List[str] = []
         self._parents: List[str] = []
         self._args_index = []
+        self._node_type = node_type
+        self._input_index = None
+
+    @property
+    def node_type(self):
+        return self._node_type
+
+    @node_type.setter
+    def node_type(self, value):
+        self._node_type = value
+
+    @property
+    def input_index(self):
+        return self._input_index
+
+    @input_index.setter
+    def input_index(self, value):
+        self._input_index = value
 
     def add_argument(self, arg, arg_index=0):
         """
@@ -145,158 +163,158 @@ class Op:
 
 
 class PlaceholderOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class MatmulOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class TransposeMatmulFusedOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class GetItemOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.GetItemType
 
 
 class OutputOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.GetItemType
 
 
 class ArangeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class ArangeStartStepOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class UnsqueezeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ViewOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class EmbeddingOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class OnesOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class FullOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class LessThanOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class SliceOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ToCopyOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class RsubOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class PowOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class MeanOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class RsqrtOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class MulOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class TransposeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class IndexOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class IndexSelectOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class CatOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ConcatType
 
 
 class BatchMatmulOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class DivOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
@@ -307,236 +325,264 @@ class DivTensorModeOp(Op):
     rounding_mode can be 'floor', 'trunc', or None.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class SoftmaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class LogSoftmaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class CloneOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class SiluOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class AddOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class AddMMOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class AmaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class SubOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class ConvertElementTypeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ExpOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ExpandOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class PermuteOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ReshapeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class SelectOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class SumDimOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class TanhOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class VarMeanOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class TOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ErfOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class ErfinvOp(Op):
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class Conv2dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW_FCHW"
 
 
 class ReluOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class SigmoidOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
+class GluOp(Op):
+    """
+    Gated linear unit operation.
+    Implements aten.glu.default: Splits tensor and applies sigmoid gate.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType
+
+
+class GruOp(Op):
+    """
+    Gated recurrent unit operation.
+    Implements aten.gru.input.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.Unfusable
+
+
 class IotaOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class ScalarTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class MaxPool2dWithIndicesOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW"
 
 
 class MaxPool2dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW"
 
 
 class MaxPool1dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCW"
 
 
 class MaxPool3dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCDHW"
 
 
 class AvgPool3dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCDHW"
 
 
 class AdaptiveMaxPool1dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCW"
 
 
 class AdaptiveMaxPool2dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW"
 
 
 class AdaptiveAvgPool1dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCW"
 
 
 class AdaptiveAvgPool2dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW"
 
 
 class AdaptiveAvgPool3dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCDHW"
 
 
 class AvgPool1dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCW"
 
 
 class CallOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self.call_func_name = ""
         self._op_type = OpType.Unfusable
 
@@ -565,387 +611,404 @@ class CallExternalOp(Op):
 
 
 class FuncOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
 
 
 class ReciprocalOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class SqrtOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class AbsOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LogOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class CeilOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class FloorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class MaximumOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class MinimumOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class BitwiseNotOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LogicalNotOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ClampOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LogicalAndOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class LogicalOrOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class BitwiseOrOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class BitwiseXorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class AminOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class MinDimOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class AvgPool2dOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
         self._layout = "NCHW"
 
 
 class LogicalXorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class ProdOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class NegOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class WhereOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class EqTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class NeTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class GtTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class GeTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class LtTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class LeTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class Log10Op(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class Log2Op(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class Log1pOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class Expm1Op(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ConstantPadNdOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class MaskedFillOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ClampMinOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ClampMaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class RandIntLowOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class CosOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class SinOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ArgMaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class ArgMinOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class SplitOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class MaxOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class GtOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ScaledDotProductFlashAttentionForCpuOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class FlashAttentionForCpuPrefillOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class GeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class GcdOp(Op):
+    """
+    Greatest common divisor operation.
+    Implements aten.gcd.default.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class GreaterThanOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.BroadcastType
 
 
 class UnsafeIndexOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class EqualOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class SliceScatterOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class CopyOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LeOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LeScalarOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LtScalarOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class BitwiseAndTensorOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class IndexPutOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LiftFreshCopyOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class NeScalarOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class CumsumOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class TensorConstantOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class RepeatOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class RepeatInterleaveOp(Op):
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class AsStridedOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -956,8 +1019,8 @@ class ScatterSrcOp(Op):
     Scatters values from src tensor into self tensor at positions specified by index.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -968,8 +1031,8 @@ class ScatterValueOp(Op):
     Scatters a scalar value into self tensor at positions specified by index.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -980,8 +1043,8 @@ class ScatterReduceOp(Op):
     Supports reduce operations like 'sum', 'prod', 'mean', 'amax', 'amin'.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -992,8 +1055,8 @@ class ScatterAddOp(Op):
     at the indices specified in the index tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1003,8 +1066,8 @@ class SqueezeOp(Op):
     Implements aten.squeeze: removes dimensions of size 1 from the tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1014,8 +1077,8 @@ class SqueezeDimOp(Op):
     Implements aten.squeeze.dim: removes a specific dimension of size 1.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1026,8 +1089,8 @@ class SortOp(Op):
     Returns (sorted_values, indices).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1038,8 +1101,8 @@ class TopkOp(Op):
     Returns (values, indices).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1049,8 +1112,8 @@ class CumSumOp(Op):
     Implements aten.cumsum: returns cumulative sum along a dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1060,8 +1123,19 @@ class CumProdOp(Op):
     Implements aten.cumprod: returns cumulative product along a dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class LogCumsumExpOp(Op):
+    """
+    Log cumulative sum exp operation.
+    Implements aten.logcumsumexp.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1071,8 +1145,8 @@ class UnbindOp(Op):
     Implements aten.unbind: removes a dimension and returns a tuple of tensors.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1086,8 +1160,8 @@ class GatherOp(Op):
         out[i][j][k] = input[i][j][index[i][j][k]]  # if dim == 2
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1097,8 +1171,8 @@ class NativeLayerNormOp(Op):
     Implements aten.native_layer_norm: Applies Layer Normalization over a mini-batch.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1108,8 +1182,8 @@ class NativeGroupNormOp(Op):
     Implements aten.native_group_norm: Applies Group Normalization over a mini-batch.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1121,8 +1195,8 @@ class NativeBatchNormLegitOp(Op):
     Returns: (output, save_mean, save_invstd)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1134,8 +1208,8 @@ class NativeBatchNormLegitNoStatsOp(Op):
     Returns: (output, save_mean, save_invstd)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1147,8 +1221,8 @@ class NativeBatchNormLegitNoTrainingOp(Op):
     Returns: (output, save_mean, save_invstd)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1159,8 +1233,8 @@ class NativeDropoutOp(Op):
     Returns (output, mask) where mask is the dropout mask.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1171,8 +1245,8 @@ class GridSampler2dOp(Op):
     Args: input, grid, interpolation_mode, padding_mode, align_corners
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1182,8 +1256,8 @@ class Col2imOp(Op):
     Implements aten.col2im: Rearranges columns back into image blocks.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1193,8 +1267,8 @@ class UpsampleBilinear2dVecOp(Op):
     Implements aten.upsample_bilinear2d.vec: Bilinear upsampling.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1204,8 +1278,8 @@ class UpsampleNearest2dVecOp(Op):
     Implements aten.upsample_nearest2d.vec: Nearest neighbor upsampling.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1215,8 +1289,8 @@ class SymSizeOp(Op):
     Implements aten.sym_size: Get symbolic size of a tensor dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ShapeType
 
 
@@ -1226,8 +1300,8 @@ class SymStrideOp(Op):
     Implements aten.sym_stride: Get symbolic stride of a tensor dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ShapeType
 
 
@@ -1237,8 +1311,8 @@ class SymNumelOp(Op):
     Implements aten.sym_numel: Get symbolic number of elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ShapeType
 
 
@@ -1248,8 +1322,8 @@ class SymStorageOffsetOp(Op):
     Implements aten.sym_storage_offset: Get symbolic storage offset.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ShapeType
 
 
@@ -1259,8 +1333,8 @@ class UnfoldOp(Op):
     Implements aten.unfold: Extract sliding local blocks from a batched input tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1270,8 +1344,8 @@ class SqueezeDimsOp(Op):
     Implements aten.squeeze.dims: Remove specified dimensions of size 1.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1281,8 +1355,8 @@ class BaddbmmOp(Op):
     Implements aten.baddbmm: batch1 @ batch2 + input * beta + alpha * batch1 @ batch2
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
 
 
@@ -1292,8 +1366,8 @@ class LgammaOp(Op):
     Implements aten.lgamma: Natural logarithm of the absolute value of the gamma function.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1303,8 +1377,8 @@ class DigammaOp(Op):
     Implements aten.digamma: Logarithmic derivative of the gamma function.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1314,8 +1388,8 @@ class I0Op(Op):
     Implements aten.i0: I0(x).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1325,8 +1399,8 @@ class ErfcOp(Op):
     Implements aten.erfc: 1 - erf(x).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1336,8 +1410,8 @@ class CummaxOp(Op):
     Implements aten.cummax: Returns cumulative maximum and indices along a dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1347,8 +1421,8 @@ class CumminOp(Op):
     Implements aten.cummin: Returns cumulative minimum and indices along a dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1358,8 +1432,8 @@ class ClampMinTensorOp(Op):
     Implements aten.clamp_min.Tensor: Clamps input to be >= min tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1369,8 +1443,8 @@ class ClampMaxTensorOp(Op):
     Implements aten.clamp_max.Tensor: Clamps input to be <= max tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1380,8 +1454,8 @@ class HypotOp(Op):
     Implements aten.hypot: sqrt(x^2 + y^2).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1391,8 +1465,8 @@ class CopysignOp(Op):
     Implements aten.copysign: Returns x with the sign of y.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1402,8 +1476,8 @@ class NextafterOp(Op):
     Implements aten.nextafter: Returns the next floating-point value after x towards y.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1413,8 +1487,8 @@ class MaskedScatterOp(Op):
     Implements aten.masked_scatter: Copies elements from source to input at positions where mask is True.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1424,8 +1498,8 @@ class RevOp(Op):
     Implements aten.rev: Reverses a tensor along specified dimensions.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1435,8 +1509,8 @@ class GeluOp(Op):
     Implements aten.gelu: Gaussian Error Linear Unit activation.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1446,8 +1520,8 @@ class FlipOp(Op):
     Implements aten.flip: Reverse the order of elements along given dimensions.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1457,8 +1531,8 @@ class LeakyReluOp(Op):
     Implements aten.leaky_relu: LeakyReLU(x) = max(0, x) + negative_slope * min(0, x)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1468,8 +1542,8 @@ class HardtanhOp(Op):
     Implements aten.hardtanh: Hardtanh(x) = max(min_val, min(max_val, x))
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1479,8 +1553,8 @@ class EluOp(Op):
     Implements aten.elu: ELU(x) = max(0, x) + min(0, alpha * (exp(x) - 1))
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1490,8 +1564,8 @@ class SignOp(Op):
     Implements aten.sign: Returns a tensor with the signs of the elements of input.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1501,8 +1575,8 @@ class RoundOp(Op):
     Implements aten.round: Rounds elements to the nearest integer.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1512,8 +1586,8 @@ class TruncOp(Op):
     Implements aten.trunc: Returns a tensor with truncated integer values of elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1523,8 +1597,8 @@ class SinhOp(Op):
     Implements aten.sinh: sinh(x) = (exp(x) - exp(-x)) / 2
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1534,8 +1608,8 @@ class CoshOp(Op):
     Implements aten.cosh: cosh(x) = (exp(x) + exp(-x)) / 2
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1545,8 +1619,8 @@ class TanOp(Op):
     Implements aten.tan: tan(x) = sin(x) / cos(x)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1556,8 +1630,8 @@ class Exp2Op(Op):
     Implements aten.exp2: exp2(x) = 2^x = exp(x * ln(2))
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1567,8 +1641,8 @@ class ZerosOp(Op):
     Implements aten.zeros: Returns a tensor filled with zeros.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
@@ -1578,8 +1652,8 @@ class ZerosLikeOp(Op):
     Implements aten.zeros_like: Returns a tensor of zeros with the same shape as input.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1589,8 +1663,8 @@ class OnesLikeOp(Op):
     Implements aten.ones_like: Returns a tensor of ones with the same shape as input.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1600,8 +1674,8 @@ class FullLikeOp(Op):
     Implements aten.full_like: Returns a tensor filled with value with the same shape as input.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1611,8 +1685,8 @@ class AllOp(Op):
     Implements aten.all: Returns True if all elements are True.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1622,8 +1696,8 @@ class AnyOp(Op):
     Implements aten.any: Returns True if any element is True.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
@@ -1633,8 +1707,8 @@ class IsInfOp(Op):
     Implements aten.isinf: Returns a boolean tensor indicating if each element is infinite.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1644,8 +1718,8 @@ class IsNanOp(Op):
     Implements aten.isnan: Returns a boolean tensor indicating if each element is NaN.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1655,8 +1729,8 @@ class FloorDivideOp(Op):
     Implements aten.floor_divide: Returns floor of x / y.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1666,8 +1740,8 @@ class FmodOp(Op):
     Implements aten.fmod: Returns element-wise remainder of division.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1677,8 +1751,8 @@ class RemainderOp(Op):
     Implements aten.remainder: Returns element-wise remainder (Python-style).
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1688,8 +1762,8 @@ class PowTensorTensorOp(Op):
     Implements aten.pow.Tensor_Tensor: Returns x^y element-wise.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1699,8 +1773,8 @@ class SoftplusOp(Op):
     Implements aten.softplus: softplus(x) = log(1 + exp(x))
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1710,8 +1784,8 @@ class HardswishOp(Op):
     Implements aten.hardswish: x * relu6(x + 3) / 6
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1721,8 +1795,8 @@ class TileOp(Op):
     Implements aten.tile: Constructs a tensor by tiling input.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1732,8 +1806,8 @@ class StackOp(Op):
     Implements aten.stack: Concatenates tensors along a new dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1743,8 +1817,8 @@ class LerpOp(Op):
     Implements aten.lerp: start + weight * (end - start)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1754,8 +1828,8 @@ class ClampTensorOp(Op):
     Implements aten.clamp.Tensor: Clamp values between min and max tensors.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1765,8 +1839,8 @@ class AddScalarOp(Op):
     Implements aten.add.Scalar: Adds a scalar to a tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1776,8 +1850,8 @@ class SubScalarOp(Op):
     Implements aten.sub.Scalar: Subtracts a scalar from a tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1787,8 +1861,8 @@ class DivScalarOp(Op):
     Implements aten.div.Scalar: Divides a tensor by a scalar.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1798,8 +1872,8 @@ class DivScalarModeOp(Op):
     Implements aten.div.Scalar_mode: Divides a tensor by a scalar with rounding.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1809,8 +1883,8 @@ class PowScalarOp(Op):
     Implements aten.pow.Scalar: Raises a scalar to the power of tensor elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1820,8 +1894,8 @@ class MeanDefaultOp(Op):
     Implements aten.mean.default: Computes the mean of all elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1831,8 +1905,8 @@ class VarCorrectionOp(Op):
     Implements aten.var.correction: Computes variance with Bessel correction.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1842,8 +1916,8 @@ class VarDimOp(Op):
     Implements aten.var.dim: Computes variance along specified dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1853,8 +1927,8 @@ class AnyDimsOp(Op):
     Implements aten.any.dims: Tests if any element is True along dims.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1864,8 +1938,8 @@ class FillScalarOp(Op):
     Implements aten.fill.Scalar: Fills a tensor with a scalar value.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1875,8 +1949,8 @@ class AcosOp(Op):
     Implements aten.acos.default: Computes element-wise arccosine.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1886,8 +1960,8 @@ class AsinOp(Op):
     Implements aten.asin.default: Computes element-wise arcsine.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1897,8 +1971,8 @@ class AtanOp(Op):
     Implements aten.atan.default: Computes element-wise arctangent.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1908,8 +1982,8 @@ class Atan2Op(Op):
     Implements aten.atan2.default: Computes element-wise arctangent of y/x.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1919,8 +1993,8 @@ class AcoshOp(Op):
     Implements aten.acosh.default: Computes element-wise inverse hyperbolic cosine.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1930,8 +2004,8 @@ class AsinhOp(Op):
     Implements aten.asinh.default: Computes element-wise inverse hyperbolic sine.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1941,8 +2015,8 @@ class AtanhOp(Op):
     Implements aten.atanh.default: Computes element-wise inverse hyperbolic tangent.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -1952,8 +2026,8 @@ class DiagonalOp(Op):
     Implements aten.diagonal.default: Extracts diagonal elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1963,8 +2037,8 @@ class AliasOp(Op):
     Implements aten.alias.default: Creates an alias of the input tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1974,8 +2048,8 @@ class EmptyOp(Op):
     Implements aten.empty.memory_format: Creates an uninitialized tensor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1985,8 +2059,8 @@ class RandOp(Op):
     Implements aten.rand.default: Creates a tensor with uniform random values.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -1996,8 +2070,8 @@ class RandnOp(Op):
     Implements aten.randn.default: Creates a tensor with normal random values.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2007,8 +2081,19 @@ class SelectScatterOp(Op):
     Implements aten.select_scatter.default: Scatters values at selected indices.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType
+
+
+class DiagonalScatterOp(Op):
+    """
+    Diagonal scatter operation.
+    Implements aten.diagonal_scatter.default: Scatters values along a diagonal.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2018,8 +2103,8 @@ class SplitWithSizesOp(Op):
     Implements aten.split_with_sizes.default: Splits tensor by given sizes.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2029,8 +2114,8 @@ class MaxDimOp(Op):
     Implements aten.max.dim: Returns max values and indices along a dimension.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2040,8 +2125,8 @@ class NonzeroOp(Op):
     Implements aten.nonzero.default: Returns indices of nonzero elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2051,8 +2136,8 @@ class StdDefaultOp(Op):
     Implements aten.std.default: Computes std of all elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2062,8 +2147,8 @@ class StdDimOp(Op):
     Implements aten.std.dim: Computes std along specified dimensions.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2073,8 +2158,8 @@ class StdCorrectionOp(Op):
     Implements aten.std.correction: Computes std with correction factor.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2084,8 +2169,8 @@ class SumDefaultOp(Op):
     Implements aten.sum.default: Computes sum of all elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2095,8 +2180,8 @@ class AllDimsOp(Op):
     Implements aten.all.dims: Reduces bool tensor over dims.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2106,8 +2191,8 @@ class NormScalarOp(Op):
     Implements aten.norm.Scalar: Computes p-norm over all elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2117,8 +2202,8 @@ class NormScalarOptDimOp(Op):
     Implements aten.norm.ScalarOpt_dim: Computes p-norm along dimensions.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2128,8 +2213,8 @@ class VarDefaultOp(Op):
     Implements aten.var.default: Computes variance of all elements.
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2152,8 +2237,8 @@ class AdaptiveAvgPool2dBackwardOp(Op):
         grad_input: Gradient w.r.t. input (N, C, H, W)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
         self._layout = "NCHW"
 
@@ -2178,8 +2263,8 @@ class AvgPool2dBackwardOp(Op):
         grad_input: Gradient w.r.t. input
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
         self._layout = "NCHW"
 
@@ -2207,8 +2292,8 @@ class ConvolutionBackwardOp(Op):
         (grad_input, grad_weight, grad_bias): Tuple of gradients
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
         self._layout = "NCHW"
 
@@ -2230,8 +2315,8 @@ class EmbeddingDenseBackwardOp(Op):
         grad_weight: Gradient w.r.t. embedding weight (num_weights, embedding_dim)
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
 
 
@@ -2255,8 +2340,8 @@ class MaxPool2dWithIndicesBackwardOp(Op):
         grad_input: Gradient w.r.t. input
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
         self._layout = "NCHW"
 
@@ -2283,8 +2368,8 @@ class NativeGroupNormBackwardOp(Op):
         (grad_input, grad_weight, grad_bias): Tuple of gradients
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
 
 
@@ -2308,8 +2393,8 @@ class NativeLayerNormBackwardOp(Op):
         (grad_input, grad_weight, grad_bias): Tuple of gradients
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.Unfusable
 
 
@@ -2319,24 +2404,24 @@ class NativeLayerNormBackwardOp(Op):
 class BitwiseAndScalarOp(Op):
     """Bitwise AND with scalar: tensor & scalar"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class BitwiseOrScalarOp(Op):
     """Bitwise OR with scalar: tensor | scalar"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class BitwiseXorScalarOp(Op):
     """Bitwise XOR with scalar: tensor ^ scalar"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
@@ -2346,40 +2431,40 @@ class BitwiseXorScalarOp(Op):
 class ReflectionPad1dOp(Op):
     """1D reflection padding"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ReflectionPad2dOp(Op):
     """2D reflection padding"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ReflectionPad3dOp(Op):
     """3D reflection padding"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ReplicationPad2dOp(Op):
     """2D replication padding"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class ReplicationPad3dOp(Op):
     """3D replication padding"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
@@ -2389,16 +2474,16 @@ class ReplicationPad3dOp(Op):
 class EmptyStridedOp(Op):
     """Create empty tensor with specified strides"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
 class RandpermOp(Op):
     """Random permutation of integers 0 to n-1"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.PlaceholderType
 
 
@@ -2408,52 +2493,341 @@ class RandpermOp(Op):
 class EmbeddingBagOp(Op):
     """Embedding bag operation with aggregation (sum, mean, max)"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class CdistForwardOp(Op):
     """Compute pairwise distance between two sets of vectors"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class PdistForwardOp(Op):
     """Compute pairwise distance within a set of vectors"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReduceType
 
 
 class FftR2cOp(Op):
     """Real-to-complex FFT transform"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class LocalScalarDenseOp(Op):
     """Convert single-element tensor to scalar"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
 
 
 class ResizeOp(Op):
     """Resize tensor in-place"""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ReshapeType
 
 
 class GQAAttentionFusedOp(Op):
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
         self._op_type = OpType.ElementwiseType
+
+
+class AsStridedScatterOp(Op):
+    """
+    Scatter into a base tensor via as_strided view.
+    Implements aten.as_strided_scatter.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class BitwiseLeftShiftOp(Op):
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.BroadcastType
+
+
+class BitwiseRightShiftOp(Op):
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.BroadcastType
+
+
+class FractionalMaxPool2dOp(Op):
+    """
+    Fractional max pool 2D operation.
+    Implements aten.fractional_max_pool2d.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+        self._layout = "NCHW"
+
+
+class FrexpOp(Op):
+    """
+    Frexp decomposition.
+    Implements aten.frexp: Returns mantissa and exponent.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class GridSampler3dOp(Op):
+    """
+    Grid sampler 3D operation.
+    Implements aten.grid_sampler_3d: Sample from input using grid coordinates.
+    Args: input, grid, interpolation_mode, padding_mode, align_corners
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType
+
+
+class HistcOp(Op):
+    """
+    Histogram count operation.
+    Implements aten.histc.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class IgammaOp(Op):
+    """
+    Lower regularized incomplete gamma.
+    Implements aten.igamma: igamma(a, x).
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class IgammacOp(Op):
+    """
+    Upper regularized incomplete gamma.
+    Implements aten.igammac: igammac(a, x).
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class KthValueOp(Op):
+    """
+    Kth value operation.
+    Implements aten.kthvalue: returns k-th smallest values and indices.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class MedianOp(Op):
+    """
+    Median reduction operation.
+    Implements aten.median (default and dim variants).
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class ModeOp(Op):
+    """
+    Mode reduction operation.
+    Implements aten.mode.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class NanMedianOp(Op):
+    """
+    NaN-aware median reduction operation.
+    Implements aten.nanmedian (default and dim variants).
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class NewEmptyStridedOp(Op):
+    """
+    Empty tensor creation with explicit stride.
+    Implements aten.new_empty_strided.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType
+
+
+class NonzeroStaticOp(Op):
+    """
+    Nonzero elements with fixed output size.
+    Implements aten.nonzero_static.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType
+
+
+class SearchSortedOp(Op):
+    """
+    Searchsorted operation.
+    Implements aten.searchsorted on tensors.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReduceType
+
+
+class SignbitOp(Op):
+    """
+    Signbit operation.
+    Implements aten.signbit: Returns a boolean tensor indicating negative values.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialEntrOp(Op):
+    """
+    Elementwise entropy.
+    Implements aten.special_entr.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialI0eOp(Op):
+    """
+    Scaled modified Bessel function of the first kind, order 0.
+    Implements aten.special_i0e.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialI1Op(Op):
+    """
+    Modified Bessel function of the first kind, order 1.
+    Implements aten.special_i1.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialI1eOp(Op):
+    """
+    Scaled modified Bessel function of the first kind, order 1.
+    Implements aten.special_i1e.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialErfcxOp(Op):
+    """
+    Scaled complementary error function.
+    Implements aten.special_erfcx: exp(x^2) * erfc(x).
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialNdtrOp(Op):
+    """
+    Standard normal CDF.
+    Implements aten.special_ndtr.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialLogNdtrOp(Op):
+    """
+    Log CDF of the standard normal distribution.
+    Implements aten.special_log_ndtr.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialNdtriOp(Op):
+    """
+    Inverse of the standard normal CDF.
+    Implements aten.special_ndtri.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class SpecialSphericalBesselJ0Op(Op):
+    """
+    Spherical Bessel function of the first kind, order 0.
+    Implements aten.special_spherical_bessel_j0.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ElementwiseType
+
+
+class UniformOp(Op):
+    """
+    Uniform random fill operation.
+    Implements aten.uniform / aten.uniform_.
+    """
+
+    def __init__(self, node_type=None) -> None:
+        super().__init__(node_type=node_type)
+        self._op_type = OpType.ReshapeType

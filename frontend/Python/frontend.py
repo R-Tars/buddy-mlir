@@ -430,6 +430,7 @@ class DynamoCompiler:
         node_output_shape: list = [],
         node_output_dtype: TensorDType = None,
         node_kwargs: Optional[Dict] = None,
+        node_type: NodeType = NodeType.OtherNode,
     ):
         """
         Create buddy op node from torch aten op.
@@ -442,9 +443,10 @@ class DynamoCompiler:
             node_output_dtype: The TensorDType enum type of the op node's output
             data type.
             node_kwargs: The restful attributes for op node.
+            node_type: The type of the node.
         """
         op_class = self._ops_map[gm_node_name]
-        buddy_node = op_class()
+        buddy_node = op_class(node_type=node_type)
         buddy_node._name = node_name
         if gm_node_name == "output":
             for input_arg in node_input[0]:
@@ -542,9 +544,10 @@ class DynamoCompiler:
                 (NodeType.FakeNode, param_nodes),
                 (NodeType.FakeNode, buffers_nodes),
                 (NodeType.InputNode, input_nodes),
-                (NodeType.OtherNode, other_nodes)
+                (NodeType.OtherNode, other_nodes),
             ]
-            
+
+            input_node_counter = 0
             for node_type, gm_nodes_sublist in gm_nodes:
                 for gm_node in gm_nodes_sublist:
                     node_users = []
@@ -561,11 +564,19 @@ class DynamoCompiler:
                             node_users,
                             gm_node.meta["tensor_meta"].shape,
                             node_dtype,
+                            node_type=node_type,
                         )
+                        if node_type == NodeType.InputNode:
+                            buddy_node.input_index = input_node_counter
+                            input_node_counter += 1
 
                     elif gm_node.op == "output":
                         buddy_node = self._create_node(
-                            gm_node.op, gm_node.name, gm_node.args, node_users
+                            gm_node.op,
+                            gm_node.name,
+                            gm_node.args,
+                            node_users,
+                            node_type=node_type,
                         )
 
                     elif gm_node.target is operator.getitem:
@@ -579,6 +590,7 @@ class DynamoCompiler:
                             node_users,
                             gm_node.meta["tensor_meta"].shape,
                             node_dtype,
+                            node_type=node_type,
                         )
                     elif gm_node.op == "get_attr":
                         if "_tensor_constant" in gm_node.name:
@@ -592,41 +604,114 @@ class DynamoCompiler:
                             if not match:
                                 assert False
                             value = float(match.group(1))
-                            gm_node.insert_arg(len(gm_node.args), value)
+                        if value is None:
                             val = gm_node.meta.get("val")
-                            node_shape = val.shape
-                            node_dtype = self._torch_dtype_translate(str(val.dtype))
-                            buddy_node = self._create_node(
-                                "_tensor_constant",
-                                gm_node.name,
-                                gm_node.args,
-                                node_users,
-                                node_shape,
-                                node_dtype,
-                                node_kwargs=gm_node.kwargs,
+                            if isinstance(val, torch.Tensor):
+                                if val.numel() != 1:
+                                    raise NotImplementedError(
+                                        "_tensor_constant only supports scalar tensors"
+                                    )
+                                value = val.item()
+                            elif isinstance(val, (int, float)):
+                                value = val
+                        if value is None:
+                            raise NotImplementedError(
+                                "Unsupported _tensor_constant format"
                             )
+                        gm_node.insert_arg(len(gm_node.args), value)
+                        val = gm_node.meta.get("val")
+                        node_shape = val.shape
+                        node_dtype = self._torch_dtype_translate(str(val.dtype))
+                        buddy_node = self._create_node(
+                            "_tensor_constant",
+                            gm_node.name,
+                            gm_node.args,
+                            node_users,
+                            node_shape,
+                            node_dtype,
+                            node_kwargs=gm_node.kwargs,
+                            node_type=node_type,
+                        )
                     else:
                         tensor_meta = gm_node.meta.get("tensor_meta")
                         val = gm_node.meta.get("val")
                         # num_returns = len(gm_node.target._schema.returns)
                         num_returns = (
                             len(val)
-                            if isinstance(val, list)
+                            if isinstance(val, (list, tuple))
                             else len(gm_node.target._schema.returns)
                         )
                         if num_returns == 1:
-                            node_dtype = self._torch_dtype_translate(
-                                str(tensor_meta.dtype)
-                            )
-                            node_shape = tensor_meta.shape
+                            if tensor_meta is None:
+                                if isinstance(val, torch.Tensor):
+                                    node_dtype = self._torch_dtype_translate(
+                                        str(val.dtype)
+                                    )
+                                    node_shape = val.shape
+                                elif str(gm_node.target) == "aten.unbind.int":
+                                    input_node = gm_node.args[0]
+                                    dim = (
+                                        gm_node.args[1]
+                                        if len(gm_node.args) > 1
+                                        else 0
+                                    )
+                                    input_meta = input_node.meta.get(
+                                        "tensor_meta"
+                                    )
+                                    input_val = input_node.meta.get("val")
+                                    if input_meta is None:
+                                        if not isinstance(
+                                            input_val, torch.Tensor
+                                        ):
+                                            raise RuntimeError(
+                                                "Missing input meta for aten.unbind.int"
+                                            )
+                                        input_shape = list(input_val.shape)
+                                        input_dtype = input_val.dtype
+                                    else:
+                                        input_shape = list(input_meta.shape)
+                                        input_dtype = input_meta.dtype
+                                    if dim < 0:
+                                        dim += len(input_shape)
+                                    length = input_shape[dim]
+                                    if length < 0:
+                                        raise RuntimeError(
+                                            "Dynamic unbind dimension not supported"
+                                        )
+                                    out_shape = tuple(
+                                        input_shape[:dim]
+                                        + input_shape[dim + 1 :]
+                                    )
+                                    node_shape = tuple([out_shape] * length)
+                                    node_dtype = tuple(
+                                        [
+                                            self._torch_dtype_translate(
+                                                str(input_dtype)
+                                            )
+                                        ]
+                                        * length
+                                    )
+                                else:
+                                    raise RuntimeError(
+                                        f"Missing tensor_meta for {gm_node.target}"
+                                    )
+                            else:
+                                node_dtype = self._torch_dtype_translate(
+                                    str(tensor_meta.dtype)
+                                )
+                                node_shape = tensor_meta.shape
                         elif num_returns > 1:
                             node_dtype = tuple(
                                 [
-                                    self._torch_dtype_translate(str(val_item.dtype))
+                                    self._torch_dtype_translate(
+                                        str(val_item.dtype)
+                                    )
                                     for val_item in val
                                 ]
                             )
-                            node_shape = tuple([val_item.shape for val_item in val])
+                            node_shape = tuple(
+                                [val_item.shape for val_item in val]
+                            )
                         else:
                             raise RuntimeError("Zero returns is not supported.")
 
@@ -638,6 +723,7 @@ class DynamoCompiler:
                             node_shape,
                             node_dtype,
                             node_kwargs=gm_node.kwargs,
+                            node_type=node_type,
                         )
                     graph.add_node(node=buddy_node, node_type=node_type)
             transform_list = [maxpool2d_simplify]
