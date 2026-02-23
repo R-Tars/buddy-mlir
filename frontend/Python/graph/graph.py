@@ -635,7 +635,6 @@ class GraphImporter:
         self._ops_registry = ops_registry
         self._current_param_pack_offset = None
         self._enable_external_calls = enable_external_calls
-        self._input_index_counter = 0
 
     def _str_to_mlir_dtype(self, dtype: str) -> ir.Type:
         """
@@ -841,7 +840,10 @@ class GraphImporter:
         Returns:
         None
         """
-        if node.node_type == NodeType.FakeNode and self._do_param_pack:
+        if (
+            self._num_input_visited < len(self._params_shapes)
+            and self._do_param_pack
+        ):
             dtype = node.tensor_meta["dtype"]
             pack_of_dtype = None
             for pack in args_list:
@@ -856,15 +858,20 @@ class GraphImporter:
             self._current_param_pack_offset[dtype] += functools.reduce(
                 lambda x, y: x * y, list(node.tensor_meta["shape"]), 1
             )
-        elif node.node_type == NodeType.InputNode:
-            arg_index = len(self._param_packs) + node.input_index
-            placeholder_name = args_list[arg_index]
+        elif self._do_param_pack:
+            if len(self._params_shapes) > 0:
+                placeholder_name = args_list[
+                    self._num_input_visited
+                    - len(self._params_shapes)
+                    + len(self._param_packs)
+                ]
+            else:
+                placeholder_name = args_list[self._num_input_visited]
         else:
-            # Fallback for cases where node_type might not be set or other types
-            placeholder_name = args_list[self._input_index_counter]
-            self._input_index_counter += 1
+            placeholder_name = args_list[self._num_input_visited]
 
         self._symbol_table[(str(node.name), 0)] = placeholder_name
+        self._num_input_visited += 1
 
     def _generate_external_func_decl(self, call_node):
         """
