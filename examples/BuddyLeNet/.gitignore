@@ -8,3 +8,12 @@ __pycache__
 lenet.mlir
 forward.mlir
 subgraph0.mlir
+ttir_out/
+ttir_e2e_artifacts/
+lenet_ttir_subgraph0.mlir
+lenet_ttir_module.mlir
+generated/
+ttrt_report.xml
+query_results.json
+run_results.json
+verify_lenet_export_tmp/

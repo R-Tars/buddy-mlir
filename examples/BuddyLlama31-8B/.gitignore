@@ -1,0 +1,17 @@
+# Runtime / intermediate artifacts produced by the TTIR + P150A pipeline.
+ttir_out/
+ttir_out_static/
+ttir_e2e_artifacts/
+chat_artifacts/
+generated/
+logs/
+
+# ttrt + python runtime detritus
+run.log
+run_results.json
+query_results.json
+ttrt_report.xml
+
+# Python caches
+__pycache__/
+*.pyc

@@ -133,6 +133,7 @@ class DynamoCompiler:
             "arange.default": ArangeOp,
             "unsqueeze.default": UnsqueezeOp,
             "view.default": ViewOp,
+            "_unsafe_view.default": ViewOp,
             "view.dtype": ViewDtypeOp,
             "ones.default": OnesOp,
             "full.default": FullOp,
@@ -899,6 +900,7 @@ class DynamoCompiler:
                 params_pos.append(i)
 
         params_flat = [inputs[i] for i in params_pos + buffers_pos]
+        runtime_inputs_flat = [inputs[i] for i in inputs_pos]
 
         if self._verbose:
             print("Graph in tabular form:")
@@ -914,6 +916,7 @@ class DynamoCompiler:
                 self._enable_external_calls,
             )
             graph._params_ref = params_flat
+            graph._runtime_inputs_ref = runtime_inputs_flat
             param_nodes = []
             buffers_nodes = []
             input_nodes = []
@@ -990,14 +993,27 @@ class DynamoCompiler:
                             value = None
                             if match:
                                 value = float(match.group(1))
+                            val = gm_node.meta.get("val")
                             if value is None:
-                                val = gm_node.meta.get("val")
                                 if isinstance(val, torch.Tensor):
-                                    if val.numel() != 1:
-                                        raise NotImplementedError(
-                                            "_tensor_constant only supports scalar tensors"
-                                        )
-                                    value = val.item()
+                                    if val.numel() == 1:
+                                        value = val.item()
+                                    else:
+                                        # Dense tensor constants (e.g. large folded tensors in LLMs).
+                                        t = val.detach().cpu().contiguous()
+                                        try:
+                                            if t.dtype == torch.bfloat16:
+                                                value = t.float().numpy()
+                                            else:
+                                                value = t.numpy()
+                                        except (TypeError, RuntimeError):
+                                            # Some tensor subclasses / dtypes disallow .numpy().
+                                            if t.dtype == torch.bfloat16:
+                                                value = np.asarray(
+                                                    t.tolist(), dtype=np.float32
+                                                )
+                                            else:
+                                                value = np.asarray(t.tolist())
                                 elif isinstance(val, (int, float)):
                                     value = val
                             if value is None:
@@ -1007,7 +1023,7 @@ class DynamoCompiler:
 
                             gm_node.insert_arg(len(gm_node.args), value)
                             val = gm_node.meta.get("val")
-                            node_shape = val.shape
+                            node_shape = list(val.shape)
                             node_dtype = self._torch_dtype_translate(
                                 str(val.dtype)
                             )

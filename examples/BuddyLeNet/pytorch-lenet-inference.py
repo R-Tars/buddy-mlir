@@ -18,16 +18,25 @@
 #
 # ===---------------------------------------------------------------------------
 
+import os
+from pathlib import Path
+
 import torch
 from torchvision import transforms
 from PIL import Image
 
 from model import LeNet
 
-# Load model
-model = LeNet()
-torch.load("./lenet-model.pth")
-# Set the model to evaluation mode
+_here = Path(__file__).resolve().parent
+_default_pth = _here.parent.parent / "tests" / "Models" / "BuddyLeNet" / "lenet-model.pth"
+_model_path = os.environ.get("LENET_MODEL_PATH")
+if _model_path:
+    _pth = Path(_model_path)
+else:
+    _pth = _default_pth if _default_pth.is_file() else _here / "lenet-model.pth"
+
+# Load model (saved with torch.save(model, ...) from training script)
+model = torch.load(_pth, weights_only=False)
 model.eval()
 
 # Prepare image and convert to grayscale

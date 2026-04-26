@@ -10,6 +10,8 @@ $ cd examples/BuddyLeNet
 $ python pytorch-lenet-train.py
 ```
 
+可选参数示例：`--epochs 3 --output ./lenet-model.pth`（默认 3 个 epoch，保存整模型供导入）。
+
 ## LeNet Model Inference
 
 ### Activate your python environment.
