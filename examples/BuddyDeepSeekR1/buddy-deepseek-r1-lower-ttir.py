@@ -154,7 +154,8 @@ def _patch_static_cache_for_buddy() -> None:
     """Replace ``transformers.cache_utils.StaticLayer.update`` so it does not
     emit ``aten.index_copy_`` (which the Buddy TOSA op map does not register).
 
-    Equivalent scatter-via-``where`` implementation:
+    Equivalent scatter-via-``where`` implementation, **compatible with both
+    Transformers 4.x and 5.5+**:
 
     - **Prefill** (``key_states.shape[-2] == max_cache_len``): directly assign
       key/value states as the new cache contents; attention uses the full 1024
@@ -162,17 +163,50 @@ def _patch_static_cache_for_buddy() -> None:
     - **Decode** (``key_states.shape[-2] == 1``): build a boolean mask
       ``arange(max_cache_len) == cache_position[0]`` and ``torch.where`` the
       new 1-token state into the corresponding slot.
+
+    Position resolution differs across versions:
+      * Transformers 4.x passed ``cache_kwargs={'cache_position': ...}`` to
+        ``update``; we still honour that path for backwards compat.
+      * Transformers 5.5+ removed ``cache_kwargs`` and relies on the layer's
+        ``cumulative_length`` buffer instead. We fall back to that, which keeps
+        ``cumulative_length`` visible to Dynamo as a graph-level placeholder.
     """
     import transformers.cache_utils as cu
 
-    def update(self, key_states, value_states, cache_kwargs=None):
-        if self.keys is None:
-            self.lazy_initialization(key_states)
-        cache_position = (
-            cache_kwargs.get("cache_position") if cache_kwargs is not None else None
-        )
+    def update(self, key_states, value_states, *args, **kwargs):
+        # Transformers 5.5: lazy_initialization needs both key + value tensors;
+        # prefer is_initialized over `self.keys is None` because lazy_init now
+        # allocates a zeros tensor instead of leaving keys as None.
+        if not getattr(self, "is_initialized", False) and getattr(
+            self, "keys", None
+        ) is None:
+            try:
+                self.lazy_initialization(key_states, value_states)
+            except TypeError:
+                # Transformers 4.x signature.
+                self.lazy_initialization(key_states)
+
+        cache_position = None
+        # Transformers 4.x: third positional or keyword 'cache_kwargs' dict.
+        ck = None
+        if args:
+            if isinstance(args[0], dict):
+                ck = args[0]
+            elif len(args) > 1 and isinstance(args[1], dict):
+                ck = args[1]
+        if ck is None and isinstance(kwargs.get("cache_kwargs"), dict):
+            ck = kwargs["cache_kwargs"]
+        if ck is not None:
+            cache_position = ck.get("cache_position")
+        # Transformers 5.5: derive from cumulative_length (a buffer that Dynamo
+        # traces as graph input, so different runtime positions don't recompile).
         if cache_position is None:
-            cache_position = torch.arange(key_states.shape[-2], device=self.device)
+            S_ = key_states.shape[-2]
+            base = getattr(self, "cumulative_length", None)
+            if base is not None:
+                cache_position = torch.arange(S_, device=self.device) + base
+            else:
+                cache_position = torch.arange(S_, device=self.device)
 
         L = self.keys.shape[-2]
         S = key_states.shape[-2]
@@ -284,12 +318,25 @@ def main() -> int:
             decode_ids = torch.zeros(1, 1, dtype=torch.long, device=device)
             cache_position = torch.tensor([200], dtype=torch.long, device=device)
             with torch.no_grad():
+                # Warm up: forces every StaticLayer.lazy_initialization with both
+                # (key, value) so subsequent traces don't recompile on first call.
+                # Transformers 5.5 dropped `cache_position` from Qwen2Model.forward,
+                # so we don't pass it here; the layer's `cumulative_length` is
+                # the new source-of-truth for position. We manually advance it to
+                # 200 (matching the pre-5.5 behaviour) so the traced graph sees a
+                # non-zero base (Dynamo keeps it as a graph-level placeholder).
                 model(
                     input_ids=decode_ids,
                     past_key_values=past_kv,
                     use_cache=True,
                     cache_implementation="static",
                 )
+                for layer in getattr(past_kv, "layers", []):
+                    base = getattr(layer, "cumulative_length", None)
+                    if base is not None:
+                        layer.cumulative_length = torch.tensor(
+                            [200], dtype=base.dtype, device=base.device
+                        )
                 graphs = dynamo_compiler.importer(
                     model,
                     input_ids=decode_ids,

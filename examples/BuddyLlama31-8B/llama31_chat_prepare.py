@@ -91,17 +91,37 @@ def _patch_static_cache_for_buddy() -> None:
 
     Replaces ``StaticLayer.update`` with a ``where``-based scatter so we do not
     hit ``aten.index_copy_`` (unregistered in the Buddy TOSA op map).
+    Compatible with both Transformers 4.x and 5.5+.
     """
     import transformers.cache_utils as cu
 
-    def update(self, key_states, value_states, cache_kwargs=None):
-        if self.keys is None:
-            self.lazy_initialization(key_states)
-        cache_position = (
-            cache_kwargs.get("cache_position") if cache_kwargs is not None else None
-        )
+    def update(self, key_states, value_states, *args, **kwargs):
+        if not getattr(self, "is_initialized", False) and getattr(
+            self, "keys", None
+        ) is None:
+            try:
+                self.lazy_initialization(key_states, value_states)
+            except TypeError:
+                self.lazy_initialization(key_states)
+
+        cache_position = None
+        ck = None
+        if args:
+            if isinstance(args[0], dict):
+                ck = args[0]
+            elif len(args) > 1 and isinstance(args[1], dict):
+                ck = args[1]
+        if ck is None and isinstance(kwargs.get("cache_kwargs"), dict):
+            ck = kwargs["cache_kwargs"]
+        if ck is not None:
+            cache_position = ck.get("cache_position")
         if cache_position is None:
-            cache_position = torch.arange(key_states.shape[-2], device=self.device)
+            S_ = key_states.shape[-2]
+            base = getattr(self, "cumulative_length", None)
+            if base is not None:
+                cache_position = torch.arange(S_, device=self.device) + base
+            else:
+                cache_position = torch.arange(S_, device=self.device)
 
         L = self.keys.shape[-2]
         S = key_states.shape[-2]
@@ -220,6 +240,12 @@ def _prepare_phase(
                 use_cache=True,
                 cache_implementation="static",
             )
+            for layer in getattr(past_kv, "layers", []):
+                base = getattr(layer, "cumulative_length", None)
+                if base is not None:
+                    layer.cumulative_length = torch.tensor(
+                        [200], dtype=base.dtype, device=base.device
+                    )
             graphs = dynamo_compiler.importer(
                 model,
                 input_ids=decode_ids,

@@ -287,6 +287,16 @@ def _apply_chat_template(tokenizer, user_message: str, system_prompt: str | None
             + f"<｜User｜>{user_message}<｜Assistant｜>"
         )
         ids = tokenizer(prompt, add_special_tokens=False).input_ids
+    # Transformers 5.5: apply_chat_template(tokenize=True) returns a
+    # BatchEncoding (dict-like); flatten to a single list of ints.
+    if hasattr(ids, "input_ids"):
+        ids = ids.input_ids
+    if isinstance(ids, dict) and "input_ids" in ids:
+        ids = ids["input_ids"]
+    if isinstance(ids, torch.Tensor):
+        ids = ids.flatten().tolist()
+    if isinstance(ids, (list, tuple)) and ids and isinstance(ids[0], (list, tuple)):
+        ids = ids[0]
     if not isinstance(ids, list):
         ids = list(ids)
     return [int(x) for x in ids]

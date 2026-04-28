@@ -168,28 +168,49 @@ def _patch_static_cache_for_buddy() -> None:
     """Replace ``transformers.cache_utils.StaticLayer.update`` so it does not
     emit ``aten.index_copy_`` (which the Buddy TOSA op map does not register).
 
-    Equivalent scatter-via-``where`` implementation:
+    Equivalent scatter-via-``where`` implementation, **compatible with both
+    Transformers 4.x and 5.5+**:
 
     - Prefill (``key_states.shape[-2] == max_cache_len``): directly assign
       key/value states as the new cache contents.
     - Decode (``key_states.shape[-2] == 1``): build a boolean mask
       ``arange(max_cache_len) == cache_position[0]`` and ``torch.where``
       the new 1-token state into the corresponding slot.
+
+    Position resolution:
+      * Transformers 4.x: ``cache_kwargs={'cache_position': ...}``.
+      * Transformers 5.5+: drop ``cache_kwargs``; read ``cumulative_length``
+        from the layer instead (kept as a Dynamo placeholder).
     """
     import transformers.cache_utils as cu
 
-    def update(self, key_states, value_states, cache_kwargs=None):
-        if self.keys is None:
-            self.lazy_initialization(key_states)
-        cache_position = (
-            cache_kwargs.get("cache_position")
-            if cache_kwargs is not None
-            else None
-        )
+    def update(self, key_states, value_states, *args, **kwargs):
+        if not getattr(self, "is_initialized", False) and getattr(
+            self, "keys", None
+        ) is None:
+            try:
+                self.lazy_initialization(key_states, value_states)
+            except TypeError:
+                self.lazy_initialization(key_states)
+
+        cache_position = None
+        ck = None
+        if args:
+            if isinstance(args[0], dict):
+                ck = args[0]
+            elif len(args) > 1 and isinstance(args[1], dict):
+                ck = args[1]
+        if ck is None and isinstance(kwargs.get("cache_kwargs"), dict):
+            ck = kwargs["cache_kwargs"]
+        if ck is not None:
+            cache_position = ck.get("cache_position")
         if cache_position is None:
-            cache_position = torch.arange(
-                key_states.shape[-2], device=self.device
-            )
+            S_ = key_states.shape[-2]
+            base = getattr(self, "cumulative_length", None)
+            if base is not None:
+                cache_position = torch.arange(S_, device=self.device) + base
+            else:
+                cache_position = torch.arange(S_, device=self.device)
 
         L = self.keys.shape[-2]
         S = key_states.shape[-2]
@@ -325,6 +346,16 @@ def main() -> int:
                     use_cache=True,
                     cache_implementation="static",
                 )
+                # Transformers 5.5: model.forward dropped the `cache_position`
+                # arg; advance per-layer `cumulative_length` so the patched
+                # `update` sees a non-zero base, which Dynamo traces as a
+                # graph-level placeholder.
+                for layer in getattr(past_kv, "layers", []):
+                    base = getattr(layer, "cumulative_length", None)
+                    if base is not None:
+                        layer.cumulative_length = torch.tensor(
+                            [200], dtype=base.dtype, device=base.device
+                        )
                 graphs = dynamo_compiler.importer(
                     model,
                     input_ids=decode_ids,
