@@ -175,10 +175,57 @@ have_artifact() {
   [[ -s "$1" ]]
 }
 
+phase_metadata_matches() {
+  local phase_dir="$1"
+  local roles="${phase_dir}/slot_roles.json"
+  local summary="${phase_dir}/summary.json"
+  [[ -f "${roles}" \
+    && -f "${phase_dir}/shapes.json" \
+    && -f "${phase_dir}/dtypes.json" \
+    && -f "${summary}" ]] || return 1
+  grep -q "\"max_cache_len\": ${MAX_CACHE_LEN}" "${summary}" || return 1
+  grep -q "\"batch\": ${BATCH_SIZE}" "${summary}" || return 1
+  if [[ "${RUNTIME_ATTENTION_MASK}" == "1" ]]; then
+    grep -q '"role": "attention_mask"' "${roles}" || return 1
+  else
+    ! grep -q '"role": "attention_mask"' "${roles}" || return 1
+  fi
+}
+
+have_phase_metadata() {
+  phase_metadata_matches "${CHAT_ART}/$1"
+}
+
+have_phase_weights() {
+  [[ -s "${CHAT_ART}/$1/weights.bin" ]]
+}
+
+have_reusable_payloads() {
+  local root="$1"
+  [[ -s "${root}/prefill/weights.bin" \
+    && -s "${root}/decode/weights.bin" ]] || return 1
+  phase_metadata_matches "${root}/prefill" || return 1
+  phase_metadata_matches "${root}/decode" || return 1
+}
+
+find_reusable_payload_root() {
+  local root
+  for root in "${BASE_CHAT_ART}" "${BASE_CHAT_ART}"_*; do
+    [[ "${root}" == "${CHAT_ART}" ]] && continue
+    [[ -d "${root}" ]] || continue
+    if have_reusable_payloads "${root}"; then
+      printf '%s\n' "${root}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 reuse_static_payloads() {
+  local source_root="${1:-${BASE_CHAT_ART}}"
   for phase in prefill decode; do
     local dst_dir="${CHAT_ART}/${phase}"
-    local src_dir="${BASE_CHAT_ART}/${phase}"
+    local src_dir="${source_root}/${phase}"
     mkdir -p "${dst_dir}"
     for name in weights.bin inv_freq.npy; do
       local src="${src_dir}/${name}"
@@ -198,25 +245,19 @@ reuse_static_payloads() {
   done
 }
 
-have_phase_metadata() {
-  local phase_dir="${CHAT_ART}/$1"
-  local roles="${phase_dir}/slot_roles.json"
-  local summary="${phase_dir}/summary.json"
-  [[ -f "${roles}" \
-    && -f "${phase_dir}/shapes.json" \
-    && -f "${phase_dir}/dtypes.json" \
-    && -f "${summary}" ]] || return 1
-  grep -q "\"max_cache_len\": ${MAX_CACHE_LEN}" "${summary}" || return 1
-  grep -q "\"batch\": ${BATCH_SIZE}" "${summary}" || return 1
-  if [[ "${RUNTIME_ATTENTION_MASK}" == "1" ]]; then
-    grep -q '"role": "attention_mask"' "${roles}" || return 1
-  else
-    ! grep -q '"role": "attention_mask"' "${roles}" || return 1
-  fi
-}
-
-have_phase_weights() {
-  [[ -s "${CHAT_ART}/$1/weights.bin" ]]
+reuse_prefill_metadata() {
+  local source_root="${1:-${BASE_CHAT_ART}}"
+  local src_dir="${source_root}/prefill"
+  local dst_dir="${CHAT_ART}/prefill"
+  mkdir -p "${dst_dir}"
+  for name in slot_roles.json shapes.json dtypes.json summary.json; do
+    local src="${src_dir}/${name}"
+    local dst="${dst_dir}/${name}"
+    if [[ -e "${dst}" || ! -e "${src}" ]]; then
+      continue
+    fi
+    cp -f "${src}" "${dst}"
+  done
 }
 
 share_phase_weights() {
@@ -477,9 +518,12 @@ if [[ "${SKIP_PREPARE}" != "1" ]]; then
   if ! have_phase_metadata prefill || ! have_phase_metadata decode \
       || ! have_phase_weights prefill || ! have_phase_weights decode; then
     echo "=== [3/4] Prepare chat artifacts (weights + roles) ==="
-    if [[ "${BASE_CHAT_ART}" != "${CHAT_ART}" \
-          && -f "${BASE_CHAT_ART}/prefill/weights.bin" \
-          && -f "${BASE_CHAT_ART}/decode/weights.bin" ]]; then
+    REUSABLE_CHAT_ART=""
+    if [[ "${BASE_CHAT_ART}" != "${CHAT_ART}" ]]; then
+      REUSABLE_CHAT_ART="$(find_reusable_payload_root || true)"
+    fi
+    if [[ -n "${REUSABLE_CHAT_ART}" ]]; then
+      reuse_prefill_metadata "${REUSABLE_CHAT_ART}"
       if ! have_phase_metadata prefill; then
         python llama31_chat_prepare.py \
           --phases prefill \
@@ -498,7 +542,7 @@ if [[ "${SKIP_PREPARE}" != "1" ]]; then
           "${PREPARE_DECODE_EXTRA[@]}" \
           -o "${CHAT_ART}"
       fi
-      reuse_static_payloads
+      reuse_static_payloads "${REUSABLE_CHAT_ART}"
     else
       if ! have_phase_metadata prefill || ! have_phase_weights prefill; then
         python llama31_chat_prepare.py \
@@ -522,7 +566,10 @@ if [[ "${SKIP_PREPARE}" != "1" ]]; then
   else
     echo "=== [3/4] chat artifacts already exist: ${CHAT_ART} ==="
     if [[ "${BASE_CHAT_ART}" != "${CHAT_ART}" ]]; then
-      reuse_static_payloads
+      REUSABLE_CHAT_ART="$(find_reusable_payload_root || true)"
+      if [[ -n "${REUSABLE_CHAT_ART}" ]]; then
+        reuse_static_payloads "${REUSABLE_CHAT_ART}"
+      fi
     else
       share_phase_weights
     fi
@@ -530,7 +577,10 @@ if [[ "${SKIP_PREPARE}" != "1" ]]; then
 else
   echo "=== skipping chat prepare (SKIP_PREPARE=1) ==="
   if [[ "${BASE_CHAT_ART}" != "${CHAT_ART}" ]]; then
-    reuse_static_payloads
+    REUSABLE_CHAT_ART="$(find_reusable_payload_root || true)"
+    if [[ -n "${REUSABLE_CHAT_ART}" ]]; then
+      reuse_static_payloads "${REUSABLE_CHAT_ART}"
+    fi
   elif [[ -s "${CHAT_ART}/prefill/weights.bin" ]]; then
     share_phase_weights
   fi
