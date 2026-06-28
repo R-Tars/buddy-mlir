@@ -330,7 +330,41 @@ function(_buddy_register_llama_tt_rax_target target_name)
                "${_buddy_llama_tt_rax_targets}")
 endfunction()
 
+function(_buddy_llama_tt_add_phase_lower_targets target_prefix package_env_var)
+  set(_buddy_llama_tt_phase_targets "")
+  foreach(_buddy_llama_tt_phase IN ITEMS prefill decode)
+    set(_buddy_llama_tt_phase_target
+      "${target_prefix}_${_buddy_llama_tt_phase}_lower")
+    add_custom_target(${_buddy_llama_tt_phase_target}
+      COMMAND ${CMAKE_COMMAND} -E env ${${package_env_var}}
+              "LOWER_PHASES=${_buddy_llama_tt_phase}"
+              "SKIP_PREPARE=1"
+              "SKIP_PACKAGE=1"
+              bash "${CMAKE_CURRENT_SOURCE_DIR}/run_llama31_tt_chat.sh"
+      DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/_env.sh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/buddy-llama31-lower-ttir.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/llama31_chat_prepare.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/pack_decode_qkv_ttnn.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/run_llama31_tt_chat.sh"
+      COMMENT "Lowering ${target_prefix} ${_buddy_llama_tt_phase} TTNN artifacts"
+      VERBATIM
+    )
+    if(TARGET python-package-buddy)
+      add_dependencies(${_buddy_llama_tt_phase_target} python-package-buddy)
+    endif()
+    list(APPEND _buddy_llama_tt_phase_targets
+      ${_buddy_llama_tt_phase_target})
+  endforeach()
+  add_custom_target(${target_prefix}_lower
+    DEPENDS ${_buddy_llama_tt_phase_targets}
+    COMMENT "Lowering ${target_prefix} prefill and decode TTNN artifacts"
+  )
+endfunction()
+
 _buddy_register_llama_tt_rax_target(llama31_tt_rax)
+_buddy_llama_tt_add_phase_lower_targets(
+  llama31_tt _BUDDY_LLAMA31_PACKAGE_ENV)
 
 set(BUDDY_LLAMA31_FIXED_BATCH_SIZES "32" CACHE STRING
   "Semicolon-separated fixed batch sizes to package for Llama 3.1 TT (batch1 is always emitted as llama31_tt_rax)")
@@ -459,6 +493,8 @@ function(_buddy_llama31_add_fixed_batch_package batch_size)
   add_dependencies(${_BUDDY_LLAMA31_BATCH_STEM}_package
     ${_BUDDY_LLAMA31_BATCH_STEM}_rax)
   _buddy_register_llama_tt_rax_target(${_BUDDY_LLAMA31_BATCH_STEM}_rax)
+  _buddy_llama_tt_add_phase_lower_targets(
+    ${_BUDDY_LLAMA31_BATCH_STEM} _BUDDY_LLAMA31_BATCH_PACKAGE_ENV)
 endfunction()
 
 if(BUDDY_LLAMA31_FIXED_BATCH_SIZES)
@@ -486,7 +522,7 @@ set(BUDDY_LLAMA32_DECODE_FOLD_IDENTITY_MUL OFF CACHE BOOL
   "Experimental: fold generated Llama 3.2 decode multiply-by-one ops")
 set(BUDDY_LLAMA32_DECODE_PACK_QKV ON CACHE BOOL
   "Experimental: pre-pack Llama 3.2 decode Q/K/V static weight slots")
-set(BUDDY_LLAMA32_DECODE_PACK_MLP_GATE_UP OFF CACHE BOOL
+set(BUDDY_LLAMA32_DECODE_PACK_MLP_GATE_UP ON CACHE BOOL
   "Experimental: pre-pack Llama 3.2 decode MLP gate/up static weight slots")
 set(BUDDY_LLAMA32_DECODE_PRECOMPUTE_ROPE ON CACHE BOOL
   "Experimental: replace generated Llama 3.2 decode RoPE trig ops with runtime inputs")
@@ -697,6 +733,8 @@ add_custom_target(llama32_tt_package
 add_dependencies(llama32_tt_package llama32_tt_rax)
 
 _buddy_register_llama_tt_rax_target(llama32_tt_rax)
+_buddy_llama_tt_add_phase_lower_targets(
+  llama32_tt _BUDDY_LLAMA32_PACKAGE_ENV)
 
 function(_buddy_llama32_add_fixed_batch_package batch_size)
   if(NOT "${batch_size}" MATCHES "^[0-9]+$")
@@ -818,6 +856,8 @@ function(_buddy_llama32_add_fixed_batch_package batch_size)
   add_dependencies(${_BUDDY_LLAMA32_BATCH_STEM}_package
     ${_BUDDY_LLAMA32_BATCH_STEM}_rax)
   _buddy_register_llama_tt_rax_target(${_BUDDY_LLAMA32_BATCH_STEM}_rax)
+  _buddy_llama_tt_add_phase_lower_targets(
+    ${_BUDDY_LLAMA32_BATCH_STEM} _BUDDY_LLAMA32_BATCH_PACKAGE_ENV)
 endfunction()
 
 if(BUDDY_LLAMA32_FIXED_BATCH_SIZES)

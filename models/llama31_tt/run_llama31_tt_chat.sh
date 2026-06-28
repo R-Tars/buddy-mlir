@@ -25,9 +25,11 @@
 #      PACKAGE_ONLY=1 is set.
 #
 # Use MAX_CACHE_LEN (default 1024) to control cache length.
-# Set SKIP_LOWER=1 / SKIP_PREPARE=1 / SKIP_PACKAGE=1 to rerun later stages
-# with existing artifacts. Set RUN_WITH_BUDDY_CLI=0 to call the Python
-# ttrt runner directly. Set MAX_NEW_TOKENS=N to cap generation length.
+# Set LOWER_PHASES=prefill or LOWER_PHASES=decode with SKIP_PREPARE=1 and
+# SKIP_PACKAGE=1 to lower one phase at a time. Set SKIP_LOWER=1 /
+# SKIP_PREPARE=1 / SKIP_PACKAGE=1 to rerun later stages with existing
+# artifacts. Set RUN_WITH_BUDDY_CLI=0 to call the Python ttrt runner directly.
+# Set MAX_NEW_TOKENS=N to cap generation length.
 # Set PACKAGE_ONLY=1 to stop after .rax generation. The default package embeds
 # the TTNN flatbuffers and Llama weights into the .rax payload.
 #
@@ -57,6 +59,8 @@ fi
 MAX_CACHE_LEN="${MAX_CACHE_LEN:-1024}"
 BATCH_SIZE="${BATCH_SIZE:-1}"
 SKIP_LOWER="${SKIP_LOWER:-0}"
+LOWER_PHASES="${LOWER_PHASES:-all}"
+LOWER_PHASES="${LOWER_PHASES// /,}"
 SKIP_PREPARE="${SKIP_PREPARE:-0}"
 SKIP_PACKAGE="${SKIP_PACKAGE:-0}"
 RUN_WITH_BUDDY_CLI="${RUN_WITH_BUDDY_CLI:-1}"
@@ -174,6 +178,35 @@ mkdir -p "${TTIR_OUT}" "${CHAT_ART}" "${RAX_PACKAGE_DIR}"
 have_artifact() {
   [[ -s "$1" ]]
 }
+
+validate_lower_phases() {
+  local phase
+  for phase in ${LOWER_PHASES//,/ }; do
+    case "${phase}" in
+      all|both|prefill|decode|none)
+        ;;
+      *)
+        echo "error: unsupported LOWER_PHASES entry '${phase}'" >&2
+        echo "Use all, prefill, decode, none, or a comma-separated subset." >&2
+        exit 1
+        ;;
+    esac
+  done
+}
+
+lower_phase_enabled() {
+  local phase="$1"
+  case ",${LOWER_PHASES}," in
+    *,all,*|*,both,*|*,"${phase}",*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_lower_phases
 
 phase_metadata_matches() {
   local phase_dir="$1"
@@ -412,103 +445,111 @@ RAX_MANIFEST="${RAX_PACKAGE_DIR}/${RAX_STEM}.rhal.mlir"
 RAX_FILE="${RAX_PACKAGE_DIR}/${RAX_STEM}.rax"
 
 if [[ "${SKIP_LOWER}" != "1" ]]; then
-  if ! have_artifact "${PREFILL_TTNN}"; then
-    echo "=== [1/4] Lower prefill TTIR (static-cache ${MAX_CACHE_LEN}) ==="
-    python buddy-llama31-lower-ttir.py \
-      --mode prefill --static-cache --max-cache-len "${MAX_CACHE_LEN}" \
-      --batch "${BATCH_SIZE}" \
-      --element-dtype bf16 \
-      --output-stem-prefix "${TTIR_STEM}_ttir" \
-      "${LOWER_COMMON_EXTRA[@]}" \
-      "${LOWER_PREFILL_EXTRA[@]}" \
-      --ttmlir-opt "$(command -v ttmlir-opt)" -o "${TTIR_OUT}"
-    echo "=== [1b/4] prefill TTIR -> TTNN ==="
-    ttmlir-opt "${TTIR_OUT}/${TTIR_STEM}_ttir_prefill.mlir" \
-      --ttir-to-ttnn-backend-pipeline="system-desc-path=${SYS}${BUDDY_TTNN_PIPELINE_EXTRA}" \
-      -o "${TTIR_OUT}/${TTIR_STEM}_prefill_static${PREFILL_ARTIFACT_SUFFIX}_ttnn.mlir"
-    echo "=== [1c/4] prefill TTNN -> flatbuffer ==="
-    ttmlir-translate --ttnn-to-flatbuffer \
-      "${TTIR_OUT}/${TTIR_STEM}_prefill_static${PREFILL_ARTIFACT_SUFFIX}_ttnn.mlir" \
-      -o "${PREFILL_TTNN}"
+  if lower_phase_enabled prefill; then
+    if ! have_artifact "${PREFILL_TTNN}"; then
+      echo "=== [1/4] Lower prefill TTIR (static-cache ${MAX_CACHE_LEN}) ==="
+      python buddy-llama31-lower-ttir.py \
+        --mode prefill --static-cache --max-cache-len "${MAX_CACHE_LEN}" \
+        --batch "${BATCH_SIZE}" \
+        --element-dtype bf16 \
+        --output-stem-prefix "${TTIR_STEM}_ttir" \
+        "${LOWER_COMMON_EXTRA[@]}" \
+        "${LOWER_PREFILL_EXTRA[@]}" \
+        --ttmlir-opt "$(command -v ttmlir-opt)" -o "${TTIR_OUT}"
+      echo "=== [1b/4] prefill TTIR -> TTNN ==="
+      ttmlir-opt "${TTIR_OUT}/${TTIR_STEM}_ttir_prefill.mlir" \
+        --ttir-to-ttnn-backend-pipeline="system-desc-path=${SYS}${BUDDY_TTNN_PIPELINE_EXTRA}" \
+        -o "${TTIR_OUT}/${TTIR_STEM}_prefill_static${PREFILL_ARTIFACT_SUFFIX}_ttnn.mlir"
+      echo "=== [1c/4] prefill TTNN -> flatbuffer ==="
+      ttmlir-translate --ttnn-to-flatbuffer \
+        "${TTIR_OUT}/${TTIR_STEM}_prefill_static${PREFILL_ARTIFACT_SUFFIX}_ttnn.mlir" \
+        -o "${PREFILL_TTNN}"
+    else
+      echo "=== [1/4] prefill flatbuffer already exists: ${PREFILL_TTNN} ==="
+    fi
   else
-    echo "=== [1/4] prefill flatbuffer already exists: ${PREFILL_TTNN} ==="
+    echo "=== [1/4] skipping prefill lower (LOWER_PHASES=${LOWER_PHASES}) ==="
   fi
 
-  DECODE_NEEDS_BUILD=0
-  if ! have_artifact "${DECODE_TTNN}"; then
-    DECODE_NEEDS_BUILD=1
-  elif [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]] && ! have_phase_metadata decode; then
-    echo "=== [2/4] decode postprocess metadata missing; regenerating ${DECODE_TTNN} ==="
-    DECODE_NEEDS_BUILD=1
-  fi
-  if [[ "${DECODE_NEEDS_BUILD}" == "1" ]]; then
-    echo "=== [2/4] Lower decode TTIR (static-cache ${MAX_CACHE_LEN}) ==="
-    env "${DECODE_LOWER_ENV[@]}" python buddy-llama31-lower-ttir.py \
-      --mode decode --static-cache --max-cache-len "${MAX_CACHE_LEN}" \
-      --batch "${BATCH_SIZE}" \
-      --element-dtype bf16 \
-      --output-stem-prefix "${TTIR_STEM}_ttir" \
-      "${LOWER_COMMON_EXTRA[@]}" \
-      "${LOWER_DECODE_EXTRA[@]}" \
-      --ttmlir-opt "$(command -v ttmlir-opt)" -o "${TTIR_OUT}"
-    DECODE_TTIR_FOR_TTNN="${TTIR_OUT}/${TTIR_STEM}_ttir_decode.mlir"
-    if [[ "${BUDDY_TT_DECODE_RMSNORM_FUSION}" == "1" ]]; then
-      DECODE_TTIR_FOR_TTNN="${TTIR_OUT}/${TTIR_STEM}_ttir_decode_rmsnorm.mlir"
-      echo "=== [2a/4] decode TTIR RMSNorm fusion ==="
-      ttmlir-opt "${TTIR_OUT}/${TTIR_STEM}_ttir_decode.mlir" \
-        --canonicalize --ttir-fusing \
-        -o "${DECODE_TTIR_FOR_TTNN}"
+  if lower_phase_enabled decode; then
+    DECODE_NEEDS_BUILD=0
+    if ! have_artifact "${DECODE_TTNN}"; then
+      DECODE_NEEDS_BUILD=1
+    elif [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]] && ! have_phase_metadata decode; then
+      echo "=== [2/4] decode postprocess metadata missing; regenerating ${DECODE_TTNN} ==="
+      DECODE_NEEDS_BUILD=1
     fi
-    echo "=== [2b/4] decode TTIR -> TTNN ==="
-    DECODE_TTNN_MLIR="${TTIR_OUT}/${TTIR_STEM}_decode_static${DECODE_ARTIFACT_SUFFIX}_ttnn.mlir"
-    DECODE_TTNN_PREPOST_MLIR="${DECODE_TTNN_MLIR}"
-    if [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]]; then
-      DECODE_TTNN_PREPOST_MLIR="${TTIR_OUT}/${TTIR_STEM}_decode_static${DECODE_ARTIFACT_SUFFIX}_prepost_ttnn.mlir"
-    fi
-    ttmlir-opt "${DECODE_TTIR_FOR_TTNN}" \
-      --ttir-to-ttnn-backend-pipeline="system-desc-path=${SYS}${BUDDY_TTNN_PIPELINE_EXTRA}" \
-      -o "${DECODE_TTNN_PREPOST_MLIR}"
-    if [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]]; then
-      if [[ ( "${BUDDY_TT_DECODE_PACK_QKV}" == "1" \
-              || "${BUDDY_TT_DECODE_PACK_MLP_GATE_UP}" == "1" \
-              || "${BUDDY_TT_DECODE_PRECOMPUTE_SDPA_MASK}" == "1" \
-              || "${BUDDY_TT_DECODE_PRECOMPUTE_ROPE}" == "1" \
-              || "${BUDDY_TT_DECODE_MERGE_CACHE_POSITION_INPUTS}" == "1" \
-              || "${BUDDY_TT_DECODE_KEEP_CACHE_POSITION_INPUTS}" == "1" \
-              || "${BUDDY_TT_DECODE_FOLD_IDENTITY_MUL}" == "1" \
-              || "${BUDDY_TT_DECODE_SPLIT_LM_HEAD}" == "1" \
-              || "${BUDDY_TT_DECODE_LM_HEAD_DRAM_PC}" == "1" \
-              || "${BUDDY_TT_DECODE_LM_HEAD_MCAST1D_PC}" == "1" \
-              || "${BUDDY_TT_DECODE_SPLIT_EMBEDDING_WEIGHT}" == "1" \
-              || "${BUDDY_TT_DECODE_KEEP_STATIC_WEIGHT_INPUTS}" == "1" \
-              || "${BUDDY_TT_DECODE_NATIVE_U32_TOKEN_IO}" == "1" \
-              || "${BUDDY_TT_DECODE_FUSE_CREATE_QKV_HEADS}" == "1" \
-              || "${BUDDY_TT_DECODE_FUSE_CONCAT_HEADS}" == "1" \
-              || "${BUDDY_TT_DECODE_FUSE_CONCAT_HEADS_SDPA_OUTPUT}" == "1" ) ]] && \
-          ! have_phase_metadata decode; then
-        echo "=== [2b.meta/4] prepare decode metadata for TTNN postprocess ==="
-        python llama31_chat_prepare.py \
-          --phases decode \
-          --max-cache-len "${MAX_CACHE_LEN}" \
-          --batch "${BATCH_SIZE}" \
-          --metadata-only \
-          "${PREPARE_DECODE_EXTRA[@]}" \
-          -o "${CHAT_ART}"
+    if [[ "${DECODE_NEEDS_BUILD}" == "1" ]]; then
+      echo "=== [2/4] Lower decode TTIR (static-cache ${MAX_CACHE_LEN}) ==="
+      env "${DECODE_LOWER_ENV[@]}" python buddy-llama31-lower-ttir.py \
+        --mode decode --static-cache --max-cache-len "${MAX_CACHE_LEN}" \
+        --batch "${BATCH_SIZE}" \
+        --element-dtype bf16 \
+        --output-stem-prefix "${TTIR_STEM}_ttir" \
+        "${LOWER_COMMON_EXTRA[@]}" \
+        "${LOWER_DECODE_EXTRA[@]}" \
+        --ttmlir-opt "$(command -v ttmlir-opt)" -o "${TTIR_OUT}"
+      DECODE_TTIR_FOR_TTNN="${TTIR_OUT}/${TTIR_STEM}_ttir_decode.mlir"
+      if [[ "${BUDDY_TT_DECODE_RMSNORM_FUSION}" == "1" ]]; then
+        DECODE_TTIR_FOR_TTNN="${TTIR_OUT}/${TTIR_STEM}_ttir_decode_rmsnorm.mlir"
+        echo "=== [2a/4] decode TTIR RMSNorm fusion ==="
+        ttmlir-opt "${TTIR_OUT}/${TTIR_STEM}_ttir_decode.mlir" \
+          --canonicalize --ttir-fusing \
+          -o "${DECODE_TTIR_FOR_TTNN}"
       fi
-      echo "=== [2b.post/4] decode TTNN experimental postprocess: ${DECODE_POSTPROCESS_ARGS[*]} ==="
-      python pack_decode_qkv_ttnn.py \
-        --input-ttnn-mlir "${DECODE_TTNN_PREPOST_MLIR}" \
-        --output-ttnn-mlir "${DECODE_TTNN_MLIR}" \
-        --input-artifacts "${CHAT_ART}" \
-        --output-artifacts "${CHAT_ART}" \
-        "${DECODE_POSTPROCESS_ARGS[@]}"
+      echo "=== [2b/4] decode TTIR -> TTNN ==="
+      DECODE_TTNN_MLIR="${TTIR_OUT}/${TTIR_STEM}_decode_static${DECODE_ARTIFACT_SUFFIX}_ttnn.mlir"
+      DECODE_TTNN_PREPOST_MLIR="${DECODE_TTNN_MLIR}"
+      if [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]]; then
+        DECODE_TTNN_PREPOST_MLIR="${TTIR_OUT}/${TTIR_STEM}_decode_static${DECODE_ARTIFACT_SUFFIX}_prepost_ttnn.mlir"
+      fi
+      ttmlir-opt "${DECODE_TTIR_FOR_TTNN}" \
+        --ttir-to-ttnn-backend-pipeline="system-desc-path=${SYS}${BUDDY_TTNN_PIPELINE_EXTRA}" \
+        -o "${DECODE_TTNN_PREPOST_MLIR}"
+      if [[ ${#DECODE_POSTPROCESS_ARGS[@]} -gt 0 ]]; then
+        if [[ ( "${BUDDY_TT_DECODE_PACK_QKV}" == "1" \
+                || "${BUDDY_TT_DECODE_PACK_MLP_GATE_UP}" == "1" \
+                || "${BUDDY_TT_DECODE_PRECOMPUTE_SDPA_MASK}" == "1" \
+                || "${BUDDY_TT_DECODE_PRECOMPUTE_ROPE}" == "1" \
+                || "${BUDDY_TT_DECODE_MERGE_CACHE_POSITION_INPUTS}" == "1" \
+                || "${BUDDY_TT_DECODE_KEEP_CACHE_POSITION_INPUTS}" == "1" \
+                || "${BUDDY_TT_DECODE_FOLD_IDENTITY_MUL}" == "1" \
+                || "${BUDDY_TT_DECODE_SPLIT_LM_HEAD}" == "1" \
+                || "${BUDDY_TT_DECODE_LM_HEAD_DRAM_PC}" == "1" \
+                || "${BUDDY_TT_DECODE_LM_HEAD_MCAST1D_PC}" == "1" \
+                || "${BUDDY_TT_DECODE_SPLIT_EMBEDDING_WEIGHT}" == "1" \
+                || "${BUDDY_TT_DECODE_KEEP_STATIC_WEIGHT_INPUTS}" == "1" \
+                || "${BUDDY_TT_DECODE_NATIVE_U32_TOKEN_IO}" == "1" \
+                || "${BUDDY_TT_DECODE_FUSE_CREATE_QKV_HEADS}" == "1" \
+                || "${BUDDY_TT_DECODE_FUSE_CONCAT_HEADS}" == "1" \
+                || "${BUDDY_TT_DECODE_FUSE_CONCAT_HEADS_SDPA_OUTPUT}" == "1" ) ]] && \
+            ! have_phase_metadata decode; then
+          echo "=== [2b.meta/4] prepare decode metadata for TTNN postprocess ==="
+          python llama31_chat_prepare.py \
+            --phases decode \
+            --max-cache-len "${MAX_CACHE_LEN}" \
+            --batch "${BATCH_SIZE}" \
+            --metadata-only \
+            "${PREPARE_DECODE_EXTRA[@]}" \
+            -o "${CHAT_ART}"
+        fi
+        echo "=== [2b.post/4] decode TTNN experimental postprocess: ${DECODE_POSTPROCESS_ARGS[*]} ==="
+        python pack_decode_qkv_ttnn.py \
+          --input-ttnn-mlir "${DECODE_TTNN_PREPOST_MLIR}" \
+          --output-ttnn-mlir "${DECODE_TTNN_MLIR}" \
+          --input-artifacts "${CHAT_ART}" \
+          --output-artifacts "${CHAT_ART}" \
+          "${DECODE_POSTPROCESS_ARGS[@]}"
+      fi
+      echo "=== [2c/4] decode TTNN -> flatbuffer ==="
+      ttmlir-translate --ttnn-to-flatbuffer \
+        "${DECODE_TTNN_MLIR}" \
+        -o "${DECODE_TTNN}"
+    else
+      echo "=== [2/4] decode flatbuffer already exists: ${DECODE_TTNN} ==="
     fi
-    echo "=== [2c/4] decode TTNN -> flatbuffer ==="
-    ttmlir-translate --ttnn-to-flatbuffer \
-      "${DECODE_TTNN_MLIR}" \
-      -o "${DECODE_TTNN}"
   else
-    echo "=== [2/4] decode flatbuffer already exists: ${DECODE_TTNN} ==="
+    echo "=== [2/4] skipping decode lower (LOWER_PHASES=${LOWER_PHASES}) ==="
   fi
 else
   echo "=== skipping lower/ttnn/flatbuffer (SKIP_LOWER=1) ==="
