@@ -774,7 +774,9 @@ synthetic tensors. The report records input shapes, expected/output shapes,
 dtype seed, layout, memory-config placeholder, host-to-device tensor conversion
 count, TTNN version when available, and explicit `api_mismatch` errors when a
 wrapper cannot find the expected TTNN API. This command deliberately does not
-compose a full attention layer.
+compose a full attention layer. Successful non-dry-run reports include
+`reference.kind=structural_shape`, which checks observed output shapes against
+the primitive plan while keeping `numeric_reference.status=not_run`.
 
 ## Phase 2 PR-F: One-Layer Attention Smoke
 
@@ -812,7 +814,9 @@ records per-primitive latency, input/output shapes, expected output shapes,
 dtype, layout, memory config, host-to-device tensor conversion count,
 memory-config conversion count, and TTNN version when available. This smoke path
 is still independent from full generated decode execution so individual
-attention issues stay easier to isolate.
+attention issues stay easier to isolate. Successful non-dry-run reports include
+`reference.kind=structural_shape` for the final attention output and paged KV
+cache shapes; this is still not a torch PCC check.
 
 ## Performance Step 1: Official Config Diff
 

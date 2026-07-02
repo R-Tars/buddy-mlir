@@ -79,6 +79,11 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(first["dtype"], "bfloat16")
             self.assertEqual(first["layout"], "tile")
             self.assertEqual(first["memory_config"], "default_or_l1")
+            self.assertEqual(report["reference"]["status"], "dry_run")
+            self.assertEqual(
+                report["reference"]["numeric_reference"]["status"],
+                "not_run",
+            )
 
     def test_run_smoke_attention_layer_executes_fake_full_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -129,6 +134,11 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(report["reference"]["kind"], "structural_shape")
+            self.assertTrue(
+                all(check["passed"] for check in report["reference"]["checks"])
+            )
             primitive_reports = report["primitive_reports"]
             self.assertEqual(
                 primitive_reports[2]["input_shapes"]["query"],

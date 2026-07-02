@@ -14,6 +14,12 @@ from .smoke_attention_primitive import (
     _validate_args,
     _zeros,
 )
+from .smoke_decode_shell import (
+    NUMERIC_REFERENCE_NOT_RUN_REASON,
+    _dry_run_reference,
+    _shape_check,
+    _value_check,
+)
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .templates import ttnn_ops
 from .templates.ttnn_ops import UnsupportedTTNNOp
@@ -110,6 +116,7 @@ def run_smoke_attention_layer(
                 "memory_config_conversion_count": 1,
                 "error": None,
                 "ttnn_version": None,
+                "reference": _dry_run_reference("attention_layer"),
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
@@ -201,23 +208,35 @@ def run_smoke_attention_layer(
             dry_run=False,
             plan=plan,
         )
+        output_shapes = {
+            "attention_output": _shape(layer_result["output"]),
+            "key_cache": _shape(layer_result["key_cache"]),
+            "value_cache": _shape(layer_result["value_cache"]),
+        }
+        reference = _attention_layer_reference(
+            plan=plan,
+            output_shapes=output_shapes,
+            primitive_reports=layer_result["primitive_reports"],
+        )
+        passed = bool(reference["passed"])
         report.update(
             {
-                "passed": True,
-                "status": "passed",
+                "passed": passed,
+                "status": "passed" if passed else "reference_mismatch",
                 "latency_ms": latency_ms,
                 "primitive_reports": layer_result["primitive_reports"],
-                "output_shapes": {
-                    "attention_output": _shape(layer_result["output"]),
-                    "key_cache": _shape(layer_result["key_cache"]),
-                    "value_cache": _shape(layer_result["value_cache"]),
-                },
+                "output_shapes": output_shapes,
                 "tensor_conversion_count": layer_result["tensor_conversion_count"],
                 "memory_config_conversion_count": (
                     layer_result["memory_config_conversion_count"]
                 ),
-                "error": None,
+                "error": (
+                    None
+                    if passed
+                    else "attention layer structural reference mismatch"
+                ),
                 "ttnn_version": getattr(ttnn, "__version__", None),
+                "reference": reference,
             }
         )
     except NoTTNNDeviceError as err:
@@ -715,6 +734,41 @@ def _failed_report(
         }
     )
     return report
+
+
+def _attention_layer_reference(
+    *,
+    plan: dict[str, Any],
+    output_shapes: dict[str, list[int] | None],
+    primitive_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    checks = [
+        _value_check(
+            "primitive_count",
+            len(primitive_reports),
+            len(ATTENTION_LAYER_OPS),
+        )
+    ]
+    for name, shape in plan["expected_output_shapes"].items():
+        checks.append(
+            _shape_check(
+                f"output.{name}",
+                output_shapes.get(name),
+                expected=shape,
+            )
+        )
+    passed = all(check["passed"] for check in checks)
+    return {
+        "kind": "structural_shape",
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "numeric_reference": {
+            "status": "not_run",
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
+        },
+        "planned_ops": list(ATTENTION_LAYER_OPS),
+        "checks": checks,
+    }
 
 
 def _output_shapes(output: Any) -> dict[str, list[int] | None]:

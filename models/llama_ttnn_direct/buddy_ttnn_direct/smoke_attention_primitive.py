@@ -12,6 +12,12 @@ from .smoke_mlp import (
     NoTTNNDeviceError,
     _managed_ttnn_device,
 )
+from .smoke_decode_shell import (
+    NUMERIC_REFERENCE_NOT_RUN_REASON,
+    _dry_run_reference,
+    _observed_op_sequence,
+    _shape_check,
+)
 from .templates import ttnn_ops
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
@@ -86,6 +92,7 @@ def run_smoke_attention_primitive(
                 "latency_ms": 0.0,
                 "error": None,
                 "ttnn_version": None,
+                "reference": _dry_run_reference("attention_primitive"),
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
@@ -174,14 +181,30 @@ def run_smoke_attention_primitive(
             dry_run=False,
             plan=plan,
         )
+        output_shapes = _output_shapes(
+            outputs,
+            expected_names=plan["expected_output_shapes"].keys(),
+        )
+        reference = _attention_primitive_reference(
+            primitive=primitive,
+            plan=plan,
+            output_shapes=output_shapes,
+            observed_ops=_observed_op_sequence(ttnn),
+        )
+        passed = bool(reference["passed"])
         report.update(
             {
-                "passed": True,
-                "status": "passed",
+                "passed": passed,
+                "status": "passed" if passed else "reference_mismatch",
                 "latency_ms": latency_ms,
-                "output_shapes": _output_shapes(outputs),
-                "error": None,
+                "output_shapes": output_shapes,
+                "error": (
+                    None
+                    if passed
+                    else "attention primitive structural reference mismatch"
+                ),
                 "ttnn_version": getattr(ttnn, "__version__", None),
+                "reference": reference,
             }
         )
     except NoTTNNDeviceError as err:
@@ -543,13 +566,51 @@ def _failed_report(
     return report
 
 
-def _output_shapes(outputs: Any) -> dict[str, list[int] | None]:
+def _attention_primitive_reference(
+    *,
+    primitive: str,
+    plan: dict[str, Any],
+    output_shapes: dict[str, list[int] | None],
+    observed_ops: list[str] | None,
+) -> dict[str, Any]:
+    checks = [
+        _shape_check(
+            f"output.{name}",
+            output_shapes.get(name),
+            expected=shape,
+        )
+        for name, shape in plan["expected_output_shapes"].items()
+    ]
+    passed = all(check["passed"] for check in checks)
+    return {
+        "kind": "structural_shape",
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "numeric_reference": {
+            "status": "not_run",
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
+        },
+        "primitive": primitive,
+        "observed_ops": observed_ops,
+        "checks": checks,
+    }
+
+
+def _output_shapes(
+    outputs: Any,
+    *,
+    expected_names: Any | None = None,
+) -> dict[str, list[int] | None]:
+    names = list(expected_names or [])
     if isinstance(outputs, tuple):
-        names = ("query", "key", "value") if len(outputs) == 3 else ("query", "key")
+        if len(names) != len(outputs):
+            names = ["query", "key", "value"] if len(outputs) == 3 else ["query", "key"]
         return {
             names[index]: _shape(tensor)
             for index, tensor in enumerate(outputs)
         }
+    if len(names) == 1:
+        return {names[0]: _shape(outputs)}
     return {"output": _shape(outputs)}
 
 
