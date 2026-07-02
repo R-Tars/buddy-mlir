@@ -526,6 +526,31 @@ device, load full tensor payloads, or run `materialize-parameters`; real
 parameter materialization remains an explicit command because it needs local
 weight files.
 
+For the real-weight path, use `validate-real-decode` after `build-program`.
+This validation gate materializes selected HF safetensors, then runs
+real-weight `smoke-decode-step`, `profile-decode-step`, and optionally
+`autotune-decode-step` against the existing generated program:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  validate-real-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --layers 1 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --trace \
+  --trace-iterations 10 \
+  --out-dir /tmp/validate_ttnn_direct_real
+```
+
+The report at
+`/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
+materialization, smoke, profile, and autotune subreports. Use `--skip-autotune`
+to stop after materialize/smoke/profile during bring-up, or `--dry-run` to
+write the schema without loading safetensors or opening a TTNN device.
+
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 
 `materialize-parameters` turns a generated program's `weights_manifest.json`

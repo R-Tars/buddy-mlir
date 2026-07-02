@@ -10,7 +10,20 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import
     ATTENTION_PRIMITIVES,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
+    REAL_DECODE_VALIDATION_STEPS,
     VALIDATION_STEPS,
+    validate_real_decode,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+    _fake_torch_and_safetensors,
+    _fake_weight_specs,
+    _write_fake_model_weights,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+    _fake_torch,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
+    _make_fake_ttnn,
 )
 
 
@@ -149,6 +162,168 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
                 32,
+            )
+
+    def test_cli_validate_real_decode_dry_run_writes_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "validate-real-decode",
+                    "--program-dir",
+                    str(program_dir),
+                    "--model-path",
+                    str(model_dir),
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--skip-autotune",
+                    "--dry-run",
+                    "--out-dir",
+                    str(out_dir),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(
+                (out_dir / "real_decode_validation_report.json").read_text()
+            )
+            self.assertEqual(report["command"], "validate-real-decode")
+            self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(
+                list(report["results"]),
+                list(REAL_DECODE_VALIDATION_STEPS),
+            )
+            self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
+            self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
+            self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
+            self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
+            self.assertTrue(
+                (out_dir / "parameter_materialization_report.json").is_file()
+            )
+            self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
+            self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
+
+    def test_validate_real_decode_runs_fake_real_weight_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            space_json = root / "decode_step_space.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            space_json.write_text(
+                json.dumps(
+                    {
+                        "lm_head_split_count": [2],
+                        "generation_template": ["device_argmax_greedy"],
+                        "mlp_intermediate_dtype": [None],
+                        "attention_sdpa_output_memory_config": [None],
+                        "attention_concat_heads_output_memory_config": [None],
+                    }
+                )
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    decode_step_search_space_path=space_json,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    trace=True,
+                    trace_iterations=2,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(
+                report["results"],
+                {step: "pass" for step in REAL_DECODE_VALIDATION_STEPS},
+            )
+            self.assertEqual(
+                report["steps"]["materialize_parameters"]["tensor_count"],
+                21,
+            )
+            self.assertEqual(
+                report["steps"]["smoke_decode_step"]["parameter_source"],
+                "hf_model",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["parameter_source"],
+                "hf_model",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["candidate_count"],
+                1,
+            )
+            self.assertIsNotNone(report["steps"]["decode_step_autotune"]["best"])
+            smoke_report = json.loads(
+                (out_dir / "decode_step_smoke_report.json").read_text()
+            )
+            self.assertEqual(smoke_report["parameter_source"], "hf_model")
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"]["tensor_count"],
+                17,
+            )
+            profile_report = json.loads(
+                (out_dir / "decode_step_profile_report.json").read_text()
+            )
+            self.assertEqual(profile_report["parameter_source"], "hf_model")
+            self.assertEqual(profile_report["trace"]["status"], "captured_and_executed")
+            autotune_report = json.loads(
+                (out_dir / "decode_step_autotune_report.json").read_text()
+            )
+            self.assertEqual(
+                autotune_report["best"]["parameter_setup"]["tensorization"][
+                    "tensor_count"
+                ],
+                11,
             )
 
     def test_cli_validate_direct_writes_failure_report(self) -> None:

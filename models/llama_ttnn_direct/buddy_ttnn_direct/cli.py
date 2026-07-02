@@ -70,6 +70,7 @@ from .validation import (
     default_official_template_path,
     default_search_space_path,
     validate_direct,
+    validate_real_decode,
 )
 
 
@@ -1093,6 +1094,82 @@ def build_parser() -> argparse.ArgumentParser:
         help="Search metric name. Dry-run search gates support latency_ms.",
     )
     validate.set_defaults(func=_cmd_validate_direct)
+
+    validate_real = subparsers.add_parser(
+        "validate-real-decode",
+        help=(
+            "Run real-weight generated decode validation gates for an "
+            "existing TTNN Direct program."
+        ),
+    )
+    validate_real.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    validate_real.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF Llama model directory containing safetensors files.",
+    )
+    validate_real.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for real decode validation reports.",
+    )
+    validate_real.add_argument(
+        "--decode-step-search-space",
+        type=Path,
+        default=default_decode_step_search_space_path(),
+        help="Decode-step autotune search space JSON.",
+    )
+    validate_real.add_argument("--layers", type=int, default=1)
+    validate_real.add_argument("--batch-size", type=int, default=None)
+    validate_real.add_argument("--cache-len", type=int, default=None)
+    validate_real.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in reports.",
+    )
+    validate_real.add_argument("--device-id", type=int, default=0)
+    validate_real.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    validate_real.add_argument(
+        "--trace",
+        action="store_true",
+        help="Capture/execute generated decode_step trace in smoke/profile.",
+    )
+    validate_real.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=1,
+        help="Number of execute_trace iterations after capture.",
+    )
+    validate_real.add_argument(
+        "--metric",
+        default="latency_ms",
+        help="Autotune metric name. Supports latency_ms.",
+    )
+    validate_real.add_argument(
+        "--skip-autotune",
+        action="store_true",
+        help="Run materialize/smoke/profile gates without candidate search.",
+    )
+    validate_real.add_argument(
+        "--dry-run",
+        action="store_true",
+        help=(
+            "Write the real-decode validation report schema without loading "
+            "safetensors or opening a TTNN device."
+        ),
+    )
+    validate_real.set_defaults(func=_cmd_validate_real_decode)
     return parser
 
 
@@ -1581,6 +1658,37 @@ def _cmd_validate_direct(args: argparse.Namespace) -> int:
     )
     print(f"  status: {report['status']}")
     return 0 if report["status"] == "pass" else 1
+
+
+def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
+    report = validate_real_decode(
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        out_dir=args.out_dir,
+        decode_step_search_space_path=args.decode_step_search_space,
+        layers=args.layers,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        device=args.device,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+        trace=args.trace,
+        trace_iterations=args.trace_iterations,
+        metric=args.metric,
+        dry_run=args.dry_run,
+        skip_autotune=args.skip_autotune,
+    )
+    print(
+        "wrote TTNN Direct real decode validation report: "
+        f"{args.out_dir / 'real_decode_validation_report.json'}"
+    )
+    print(f"  status: {report['status']}")
+    if report["status"] in {"pass", "dry_run"}:
+        return 0
+    if report["status"] == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 1
 
 
 def main(argv: list[str] | None = None) -> int:
