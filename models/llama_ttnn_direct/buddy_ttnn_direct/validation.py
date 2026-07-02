@@ -616,6 +616,8 @@ def validate_real_decode(
     metric: str = "latency_ms",
     dry_run: bool = False,
     skip_autotune: bool = False,
+    require_trace: bool = False,
+    min_tokens_per_second_per_user: float | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -669,6 +671,8 @@ def validate_real_decode(
         "metric": metric,
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
+        "require_trace": require_trace,
+        "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "results": {
             step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
         },
@@ -814,6 +818,7 @@ def validate_real_decode(
                 "tensor_conversion_count"
             ),
             "tensor_conversion_ms": profile_report.get("tensor_conversion_ms"),
+            "throughput_summary": profile_report.get("throughput_summary"),
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
             "ttnn_environment": profile_report.get("ttnn_environment"),
@@ -897,7 +902,19 @@ def validate_real_decode(
         if not run_step(step, step_actions[step]):
             return report
 
-    report["status"] = "dry_run" if dry_run else "pass"
+    acceptance = _real_decode_acceptance(
+        report,
+        require_trace=require_trace,
+        min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+    )
+    report["acceptance"] = acceptance
+    report["status"] = (
+        "dry_run"
+        if dry_run
+        else "pass"
+        if acceptance["passed"]
+        else "acceptance_failed"
+    )
     persist()
     return report
 
@@ -912,6 +929,95 @@ def _runtime_step_status(
     if runtime_report.get("passed"):
         return "pass"
     return str(runtime_report.get("status", "fail"))
+
+
+def _real_decode_acceptance(
+    report: dict[str, Any],
+    *,
+    require_trace: bool,
+    min_tokens_per_second_per_user: float | None,
+) -> dict[str, Any]:
+    if report.get("dry_run"):
+        return {
+            "status": "dry_run",
+            "passed": True,
+            "require_trace": require_trace,
+            "min_tokens_per_second_per_user": (
+                min_tokens_per_second_per_user
+            ),
+            "checks": [],
+            "message": "Dry run only; runtime acceptance was not evaluated.",
+        }
+
+    steps = report.get("steps", {})
+    smoke = steps.get("smoke_decode_step", {})
+    profile = steps.get("profile_decode_step", {})
+    checks = [
+        _acceptance_check(
+            "smoke_decode_step.reference_status",
+            smoke.get("reference_status") == "passed",
+            observed=smoke.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.reference_status",
+            profile.get("reference_status") == "passed",
+            observed=profile.get("reference_status"),
+            expected="passed",
+        ),
+    ]
+    if require_trace:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "smoke_decode_step.trace_status",
+                    smoke.get("trace_status") == "captured_and_executed",
+                    observed=smoke.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_status",
+                    profile.get("trace_status") == "captured_and_executed",
+                    observed=profile.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+            ]
+        )
+
+    if min_tokens_per_second_per_user is not None:
+        throughput = profile.get("throughput_summary") or {}
+        observed = throughput.get("tokens_per_second_per_user")
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.tokens_per_second_per_user",
+                observed is not None
+                and float(observed) >= min_tokens_per_second_per_user,
+                observed=observed,
+                minimum=min_tokens_per_second_per_user,
+            )
+        )
+
+    passed = all(check["passed"] for check in checks)
+    return {
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "require_trace": require_trace,
+        "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "checks": checks,
+    }
+
+
+def _acceptance_check(
+    name: str,
+    passed: bool,
+    **details: Any,
+) -> dict[str, Any]:
+    check = {
+        "name": name,
+        "passed": bool(passed),
+    }
+    check.update(details)
+    return check
 
 
 def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:

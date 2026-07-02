@@ -575,6 +575,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --device p150a \
   --trace \
   --trace-iterations 10 \
+  --require-trace \
+  --min-tokens-per-second-per-user 1.0 \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
@@ -582,7 +584,11 @@ The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
 materialization, smoke, profile, and autotune subreports. Use `--skip-autotune`
 to stop after materialize/smoke/profile during bring-up, or `--dry-run` to
-write the schema without loading safetensors or opening a TTNN device.
+write the schema without loading safetensors or opening a TTNN device. With
+`--require-trace` and/or `--min-tokens-per-second-per-user`, the final report
+includes an `acceptance` block that checks structural references, trace
+capture/execute status, and profile throughput before marking the validation as
+accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

@@ -1168,6 +1168,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run materialize/smoke/profile gates without candidate search.",
     )
     validate_real.add_argument(
+        "--require-trace",
+        action="store_true",
+        help=(
+            "Require smoke/profile decode-step reports to capture and "
+            "execute a TTNN trace before accepting the validation report."
+        ),
+    )
+    validate_real.add_argument(
+        "--min-tokens-per-second-per-user",
+        type=float,
+        default=None,
+        help=(
+            "Minimum profile throughput gate for acceptance. The value is "
+            "checked against profile_decode_step.throughput_summary."
+        ),
+    )
+    validate_real.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -1683,6 +1700,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         metric=args.metric,
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
+        require_trace=args.require_trace,
+        min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
     )
     print(
         "wrote TTNN Direct real decode validation report: "
