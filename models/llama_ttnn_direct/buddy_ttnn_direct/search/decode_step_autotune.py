@@ -22,6 +22,7 @@ def run_decode_step_autotune(
     layers: int,
     batch_size: int | None = None,
     cache_len: int | None = None,
+    model_path: str | Path | None = None,
     metric: str = "latency_ms",
     candidates_dir: str | Path | None = None,
     dry_run: bool = False,
@@ -43,6 +44,7 @@ def run_decode_step_autotune(
 
     program_root = Path(program_dir)
     out_path = Path(out)
+    model_path_for_profile = Path(model_path) if model_path is not None else None
     base_config = json.loads((program_root / "config.json").read_text())
     candidate_root = (
         Path(candidates_dir)
@@ -70,26 +72,33 @@ def run_decode_step_autotune(
             candidate,
         )
         config_path = candidate_dir / "config.json"
-        model_path = candidate_dir / "model.py"
+        candidate_model_path = candidate_dir / "model.py"
         report_path = candidate_dir / "profile_report.json"
         _write_json(config_path, candidate_config)
-        shutil.copy2(program_root / "model.py", model_path)
+        shutil.copy2(program_root / "model.py", candidate_model_path)
+        metadata_paths = _copy_profile_metadata(program_root, candidate_dir)
 
         record = {
             "id": candidate["id"],
             "config": _relative_or_absolute(config_path, out_path.parent),
-            "model": _relative_or_absolute(model_path, out_path.parent),
+            "model": _relative_or_absolute(candidate_model_path, out_path.parent),
+            "profile_metadata": [
+                _relative_or_absolute(path, out_path.parent)
+                for path in metadata_paths
+            ],
             "knobs": _candidate_knobs(candidate),
             "status": "dry_run_planned" if dry_run else "pending",
             "metric": None,
             "profile_report": None,
             "bottleneck_summary": None,
+            "parameter_source": None,
         }
         if not dry_run:
             profile = profile_decode_step(
                 out=report_path,
                 program_dir=candidate_dir,
                 layers=layers,
+                model_path=model_path_for_profile,
                 device=device,
                 device_id=device_id,
                 batch_size=batch_size,
@@ -101,6 +110,7 @@ def run_decode_step_autotune(
                 torch_module=torch_module,
             )
             record["status"] = str(profile["status"])
+            record["parameter_source"] = profile.get("parameter_source")
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,
@@ -120,6 +130,7 @@ def run_decode_step_autotune(
         "metric": metric,
         "dry_run": bool(dry_run),
         "program_dir": str(program_root),
+        "model_path": str(model_path_for_profile) if model_path_for_profile else None,
         "layers": layers,
         "batch_size": batch_size,
         "cache_len": cache_len,
@@ -196,6 +207,22 @@ def _candidate_knobs(candidate: dict[str, Any]) -> dict[str, Any]:
             "attention_concat_heads_output_memory_config"
         ),
     }
+
+
+def _copy_profile_metadata(program_root: Path, candidate_dir: Path) -> list[Path]:
+    copied = []
+    for filename in (
+        "semantic_graph.json",
+        "weights_manifest.json",
+        "execution_plan.json",
+    ):
+        source = program_root / filename
+        if not source.is_file():
+            continue
+        destination = candidate_dir / filename
+        shutil.copy2(source, destination)
+        copied.append(destination)
+    return copied
 
 
 def _memory_config_value(value: Any) -> Any:

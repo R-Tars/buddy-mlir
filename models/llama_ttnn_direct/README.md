@@ -960,3 +960,10 @@ heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
 profile report path, metric, bottleneck summary, and the lowest-latency `best`
 candidate when measurements are available.
+
+Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
+HF weights through each candidate's `profile-decode-step` run. Candidate
+directories copy the generated program metadata needed by real-weight profile
+(`semantic_graph.json`, `weights_manifest.json`, and `execution_plan.json`),
+while token ids, page table, cache position, rotary matrices, and paged KV
+cache remain synthetic at this stage.

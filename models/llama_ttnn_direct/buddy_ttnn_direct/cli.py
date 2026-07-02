@@ -970,6 +970,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Input directory from build-program.",
     )
     autotune_decode_step.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local HF model directory. When provided in device mode, "
+            "candidate profiles materialize and tensorize real weights."
+        ),
+    )
+    autotune_decode_step.add_argument(
         "--space",
         type=Path,
         required=True,
@@ -1526,6 +1535,7 @@ def _cmd_autotune_decode_step(args: argparse.Namespace) -> int:
         layers=args.layers,
         batch_size=args.batch_size,
         cache_len=args.cache_len,
+        model_path=args.model_path,
         metric=args.metric,
         candidates_dir=args.candidates_dir,
         dry_run=args.dry_run,

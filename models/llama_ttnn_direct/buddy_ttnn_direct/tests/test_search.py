@@ -26,6 +26,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primi
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
     _make_fake_ttnn,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+    _fake_torch_and_safetensors,
+    _fake_weight_specs,
+    _write_fake_model_weights,
+)
 
 
 class SearchTest(unittest.TestCase):
@@ -269,6 +274,20 @@ class SearchTest(unittest.TestCase):
                 "bfloat8_b",
             )
             self.assertFalse(tuned_config["lm_head"]["retain_logits"])
+            self.assertTrue(
+                (
+                    candidate_root
+                    / "lm_split_2_argmax_mlp_bfloat8_b"
+                    / "semantic_graph.json"
+                ).is_file()
+            )
+            self.assertTrue(
+                (
+                    candidate_root
+                    / "lm_split_2_argmax_mlp_bfloat8_b"
+                    / "weights_manifest.json"
+                ).is_file()
+            )
 
     def test_decode_step_autotune_profiles_fake_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -320,6 +339,68 @@ class SearchTest(unittest.TestCase):
                 report["candidates"][0]["knobs"]["lm_head_split_count"],
                 2,
             )
+
+    def test_decode_step_autotune_profiles_fake_model_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_autotune.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            config_json.write_text(json.dumps(_seed_config()))
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = run_decode_step_autotune(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    space={
+                        "lm_head_split_count": [2],
+                        "generation_template": ["device_argmax_greedy"],
+                        "mlp_intermediate_dtype": [None],
+                        "attention_sdpa_output_memory_config": [None],
+                        "attention_concat_heads_output_memory_config": [None],
+                    },
+                    out=report_json,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertFalse(report["dry_run"])
+            self.assertEqual(report["model_path"], str(model_dir))
+            self.assertEqual(report["candidate_count"], 1)
+            self.assertIsNotNone(report["best"])
+            self.assertEqual(report["best"]["status"], "profiled")
+            self.assertEqual(report["best"]["parameter_source"], "hf_model")
+            candidate = report["candidates"][0]
+            self.assertEqual(candidate["parameter_source"], "hf_model")
+            profile_report = json.loads(
+                (root / candidate["profile_report"]).read_text()
+            )
+            self.assertEqual(profile_report["parameter_source"], "hf_model")
+            self.assertEqual(profile_report["input_source"], "synthetic")
+            self.assertEqual(profile_report["tensor_conversion_count"], 19)
+            candidate_root = root / report["candidates_dir"] / candidate["id"]
+            self.assertTrue((candidate_root / "semantic_graph.json").is_file())
+            self.assertTrue((candidate_root / "weights_manifest.json").is_file())
 
 
 def _fake_graph():
