@@ -17,11 +17,19 @@ from .codegen.package import (
 )
 from .codegen.parameters import (
     ParameterMaterializationError,
+    load_llama_parameters_from_manifests,
     materialize_parameters_from_program,
     parse_layer_ids,
 )
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .codegen.program import write_decode_program_bundle
+from .codegen.ttnn_tensorizer import (
+    TTNNTensorizationError,
+    load_parameter_config_from_program,
+    parse_role_groups,
+    tensorize_parameters_from_program_dry_run,
+    to_ttnn_parameters,
+)
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
@@ -412,6 +420,62 @@ def build_parser() -> argparse.ArgumentParser:
     )
     materialize_parameters.set_defaults(func=_cmd_materialize_parameters)
 
+    tensorize_parameters = subparsers.add_parser(
+        "tensorize-parameters",
+        help=(
+            "Convert materialized host-side parameters into TTNN tensors. "
+            "PR-C covers MLP and LM-head roles only."
+        ),
+    )
+    tensorize_parameters.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    tensorize_parameters.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Local HF model directory. Required unless --dry-run is used.",
+    )
+    tensorize_parameters.add_argument(
+        "--roles",
+        default="mlp,lm_head",
+        help="Comma-separated role groups to tensorize: mlp,lm_head.",
+    )
+    tensorize_parameters.add_argument(
+        "--layers",
+        default=None,
+        help=(
+            "Optional comma-separated decoder layer ids to tensorize, "
+            "for example --layers 0."
+        ),
+    )
+    tensorize_parameters.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the tensorization report.",
+    )
+    tensorize_parameters.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when not using --dry-run.",
+    )
+    tensorize_parameters.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write planned dtype/layout conversions without importing TTNN.",
+    )
+    tensorize_parameters.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output tensorization report JSON path.",
+    )
+    tensorize_parameters.set_defaults(func=_cmd_tensorize_parameters)
+
     search = subparsers.add_parser(
         "search",
         help="Enumerate semantic-level TTNN Direct autotune candidates.",
@@ -711,6 +775,82 @@ def _cmd_materialize_parameters(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_tensorize_parameters(args: argparse.Namespace) -> int:
+    try:
+        roles = parse_role_groups(args.roles)
+        layers = parse_layer_ids(args.layers)
+        if args.dry_run:
+            report = tensorize_parameters_from_program_dry_run(
+                program_dir=args.program_dir,
+                roles=roles,
+                layers=layers,
+                device=args.device,
+                out=args.out,
+            )
+            print(f"wrote TTNN tensorization report: {args.out}")
+            print(f"  status: {report['status']}")
+            return 0
+
+        if args.model_path is None:
+            raise TTNNTensorizationError(
+                "--model-path is required unless --dry-run is used"
+            )
+        parameter_config = load_parameter_config_from_program(args.program_dir)
+        torch_params = load_llama_parameters_from_manifests(
+            model_path=args.model_path,
+            weights_manifest=args.program_dir / "weights_manifest.json",
+            config=args.program_dir / "config.json",
+            tensor_backend="torch",
+            layers=layers,
+        )
+        ttnn = __import__("ttnn")
+        device = _open_ttnn_device(ttnn, args.device_id)
+        try:
+            result = to_ttnn_parameters(
+                torch_params,
+                device,
+                parameter_config,
+                roles=roles,
+                layers=layers,
+                ttnn_module=ttnn,
+            )
+        finally:
+            _close_ttnn_device(ttnn, device)
+        report = {
+            **result.report,
+            "program_dir": str(args.program_dir),
+            "model_path": str(args.model_path),
+            "device_label": args.device,
+        }
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"wrote TTNN tensorization report: {args.out}")
+        print(f"  status: {report['status']}")
+        return 0
+    except (
+        ModuleNotFoundError,
+        ParameterMaterializationError,
+        TTNNTensorizationError,
+    ) as exc:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "schema_version": 1,
+            "status": "fail",
+            "dry_run": bool(args.dry_run),
+            "program_dir": str(args.program_dir),
+            "model_path": str(args.model_path) if args.model_path else None,
+            "device": args.device,
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+        args.out.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"wrote TTNN tensorization report: {args.out}")
+        print(f"  status: {report['status']}")
+        return 1
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     graph = load_graph_json(args.semantic_json)
     base_config = load_template_config(args.base_config)
@@ -728,6 +868,19 @@ def _cmd_search(args: argparse.Namespace) -> int:
     print(f"wrote TTNN Direct search report: {args.out}")
     print(f"  candidates: {report['candidates_dir']}")
     return 0
+
+
+def _open_ttnn_device(ttnn: object, device_id: int) -> object:
+    open_device = getattr(ttnn, "open_device", None)
+    if open_device is None:
+        return device_id
+    return open_device(device_id=device_id)
+
+
+def _close_ttnn_device(ttnn: object, device: object) -> None:
+    close_device = getattr(ttnn, "close_device", None)
+    if close_device is not None:
+        close_device(device)
 
 
 def _cmd_validate_direct(args: argparse.Namespace) -> int:

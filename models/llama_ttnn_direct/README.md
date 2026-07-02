@@ -551,3 +551,40 @@ when the torch backend is used, reads individual safetensors keys through
 `safe_open` when available, packs QKV on output-feature axis `0`, and slices
 the LM-head on vocab axis `0`. The output report records each materialized
 tensor's source key and shape.
+
+## Phase 2 PR-C: TTNN Tensorization Seed
+
+`tensorize-parameters` converts materialized host-side parameters into TTNN
+tensors for selected role groups. The first version is intentionally limited to
+MLP and LM-head weights; attention and KV-cache tensors are left for later
+primitive smoke work.
+
+Dry-run, no device or TTNN import:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  tensorize-parameters \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --roles mlp,lm_head \
+  --layers 0 \
+  --device p150a \
+  --dry-run \
+  --out /tmp/tensorize_report.json
+```
+
+Device mode first materializes torch parameters, then calls `ttnn.from_torch`
+with role-based dtype/layout from the emitted parameter config:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  tensorize-parameters \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --roles mlp,lm_head \
+  --layers 0 \
+  --device p150a \
+  --out /tmp/tensorize_report.json
+```
+
+The report records each planned or converted tensor path, target dtype, layout,
+memory config placeholder, and shape when host tensors are available.
