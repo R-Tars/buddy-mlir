@@ -451,6 +451,12 @@ def profile_decode_step(
                     tensor_conversion_ms=0.0,
                     trace_execute_ms=0.0,
                 ),
+                "throughput_summary": _throughput_summary(
+                    latency_ms=0.0,
+                    batch_size=batch_size,
+                    trace_report=None,
+                    dry_run=True,
+                ),
                 "output_shapes": None,
                 "tensor_conversion_count": plan["tensor_conversion_count"],
                 "tensor_conversion_ms": 0.0,
@@ -623,6 +629,11 @@ def profile_decode_step(
                 trace_execute_ms=float(
                     profile["trace"].get("execute_latency_ms") or 0.0
                 ),
+            )
+            profile["throughput_summary"] = _throughput_summary(
+                latency_ms=float(profile["latency_ms"]),
+                batch_size=batch_size,
+                trace_report=profile.get("trace"),
             )
             report.update(profile)
     except NoTTNNDeviceError as err:
@@ -1954,6 +1965,11 @@ def _profile_unavailable_report(
                 tensor_conversion_ms=0.0,
                 trace_execute_ms=0.0,
             ),
+            "throughput_summary": _throughput_summary(
+                latency_ms=None,
+                batch_size=batch_size,
+                trace_report=None,
+            ),
             "output_shapes": None,
             "tensor_conversion_count": 0,
             "tensor_conversion_ms": 0.0,
@@ -2023,6 +2039,79 @@ def _bottleneck_summary(
         "max_section": bottleneck[0],
         "max_section_ms": bottleneck[1],
     }
+
+
+def _throughput_summary(
+    *,
+    latency_ms: float | None,
+    batch_size: int,
+    trace_report: dict[str, Any] | None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "batch_size": batch_size,
+        "generated_tokens_per_user": 1,
+        "total_generated_tokens": batch_size,
+        "basis": "decode_step_latency_ms",
+    }
+    if dry_run:
+        summary.update(
+            {
+                "status": "dry_run",
+                "latency_ms": 0.0,
+                "tokens_per_second_per_user": 0.0,
+                "aggregate_tokens_per_second": 0.0,
+            }
+        )
+        return summary
+
+    if latency_ms is None or latency_ms <= 0.0:
+        summary.update(
+            {
+                "status": "unavailable",
+                "latency_ms": latency_ms,
+                "tokens_per_second_per_user": None,
+                "aggregate_tokens_per_second": None,
+            }
+        )
+        return summary
+
+    tokens_per_second_per_user = 1000.0 / latency_ms
+    summary.update(
+        {
+            "status": "measured",
+            "latency_ms": latency_ms,
+            "tokens_per_second_per_user": tokens_per_second_per_user,
+            "aggregate_tokens_per_second": (
+                tokens_per_second_per_user * batch_size
+            ),
+        }
+    )
+
+    trace_samples = (
+        (trace_report or {}).get("execute_samples_ms")
+        if trace_report is not None
+        else None
+    )
+    if trace_samples:
+        trace_mean_ms = sum(float(sample) for sample in trace_samples) / len(
+            trace_samples
+        )
+        if trace_mean_ms > 0.0:
+            trace_tps_per_user = 1000.0 / trace_mean_ms
+            summary.update(
+                {
+                    "trace_execute_mean_ms": trace_mean_ms,
+                    "trace_execute_tokens_per_second_per_user": (
+                        trace_tps_per_user
+                    ),
+                    "trace_execute_aggregate_tokens_per_second": (
+                        trace_tps_per_user * batch_size
+                    ),
+                    "trace_iterations": len(trace_samples),
+                }
+            )
+    return summary
 
 
 def _trace_apis_available(ttnn: Any) -> bool:

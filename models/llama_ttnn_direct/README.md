@@ -1015,9 +1015,12 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report includes tensor conversion time, embedding time, per-layer
 attention time, per-layer MLP time, final norm time, LM-head split/concat time,
 argmax time, host-copy time, trace execute time, and a `bottleneck_summary`
-that identifies the largest measured section. LM-head profiling mirrors the
-generated split LM-head code but separates device argmax into its own timed
-section. Non-dry-run profile reports reuse the generated decode-step
+that identifies the largest measured section. It also records a
+`throughput_summary` with decode-step latency, aggregate tokens/sec, and
+tokens/sec/user for the one-token-per-user decode step; when trace execution
+samples are available, trace-execute throughput is reported separately. LM-head
+profiling mirrors the generated split LM-head code but separates device argmax
+into its own timed section. Non-dry-run profile reports reuse the generated decode-step
 `reference.kind=structural_shape_dtype` checks, so output or KV-cache shape
 mismatches are reported as `reference_mismatch` instead of being treated as
 valid latency measurements.
@@ -1036,6 +1039,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --batch-size 32 \
   --cache-len 1024 \
   --device p150a \
+  --metric tokens_per_second_per_user \
   --trace \
   --trace-iterations 10 \
   --out /tmp/decode_step_autotune_report.json
@@ -1046,8 +1050,9 @@ logits, MLP intermediate dtype, attention SDPA output memory config, and concat
 heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
 profile report path, metric, bottleneck summary, status/reference/trace
-summaries, and the lowest-latency `best` candidate when measurements are
-available. Top-level `status_counts`, `reference_status_counts`, and
+summaries, and the best candidate when measurements are available. `latency_ms`
+is minimized; `tokens_per_second_per_user` and `aggregate_tokens_per_second`
+are maximized. Top-level `status_counts`, `reference_status_counts`, and
 `trace_status_counts` make failed or skipped candidate classes visible without
 opening every nested profile report. Candidates whose profile report does not
 pass the structural reference gate are not considered for `best`.

@@ -541,6 +541,7 @@ def validate_direct(
                 paths["decode_step_autotune_candidates_dir"]
             ),
             "candidate_count": autotune_report["candidate_count"],
+            "metric_direction": autotune_report.get("metric_direction"),
             "status_counts": autotune_report.get("status_counts", {}),
             "reference_status_counts": autotune_report.get(
                 "reference_status_counts",
@@ -856,6 +857,7 @@ def validate_real_decode(
             "autotune_report": str(paths["autotune_report"]),
             "candidates_dir": str(paths["autotune_candidates_dir"]),
             "candidate_count": autotune_report["candidate_count"],
+            "metric_direction": autotune_report.get("metric_direction"),
             "status_counts": autotune_report.get("status_counts", {}),
             "passed_candidate_count": autotune_report.get(
                 "passed_candidate_count",

@@ -11,7 +11,12 @@ from ..templates.lm_head import build_lm_head_split_ranges
 from .space import enumerate_candidate_configs
 
 
-SUPPORTED_DECODE_STEP_METRICS = {"latency_ms"}
+DECODE_STEP_METRIC_DIRECTIONS = {
+    "latency_ms": "minimize",
+    "tokens_per_second_per_user": "maximize",
+    "aggregate_tokens_per_second": "maximize",
+}
+SUPPORTED_DECODE_STEP_METRICS = set(DECODE_STEP_METRIC_DIRECTIONS)
 
 
 def run_decode_step_autotune(
@@ -128,11 +133,15 @@ def run_decode_step_autotune(
                 out_path.parent,
             )
             if profile.get("passed"):
-                record["metric"] = float(profile[metric])
+                record["metric"] = _profile_metric_value(profile, metric)
                 record["bottleneck_summary"] = profile.get(
                     "bottleneck_summary"
                 )
-                if best is None or float(record["metric"]) < float(best["metric"]):
+                if best is None or _is_better_metric(
+                    float(record["metric"]),
+                    float(best["metric"]),
+                    metric,
+                ):
                     best = dict(record)
         candidates.append(record)
 
@@ -146,6 +155,7 @@ def run_decode_step_autotune(
         "schema_version": 1,
         "search": "decode_step_minimal",
         "metric": metric,
+        "metric_direction": DECODE_STEP_METRIC_DIRECTIONS[metric],
         "dry_run": bool(dry_run),
         "program_dir": str(program_root),
         "model_path": str(model_path_for_profile) if model_path_for_profile else None,
@@ -234,6 +244,23 @@ def _reference_summary(report: dict[str, Any]) -> dict[str, Any]:
             if isinstance(check, dict) and not check.get("passed")
         ],
     }
+
+
+def _profile_metric_value(profile: dict[str, Any], metric: str) -> float:
+    if metric == "latency_ms":
+        return float(profile["latency_ms"])
+    throughput = profile.get("throughput_summary") or {}
+    value = throughput.get(metric)
+    if value is None:
+        raise ValueError(f"profile report did not produce metric {metric!r}")
+    return float(value)
+
+
+def _is_better_metric(candidate: float, current_best: float, metric: str) -> bool:
+    direction = DECODE_STEP_METRIC_DIRECTIONS[metric]
+    if direction == "maximize":
+        return candidate > current_best
+    return candidate < current_best
 
 
 def _candidate_field_counts(

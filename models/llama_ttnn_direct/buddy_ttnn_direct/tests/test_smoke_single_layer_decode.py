@@ -493,6 +493,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 "tensor_conversion_ms",
                 report["bottleneck_summary"]["sections_ms"],
             )
+            self.assertEqual(report["throughput_summary"]["status"], "dry_run")
+            self.assertEqual(
+                report["throughput_summary"]["tokens_per_second_per_user"],
+                0.0,
+            )
             self.assertEqual(report["trace"]["status"], "dry_run")
             self.assertEqual(report["reference"]["status"], "dry_run")
             self.assertEqual(
@@ -566,6 +571,18 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 self.assertIn(name, sections)
             self.assertEqual(report["trace"]["status"], "captured_and_executed")
             self.assertEqual(report["trace"]["iterations"], 2)
+            throughput = report["throughput_summary"]
+            self.assertEqual(throughput["status"], "measured")
+            self.assertEqual(throughput["batch_size"], 2)
+            self.assertGreater(throughput["tokens_per_second_per_user"], 0.0)
+            self.assertAlmostEqual(
+                throughput["aggregate_tokens_per_second"],
+                throughput["tokens_per_second_per_user"] * 2,
+            )
+            self.assertGreater(
+                throughput["trace_execute_tokens_per_second_per_user"],
+                0.0,
+            )
             self.assertEqual(report["ttnn_environment"]["version"], "fake-ttnn")
             self.assertEqual(
                 report["ttnn_environment"]["tt_metal_git_commit"],

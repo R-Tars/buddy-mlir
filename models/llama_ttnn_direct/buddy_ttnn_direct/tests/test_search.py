@@ -258,6 +258,7 @@ class SearchTest(unittest.TestCase):
             report = json.loads(report_json.read_text())
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["search"], "decode_step_minimal")
+            self.assertEqual(report["metric_direction"], "minimize")
             self.assertEqual(report["candidate_count"], 2)
             self.assertEqual(report["status_counts"], {"dry_run_planned": 2})
             self.assertEqual(report["passed_candidate_count"], 0)
@@ -331,11 +332,14 @@ class SearchTest(unittest.TestCase):
                 layers=1,
                 batch_size=2,
                 cache_len=16,
+                metric="tokens_per_second_per_user",
                 ttnn_module=_make_fake_ttnn(),
                 torch_module=_fake_torch(),
             )
 
             self.assertFalse(report["dry_run"])
+            self.assertEqual(report["metric"], "tokens_per_second_per_user")
+            self.assertEqual(report["metric_direction"], "maximize")
             self.assertEqual(report["candidate_count"], 1)
             self.assertEqual(report["status_counts"], {"profiled": 1})
             self.assertEqual(report["passed_candidate_count"], 1)
@@ -350,6 +354,7 @@ class SearchTest(unittest.TestCase):
                 "structural_shape_dtype",
             )
             self.assertIsInstance(report["best"]["metric"], float)
+            self.assertGreater(report["best"]["metric"], 0.0)
             self.assertEqual(
                 report["candidates"][0]["knobs"]["lm_head_split_count"],
                 2,
@@ -428,6 +433,12 @@ class SearchTest(unittest.TestCase):
             )
             profile_report = json.loads(
                 (root / candidate["profile_report"]).read_text()
+            )
+            self.assertGreater(
+                profile_report["throughput_summary"][
+                    "tokens_per_second_per_user"
+                ],
+                0.0,
             )
             self.assertEqual(profile_report["parameter_source"], "hf_model")
             self.assertEqual(profile_report["input_source"], "synthetic")

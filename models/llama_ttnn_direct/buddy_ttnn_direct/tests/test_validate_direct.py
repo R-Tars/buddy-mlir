@@ -169,6 +169,12 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"][
+                    "metric_direction"
+                ],
+                "minimize",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"][
                     "status_counts"
                 ],
                 {"dry_run_planned": 32},
@@ -357,6 +363,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["candidate_count"],
                 1,
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["metric_direction"],
+                "minimize",
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["status_counts"],

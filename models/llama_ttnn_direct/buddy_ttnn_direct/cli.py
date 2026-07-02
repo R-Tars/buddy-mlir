@@ -996,7 +996,10 @@ def build_parser() -> argparse.ArgumentParser:
     autotune_decode_step.add_argument(
         "--metric",
         default="latency_ms",
-        help="Metric name to minimize. Supports latency_ms.",
+        help=(
+            "Metric name. Supports latency_ms, "
+            "tokens_per_second_per_user, and aggregate_tokens_per_second."
+        ),
     )
     autotune_decode_step.add_argument(
         "--device",
@@ -1154,7 +1157,10 @@ def build_parser() -> argparse.ArgumentParser:
     validate_real.add_argument(
         "--metric",
         default="latency_ms",
-        help="Autotune metric name. Supports latency_ms.",
+        help=(
+            "Autotune metric name. Supports latency_ms, "
+            "tokens_per_second_per_user, and aggregate_tokens_per_second."
+        ),
     )
     validate_real.add_argument(
         "--skip-autotune",
