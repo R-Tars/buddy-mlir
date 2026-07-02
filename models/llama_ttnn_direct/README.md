@@ -366,3 +366,57 @@ can still be imported with a fake or unavailable TTNN module for offline tests.
 If the installed TTNN version lacks a required API, wrappers raise
 `UnsupportedTTNNOp` with the official decode template op name and searched API
 paths.
+
+## Phase 13: Program Package Directory
+
+Phase 13 packages the generated Python TTNN program and manifests into a
+directory without changing the existing `llama31_tt_rax` flatbuffer package
+path.
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  package-program \
+  --program-dir /tmp/llama31_ttnn_program \
+  --out-dir /tmp/llama31_ttnn_direct_package
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  package-program \
+  --program-dir /tmp/llama31_ttnn_program \
+  --out-dir /tmp/llama31_ttnn_direct_package \
+  --dry-run
+```
+
+The package writes `manifest.json` with:
+
+```json
+{
+  "backend": "tenstorrent-ttnn-direct",
+  "program_type": "python-ttnn",
+  "entrypoint": "model.py",
+  "semantic_graph": "semantic_graph.json",
+  "execution_plan": "execution_plan.json",
+  "weights_manifest": "weights_manifest.json"
+}
+```
+
+CMake exposes an additive target behind
+`BUDDY_BUILD_LLAMA31_TTNN_DIRECT_MODEL=ON`:
+
+```bash
+cmake --build "$BUDDY_BUILD" --target llama31_ttnn_direct_program
+```
+
+The target produces:
+
+```text
+$BUDDY_BUILD/models/llama31_ttnn_direct/llama31_ttnn_direct_package/
+```
+
+By default the target uses a config-only Llama 3.1 8B model description so it
+does not require weights or TTNN hardware. Set
+`BUDDY_LLAMA31_TTNN_DIRECT_MODEL_PATH` to package from a local Hugging Face
+model directory.

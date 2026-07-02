@@ -11,6 +11,10 @@ from .codegen.config_emit import (
     emit_parameter_config,
     parameter_config_dry_run_report,
 )
+from .codegen.package import (
+    package_dry_run_report,
+    package_ttnn_direct_program,
+)
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .codegen.program import write_decode_program_bundle
 from .semantic.dump import dump_graph_json, load_graph_json
@@ -330,6 +334,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory for the decode program bundle.",
     )
     build_program.set_defaults(func=_cmd_build_program)
+
+    package_program = subparsers.add_parser(
+        "package-program",
+        help="Package a generated TTNN Direct Python program directory.",
+    )
+    package_program.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    package_program.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output package directory.",
+    )
+    package_program.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and print package manifest JSON without writing.",
+    )
+    package_program.set_defaults(func=_cmd_package_program)
     return parser
 
 
@@ -483,6 +510,23 @@ def _cmd_build_program(args: argparse.Namespace) -> int:
         out_dir=args.out_dir,
     )
     print(f"wrote TTNN Direct decode program: {args.out_dir}")
+    for name in sorted(paths):
+        print(f"  {name}: {paths[name]}")
+    return 0
+
+
+def _cmd_package_program(args: argparse.Namespace) -> int:
+    if args.dry_run:
+        print(
+            json.dumps(
+                package_dry_run_report(args.program_dir, args.out_dir),
+                indent=2,
+            )
+        )
+        return 0
+
+    paths = package_ttnn_direct_program(args.program_dir, args.out_dir)
+    print(f"wrote TTNN Direct program package: {args.out_dir}")
     for name in sorted(paths):
         print(f"  {name}: {paths[name]}")
     return 0
