@@ -19,6 +19,11 @@ from .templates.registry import (
     load_execution_plan,
     load_template_config,
 )
+from .templates.diff import (
+    diff_plan_against_official,
+    dump_plan_diff,
+    load_official_template,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -153,6 +158,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and report metadata summary without writing.",
     )
     emit_config.set_defaults(func=_cmd_emit_config)
+
+    diff_plan = subparsers.add_parser(
+        "diff-plan",
+        help="Diff a TTNN Direct plan against an official-like decode template.",
+    )
+    diff_plan.add_argument(
+        "--ours",
+        type=Path,
+        required=True,
+        help="Input TTNN Direct execution plan JSON.",
+    )
+    diff_plan.add_argument(
+        "--official-template",
+        type=Path,
+        required=True,
+        help="Official-like reference decode template JSON.",
+    )
+    diff_plan.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output structural diff JSON path.",
+    )
+    diff_plan.set_defaults(func=_cmd_diff_plan)
     return parser
 
 
@@ -217,6 +246,15 @@ def _cmd_emit_config(args: argparse.Namespace) -> int:
     )
     dump_parameter_config(config, args.out)
     print(f"wrote parameter metadata config: {args.out}")
+    return 0
+
+
+def _cmd_diff_plan(args: argparse.Namespace) -> int:
+    plan = load_execution_plan(args.ours)
+    official_template = load_official_template(args.official_template)
+    diff = diff_plan_against_official(plan, official_template)
+    dump_plan_diff(diff, args.out)
+    print(f"wrote TTNN Direct plan diff: {args.out}")
     return 0
 
 

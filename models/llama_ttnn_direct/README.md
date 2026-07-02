@@ -147,3 +147,34 @@ LM-head weights            -> bfloat8_b, tile, vocab_split
 activations                -> bfloat16
 KV cache                   -> bfloat8_b, paged
 ```
+
+## Phase 16: Official Plan Diff
+
+Phase 16 compares a Buddy-TTNN Direct execution plan against a hand-written
+official-like Llama decode template. The diff is structural only; it does not
+run TTNN or measure performance.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  diff-plan \
+  --ours /tmp/llama_ttnn_plan.json \
+  --official-template models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_llama31_decode_template.json \
+  --out /tmp/plan_diff.json
+```
+
+The high-level plan templates are expanded before comparison. For example,
+`official_paged_attention_decode` expands to:
+
+```text
+linear.qkv_packed
+nlp_create_qkv_heads_decode
+rotary_embedding_decode
+paged_update_cache
+paged_scaled_dot_product_attention_decode
+nlp_concat_heads_decode
+linear.o_proj
+```
+
+The output records `missing_ops`, `extra_ops`, and `order_mismatch`.
