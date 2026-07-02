@@ -1217,6 +1217,8 @@ def _real_decode_acceptance(
     profile = steps.get("profile_decode_step", {})
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
+    smoke_environment = _step_ttnn_environment(smoke)
+    profile_environment = _step_ttnn_environment(profile)
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1247,6 +1249,27 @@ def _real_decode_acceptance(
             _positive_number(smoke.get("tensor_conversion_count")),
             observed=smoke.get("tensor_conversion_count"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.ttnn_module_available",
+            smoke_environment.get("module_available") is True,
+            observed=smoke_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.ttnn_version",
+            _non_empty_string(smoke_environment.get("version")),
+            observed=smoke_environment.get("version"),
+            required=True,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tt_metal_git_commit",
+            _non_empty_string(
+                smoke_environment.get("tt_metal_git_commit")
+            ),
+            observed=smoke_environment.get("tt_metal_git_commit"),
+            source=smoke_environment.get("tt_metal_git_commit_source"),
+            required=True,
         ),
         _acceptance_check(
             "smoke_decode_step.tensorization_status",
@@ -1294,6 +1317,27 @@ def _real_decode_acceptance(
             _positive_number(profile.get("tensor_conversion_count")),
             observed=profile.get("tensor_conversion_count"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.ttnn_module_available",
+            profile_environment.get("module_available") is True,
+            observed=profile_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "profile_decode_step.ttnn_version",
+            _non_empty_string(profile_environment.get("version")),
+            observed=profile_environment.get("version"),
+            required=True,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tt_metal_git_commit",
+            _non_empty_string(
+                profile_environment.get("tt_metal_git_commit")
+            ),
+            observed=profile_environment.get("tt_metal_git_commit"),
+            source=profile_environment.get("tt_metal_git_commit_source"),
+            required=True,
         ),
         _acceptance_check(
             "profile_decode_step.tensorization_status",
@@ -1408,6 +1452,15 @@ def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
     setup = step.get("parameter_setup") or {}
     tensorization = setup.get("tensorization") or {}
     return tensorization if isinstance(tensorization, dict) else {}
+
+
+def _step_ttnn_environment(step: dict[str, Any]) -> dict[str, Any]:
+    environment = step.get("ttnn_environment") or {}
+    return environment if isinstance(environment, dict) else {}
+
+
+def _non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _contains_all(observed: Any, expected: Any) -> bool:

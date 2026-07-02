@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
@@ -426,6 +427,14 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "smoke_decode_step.ttnn_version",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.tt_metal_git_commit",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "smoke_decode_step.tensorization_roles",
                 acceptance_check_names,
             )
@@ -435,6 +444,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.tensor_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.ttnn_version",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.tt_metal_git_commit",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -450,6 +467,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "version"
                 ],
                 "fake-ttnn",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["ttnn_environment"][
+                    "tt_metal_git_commit"
+                ],
+                "fake-tt-metal",
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["candidate_count"],
@@ -579,6 +602,18 @@ class ValidateDirectTest(unittest.TestCase):
                 "captured_and_executed",
             )
             self.assertEqual(
+                evidence["device_evidence"]["profile_ttnn_environment"][
+                    "version"
+                ],
+                "fake-ttnn",
+            )
+            self.assertEqual(
+                evidence["device_evidence"]["profile_ttnn_environment"][
+                    "tt_metal_git_commit"
+                ],
+                "fake-tt-metal",
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["decode_step_autotune"][
                     "best_reference_status"
                 ],
@@ -643,6 +678,73 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 ["profile_decode_step.tokens_per_second_per_user"],
+            )
+
+    def test_validate_real_decode_fails_without_tt_metal_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            delattr(fake_ttnn, "__tt_metal_commit__")
+            with patch.dict("os.environ", {}, clear=True):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=fake_ttnn,
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                [
+                    "smoke_decode_step.tt_metal_git_commit",
+                    "profile_decode_step.tt_metal_git_commit",
+                ],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                [
+                    "smoke_decode_step.tt_metal_git_commit",
+                    "profile_decode_step.tt_metal_git_commit",
+                ],
             )
 
     def test_validate_real_decode_fails_when_numeric_shell_required(self) -> None:
