@@ -894,6 +894,7 @@ def validate_real_decode(
                 "tensor_conversion_count"
             ),
             "tensor_conversion_ms": profile_report.get("tensor_conversion_ms"),
+            "latency_ms": profile_report.get("latency_ms"),
             "throughput_summary": profile_report.get("throughput_summary"),
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
@@ -1197,6 +1198,7 @@ def _real_decode_evidence_manifest(
                     "tensor_conversion_count"
                 ),
                 "tensor_conversion_ms": profile.get("tensor_conversion_ms"),
+                "latency_ms": profile.get("latency_ms"),
                 "trace_status": profile.get("trace_status"),
                 "trace": profile.get("trace"),
                 "reference_status": profile.get("reference_status"),
@@ -1314,6 +1316,7 @@ def _real_decode_acceptance(
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
+    throughput = profile.get("throughput_summary") or {}
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1517,6 +1520,34 @@ def _real_decode_acceptance(
             observed=profile.get("reference_status"),
             expected="passed",
         ),
+        _acceptance_check(
+            "profile_decode_step.throughput_status",
+            throughput.get("status") == "measured",
+            observed=throughput.get("status"),
+            expected="measured",
+        ),
+        _acceptance_check(
+            "profile_decode_step.latency_ms",
+            _positive_number(throughput.get("latency_ms")),
+            observed=throughput.get("latency_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tokens_per_second_per_user",
+            _positive_number(
+                throughput.get("tokens_per_second_per_user")
+            ),
+            observed=throughput.get("tokens_per_second_per_user"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.aggregate_tokens_per_second",
+            _positive_number(
+                throughput.get("aggregate_tokens_per_second")
+            ),
+            observed=throughput.get("aggregate_tokens_per_second"),
+            minimum=0,
+        ),
     ]
     if require_decode_shell_numeric_reference:
         checks.append(
@@ -1578,17 +1609,30 @@ def _real_decode_acceptance(
                     observed=profile_trace.get("execute_sample_count"),
                     expected=expected_trace_iterations,
                 ),
+                _acceptance_check(
+                    (
+                        "profile_decode_step."
+                        "trace_execute_tokens_per_second_per_user"
+                    ),
+                    _positive_number(
+                        throughput.get(
+                            "trace_execute_tokens_per_second_per_user"
+                        )
+                    ),
+                    observed=throughput.get(
+                        "trace_execute_tokens_per_second_per_user"
+                    ),
+                    minimum=0,
+                ),
             ]
         )
 
     if min_tokens_per_second_per_user is not None:
-        throughput = profile.get("throughput_summary") or {}
         observed = throughput.get("tokens_per_second_per_user")
         checks.append(
             _acceptance_check(
-                "profile_decode_step.tokens_per_second_per_user",
-                observed is not None
-                and float(observed) >= min_tokens_per_second_per_user,
+                "profile_decode_step.min_tokens_per_second_per_user",
+                _number_at_least(observed, min_tokens_per_second_per_user),
                 observed=observed,
                 minimum=min_tokens_per_second_per_user,
             )
@@ -1623,6 +1667,13 @@ def _acceptance_check(
 def _positive_number(value: Any) -> bool:
     try:
         return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _number_at_least(value: Any, minimum: Any) -> bool:
+    try:
+        return float(value) >= float(minimum)
     except (TypeError, ValueError):
         return False
 
