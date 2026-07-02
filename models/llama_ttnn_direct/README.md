@@ -611,10 +611,10 @@ and/or `--min-tokens-per-second-per-user`, the final report includes an
 layer/batch/cache runtime shape, TTNN module availability, TTNN version and
 tt-metal git commit evidence, decode-step tensor conversion counts, shell
 numeric/structural references, decode-step tensorization roles and memory
-config evidence, decode-step structural references, trace capture/execute
-status plus requested execute iteration/sample-count evidence, measured
-profile latency, and positive profile throughput before marking the validation
-as accepted.
+config evidence, required tensorized decode weight paths for smoke/profile,
+decode-step structural references, trace capture/execute status plus requested
+execute iteration/sample-count evidence, measured profile latency, and positive
+profile throughput before marking the validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 
@@ -958,8 +958,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report sets `parameter_source` to `hf_model` for this path and
 `input_source` to `synthetic`. It also includes a compact `parameter_setup`
 summary with materialized layer ids, materialized/tensorized tensor counts,
-tensorized role groups, dtype/layout/memory-config counts, key tensor
-dtype/layout/memory-config records, and the number of synthetic
+tensorized role groups, complete tensorized weight paths,
+dtype/layout/memory-config counts, key tensor dtype/layout/memory-config
+records, and the number of synthetic
 rotary/runtime-input tensors added around the real weights.
 
 ## Performance Step 2b: Generated Decode Layer Stack Smoke

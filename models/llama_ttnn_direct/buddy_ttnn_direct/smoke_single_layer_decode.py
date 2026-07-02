@@ -1506,6 +1506,11 @@ def _materialization_summary(params: Any) -> dict[str, Any]:
 
 def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
     tensors = report.get("tensors", [])
+    tensor_paths = sorted(
+        str(record["path"])
+        for record in tensors
+        if isinstance(record, dict) and record.get("path") is not None
+    )
     key_tensor_records = {}
     key_paths = [
         record["path"]
@@ -1550,6 +1555,7 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
             tensors,
             "ttnn_memory_config",
         ),
+        "tensor_paths": tensor_paths,
         "key_paths": key_paths,
         "key_tensors": key_tensor_records,
     }

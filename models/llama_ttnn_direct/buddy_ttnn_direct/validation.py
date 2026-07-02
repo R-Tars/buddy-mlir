@@ -813,6 +813,34 @@ def validate_real_decode(
             ),
         }
 
+    def materialized_lm_head_split_count() -> int | None:
+        materialize = report.get("steps", {}).get("materialize_parameters", {})
+        value = materialize.get("lm_head_split_count")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def tensorization_path_detail(
+        runtime_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        setup = runtime_report.get("parameter_setup") or {}
+        tensorization = setup.get("tensorization") or {}
+        if not isinstance(tensorization, dict):
+            tensorization = {}
+        required_tensor_paths = _required_tensorized_tensor_paths(
+            layer_count=layer_count,
+            lm_head_split_count=materialized_lm_head_split_count(),
+        )
+        tensorized_tensor_paths = _tensorized_tensor_paths(tensorization)
+        return {
+            "tensorized_tensor_paths": tensorized_tensor_paths,
+            "required_tensorized_tensor_paths": required_tensor_paths,
+            "missing_required_tensorized_tensor_paths": sorted(
+                set(required_tensor_paths) - set(tensorized_tensor_paths)
+            ),
+        }
+
     def decode_shell_step() -> dict[str, Any]:
         shell_report = run_smoke_decode_shell(
             out=paths["decode_shell_report"],
@@ -883,6 +911,7 @@ def validate_real_decode(
             "trace": _trace_summary(smoke_report.get("trace")),
             "ttnn_environment": smoke_report.get("ttnn_environment"),
             "parameter_setup": smoke_report.get("parameter_setup"),
+            **tensorization_path_detail(smoke_report),
             **_reference_summary(smoke_report),
         }
 
@@ -924,6 +953,7 @@ def validate_real_decode(
             "trace": _trace_summary(profile_report.get("trace")),
             "ttnn_environment": profile_report.get("ttnn_environment"),
             "parameter_setup": profile_report.get("parameter_setup"),
+            **tensorization_path_detail(profile_report),
             **_reference_summary(profile_report),
         }
 
@@ -1111,6 +1141,35 @@ def _required_materialized_tensor_paths(
                 f"layers.{layer_id}.attention.v_proj.weight",
                 f"layers.{layer_id}.attention.o_proj.weight",
                 f"layers.{layer_id}.attention.wqkv_packed.weight",
+                f"layers.{layer_id}.mlp.gate_proj.weight",
+                f"layers.{layer_id}.mlp.up_proj.weight",
+                f"layers.{layer_id}.mlp.down_proj.weight",
+                f"layers.{layer_id}.input_norm.weight",
+                f"layers.{layer_id}.post_attention_norm.weight",
+            ]
+        )
+    if lm_head_split_count is not None:
+        paths.extend(
+            f"lm_head.splits.{shard_id}.weight"
+            for shard_id in range(int(lm_head_split_count))
+        )
+    return paths
+
+
+def _required_tensorized_tensor_paths(
+    *,
+    layer_count: int,
+    lm_head_split_count: int | None,
+) -> list[str]:
+    paths = [
+        "embedding.weight",
+        "final_norm.weight",
+    ]
+    for layer_id in range(layer_count):
+        paths.extend(
+            [
+                f"layers.{layer_id}.attention.wqkv_packed.weight",
+                f"layers.{layer_id}.attention.o_proj.weight",
                 f"layers.{layer_id}.mlp.gate_proj.weight",
                 f"layers.{layer_id}.mlp.up_proj.weight",
                 f"layers.{layer_id}.mlp.down_proj.weight",
@@ -1361,6 +1420,15 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
             "ttnn_memory_config_counts",
             {},
         ),
+        "tensor_paths": tensorization.get("tensor_paths", []),
+        "required_tensorized_tensor_paths": step.get(
+            "required_tensorized_tensor_paths",
+            [],
+        ),
+        "missing_required_tensorized_tensor_paths": step.get(
+            "missing_required_tensorized_tensor_paths",
+            [],
+        ),
         "key_paths": tensorization.get("key_paths", []),
         "key_tensors": tensorization.get("key_tensors", {}),
     }
@@ -1515,6 +1583,12 @@ def _real_decode_acceptance(
             expected=list(DECODE_PARAMETER_ROLES),
         ),
         _acceptance_check(
+            "smoke_decode_step.required_tensorized_tensor_paths",
+            smoke.get("missing_required_tensorized_tensor_paths") == [],
+            observed=smoke.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
             "smoke_decode_step.tensorization_memory_configs",
             _positive_count(smoke_tensorization.get("memory_config_counts")),
             observed=smoke_tensorization.get("memory_config_counts"),
@@ -1599,6 +1673,12 @@ def _real_decode_acceptance(
             ),
             observed=profile_tensorization.get("roles"),
             expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "profile_decode_step.required_tensorized_tensor_paths",
+            profile.get("missing_required_tensorized_tensor_paths") == [],
+            observed=profile.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
         ),
         _acceptance_check(
             "profile_decode_step.tensorization_memory_configs",
@@ -1799,6 +1879,22 @@ def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
     setup = step.get("parameter_setup") or {}
     tensorization = setup.get("tensorization") or {}
     return tensorization if isinstance(tensorization, dict) else {}
+
+
+def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:
+    paths = tensorization.get("tensor_paths")
+    if isinstance(paths, list):
+        return sorted({str(path) for path in paths if path is not None})
+
+    paths = tensorization.get("key_paths")
+    if isinstance(paths, list):
+        return sorted({str(path) for path in paths if path is not None})
+
+    key_tensors = tensorization.get("key_tensors")
+    if isinstance(key_tensors, dict):
+        return sorted(str(path) for path in key_tensors)
+
+    return []
 
 
 def _step_ttnn_environment(step: dict[str, Any]) -> dict[str, Any]:
