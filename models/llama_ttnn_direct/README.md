@@ -342,10 +342,32 @@ run_decode.py
 README.md
 ```
 
-`run_decode.py --dry-run` prints the expanded per-layer decode op sequence and
-final ops. Full TTNN decode execution remains intentionally disabled at this
-phase, but missing attention op wrappers now report the exact template boundary
-that needs implementation.
+`run_decode.py` prints the expanded per-layer decode op sequence and final ops.
+It also wraps the same generated decode bring-up gates used by the repository
+CLI:
+
+```bash
+python /tmp/llama31_ttnn_program/run_decode.py \
+  --mode smoke \
+  --layers 1 \
+  --device p150a \
+  --out /tmp/decode_step_smoke_report.json
+
+python /tmp/llama31_ttnn_program/run_decode.py \
+  --mode profile \
+  --layers 1 \
+  --device p150a \
+  --out /tmp/decode_step_profile_report.json
+
+python /tmp/llama31_ttnn_program/run_decode.py \
+  --mode validate-real \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --out-dir /tmp/validate_ttnn_direct_real
+```
+
+Add `--dry-run` to any execution mode to write the report schema without
+opening a TTNN device. Missing attention op wrappers still report the exact
+template boundary that needs implementation.
 
 ## Phase 12: Attention TTNN Op Wrappers
 

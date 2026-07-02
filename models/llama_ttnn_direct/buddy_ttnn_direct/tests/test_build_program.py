@@ -142,6 +142,123 @@ class BuildProgramTest(unittest.TestCase):
                 ["rmsnorm.final", "split_lm_head", "argmax_or_sampling"],
             )
 
+    def test_generated_run_decode_wraps_smoke_profile_and_real_validation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            out_dir = root / "program"
+            smoke_report = root / "decode_step_smoke_report.json"
+            profile_report = root / "decode_step_profile_report.json"
+            validate_dir = root / "real_decode_validation"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            smoke = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "smoke",
+                    "--dry-run",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(smoke_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            smoke_summary = json.loads(smoke.stdout)
+            self.assertEqual(smoke_summary["status"], "dry_run")
+            self.assertEqual(smoke_summary["report"], str(smoke_report))
+            self.assertEqual(
+                json.loads(smoke_report.read_text())["template"],
+                "generated_decode_step",
+            )
+
+            profile = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "profile",
+                    "--dry-run",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(profile_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            profile_summary = json.loads(profile.stdout)
+            self.assertEqual(profile_summary["status"], "dry_run")
+            self.assertEqual(profile_summary["report"], str(profile_report))
+            self.assertEqual(
+                json.loads(profile_report.read_text())["template"],
+                "generated_decode_step_profile",
+            )
+
+            validation = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "validate-real",
+                    "--dry-run",
+                    "--skip-autotune",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out-dir",
+                    str(validate_dir),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            validation_summary = json.loads(validation.stdout)
+            self.assertEqual(validation_summary["status"], "dry_run")
+            validation_report = validate_dir / "real_decode_validation_report.json"
+            self.assertEqual(validation_summary["report"], str(validation_report))
+            self.assertEqual(
+                json.loads(validation_report.read_text())["command"],
+                "validate-real-decode",
+            )
+
 
 def _write_fake_model_config(model_dir: Path) -> None:
     model_dir.mkdir(parents=True)
