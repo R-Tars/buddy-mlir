@@ -362,6 +362,10 @@ python /tmp/llama31_ttnn_program/run_decode.py \
 python /tmp/llama31_ttnn_program/run_decode.py \
   --mode validate-real \
   --model-path /path/to/Llama-3.1-8B-Instruct \
+  --trace \
+  --trace-iterations 10 \
+  --require-trace \
+  --min-tokens-per-second-per-user 1.0 \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 

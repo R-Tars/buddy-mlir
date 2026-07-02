@@ -87,6 +87,8 @@ class PackageProgramTest(unittest.TestCase):
             package_readme = (package_dir / "PACKAGE_README.md").read_text()
             self.assertIn("python run_decode.py --mode smoke", package_readme)
             self.assertIn("validate-real", package_readme)
+            self.assertIn("--require-trace", package_readme)
+            self.assertIn("--min-tokens-per-second-per-user", package_readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

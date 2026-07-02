@@ -236,6 +236,9 @@ class BuildProgramTest(unittest.TestCase):
                     "validate-real",
                     "--dry-run",
                     "--skip-autotune",
+                    "--require-trace",
+                    "--min-tokens-per-second-per-user",
+                    "1.0",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -254,10 +257,15 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(validation_summary["status"], "dry_run")
             validation_report = validate_dir / "real_decode_validation_report.json"
             self.assertEqual(validation_summary["report"], str(validation_report))
+            validation_payload = json.loads(validation_report.read_text())
+            self.assertEqual(validation_payload["command"], "validate-real-decode")
+            self.assertTrue(validation_payload["require_trace"])
             self.assertEqual(
-                json.loads(validation_report.read_text())["command"],
-                "validate-real-decode",
+                validation_payload["min_tokens_per_second_per_user"],
+                1.0,
             )
+            self.assertEqual(validation_payload["acceptance"]["status"], "dry_run")
+            self.assertTrue(validation_payload["acceptance"]["require_trace"])
 
 
 def _write_fake_model_config(model_dir: Path) -> None:

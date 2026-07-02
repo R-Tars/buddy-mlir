@@ -137,6 +137,12 @@ def main(argv=None):
     parser.add_argument("--metric", default="latency_ms")
     parser.add_argument("--decode-step-search-space", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
+    parser.add_argument("--require-trace", action="store_true")
+    parser.add_argument(
+        "--min-tokens-per-second-per-user",
+        type=float,
+        default=None,
+    )
     parser.add_argument(
         "--out",
         type=Path,
@@ -228,6 +234,8 @@ def main(argv=None):
         metric=args.metric,
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
+        require_trace=args.require_trace,
+        min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
     )
     report_path = out_dir / "real_decode_validation_report.json"
     print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -325,6 +333,10 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         ```bash
         python run_decode.py --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
+          --trace \
+          --trace-iterations 10 \
+          --require-trace \
+          --min-tokens-per-second-per-user 1.0 \
           --out-dir /tmp/validate_ttnn_direct_real
         ```
 
