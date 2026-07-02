@@ -424,6 +424,12 @@ class SearchTest(unittest.TestCase):
                 report["best"]["parameter_setup"]["tensorization"]["tensor_count"],
                 11,
             )
+            self.assertEqual(
+                report["best"]["parameter_setup"]["tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 11},
+            )
             candidate = report["candidates"][0]
             self.assertEqual(candidate["reference_status"], "passed")
             self.assertEqual(candidate["parameter_source"], "hf_model")
@@ -446,6 +452,12 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 profile_report["parameter_setup"]["tensorization"]["tensor_count"],
                 11,
+            )
+            self.assertEqual(
+                profile_report["parameter_setup"]["tensorization"][
+                    "ttnn_memory_config_counts"
+                ],
+                {"ttnn.DRAM_MEMORY_CONFIG": 11},
             )
             self.assertEqual(
                 profile_report["parameter_setup"]["synthetic_rotary_tensor_count"],

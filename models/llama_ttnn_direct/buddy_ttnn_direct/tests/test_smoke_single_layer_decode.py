@@ -295,6 +295,24 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 17,
             )
             self.assertEqual(
+                report["parameter_setup"]["tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 17},
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"][
+                    "ttnn_memory_config_counts"
+                ],
+                {"ttnn.DRAM_MEMORY_CONFIG": 17},
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "layers.0.attention.wqkv_packed.weight"
+                ]["ttnn_memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
                 report["parameter_setup"]["synthetic_rotary_tensor_count"],
                 3,
             )

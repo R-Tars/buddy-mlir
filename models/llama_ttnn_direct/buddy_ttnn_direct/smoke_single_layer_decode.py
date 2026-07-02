@@ -1506,6 +1506,7 @@ def _materialization_summary(params: Any) -> dict[str, Any]:
 
 def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
     tensors = report.get("tensors", [])
+    key_tensor_records = {}
     key_paths = [
         record["path"]
         for record in tensors
@@ -1520,13 +1521,49 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
             "lm_head.splits.0.weight",
         }
     ]
+    for record in tensors:
+        path = record.get("path")
+        if path not in key_paths:
+            continue
+        key_tensor_records[path] = {
+            "role": record.get("role"),
+            "role_group": record.get("role_group"),
+            "target_dtype": record.get("target_dtype"),
+            "layout": record.get("layout"),
+            "memory_config": record.get("memory_config"),
+            "ttnn_dtype": record.get("ttnn_dtype"),
+            "ttnn_layout": record.get("ttnn_layout"),
+            "ttnn_memory_config": record.get("ttnn_memory_config"),
+            "shape": record.get("shape"),
+        }
     return {
         "status": report.get("status"),
         "backend": "ttnn",
         "roles": list(report.get("roles", [])),
         "tensor_count": report.get("tensor_count"),
+        "target_dtype_counts": _field_counts(tensors, "target_dtype"),
+        "layout_counts": _field_counts(tensors, "layout"),
+        "memory_config_counts": _field_counts(tensors, "memory_config"),
+        "ttnn_dtype_counts": _field_counts(tensors, "ttnn_dtype"),
+        "ttnn_layout_counts": _field_counts(tensors, "ttnn_layout"),
+        "ttnn_memory_config_counts": _field_counts(
+            tensors,
+            "ttnn_memory_config",
+        ),
         "key_paths": key_paths,
+        "key_tensors": key_tensor_records,
     }
+
+
+def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        value = record.get(field)
+        if value is None:
+            continue
+        value = str(value)
+        counts[value] = counts.get(value, 0) + 1
+    return counts
 
 
 def _build_synthetic_decode_inputs(

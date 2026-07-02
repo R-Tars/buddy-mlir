@@ -37,6 +37,7 @@ from .smoke_attention_primitive import (
 )
 from .smoke_decode_shell import run_smoke_decode_shell
 from .smoke_single_layer_decode import (
+    DECODE_PARAMETER_ROLES,
     profile_decode_step,
     run_smoke_decode_step,
     run_smoke_single_layer_decode,
@@ -831,6 +832,7 @@ def validate_real_decode(
             ),
             "trace_status": smoke_report.get("trace", {}).get("status"),
             "ttnn_environment": smoke_report.get("ttnn_environment"),
+            "parameter_setup": smoke_report.get("parameter_setup"),
             **_reference_summary(smoke_report),
         }
 
@@ -866,6 +868,7 @@ def validate_real_decode(
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
             "ttnn_environment": profile_report.get("ttnn_environment"),
+            "parameter_setup": profile_report.get("parameter_setup"),
             **_reference_summary(profile_report),
         }
 
@@ -1006,6 +1009,8 @@ def _real_decode_acceptance(
     decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    smoke_tensorization = _step_tensorization_summary(smoke)
+    profile_tensorization = _step_tensorization_summary(profile)
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1038,6 +1043,35 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "smoke_decode_step.tensorization_status",
+            smoke_tensorization.get("status") == "pass",
+            observed=smoke_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_roles",
+            _contains_all(
+                smoke_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=smoke_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_memory_configs",
+            _positive_count(smoke_tensorization.get("memory_config_counts")),
+            observed=smoke_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_ttnn_memory_configs",
+            _positive_count(
+                smoke_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=smoke_tensorization.get("ttnn_memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
             "smoke_decode_step.reference_status",
             smoke.get("reference_status") == "passed",
             observed=smoke.get("reference_status"),
@@ -1053,6 +1087,35 @@ def _real_decode_acceptance(
             "profile_decode_step.tensor_conversion_count",
             _positive_number(profile.get("tensor_conversion_count")),
             observed=profile.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_status",
+            profile_tensorization.get("status") == "pass",
+            observed=profile_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_roles",
+            _contains_all(
+                profile_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=profile_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_memory_configs",
+            _positive_count(profile_tensorization.get("memory_config_counts")),
+            observed=profile_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_ttnn_memory_configs",
+            _positive_count(
+                profile_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=profile_tensorization.get("ttnn_memory_config_counts"),
             minimum=1,
         ),
         _acceptance_check(
@@ -1133,6 +1196,30 @@ def _positive_number(value: Any) -> bool:
         return float(value) > 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
+    setup = step.get("parameter_setup") or {}
+    tensorization = setup.get("tensorization") or {}
+    return tensorization if isinstance(tensorization, dict) else {}
+
+
+def _contains_all(observed: Any, expected: Any) -> bool:
+    if not isinstance(observed, list):
+        return False
+    return set(expected).issubset(set(observed))
+
+
+def _positive_count(counts: Any) -> bool:
+    if not isinstance(counts, dict):
+        return False
+    total = 0
+    for count in counts.values():
+        try:
+            total += int(count)
+        except (TypeError, ValueError):
+            return False
+    return total > 0
 
 
 def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:

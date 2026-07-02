@@ -408,7 +408,23 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "smoke_decode_step.tensorization_roles",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.tensorization_memory_configs",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "profile_decode_step.tensor_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.tensorization_roles",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.tensorization_ttnn_memory_configs",
                 acceptance_check_names,
             )
             self.assertEqual(
@@ -462,11 +478,41 @@ class ValidateDirectTest(unittest.TestCase):
                 smoke_report["parameter_setup"]["tensorization"]["tensor_count"],
                 17,
             )
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 17},
+            )
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"][
+                    "ttnn_memory_config_counts"
+                ],
+                {"ttnn.DRAM_MEMORY_CONFIG": 17},
+            )
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "embedding.weight"
+                ]["ttnn_memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
+                report["steps"]["smoke_decode_step"]["parameter_setup"][
+                    "tensorization"
+                ]["memory_config_counts"],
+                {"dram": 17},
+            )
             profile_report = json.loads(
                 (out_dir / "decode_step_profile_report.json").read_text()
             )
             self.assertEqual(profile_report["parameter_source"], "hf_model")
             self.assertEqual(profile_report["trace"]["status"], "captured_and_executed")
+            self.assertEqual(
+                profile_report["parameter_setup"]["tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 17},
+            )
             autotune_report = json.loads(
                 (out_dir / "decode_step_autotune_report.json").read_text()
             )
@@ -485,6 +531,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "tensor_count"
                 ],
                 11,
+            )
+            self.assertEqual(
+                autotune_report["best"]["parameter_setup"]["tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 11},
             )
 
     def test_validate_real_decode_fails_acceptance_threshold(self) -> None:

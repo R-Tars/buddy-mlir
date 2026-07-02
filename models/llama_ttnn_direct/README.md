@@ -602,9 +602,9 @@ opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-r
 and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, decode-step tensor conversion counts, shell
-numeric/structural references, decode-step structural references, trace
-capture/execute status, and profile throughput before marking the validation as
-accepted.
+numeric/structural references, decode-step tensorization roles and memory
+config evidence, decode-step structural references, trace capture/execute
+status, and profile throughput before marking the validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 
@@ -948,8 +948,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report sets `parameter_source` to `hf_model` for this path and
 `input_source` to `synthetic`. It also includes a compact `parameter_setup`
 summary with materialized layer ids, materialized/tensorized tensor counts,
-tensorized role groups, and the number of synthetic rotary/runtime-input
-tensors added around the real weights.
+tensorized role groups, dtype/layout/memory-config counts, key tensor
+dtype/layout/memory-config records, and the number of synthetic
+rotary/runtime-input tensors added around the real weights.
 
 ## Performance Step 2b: Generated Decode Layer Stack Smoke
 
@@ -1091,5 +1092,5 @@ directories copy the generated program metadata needed by real-weight profile
 (`semantic_graph.json`, `weights_manifest.json`, and `execution_plan.json`),
 while token ids, page table, cache position, rotary matrices, and paged KV
 cache remain synthetic at this stage. Candidate records forward the
-`parameter_source` and compact `parameter_setup` summary from their profile
-report.
+`parameter_source` and compact `parameter_setup` summary, including
+tensorization dtype/layout/memory-config evidence, from their profile report.
