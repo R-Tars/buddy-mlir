@@ -494,6 +494,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 report["bottleneck_summary"]["sections_ms"],
             )
             self.assertEqual(report["trace"]["status"], "dry_run")
+            self.assertEqual(report["reference"]["status"], "dry_run")
+            self.assertEqual(
+                report["reference"]["numeric_reference"]["status"],
+                "not_run",
+            )
 
     def test_profile_decode_step_reports_fake_bottleneck_sections(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -540,6 +545,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["tensor_conversion_count"], 37)
             self.assertGreaterEqual(report["tensor_conversion_ms"], 0.0)
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertTrue(
+                all(check["passed"] for check in report["reference"]["checks"])
+            )
             self.assertEqual(report["lm_head_profile"]["split_count"], 8)
             self.assertEqual(report["lm_head_profile"]["argmax_status"], "profiled")
             sections = report["bottleneck_summary"]["sections_ms"]

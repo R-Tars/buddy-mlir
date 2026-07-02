@@ -455,6 +455,7 @@ def profile_decode_step(
                     status="dry_run" if trace else "disabled",
                     iterations=trace_iterations if trace else 0,
                 ),
+                "reference": _dry_run_reference("generated_decode_step_profile"),
                 "error": None,
                 "ttnn_version": None,
                 "message": "Dry run only; TTNN device is not required.",
@@ -580,6 +581,7 @@ def profile_decode_step(
                 kv_cache=kv_cache,
                 trace=trace,
                 trace_iterations=trace_iterations,
+                plan=plan,
             )
             report = _base_profile_report(
                 program_dir=program_root,
@@ -894,6 +896,7 @@ def _run_generated_decode_profile(
     kv_cache: Any,
     trace: bool,
     trace_iterations: int,
+    plan: dict[str, Any],
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
@@ -1029,36 +1032,48 @@ def _run_generated_decode_profile(
             )
 
     latency_ms = (time.perf_counter() - total_start) * 1000.0
+    output_shapes = {
+        "token": _shape(token),
+        "key_cache": _shape(kv_cache[0].k),
+        "value_cache": _shape(kv_cache[0].v),
+        "kv_cache_layers": [
+            {
+                "layer_id": layer_id,
+                "key_cache": _shape(layer_cache.k),
+                "value_cache": _shape(layer_cache.v),
+            }
+            for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
+        ],
+    }
+    output = {
+        "shape": _shape(token),
+        "dtype": _dtype(token),
+        "repr": repr(token),
+    }
+    reference = _decode_step_reference(
+        plan=plan,
+        layer_count=layer_count,
+        output_shapes=output_shapes,
+        output=output,
+        observed_ops=_observed_op_sequence(ttnn),
+    )
+    passed = bool(reference["passed"])
+
     return {
-        "passed": True,
-        "status": "profiled",
+        "passed": passed,
+        "status": "profiled" if passed else "reference_mismatch",
         "latency_ms": latency_ms,
         "section_latency_ms": section_latency,
         "layer_profiles": layer_profiles,
         "lm_head_profile": lm_head_profile,
-        "output_shapes": {
-            "token": _shape(token),
-            "key_cache": _shape(kv_cache[0].k),
-            "value_cache": _shape(kv_cache[0].v),
-            "kv_cache_layers": [
-                {
-                    "layer_id": layer_id,
-                    "key_cache": _shape(layer_cache.k),
-                    "value_cache": _shape(layer_cache.v),
-                }
-                for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
-            ],
-        },
-        "output": {
-            "shape": _shape(token),
-            "dtype": _dtype(token),
-            "repr": repr(token),
-        },
+        "output_shapes": output_shapes,
+        "output": output,
         "host_copy_ms": 0.0,
         "host_copy_status": "not_performed",
         "trace": trace_report,
-        "error": None,
+        "error": None if passed else "decode-step profile structural mismatch",
         "ttnn_version": getattr(ttnn, "__version__", None),
+        "reference": reference,
     }
 
 

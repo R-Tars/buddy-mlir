@@ -1015,7 +1015,10 @@ attention time, per-layer MLP time, final norm time, LM-head split/concat time,
 argmax time, host-copy time, trace execute time, and a `bottleneck_summary`
 that identifies the largest measured section. LM-head profiling mirrors the
 generated split LM-head code but separates device argmax into its own timed
-section.
+section. Non-dry-run profile reports reuse the generated decode-step
+`reference.kind=structural_shape_dtype` checks, so output or KV-cache shape
+mismatches are reported as `reference_mismatch` instead of being treated as
+valid latency measurements.
 
 ## Performance Step 6: Minimal Decode-Step Autotune
 
@@ -1041,7 +1044,8 @@ logits, MLP intermediate dtype, attention SDPA output memory config, and concat
 heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
 profile report path, metric, bottleneck summary, and the lowest-latency `best`
-candidate when measurements are available.
+candidate when measurements are available. Candidates whose profile report does
+not pass the structural reference gate are not considered for `best`.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate
