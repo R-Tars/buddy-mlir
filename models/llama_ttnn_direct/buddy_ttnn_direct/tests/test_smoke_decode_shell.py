@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_decode_shell import (
     DECODE_SHELL_OPS,
@@ -154,6 +156,53 @@ class SmokeDecodeShellTest(unittest.TestCase):
                 [call["op"] for call in fake_ttnn.calls],
             )
 
+    def test_run_smoke_decode_shell_reports_torch_numeric_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_shell_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            parameters = _fake_numeric_parameters(split_count=8)
+            report = run_smoke_decode_shell(
+                out=report_json,
+                program_dir=program_dir,
+                layers=1,
+                disable_attention=True,
+                device="p150a",
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_numeric_torch(),
+                parameters=parameters,
+                reference_parameters=parameters,
+                token_ids=MiniTensor([[0] for _ in range(32)], dtype="int64"),
+            )
+
+            self.assertTrue(report["passed"])
+            numeric = report["reference"]["numeric_reference"]
+            self.assertEqual(numeric["status"], "passed")
+            self.assertEqual(numeric["kind"], "torch_decode_shell")
+            self.assertGreaterEqual(numeric["pcc"], 0.999999)
+            self.assertTrue(all(check["passed"] for check in numeric["checks"]))
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
     def test_run_smoke_decode_shell_synthesizes_token_ids(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -212,10 +261,16 @@ class FakeTensor:
         shape: list[int] | None = None,
         dtype: str = "bf16",
         mem_config: str | None = None,
+        torch_value: Any | None = None,
     ) -> None:
         self.name = name
-        self.shape = shape or [32, 1, 16]
-        self.dtype = dtype
+        self.torch_value = torch_value
+        self.shape = (
+            list(torch_value.shape)
+            if torch_value is not None
+            else shape or [32, 1, 16]
+        )
+        self.dtype = str(torch_value.dtype) if torch_value is not None else dtype
         self._mem_config = mem_config
 
     def memory_config(self) -> str | None:
@@ -223,6 +278,69 @@ class FakeTensor:
 
     def __repr__(self) -> str:
         return f"FakeTensor({self.name})"
+
+
+class MiniTensor:
+    def __init__(self, values: Any, dtype: str = "float32") -> None:
+        np_dtype = np.int64 if dtype.startswith("int") else np.float64
+        self.array = np.array(values, dtype=np_dtype)
+        self.dtype = dtype
+        self.shape = list(self.array.shape)
+
+    def transpose(self, dim0: int, dim1: int) -> "MiniTensor":
+        return MiniTensor(np.swapaxes(self.array, dim0, dim1), self.dtype)
+
+    def mean(self, *, dim: int, keepdim: bool) -> "MiniTensor":
+        return MiniTensor(
+            np.mean(self.array, axis=dim, keepdims=keepdim),
+            self.dtype,
+        )
+
+    def reshape(self, *shape: int) -> "MiniTensor":
+        if len(shape) == 1 and isinstance(shape[0], tuple):
+            shape = shape[0]
+        return MiniTensor(np.reshape(self.array, shape), self.dtype)
+
+    def tolist(self) -> list[Any]:
+        return self.array.tolist()
+
+    def detach(self) -> "MiniTensor":
+        return self
+
+    def cpu(self) -> "MiniTensor":
+        return self
+
+    def __matmul__(self, other: Any) -> "MiniTensor":
+        return MiniTensor(self.array @ _mini_array(other), self.dtype)
+
+    def __add__(self, other: Any) -> "MiniTensor":
+        return MiniTensor(self.array + _mini_array(other), self.dtype)
+
+    def __radd__(self, other: Any) -> "MiniTensor":
+        return self.__add__(other)
+
+    def __mul__(self, other: Any) -> "MiniTensor":
+        return MiniTensor(self.array * _mini_array(other), self.dtype)
+
+    def __rmul__(self, other: Any) -> "MiniTensor":
+        return self.__mul__(other)
+
+    def __truediv__(self, other: Any) -> "MiniTensor":
+        return MiniTensor(self.array / _mini_array(other), self.dtype)
+
+    def __rtruediv__(self, other: Any) -> "MiniTensor":
+        return MiniTensor(_mini_array(other) / self.array, self.dtype)
+
+    def __neg__(self) -> "MiniTensor":
+        return MiniTensor(-self.array, self.dtype)
+
+
+def _mini_array(value: Any) -> np.ndarray:
+    if isinstance(value, MiniTensor):
+        return value.array
+    if isinstance(value, FakeTensor) and value.torch_value is not None:
+        return value.torch_value.array
+    return np.array(value)
 
 
 def _fake_parameters(split_count: int):
@@ -251,6 +369,81 @@ def _fake_parameters(split_count: int):
     )
 
 
+def _fake_numeric_parameters(split_count: int):
+    hidden_size = 16
+    intermediate_size = 32
+    vocab_size = 128
+    shard_size = vocab_size // split_count
+
+    def matrix(name: str, shape: tuple[int, int]) -> MiniTensor:
+        values = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+        values = (values + 1.0) / (1000.0 + len(name))
+        return MiniTensor(values)
+
+    return types.SimpleNamespace(
+        embedding=types.SimpleNamespace(
+            weight=matrix("embedding", (vocab_size, hidden_size)),
+        ),
+        layers=[
+            types.SimpleNamespace(
+                input_norm=types.SimpleNamespace(
+                    weight=MiniTensor(np.ones(hidden_size)),
+                ),
+                post_attention_norm=types.SimpleNamespace(
+                    weight=MiniTensor(np.ones(hidden_size) * 0.5),
+                ),
+                mlp=types.SimpleNamespace(
+                    gate_proj=types.SimpleNamespace(
+                        weight=matrix("gate", (intermediate_size, hidden_size)),
+                    ),
+                    up_proj=types.SimpleNamespace(
+                        weight=matrix("up", (intermediate_size, hidden_size)),
+                    ),
+                    down_proj=types.SimpleNamespace(
+                        weight=matrix("down", (hidden_size, intermediate_size)),
+                    ),
+                ),
+            )
+        ],
+        final_norm=types.SimpleNamespace(
+            weight=MiniTensor(np.ones(hidden_size) * 0.75),
+        ),
+        lm_head=types.SimpleNamespace(
+            splits=[
+                types.SimpleNamespace(
+                    weight=matrix(f"lm_head_{index}", (shard_size, hidden_size)),
+                )
+                for index in range(split_count)
+            ]
+        ),
+    )
+
+
+def _fake_numeric_torch():
+    module = types.SimpleNamespace()
+    module.float32 = "float32"
+    module.int64 = "int64"
+
+    def embedding(token_ids: MiniTensor, weight: MiniTensor) -> MiniTensor:
+        return MiniTensor(weight.array[token_ids.array.astype(np.int64)])
+
+    def silu(tensor: MiniTensor) -> MiniTensor:
+        return MiniTensor(tensor.array / (1.0 + np.exp(-tensor.array)))
+
+    module.nn = types.SimpleNamespace(
+        functional=types.SimpleNamespace(embedding=embedding, silu=silu)
+    )
+    module.rsqrt = lambda tensor: MiniTensor(1.0 / np.sqrt(tensor.array))
+    module.cat = lambda tensors, dim: MiniTensor(
+        np.concatenate([tensor.array for tensor in tensors], axis=dim)
+    )
+    module.argmax = lambda tensor, dim: MiniTensor(
+        np.argmax(tensor.array, axis=dim),
+        dtype="int64",
+    )
+    return module
+
+
 def _make_fake_ttnn():
     module = types.ModuleType("ttnn")
     module.calls = []
@@ -263,6 +456,12 @@ def _make_fake_ttnn():
         return ("UnaryWithParam", op)
 
     def embedding(token_ids, weight, **kwargs):
+        torch_value = None
+        if _has_numeric(token_ids) and _has_numeric(weight):
+            torch_value = _fake_numeric_torch().nn.functional.embedding(
+                _to_mini(token_ids),
+                _to_mini(weight),
+            )
         module.calls.append(
             {
                 "op": "embedding",
@@ -271,7 +470,11 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor(f"embedding:{weight}", mem_config=kwargs.get("memory_config"))
+        return FakeTensor(
+            f"embedding:{weight}",
+            mem_config=kwargs.get("memory_config"),
+            torch_value=torch_value,
+        )
 
     def from_torch(tensor, **kwargs):
         module.calls.append(
@@ -285,9 +488,25 @@ def _make_fake_ttnn():
             getattr(tensor, "name", "torch_tensor"),
             list(tensor.shape),
             dtype=str(getattr(tensor, "dtype", None)),
+            torch_value=tensor if isinstance(tensor, MiniTensor) else None,
         )
 
     def rms_norm(hidden, **kwargs):
+        torch_value = None
+        if _has_numeric(hidden) and _has_numeric(kwargs.get("weight")):
+            hidden_value = _to_mini(hidden)
+            weight_value = _to_mini(kwargs["weight"])
+            variance = (hidden_value * hidden_value).mean(
+                dim=-1,
+                keepdim=True,
+            )
+            torch_value = (
+                hidden_value
+                * _fake_numeric_torch().rsqrt(
+                    variance + float(kwargs.get("epsilon", 1e-5))
+                )
+                * weight_value
+            )
         module.calls.append(
             {
                 "op": "rms_norm",
@@ -298,9 +517,13 @@ def _make_fake_ttnn():
         return FakeTensor(
             f"rms_norm:{kwargs.get('weight')}",
             mem_config=kwargs.get("memory_config"),
+            torch_value=torch_value,
         )
 
     def linear(activation, weight, **kwargs):
+        torch_value = None
+        if _has_numeric(activation) and _has_numeric(weight):
+            torch_value = _to_mini(activation) @ _to_mini(weight).transpose(-1, -2)
         module.calls.append(
             {
                 "op": "linear",
@@ -309,9 +532,19 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor(f"linear:{weight}", mem_config=kwargs.get("memory_config"))
+        return FakeTensor(
+            f"linear:{weight}",
+            mem_config=kwargs.get("memory_config"),
+            torch_value=torch_value,
+        )
 
     def mul(lhs, rhs, **kwargs):
+        torch_value = None
+        if _has_numeric(lhs) and _has_numeric(rhs):
+            lhs_value = _to_mini(lhs)
+            if kwargs.get("input_tensor_a_activations"):
+                lhs_value = _fake_numeric_torch().nn.functional.silu(lhs_value)
+            torch_value = lhs_value * _to_mini(rhs)
         module.calls.append(
             {
                 "op": "mul",
@@ -320,9 +553,16 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("mul_out", mem_config=kwargs.get("memory_config"))
+        return FakeTensor(
+            "mul_out",
+            mem_config=kwargs.get("memory_config"),
+            torch_value=torch_value,
+        )
 
     def add(lhs, rhs, **kwargs):
+        torch_value = None
+        if _has_numeric(lhs) and _has_numeric(rhs):
+            torch_value = _to_mini(lhs) + _to_mini(rhs)
         module.calls.append(
             {
                 "op": "add",
@@ -331,10 +571,20 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("add_out", mem_config=kwargs.get("memory_config"))
+        return FakeTensor(
+            "add_out",
+            mem_config=kwargs.get("memory_config"),
+            torch_value=torch_value,
+        )
 
     def concat(tensors, **kwargs):
         names = [getattr(tensor, "name", tensor) for tensor in tensors]
+        torch_value = None
+        if all(_has_numeric(tensor) for tensor in tensors):
+            torch_value = _fake_numeric_torch().cat(
+                [_to_mini(tensor) for tensor in tensors],
+                dim=int(kwargs.get("dim", -1)),
+            )
         module.calls.append(
             {
                 "op": "concat",
@@ -342,9 +592,18 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("concat:" + ",".join(names))
+        return FakeTensor(
+            "concat:" + ",".join(names),
+            torch_value=torch_value,
+        )
 
     def argmax(tensor, **kwargs):
+        torch_value = None
+        if _has_numeric(tensor):
+            torch_value = _fake_numeric_torch().argmax(
+                _to_mini(tensor),
+                dim=int(kwargs.get("dim", -1)),
+            )
         module.calls.append(
             {
                 "op": "argmax",
@@ -352,7 +611,18 @@ def _make_fake_ttnn():
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor(f"argmax:{getattr(tensor, 'name', tensor)}", [32])
+        return FakeTensor(
+            f"argmax:{getattr(tensor, 'name', tensor)}",
+            [32],
+            torch_value=torch_value,
+        )
+
+    def to_torch(tensor):
+        if isinstance(tensor, FakeTensor):
+            return tensor.torch_value
+        if isinstance(tensor, MiniTensor):
+            return tensor
+        return None
 
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
@@ -364,7 +634,22 @@ def _make_fake_ttnn():
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.to_torch = to_torch
     return module
+
+
+def _has_numeric(value: Any) -> bool:
+    return isinstance(value, MiniTensor) or (
+        isinstance(value, FakeTensor) and value.torch_value is not None
+    )
+
+
+def _to_mini(value: Any) -> MiniTensor:
+    if isinstance(value, MiniTensor):
+        return value
+    if isinstance(value, FakeTensor) and value.torch_value is not None:
+        return value.torch_value
+    raise TypeError(f"expected numeric fake tensor, got {type(value).__name__}")
 
 
 def _write_fake_model_config(model_dir: Path) -> None:

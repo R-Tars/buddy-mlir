@@ -373,6 +373,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="TTNN device id to open when hardware is available.",
     )
     smoke_decode_shell.add_argument(
+        "--pcc-threshold",
+        type=float,
+        default=0.99,
+        help="Minimum final-hidden PCC required when torch reference runs.",
+    )
+    smoke_decode_shell.add_argument(
         "--dry-run",
         action="store_true",
         help="Write the decode shell report schema without opening a device.",
@@ -1323,6 +1329,7 @@ def _cmd_smoke_decode_shell(args: argparse.Namespace) -> int:
         device_id=args.device_id,
         model_path=args.model_path,
         dry_run=args.dry_run,
+        pcc_threshold=args.pcc_threshold,
     )
     print(f"wrote decode shell smoke report: {args.out}")
     if report.get("status") == "no_device":

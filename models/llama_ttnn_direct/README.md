@@ -729,6 +729,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --layers 1 \
   --disable-attention \
   --device p150a \
+  --pcc-threshold 0.99 \
   --out /tmp/decode_shell_report.json
 ```
 
@@ -739,11 +740,14 @@ composed before attention primitive bring-up.
 Successful non-dry-run reports now include a `reference` block with
 `kind=structural_shape_dtype`. It checks the expected layer count, disabled
 attention status, per-layer hidden shape/dtype, and final token shape/dtype.
-This is not a numeric PCC reference; `numeric_reference.status` remains
-`not_run` until a torch correctness reference is added. Reports also record
-`input_source`, `input_shapes.token_ids`, and `runtime_input_tensor_count` so
-real device bring-up can distinguish injected inputs from synthesized runtime
-inputs.
+When host torch parameters are available, the same block also includes
+`numeric_reference.kind=torch_decode_shell`, a final-hidden PCC check against a
+torch reference, and an optional token match after LM-head argmax. If host
+parameters or `ttnn.to_torch` output conversion are unavailable,
+`numeric_reference.status` remains `not_run` with the reason recorded. Reports
+also record `input_source`, `input_shapes.token_ids`, and
+`runtime_input_tensor_count` so real device bring-up can distinguish injected
+inputs from synthesized runtime inputs.
 
 ## Phase 2 PR-E: Attention Primitive Smoke
 
