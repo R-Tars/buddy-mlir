@@ -539,6 +539,15 @@ def validate_direct(
                 paths["decode_step_autotune_candidates_dir"]
             ),
             "candidate_count": autotune_report["candidate_count"],
+            "status_counts": autotune_report.get("status_counts", {}),
+            "reference_status_counts": autotune_report.get(
+                "reference_status_counts",
+                {},
+            ),
+            "trace_status_counts": autotune_report.get(
+                "trace_status_counts",
+                {},
+            ),
             "dry_run": autotune_report["dry_run"],
             "trace_enabled": autotune_report["trace_enabled"],
         }
@@ -843,6 +852,15 @@ def validate_real_decode(
             "autotune_report": str(paths["autotune_report"]),
             "candidates_dir": str(paths["autotune_candidates_dir"]),
             "candidate_count": autotune_report["candidate_count"],
+            "status_counts": autotune_report.get("status_counts", {}),
+            "passed_candidate_count": autotune_report.get(
+                "passed_candidate_count",
+                0,
+            ),
+            "failed_candidate_count": autotune_report.get(
+                "failed_candidate_count",
+                0,
+            ),
             "best": autotune_report.get("best", {}).get("id")
             if autotune_report.get("best") is not None
             else None,
@@ -851,8 +869,13 @@ def validate_real_decode(
                 if autotune_report.get("best") is not None
                 else None
             ),
-            "reference_status_counts": _candidate_reference_status_counts(
-                autotune_report
+            "reference_status_counts": autotune_report.get(
+                "reference_status_counts",
+                _candidate_reference_status_counts(autotune_report),
+            ),
+            "trace_status_counts": autotune_report.get(
+                "trace_status_counts",
+                {},
             ),
             "dry_run": autotune_report["dry_run"],
         }

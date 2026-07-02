@@ -1043,9 +1043,12 @@ The bundled minimal space covers LM-head split count, device argmax versus full
 logits, MLP intermediate dtype, attention SDPA output memory config, and concat
 heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
-profile report path, metric, bottleneck summary, and the lowest-latency `best`
-candidate when measurements are available. Candidates whose profile report does
-not pass the structural reference gate are not considered for `best`.
+profile report path, metric, bottleneck summary, status/reference/trace
+summaries, and the lowest-latency `best` candidate when measurements are
+available. Top-level `status_counts`, `reference_status_counts`, and
+`trace_status_counts` make failed or skipped candidate classes visible without
+opening every nested profile report. Candidates whose profile report does not
+pass the structural reference gate are not considered for `best`.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate

@@ -147,6 +147,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertTrue(decode_step_autotune["dry_run"])
             self.assertEqual(decode_step_autotune["candidate_count"], 32)
+            self.assertEqual(
+                decode_step_autotune["status_counts"],
+                {"dry_run_planned": 32},
+            )
 
             self.assertEqual(
                 report["steps"]["py_compile"]["compiled"],
@@ -162,6 +166,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
                 32,
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "status_counts"
+                ],
+                {"dry_run_planned": 32},
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "reference_status_counts"
+                ],
+                {},
             )
             self.assertEqual(
                 report["steps"]["decode_step_smoke_dry_run"][
@@ -330,6 +346,22 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["decode_step_autotune"]["candidate_count"],
                 1,
             )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["status_counts"],
+                {"profiled": 1},
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "passed_candidate_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "failed_candidate_count"
+                ],
+                0,
+            )
             self.assertIsNotNone(report["steps"]["decode_step_autotune"]["best"])
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["best_reference_status"],
@@ -338,6 +370,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["reference_status_counts"],
                 {"passed": 1},
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["trace_status_counts"],
+                {"captured_and_executed": 1},
             )
             smoke_report = json.loads(
                 (out_dir / "decode_step_smoke_report.json").read_text()
@@ -356,6 +392,11 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "decode_step_autotune_report.json").read_text()
             )
             self.assertEqual(autotune_report["best"]["reference_status"], "passed")
+            self.assertEqual(autotune_report["status_counts"], {"profiled": 1})
+            self.assertEqual(
+                autotune_report["trace_status_counts"],
+                {"captured_and_executed": 1},
+            )
             self.assertEqual(
                 autotune_report["candidates"][0]["reference_status"],
                 "passed",

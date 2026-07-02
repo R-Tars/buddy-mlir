@@ -88,14 +88,17 @@ def run_decode_step_autotune(
             ],
             "knobs": _candidate_knobs(candidate),
             "status": "dry_run_planned" if dry_run else "pending",
+            "passed": None,
             "metric": None,
             "profile_report": None,
             "bottleneck_summary": None,
             "parameter_source": None,
             "parameter_setup": None,
+            "trace_status": None,
             "reference_status": None,
             "reference_kind": None,
             "reference_failed_checks": [],
+            "error": None,
         }
         if not dry_run:
             profile = profile_decode_step(
@@ -114,9 +117,12 @@ def run_decode_step_autotune(
                 torch_module=torch_module,
             )
             record["status"] = str(profile["status"])
+            record["passed"] = bool(profile.get("passed"))
             record["parameter_source"] = profile.get("parameter_source")
             record["parameter_setup"] = profile.get("parameter_setup")
+            record["trace_status"] = (profile.get("trace") or {}).get("status")
             record.update(_reference_summary(profile))
+            record["error"] = profile.get("error")
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,
@@ -130,6 +136,12 @@ def run_decode_step_autotune(
                     best = dict(record)
         candidates.append(record)
 
+    status_counts = _candidate_field_counts(candidates, "status")
+    reference_status_counts = _candidate_field_counts(
+        candidates,
+        "reference_status",
+    )
+    trace_status_counts = _candidate_field_counts(candidates, "trace_status")
     return {
         "schema_version": 1,
         "search": "decode_step_minimal",
@@ -143,6 +155,15 @@ def run_decode_step_autotune(
         "trace_enabled": trace,
         "trace_iterations": trace_iterations if trace else 0,
         "candidate_count": len(candidates),
+        "status_counts": status_counts,
+        "passed_candidate_count": sum(
+            1 for candidate in candidates if candidate.get("passed") is True
+        ),
+        "failed_candidate_count": sum(
+            1 for candidate in candidates if candidate.get("passed") is False
+        ),
+        "reference_status_counts": reference_status_counts,
+        "trace_status_counts": trace_status_counts,
         "candidates_dir": _relative_or_absolute(candidate_root, out_path.parent),
         "candidates": candidates,
         "best": best,
@@ -213,6 +234,19 @@ def _reference_summary(report: dict[str, Any]) -> dict[str, Any]:
             if isinstance(check, dict) and not check.get("passed")
         ],
     }
+
+
+def _candidate_field_counts(
+    candidates: list[dict[str, Any]],
+    field: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        value = candidate.get(field)
+        if value is None:
+            continue
+        counts[str(value)] = counts.get(str(value), 0) + 1
+    return counts
 
 
 def _candidate_knobs(candidate: dict[str, Any]) -> dict[str, Any]:
