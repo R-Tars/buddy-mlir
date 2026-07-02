@@ -341,6 +341,7 @@ def _run_attention_layer(
         "qkv_linear",
         lambda: ttnn.linear(hidden, qkv_weight, memory_config=memory_config),
         input_shapes=_op_input_shapes("qkv_linear", plan),
+        expected_output_shapes=_op_expected_output_shapes("qkv_linear", plan),
         dtype=dtype_name,
         memory_config=memory_config,
     )
@@ -355,6 +356,10 @@ def _run_attention_layer(
             memory_config=memory_config,
         ),
         input_shapes=_op_input_shapes("nlp_create_qkv_heads_decode", plan),
+        expected_output_shapes=_op_expected_output_shapes(
+            "nlp_create_qkv_heads_decode",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=memory_config,
     )
@@ -374,6 +379,10 @@ def _run_attention_layer(
             transformation_matrix=transform,
         ),
         input_shapes=_op_input_shapes("rotary_embedding_decode", plan),
+        expected_output_shapes=_op_expected_output_shapes(
+            "rotary_embedding_decode",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=None,
     )
@@ -393,6 +402,10 @@ def _run_attention_layer(
             page_table=page_table,
         ),
         input_shapes=_op_input_shapes("paged_update_cache.k", plan),
+        expected_output_shapes=_op_expected_output_shapes(
+            "paged_update_cache.k",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=None,
     )
@@ -407,6 +420,10 @@ def _run_attention_layer(
             page_table=page_table,
         ),
         input_shapes=_op_input_shapes("paged_update_cache.v", plan),
+        expected_output_shapes=_op_expected_output_shapes(
+            "paged_update_cache.v",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=None,
     )
@@ -427,6 +444,10 @@ def _run_attention_layer(
             "paged_scaled_dot_product_attention_decode",
             plan,
         ),
+        expected_output_shapes=_op_expected_output_shapes(
+            "paged_scaled_dot_product_attention_decode",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=memory_config,
     )
@@ -440,6 +461,10 @@ def _run_attention_layer(
             memory_config=memory_config,
         ),
         input_shapes=_op_input_shapes("nlp_concat_heads_decode", plan),
+        expected_output_shapes=_op_expected_output_shapes(
+            "nlp_concat_heads_decode",
+            plan,
+        ),
         dtype=dtype_name,
         memory_config=memory_config,
     )
@@ -452,6 +477,7 @@ def _run_attention_layer(
         "o_proj_linear",
         lambda: ttnn.linear(concat, o_proj_weight, memory_config=memory_config),
         input_shapes=_op_input_shapes("o_proj_linear", plan),
+        expected_output_shapes=_op_expected_output_shapes("o_proj_linear", plan),
         dtype=dtype_name,
         memory_config=memory_config,
     )
@@ -472,11 +498,16 @@ def _time_op(
     fn: Callable[[], Any],
     *,
     input_shapes: dict[str, list[int]],
+    expected_output_shapes: dict[str, list[int]],
     dtype: str,
     memory_config: Any | None,
 ) -> Any:
     start = time.perf_counter()
     output = fn()
+    output_shapes = _output_shapes(
+        output,
+        expected_names=expected_output_shapes.keys(),
+    )
     latency_ms = (time.perf_counter() - start) * 1000.0
     reports.append(
         {
@@ -484,7 +515,8 @@ def _time_op(
             "status": "passed",
             "latency_ms": latency_ms,
             "input_shapes": input_shapes,
-            "output_shapes": _output_shapes(output),
+            "expected_output_shapes": expected_output_shapes,
+            "output_shapes": output_shapes,
             "dtype": dtype,
             "layout": "tile",
             "memory_config": _string_or_none(memory_config),
@@ -546,6 +578,7 @@ def _planned_op_report(
         "status": "planned",
         "latency_ms": 0.0,
         "input_shapes": _op_input_shapes(name, plan),
+        "expected_output_shapes": _op_expected_output_shapes(name, plan),
         "output_shapes": None,
         "dtype": dtype,
         "layout": "tile",
@@ -593,6 +626,32 @@ def _op_input_shapes(name: str, plan: dict[str, Any]) -> dict[str, list[int]]:
     return {
         input_name: list(shapes[input_name])
         for input_name in inputs_by_op[name]
+    }
+
+
+def _op_expected_output_shapes(
+    name: str,
+    plan: dict[str, Any],
+) -> dict[str, list[int]]:
+    shapes = {
+        **plan["expected_intermediate_shapes"],
+        **plan["expected_output_shapes"],
+        "key_cache": plan["input_shapes"]["key_cache"],
+        "value_cache": plan["input_shapes"]["value_cache"],
+    }
+    outputs_by_op = {
+        "qkv_linear": ["qkv"],
+        "nlp_create_qkv_heads_decode": ["query", "key", "value"],
+        "rotary_embedding_decode": ["query", "key"],
+        "paged_update_cache.k": ["key_cache"],
+        "paged_update_cache.v": ["value_cache"],
+        "paged_scaled_dot_product_attention_decode": ["attention"],
+        "nlp_concat_heads_decode": ["concat_heads"],
+        "o_proj_linear": ["attention_output"],
+    }
+    return {
+        output_name: list(shapes[output_name])
+        for output_name in outputs_by_op[name]
     }
 
 
@@ -747,8 +806,25 @@ def _attention_layer_reference(
             "primitive_count",
             len(primitive_reports),
             len(ATTENTION_LAYER_OPS),
-        )
+        ),
+        _value_check(
+            "primitive_sequence",
+            [report.get("primitive") for report in primitive_reports],
+            list(ATTENTION_LAYER_OPS),
+        ),
     ]
+    for report in primitive_reports:
+        primitive = str(report.get("primitive"))
+        expected_shapes = report.get("expected_output_shapes") or {}
+        output_shapes_by_name = report.get("output_shapes") or {}
+        for name, shape in expected_shapes.items():
+            checks.append(
+                _shape_check(
+                    f"primitive.{primitive}.{name}",
+                    output_shapes_by_name.get(name),
+                    expected=shape,
+                )
+            )
     for name, shape in plan["expected_output_shapes"].items():
         checks.append(
             _shape_check(
@@ -771,13 +847,25 @@ def _attention_layer_reference(
     }
 
 
-def _output_shapes(output: Any) -> dict[str, list[int] | None]:
+def _output_shapes(
+    output: Any,
+    *,
+    expected_names: Any | None = None,
+) -> dict[str, list[int] | None]:
+    names = list(expected_names or [])
     if isinstance(output, tuple):
-        names = ("query", "key", "value") if len(output) == 3 else ("query", "key")
+        if len(names) != len(output):
+            names = (
+                ["query", "key", "value"]
+                if len(output) == 3
+                else ["query", "key"]
+            )
         return {
             names[index]: _shape(tensor)
             for index, tensor in enumerate(output)
         }
+    if len(names) == 1:
+        return {names[0]: _shape(output)}
     return {"output": _shape(output)}
 
 

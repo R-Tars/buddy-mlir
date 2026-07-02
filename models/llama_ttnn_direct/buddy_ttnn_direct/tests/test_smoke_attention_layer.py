@@ -76,6 +76,8 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(first["primitive"], "qkv_linear")
             self.assertEqual(first["input_shapes"]["hidden"], [2, 1, 16])
             self.assertEqual(first["input_shapes"]["qkv_weight"], [16, 32])
+            self.assertEqual(first["expected_output_shapes"]["qkv"], [2, 1, 32])
+            self.assertIsNone(first["output_shapes"])
             self.assertEqual(first["dtype"], "bfloat16")
             self.assertEqual(first["layout"], "tile")
             self.assertEqual(first["memory_config"], "default_or_l1")
@@ -139,7 +141,27 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
             )
+            check_names = {
+                check["name"] for check in report["reference"]["checks"]
+            }
+            self.assertIn("primitive.qkv_linear.qkv", check_names)
+            self.assertIn(
+                "primitive.o_proj_linear.attention_output",
+                check_names,
+            )
             primitive_reports = report["primitive_reports"]
+            self.assertEqual(
+                primitive_reports[0]["expected_output_shapes"]["qkv"],
+                [2, 1, 32],
+            )
+            self.assertEqual(
+                primitive_reports[0]["output_shapes"]["qkv"],
+                [2, 1, 32],
+            )
+            self.assertEqual(
+                primitive_reports[-1]["output_shapes"]["attention_output"],
+                [2, 1, 16],
+            )
             self.assertEqual(
                 primitive_reports[2]["input_shapes"]["query"],
                 [2, 4, 1, 4],
