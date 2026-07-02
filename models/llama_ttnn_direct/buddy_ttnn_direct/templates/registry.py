@@ -143,6 +143,7 @@ def build_execution_plan(
         "num_key_value_heads": graph.num_key_value_heads,
         "head_dim": graph.head_dim,
         "vocab_size": graph.vocab_size,
+        "rms_norm_eps": graph.rms_norm_eps,
         "template_config": {
             "device": config["device"],
             "model": config["model"],

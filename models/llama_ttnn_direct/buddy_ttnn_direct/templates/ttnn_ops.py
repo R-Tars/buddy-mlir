@@ -14,10 +14,7 @@ class UnsupportedTTNNOp(RuntimeError):
         searched = ", ".join(
             "ttnn." + ".".join(path) for path in searched_paths
         )
-        message = (
-            "Attention template official_paged_attention_decode requires "
-            f"TTNN op wrapper implementation: {op_name}"
-        )
+        message = f"TTNN Direct requires TTNN op wrapper implementation: {op_name}"
         if searched:
             message += f". Searched: {searched}"
         super().__init__(message)

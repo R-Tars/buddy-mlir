@@ -110,6 +110,8 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("self.ops.mul_silu", source)
             self.assertIn("self.ops.concat", source)
             self.assertIn("self.ops.argmax", source)
+            self.assertIn("self.ops.embedding", source)
+            self.assertIn("self.ops.rms_norm", source)
             self.assertIn("layer_params.wqkv_packed.weight", source)
             self.assertIn("self.ops.nlp_create_qkv_heads_decode", source)
             self.assertIn("self.rotary_embedding_decode", source)
@@ -118,7 +120,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("self.ops.nlp_concat_heads_decode", source)
             self.assertIn("layer_params.o_proj.weight", source)
             self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 8", source)
-            self.assertIn("raise NotImplementedError", source)
+            self.assertNotIn("raise NotImplementedError", source)
 
             py_compile.compile(
                 str(out_dir / "model.py"),
@@ -134,6 +136,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(config["head_dim"], 4)
             self.assertEqual(config["vocab_size"], 128)
             self.assertEqual(config["template_config"]["device"], "p150a")
+            self.assertEqual(config["embedding"]["output_memory_config"], None)
+            self.assertEqual(config["rms_norm"]["eps"], 1e-5)
+            self.assertEqual(config["mlp"]["template"], "official_gated_mlp_decode")
             self.assertEqual(
                 config["attention"]["op_sequence"],
                 official_paged_attention_decode_op_sequence(),
@@ -152,6 +157,87 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(config["generation"]["mode"], "greedy")
             copied_plan = json.loads((out_dir / "plan.json").read_text())
             self.assertEqual(copied_plan["layers"], plan["layers"])
+
+    def test_generated_embedding_and_norm_use_ttnn_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            parameters = _ns(
+                embedding=_ns(weight="embed_weight"),
+                layers=[
+                    _ns(
+                        input_norm=_ns(weight="attn_norm_weight"),
+                        post_attention_norm=_ns(weight="mlp_norm_weight"),
+                    )
+                ],
+                final_norm=_ns(weight="final_norm_weight"),
+            )
+            config = _ns(
+                num_layers=1,
+                embedding=_ns(
+                    output_memory_config="embed_mem",
+                    output_dtype="bf16",
+                ),
+                rms_norm=_ns(
+                    eps=1e-5,
+                    output_memory_config="norm_mem",
+                    output_dtype="bf16",
+                ),
+            )
+            model = generated.BuddyLlama31TTNN(
+                device=None,
+                parameters=parameters,
+                config=config,
+            )
+
+            embedded = model.embed("token_ids")
+            attn_norm = model.rmsnorm(_FakeTensor("hidden"), 0, kind="attn")
+            mlp_norm = model.rmsnorm(_FakeTensor("hidden"), 0, kind="mlp")
+            final_norm = model.final_norm(_FakeTensor("hidden"))
+
+            self.assertEqual(embedded.name, "embedding:embed_weight")
+            self.assertEqual(attn_norm.name, "rms_norm:attn_norm_weight")
+            self.assertEqual(mlp_norm.name, "rms_norm:mlp_norm_weight")
+            self.assertEqual(final_norm.name, "rms_norm:final_norm_weight")
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls],
+                ["embedding", "rms_norm", "rms_norm", "rms_norm"],
+            )
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"],
+                {"memory_config": "embed_mem", "dtype": "bf16"},
+            )
+            self.assertEqual(
+                fake_ttnn.calls[1]["kwargs"],
+                {
+                    "weight": "attn_norm_weight",
+                    "epsilon": 1e-5,
+                    "memory_config": "norm_mem",
+                    "dtype": "bf16",
+                },
+            )
 
     def test_lm_head_split_count_changes_codegen_and_config(self) -> None:
         configs = {}
@@ -528,6 +614,30 @@ def _make_fake_ttnn_module():
         )
         return _FakeTensor(f"linear:{weight}", kwargs.get("memory_config"))
 
+    def embedding(token_ids, weight, **kwargs):
+        module.calls.append(
+            {
+                "op": "embedding",
+                "token_ids": token_ids,
+                "weight": weight,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(f"embedding:{weight}", kwargs.get("memory_config"))
+
+    def rms_norm(hidden, **kwargs):
+        module.calls.append(
+            {
+                "op": "rms_norm",
+                "hidden": getattr(hidden, "name", hidden),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(
+            f"rms_norm:{kwargs.get('weight')}",
+            kwargs.get("memory_config"),
+        )
+
     def mul(lhs, rhs, **kwargs):
         module.calls.append(
             {
@@ -634,6 +744,8 @@ def _make_fake_ttnn_module():
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
     module.linear = linear
+    module.embedding = embedding
+    module.rms_norm = rms_norm
     module.mul = mul
     module.add = add
     module.concat = concat

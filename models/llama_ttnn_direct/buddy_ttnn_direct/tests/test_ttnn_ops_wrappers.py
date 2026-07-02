@@ -174,10 +174,10 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                 "v_cache",
                 "page_table",
                 "pos",
-            )
+        )
 
         message = str(ctx.exception)
-        self.assertIn("official_paged_attention_decode", message)
+        self.assertIn("TTNN Direct", message)
         self.assertIn("paged_scaled_dot_product_attention_decode", message)
         self.assertIn(
             "ttnn.transformer.paged_scaled_dot_product_attention_decode",

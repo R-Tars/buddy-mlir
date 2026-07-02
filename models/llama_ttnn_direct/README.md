@@ -588,3 +588,51 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report records each planned or converted tensor path, target dtype, layout,
 memory config placeholder, and shape when host tensors are available.
+
+## Phase 2 PR-D: Decode Shell Without Attention
+
+Generated `model.py` now routes embedding, per-layer RMSNorm, and final
+RMSNorm through `TTNNCompatOps` instead of raising `NotImplementedError`.
+Missing TTNN primitives fail explicitly with `UnsupportedTTNNOp`.
+
+The first decode-shell smoke path runs the generated program with attention
+disabled:
+
+```text
+token ids
+embedding
+per-layer RMSNorm + MLP + residual add
+final RMSNorm
+split LM-head + greedy argmax
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-decode-shell \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 1 \
+  --disable-attention \
+  --device p150a \
+  --dry-run \
+  --out /tmp/decode_shell_report.json
+```
+
+Device mode additionally needs the local model path so host parameters can be
+materialized and converted for the shell:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-decode-shell \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 1 \
+  --disable-attention \
+  --device p150a \
+  --out /tmp/decode_shell_report.json
+```
+
+This smoke command intentionally does not execute attention. Its purpose is to
+validate that generated embedding/RMSNorm/MLP/LM-head code can be loaded and
+composed before attention primitive bring-up.

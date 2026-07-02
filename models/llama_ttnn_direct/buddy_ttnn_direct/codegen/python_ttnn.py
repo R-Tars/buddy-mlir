@@ -92,6 +92,15 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         "template_config": template_config,
         "layers": copy.deepcopy(plan["layers"]),
         "final": copy.deepcopy(plan["final"]),
+        "embedding": {
+            "output_memory_config": None,
+            "output_dtype": None,
+        },
+        "rms_norm": {
+            "eps": plan.get("rms_norm_eps"),
+            "output_memory_config": None,
+            "output_dtype": None,
+        },
         "attention": {
             "template": "official_paged_attention_decode",
             "op_sequence": official_paged_attention_decode_op_sequence(),
@@ -109,6 +118,18 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "o_proj_program_config": None,
             "o_proj_compute_kernel_config": None,
             "o_proj_output_dtype": None,
+        },
+        "mlp": {
+            "template": "official_gated_mlp_decode",
+            "gate_output_memory_config": None,
+            "gate_program_config": None,
+            "up_output_memory_config": None,
+            "up_program_config": None,
+            "down_output_memory_config": None,
+            "down_program_config": None,
+            "compute_kernel_config": None,
+            "intermediate_dtype": None,
+            "output_dtype": None,
         },
         "lm_head": {
             "template": "official_split_lm_head",
@@ -147,6 +168,10 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
     lm_head_template = _template_name(plan, "official_split_lm_head")
     generation_template = config["generation"]["template"]
     lm_head_split_count = int(config["lm_head"]["split_count"])
+    rms_norm_eps = config["rms_norm"]["eps"]
+    if rms_norm_eps is None:
+        rms_norm_eps = 1e-5
+    rms_norm_eps = float(rms_norm_eps)
 
     return (
         textwrap.dedent(
@@ -252,6 +277,51 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     if silu is None:
                         return None
                     return unary_with_param(silu)
+
+                def embedding(
+                    self,
+                    token_ids,
+                    weight,
+                    *,
+                    memory_config=None,
+                    dtype=None,
+                ):
+                    op = getattr(self.ttnn, "embedding", None)
+                    if op is None:
+                        raise ttnn_ops.UnsupportedTTNNOp(
+                            "embedding",
+                            (("embedding",),),
+                        )
+                    kwargs = {{}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if dtype is not None:
+                        kwargs["dtype"] = dtype
+                    return op(token_ids, weight, **kwargs)
+
+                def rms_norm(
+                    self,
+                    hidden,
+                    weight,
+                    *,
+                    epsilon,
+                    memory_config=None,
+                    dtype=None,
+                ):
+                    op = getattr(self.ttnn, "rms_norm", None)
+                    if op is None:
+                        op = getattr(self.ttnn, "rmsnorm", None)
+                    if op is None:
+                        raise ttnn_ops.UnsupportedTTNNOp(
+                            "rms_norm",
+                            (("rms_norm",), ("rmsnorm",)),
+                        )
+                    kwargs = {{"weight": weight, "epsilon": epsilon}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if dtype is not None:
+                        kwargs["dtype"] = dtype
+                    return op(hidden, **kwargs)
 
                 def nlp_create_qkv_heads_decode(
                     self,
@@ -396,21 +466,49 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     return hidden
 
                 def embed(self, token_ids):
-                    # TODO: ttnn.embedding for token ids.
-                    raise NotImplementedError(
-                        "Embedding template is not implemented in Phase 3."
+                    embedding_config = _optional_attr(
+                        self.config, "embedding", None
+                    )
+                    return self.ops.embedding(
+                        token_ids,
+                        self.parameters.embedding.weight,
+                        memory_config=_optional_attr(
+                            embedding_config, "output_memory_config"
+                        ),
+                        dtype=_optional_attr(
+                            embedding_config, "output_dtype"
+                        ),
                     )
 
                 def rmsnorm(self, hidden, layer_id, kind):
-                    # TODO: ttnn.rms_norm using per-layer RMSNorm weights.
-                    raise NotImplementedError(
-                        "RMSNorm template is not implemented in Phase 3."
-                    )
+                    layer_params = self.parameters.layers[layer_id]
+                    if kind == "attn":
+                        norm_params = layer_params.input_norm
+                    elif kind == "mlp":
+                        norm_params = layer_params.post_attention_norm
+                    else:
+                        raise ValueError(f"unknown RMSNorm kind: {{kind}}")
+                    return self._rmsnorm_with_weight(hidden, norm_params.weight)
 
                 def final_norm(self, hidden):
-                    # TODO: final ttnn.rms_norm before LM-head.
-                    raise NotImplementedError(
-                        "Final RMSNorm template is not implemented in Phase 3."
+                    return self._rmsnorm_with_weight(
+                        hidden,
+                        self.parameters.final_norm.weight,
+                    )
+
+                def _rmsnorm_with_weight(self, hidden, weight):
+                    rms_config = _optional_attr(self.config, "rms_norm", None)
+                    epsilon = _optional_attr(
+                        rms_config, "eps", GENERATED_RMS_NORM_EPS
+                    )
+                    return self.ops.rms_norm(
+                        hidden,
+                        weight,
+                        epsilon=epsilon,
+                        memory_config=_optional_attr(
+                            rms_config, "output_memory_config"
+                        ),
+                        dtype=_optional_attr(rms_config, "output_dtype"),
                     )
 
                 def attention_decode(
@@ -683,6 +781,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
             GENERATED_NUM_LAYERS = {num_layers}
             GENERATED_LM_HEAD_SPLIT_COUNT = {lm_head_split_count}
+            GENERATED_RMS_NORM_EPS = {rms_norm_eps!r}
             '''
         ).lstrip()
     )
@@ -698,8 +797,9 @@ def render_codegen_readme(plan: dict[str, Any]) -> str:
         The generated `model.py` defines the decode program structure and
         template method boundaries. Attention decode, MLP decode, and LM-head
         templates emit official-like TTNN calls through a small compatibility
-        wrapper; embedding and RMSNorm bodies still intentionally raise
-        `NotImplementedError`. Attention primitive wrappers raise
+        wrapper. Embedding and RMSNorm also route through `TTNNCompatOps` and
+        raise `UnsupportedTTNNOp` if the installed TTNN module does not expose
+        the required primitive. Attention primitive wrappers raise
         `UnsupportedTTNNOp` when the installed TTNN module lacks a required
         decode API.
 

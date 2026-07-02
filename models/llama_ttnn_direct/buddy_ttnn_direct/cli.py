@@ -37,6 +37,7 @@ from .search.report import dump_search_report
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
+from .smoke_decode_shell import run_smoke_decode_shell
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -284,6 +285,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output smoke report JSON path.",
     )
     smoke_mlp.set_defaults(func=_cmd_smoke_mlp)
+
+    smoke_decode_shell = subparsers.add_parser(
+        "smoke-decode-shell",
+        help=(
+            "Run or dry-run a one-layer generated decode shell with "
+            "attention disabled."
+        ),
+    )
+    smoke_decode_shell.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    smoke_decode_shell.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Local HF model directory. Required for non-dry-run execution.",
+    )
+    smoke_decode_shell.add_argument(
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of decoder layers to run in the shell.",
+    )
+    smoke_decode_shell.add_argument(
+        "--disable-attention",
+        action="store_true",
+        help="Required in PR-D; runs embedding/RMSNorm/MLP/LM-head only.",
+    )
+    smoke_decode_shell.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the smoke report.",
+    )
+    smoke_decode_shell.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    smoke_decode_shell.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the decode shell report schema without opening a device.",
+    )
+    smoke_decode_shell.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output decode shell smoke report JSON path.",
+    )
+    smoke_decode_shell.set_defaults(func=_cmd_smoke_decode_shell)
 
     profile = subparsers.add_parser(
         "profile-template",
@@ -673,6 +728,24 @@ def _cmd_smoke_mlp(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     print(f"wrote MLP smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_smoke_decode_shell(args: argparse.Namespace) -> int:
+    report = run_smoke_decode_shell(
+        out=args.out,
+        program_dir=args.program_dir,
+        layers=args.layers,
+        disable_attention=args.disable_attention,
+        device=args.device,
+        device_id=args.device_id,
+        model_path=args.model_path,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote decode shell smoke report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
