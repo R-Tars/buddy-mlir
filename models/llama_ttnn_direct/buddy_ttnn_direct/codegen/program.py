@@ -149,6 +149,10 @@ def main(argv=None):
         default=0.99,
     )
     parser.add_argument(
+        "--require-decode-shell-numeric-reference",
+        action="store_true",
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -242,6 +246,9 @@ def main(argv=None):
         require_trace=args.require_trace,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=(
+            args.require_decode_shell_numeric_reference
+        ),
     )
     report_path = out_dir / "real_decode_validation_report.json"
     print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -344,6 +351,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --require-trace \
           --min-tokens-per-second-per-user 1.0 \
           --decode-shell-pcc-threshold 0.99 \
+          --require-decode-shell-numeric-reference \
           --out-dir /tmp/validate_ttnn_direct_real
         ```
 

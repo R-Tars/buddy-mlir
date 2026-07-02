@@ -620,6 +620,7 @@ def validate_real_decode(
     require_trace: bool = False,
     min_tokens_per_second_per_user: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
+    require_decode_shell_numeric_reference: bool = False,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -677,6 +678,9 @@ def validate_real_decode(
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
+        "require_decode_shell_numeric_reference": (
+            require_decode_shell_numeric_reference
+        ),
         "results": {
             step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
         },
@@ -947,6 +951,9 @@ def validate_real_decode(
         report,
         require_trace=require_trace,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        require_decode_shell_numeric_reference=(
+            require_decode_shell_numeric_reference
+        ),
     )
     report["acceptance"] = acceptance
     report["status"] = (
@@ -977,6 +984,7 @@ def _real_decode_acceptance(
     *,
     require_trace: bool,
     min_tokens_per_second_per_user: float | None,
+    require_decode_shell_numeric_reference: bool,
 ) -> dict[str, Any]:
     if report.get("dry_run"):
         return {
@@ -985,6 +993,9 @@ def _real_decode_acceptance(
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
+            ),
+            "require_decode_shell_numeric_reference": (
+                require_decode_shell_numeric_reference
             ),
             "checks": [],
             "message": "Dry run only; runtime acceptance was not evaluated.",
@@ -1014,6 +1025,15 @@ def _real_decode_acceptance(
             expected="passed",
         ),
     ]
+    if require_decode_shell_numeric_reference:
+        checks.append(
+            _acceptance_check(
+                "decode_shell.numeric_reference_status",
+                decode_shell.get("numeric_reference_status") == "passed",
+                observed=decode_shell.get("numeric_reference_status"),
+                expected="passed",
+            )
+        )
     if require_trace:
         checks.extend(
             [
@@ -1051,6 +1071,9 @@ def _real_decode_acceptance(
         "passed": passed,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "require_decode_shell_numeric_reference": (
+            require_decode_shell_numeric_reference
+        ),
         "checks": checks,
     }
 

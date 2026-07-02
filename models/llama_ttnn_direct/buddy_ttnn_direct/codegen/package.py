@@ -131,7 +131,8 @@ python run_decode.py --mode smoke --dry-run --out /tmp/decode_step_smoke.json
 python run_decode.py --mode profile --dry-run --out /tmp/decode_step_profile.json
 python run_decode.py --mode validate-real --dry-run --require-trace \\
   --min-tokens-per-second-per-user 1.0 \\
-  --decode-shell-pcc-threshold 0.99 --out-dir /tmp/validate_real
+  --decode-shell-pcc-threshold 0.99 \\
+  --require-decode-shell-numeric-reference --out-dir /tmp/validate_real
 ```
 """
 

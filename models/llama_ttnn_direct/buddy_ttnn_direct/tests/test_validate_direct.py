@@ -239,6 +239,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "--require-trace",
                     "--min-tokens-per-second-per-user",
                     "1.0",
+                    "--require-decode-shell-numeric-reference",
                     "--dry-run",
                     "--out-dir",
                     str(out_dir),
@@ -263,6 +264,11 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["acceptance"]["status"], "dry_run")
             self.assertTrue(report["acceptance"]["passed"])
             self.assertTrue(report["acceptance"]["require_trace"])
+            self.assertTrue(
+                report["acceptance"][
+                    "require_decode_shell_numeric_reference"
+                ]
+            )
             self.assertEqual(
                 report["acceptance"]["min_tokens_per_second_per_user"],
                 1.0,
@@ -516,6 +522,61 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 [check["name"] for check in failed_checks],
                 ["profile_decode_step.tokens_per_second_per_user"],
+            )
+
+    def test_validate_real_decode_fails_when_numeric_shell_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    min_tokens_per_second_per_user=0.0,
+                    require_decode_shell_numeric_reference=True,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(
+                report["steps"]["decode_shell"]["numeric_reference_status"],
+                "not_run",
+            )
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_shell.numeric_reference_status"],
             )
 
     def test_cli_validate_direct_writes_failure_report(self) -> None:

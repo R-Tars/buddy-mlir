@@ -241,6 +241,7 @@ class BuildProgramTest(unittest.TestCase):
                     "1.0",
                     "--decode-shell-pcc-threshold",
                     "0.5",
+                    "--require-decode-shell-numeric-reference",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -269,6 +270,11 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 validation_payload["decode_shell_pcc_threshold"],
                 0.5,
+            )
+            self.assertTrue(
+                validation_payload[
+                    "require_decode_shell_numeric_reference"
+                ]
             )
             self.assertEqual(validation_payload["acceptance"]["status"], "dry_run")
             self.assertTrue(validation_payload["acceptance"]["require_trace"])

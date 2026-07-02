@@ -367,6 +367,7 @@ python /tmp/llama31_ttnn_program/run_decode.py \
   --require-trace \
   --min-tokens-per-second-per-user 1.0 \
   --decode-shell-pcc-threshold 0.99 \
+  --require-decode-shell-numeric-reference \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
@@ -583,6 +584,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --require-trace \
   --min-tokens-per-second-per-user 1.0 \
   --decode-shell-pcc-threshold 0.99 \
+  --require-decode-shell-numeric-reference \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
@@ -592,13 +594,15 @@ materialization, attention-disabled decode shell, smoke, profile, and autotune
 subreports. The decode shell gate runs before full decode-step smoke/profile
 so embedding/RMSNorm/MLP/LM-head correctness can fail early; when a torch
 reference can run, `--decode-shell-pcc-threshold` gates the final-hidden PCC.
+Use `--require-decode-shell-numeric-reference` for acceptance runs that should
+fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
 bring-up, or `--dry-run` to write the schema without loading safetensors or
-opening a TTNN device. With `--require-trace` and/or
-`--min-tokens-per-second-per-user`, the final report includes an `acceptance`
-block that checks shell and decode-step structural references, trace
-capture/execute status, and profile throughput before marking the validation as
-accepted.
+opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
+and/or `--min-tokens-per-second-per-user`, the final report includes an
+`acceptance` block that checks shell numeric/structural references, decode-step
+structural references, trace capture/execute status, and profile throughput
+before marking the validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

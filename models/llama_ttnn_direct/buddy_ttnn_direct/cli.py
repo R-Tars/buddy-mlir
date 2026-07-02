@@ -1200,6 +1200,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--require-decode-shell-numeric-reference",
+        action="store_true",
+        help=(
+            "Require the attention-disabled decode shell gate to run and pass "
+            "its torch numeric reference before accepting validation."
+        ),
+    )
+    validate_real.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -1719,6 +1727,9 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         require_trace=args.require_trace,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=(
+            args.require_decode_shell_numeric_reference
+        ),
     )
     print(
         "wrote TTNN Direct real decode validation report: "
