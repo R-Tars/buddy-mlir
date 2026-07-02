@@ -1,6 +1,7 @@
 """Code generation helpers for Buddy-TTNN Direct."""
 
 from .python_ttnn import (
+    CustomFusedRegionNotImplemented,
     build_codegen_config,
     dry_run_report,
     render_python_ttnn_model,
@@ -15,6 +16,7 @@ from .config_emit import (
 )
 
 __all__ = [
+    "CustomFusedRegionNotImplemented",
     "build_codegen_config",
     "dump_parameter_config",
     "dry_run_report",

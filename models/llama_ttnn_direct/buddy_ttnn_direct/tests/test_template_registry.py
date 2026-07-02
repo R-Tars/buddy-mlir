@@ -13,7 +13,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama impor
     import_hf_llama,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
+    CUSTOM_FUSED_LM_HEAD_TEMPLATE,
+    CUSTOM_FUSED_MLP_TEMPLATE,
     build_execution_plan,
+    find_custom_fused_templates,
 )
 
 
@@ -140,6 +143,44 @@ class TemplateRegistryTest(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "batch_size mismatch"):
             build_execution_plan(_fake_graph(), bad_config)
+
+    def test_plan_accepts_reserved_custom_fused_templates(self) -> None:
+        config = _seed_config()
+        config["mlp_template"] = CUSTOM_FUSED_MLP_TEMPLATE
+        config["lm_head_template"] = CUSTOM_FUSED_LM_HEAD_TEMPLATE
+
+        plan = build_execution_plan(_fake_graph(num_layers=2), config)
+
+        self.assertEqual(
+            plan["layers"][0]["templates"][4],
+            CUSTOM_FUSED_MLP_TEMPLATE,
+        )
+        self.assertEqual(
+            plan["final"][1],
+            CUSTOM_FUSED_LM_HEAD_TEMPLATE,
+        )
+        self.assertEqual(
+            find_custom_fused_templates(plan),
+            [
+                CUSTOM_FUSED_MLP_TEMPLATE,
+                CUSTOM_FUSED_LM_HEAD_TEMPLATE,
+            ],
+        )
+
+    def test_custom_ops_readme_documents_reserved_regions(self) -> None:
+        repo_root = Path(__file__).parents[4]
+        readme = (
+            repo_root
+            / "models"
+            / "llama_ttnn_direct"
+            / "buddy_ttnn_direct"
+            / "custom_ops"
+            / "README.md"
+        ).read_text()
+
+        self.assertIn("buddy_fused_mlp_decode", readme)
+        self.assertIn("buddy_lmhead_argmax_decode", readme)
+        self.assertIn("CustomFusedRegionNotImplemented", readme)
 
 
 if __name__ == "__main__":

@@ -2,8 +2,12 @@
 
 from . import ttnn_ops
 from .registry import (
+    CUSTOM_FUSED_LM_HEAD_TEMPLATE,
+    CUSTOM_FUSED_MLP_TEMPLATE,
+    CUSTOM_FUSED_REGION_TEMPLATES,
     build_execution_plan,
     dump_execution_plan,
+    find_custom_fused_templates,
     load_execution_plan,
     load_template_config,
     validate_template_config,
@@ -35,11 +39,15 @@ from .ttnn_ops import (
 
 __all__ = [
     "build_execution_plan",
+    "CUSTOM_FUSED_LM_HEAD_TEMPLATE",
+    "CUSTOM_FUSED_MLP_TEMPLATE",
+    "CUSTOM_FUSED_REGION_TEMPLATES",
     "diff_plan_against_official",
     "dump_attention_decode_op_sequence",
     "dump_execution_plan",
     "dump_plan_diff",
     "expand_plan_ops",
+    "find_custom_fused_templates",
     "load_execution_plan",
     "load_official_template",
     "load_template_config",

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.python_ttnn import (
+    CustomFusedRegionNotImplemented,
     build_codegen_config,
     render_python_ttnn_model,
 )
@@ -21,6 +22,8 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.attention_decode impor
     official_paged_attention_decode_op_sequence,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
+    CUSTOM_FUSED_LM_HEAD_TEMPLATE,
+    CUSTOM_FUSED_MLP_TEMPLATE,
     build_execution_plan,
     dump_execution_plan,
 )
@@ -176,6 +179,21 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             ],
         )
         self.assertEqual(configs[8]["lm_head"]["splits"][3]["vocab_end"], 64)
+
+    def test_custom_fused_templates_fail_codegen_explicitly(self) -> None:
+        plan = _fake_plan(num_layers=1)
+        plan["layers"][0]["templates"][4] = CUSTOM_FUSED_MLP_TEMPLATE
+        plan["final"][1] = CUSTOM_FUSED_LM_HEAD_TEMPLATE
+
+        with self.assertRaisesRegex(
+            CustomFusedRegionNotImplemented,
+            "CustomFusedRegionNotImplemented",
+        ) as ctx:
+            render_python_ttnn_model(plan)
+
+        message = str(ctx.exception)
+        self.assertIn(CUSTOM_FUSED_MLP_TEMPLATE, message)
+        self.assertIn(CUSTOM_FUSED_LM_HEAD_TEMPLATE, message)
 
     def test_generated_mlp_decode_uses_mockable_ttnn_wrappers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

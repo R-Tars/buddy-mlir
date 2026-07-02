@@ -457,3 +457,25 @@ codegen/
 
 Phase 14 does not run device measurements yet. Reports set `best` to `null`
 and mark dry-run candidates as `dry_run_generated`.
+
+## Phase 15: Custom Fused Region Hooks
+
+Phase 15 reserves template names for future custom TTNN fused regions:
+
+```json
+{
+  "mlp_template": "custom_buddy_fused_mlp_decode",
+  "lm_head_template": "custom_buddy_lmhead_argmax_decode"
+}
+```
+
+The template registry accepts these names and preserves them in the execution
+plan. Python TTNN codegen deliberately fails with
+`CustomFusedRegionNotImplemented` when either reserved template is selected, so
+there is no silent fallback to the official MLP or LM-head templates.
+
+The future op shapes are documented in:
+
+```text
+models/llama_ttnn_direct/buddy_ttnn_direct/custom_ops/README.md
+```
