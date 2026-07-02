@@ -714,3 +714,36 @@ host-to-device tensor conversion count, memory-config conversion count, dtype,
 layout, memory config placeholder, and TTNN version when available. This smoke
 path is still independent from full generated decode execution so individual
 attention issues stay easier to isolate.
+
+## Performance Step 1: Official Config Diff
+
+`diff-official-config` compares a generated TTNN Direct `config.json` against
+an official or official-like parity JSON. The comparison normalizes both sides
+into these sections:
+
+```text
+dtype_recipe
+compute_fidelity
+program_config
+memory_config
+core_grid
+lm_head
+paged_attention
+```
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  diff-official-config \
+  --ours /tmp/llama31_ttnn_direct_program/config.json \
+  --official models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
+  --out /tmp/official_config_diff.json
+```
+
+The bundled official config is a hand-written seed reference, not a measured
+TT-Transformers export. Replace `--official` with an imported or hand-curated
+official JSON when available. The report records missing fields, mismatches,
+extra fields, matching fields, and per-section summaries. Its purpose is to
+make parity gaps explicit before tuning dtype, compute fidelity, program
+config, memory config, core grid, LM-head strategy, or paged attention config.

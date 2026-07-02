@@ -11,6 +11,11 @@ from .codegen.config_emit import (
     emit_parameter_config,
     parameter_config_dry_run_report,
 )
+from .codegen.config_diff import (
+    default_official_config_path,
+    diff_official_config,
+    dump_config_diff,
+)
 from .codegen.package import (
     package_dry_run_report,
     package_ttnn_direct_program,
@@ -217,6 +222,33 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output structural diff JSON path.",
     )
     diff_plan.set_defaults(func=_cmd_diff_plan)
+
+    diff_official_config_parser = subparsers.add_parser(
+        "diff-official-config",
+        help=(
+            "Diff generated TTNN Direct config metadata against an official "
+            "or official-like config parity JSON."
+        ),
+    )
+    diff_official_config_parser.add_argument(
+        "--ours",
+        type=Path,
+        required=True,
+        help="Generated TTNN Direct config.json or normalized parity JSON.",
+    )
+    diff_official_config_parser.add_argument(
+        "--official",
+        type=Path,
+        default=default_official_config_path(),
+        help="Official or official-like config parity JSON.",
+    )
+    diff_official_config_parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output config parity diff JSON path.",
+    )
+    diff_official_config_parser.set_defaults(func=_cmd_diff_official_config)
 
     prepare_artifacts = subparsers.add_parser(
         "prepare-artifacts",
@@ -814,6 +846,15 @@ def _cmd_diff_plan(args: argparse.Namespace) -> int:
     diff = diff_plan_against_official(plan, official_template)
     dump_plan_diff(diff, args.out)
     print(f"wrote TTNN Direct plan diff: {args.out}")
+    return 0
+
+
+def _cmd_diff_official_config(args: argparse.Namespace) -> int:
+    diff = diff_official_config(args.ours, args.official)
+    dump_config_diff(diff, args.out)
+    print(f"wrote TTNN Direct official config diff: {args.out}")
+    print(f"  status: {diff['status']}")
+    print(f"  issues: {diff['summary']['issue_count']}")
     return 0
 
 

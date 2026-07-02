@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "model_name": "llama3.1-8b",
+  "source": "hand_written_official_like_seed_for_config_parity",
+  "notes": "Seed reference for diff-official-config. Replace with measured/imported TT-Transformers config when available.",
+  "parity_config": {
+    "dtype_recipe": {
+      "recipe": "official_like_performance_seed",
+      "embedding": "bfloat16",
+      "rms_norm": "bfloat16",
+      "attention_qkv": "bfloat8_b",
+      "attention_o_proj": "bfloat8_b",
+      "mlp_intermediate": "bfloat4_b",
+      "mlp_output": "bfloat8_b",
+      "lm_head": "bfloat8_b",
+      "kv_cache": "bfloat8_b"
+    },
+    "compute_fidelity": {
+      "attention_qkv": "HiFi2",
+      "attention_sdpa": "HiFi4",
+      "attention_o_proj": "HiFi2",
+      "mlp": "HiFi2",
+      "lm_head": "HiFi2"
+    },
+    "program_config": {
+      "attention_qkv": "official_p150a_qkv_decode_program",
+      "attention_sdpa": "official_p150a_paged_sdpa_decode_program",
+      "attention_o_proj": "official_p150a_o_proj_decode_program",
+      "mlp_gate": "official_p150a_mlp_gate_decode_program",
+      "mlp_up": "official_p150a_mlp_up_decode_program",
+      "mlp_down": "official_p150a_mlp_down_decode_program",
+      "lm_head_shards": "official_p150a_lm_head_sharded_programs"
+    },
+    "memory_config": {
+      "embedding": "dram",
+      "rms_norm": "l1_interleaved",
+      "attention_qkv": "l1_width_sharded",
+      "attention_heads": "l1_height_sharded",
+      "attention_sdpa": "l1_height_sharded",
+      "attention_concat_heads": "l1_width_sharded",
+      "attention_o_proj": "l1_width_sharded",
+      "mlp_gate": "l1_width_sharded",
+      "mlp_up": "l1_width_sharded",
+      "mlp_down": "l1_width_sharded",
+      "lm_head_output": "l1_width_sharded",
+      "lm_head_concat": "l1_interleaved",
+      "kv_cache": "paged_bfloat8_l1"
+    },
+    "core_grid": {
+      "attention": "p150a_attention_decode_grid",
+      "mlp": "p150a_mlp_decode_grid",
+      "lm_head": "p150a_lm_head_grid"
+    },
+    "lm_head": {
+      "template": "official_split_lm_head",
+      "split_count": 8,
+      "split_axis": "vocab",
+      "retain_logits": false,
+      "shard_count": 8,
+      "argmax_strategy": "local_global_argmax"
+    },
+    "paged_attention": {
+      "enabled": true,
+      "scale": "head_dim^-0.5",
+      "max_cache_len": 1024,
+      "page_block_size": 32,
+      "qkv_heads_memory_config": "l1_height_sharded",
+      "sdpa_program_config": "official_p150a_paged_sdpa_decode_program",
+      "sdpa_memory_config": "l1_height_sharded"
+    }
+  }
+}
