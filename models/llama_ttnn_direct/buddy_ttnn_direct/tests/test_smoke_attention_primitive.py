@@ -10,6 +10,7 @@ from typing import Any
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
+    PRIMITIVE_EXPECTED_OBSERVED_OPS,
     run_smoke_attention_primitive,
 )
 
@@ -93,7 +94,21 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                     self.assertEqual(report["status"], "passed")
                     self.assertIsNotNone(report["output_shapes"])
                     self.assertEqual(report["reference"]["status"], "passed")
-                    self.assertEqual(report["reference"]["kind"], "structural_shape")
+                    self.assertEqual(
+                        report["reference"]["kind"],
+                        "structural_shape_op_sequence",
+                    )
+                    self.assertEqual(
+                        report["reference"]["planned_ops"],
+                        PRIMITIVE_EXPECTED_OBSERVED_OPS[primitive],
+                    )
+                    self.assertIn(
+                        "observed_op_sequence",
+                        [
+                            check["name"]
+                            for check in report["reference"]["checks"]
+                        ],
+                    )
                     self.assertTrue(
                         all(
                             check["passed"]
@@ -154,6 +169,57 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             self.assertIn(
                 "paged_scaled_dot_product_attention_decode",
                 report["error"],
+            )
+            self.assertEqual(json.loads(out.read_text()), report)
+
+    def test_observed_op_mismatch_fails_structural_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "primitive_report.json"
+            fake_ttnn = _fake_ttnn()
+
+            def wrong_sdpa(q, k_cache, v_cache, **kwargs):
+                fake_ttnn.calls.append(
+                    {
+                        "op": "wrong_sdpa_decode",
+                        "query": q.name,
+                        "kwargs": dict(kwargs),
+                    }
+                )
+                return FakeTTNNTensor("attention", q.shape)
+
+            fake_ttnn.transformer.paged_scaled_dot_product_attention_decode = (
+                wrong_sdpa
+            )
+
+            report = run_smoke_attention_primitive(
+                out=out,
+                primitive="paged_scaled_dot_product_attention_decode",
+                device="p150a",
+                batch_size=2,
+                hidden_size=16,
+                num_heads=4,
+                num_kv_heads=2,
+                head_dim=4,
+                max_cache_len=16,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status"], "reference_mismatch")
+            self.assertEqual(report["reference"]["status"], "failed")
+            failed_checks = [
+                check
+                for check in report["reference"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["observed_op_sequence"],
+            )
+            self.assertEqual(
+                failed_checks[0]["missing_from_ordered_coverage"],
+                ["paged_scaled_dot_product_attention_decode"],
             )
             self.assertEqual(json.loads(out.read_text()), report)
 

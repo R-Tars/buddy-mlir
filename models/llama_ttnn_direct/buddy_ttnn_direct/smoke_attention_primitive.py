@@ -15,6 +15,7 @@ from .smoke_mlp import (
 from .smoke_decode_shell import (
     NUMERIC_REFERENCE_NOT_RUN_REASON,
     _dry_run_reference,
+    _op_sequence_coverage_check,
     _observed_op_sequence,
     _shape_check,
 )
@@ -32,6 +33,24 @@ ATTENTION_PRIMITIVES = (
     "nlp_concat_heads_decode",
     "o_proj_linear",
 )
+
+PRIMITIVE_EXPECTED_OBSERVED_OPS = {
+    "qkv_linear": ["linear"],
+    "nlp_create_qkv_heads_decode": ["nlp_create_qkv_heads_decode"],
+    "rotary_embedding_decode": [
+        "rotary_embedding_llama",
+        "rotary_embedding_llama",
+    ],
+    "paged_update_cache": ["paged_update_cache"],
+    "paged_scaled_dot_product_attention_decode": [
+        "paged_scaled_dot_product_attention_decode"
+    ],
+    "nlp_concat_heads_decode": [
+        "to_memory_config",
+        "nlp_concat_heads_decode",
+    ],
+    "o_proj_linear": ["linear"],
+}
 
 
 def run_smoke_attention_primitive(
@@ -591,9 +610,16 @@ def _attention_primitive_reference(
         )
         for name, shape in plan["expected_output_shapes"].items()
     ]
+    planned_ops = list(PRIMITIVE_EXPECTED_OBSERVED_OPS[primitive])
+    checks.append(
+        _op_sequence_coverage_check(
+            planned_ops=planned_ops,
+            observed_ops=observed_ops,
+        )
+    )
     passed = all(check["passed"] for check in checks)
     return {
-        "kind": "structural_shape",
+        "kind": "structural_shape_op_sequence",
         "status": "passed" if passed else "failed",
         "passed": passed,
         "numeric_reference": {
@@ -601,6 +627,7 @@ def _attention_primitive_reference(
             "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
         },
         "primitive": primitive,
+        "planned_ops": planned_ops,
         "observed_ops": observed_ops,
         "checks": checks,
     }

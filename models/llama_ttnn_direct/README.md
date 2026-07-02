@@ -821,9 +821,10 @@ count, TTNN environment metadata (`ttnn_environment.version`, module file, and
 detected tt-metal git commit when available), and explicit `api_mismatch`
 errors when a wrapper cannot find the expected TTNN API. This command
 deliberately does not compose a full attention layer. Successful non-dry-run
-reports include
-`reference.kind=structural_shape`, which checks observed output shapes against
-the primitive plan while keeping `numeric_reference.status=not_run`.
+reports include `reference.kind=structural_shape_op_sequence`, which checks
+observed output shapes against the primitive plan and verifies the expected
+raw TTNN wrapper call sequence, while keeping
+`numeric_reference.status=not_run`.
 
 ## Phase 2 PR-F: One-Layer Attention Smoke
 
