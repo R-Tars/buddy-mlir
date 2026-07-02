@@ -35,6 +35,11 @@ from .templates.diff import (
     dump_plan_diff,
     load_official_template,
 )
+from .validation import (
+    default_official_template_path,
+    default_search_space_path,
+    validate_direct,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -409,6 +414,50 @@ def build_parser() -> argparse.ArgumentParser:
         help="Generate candidate artifacts without running hardware metrics.",
     )
     search.set_defaults(func=_cmd_search)
+
+    validate = subparsers.add_parser(
+        "validate-direct",
+        help=(
+            "Run all device-free TTNN Direct dry-run/codegen/package checks "
+            "and write a JSON validation report."
+        ),
+    )
+    validate.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF Llama model directory or model id.",
+    )
+    validate.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Template seed config JSON.",
+    )
+    validate.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for validation artifacts and report.",
+    )
+    validate.add_argument(
+        "--official-template",
+        type=Path,
+        default=default_official_template_path(),
+        help="Official-like reference decode template JSON.",
+    )
+    validate.add_argument(
+        "--search-space",
+        type=Path,
+        default=default_search_space_path(),
+        help="Semantic autotune search space JSON.",
+    )
+    validate.add_argument(
+        "--metric",
+        default="latency_ms",
+        help="Search metric name. Phase 14 supports latency_ms only.",
+    )
+    validate.set_defaults(func=_cmd_validate_direct)
     return parser
 
 
@@ -601,6 +650,23 @@ def _cmd_search(args: argparse.Namespace) -> int:
     print(f"wrote TTNN Direct search report: {args.out}")
     print(f"  candidates: {report['candidates_dir']}")
     return 0
+
+
+def _cmd_validate_direct(args: argparse.Namespace) -> int:
+    report = validate_direct(
+        model_path=args.model_path,
+        config_path=args.config,
+        out_dir=args.out_dir,
+        official_template_path=args.official_template,
+        search_space_path=args.search_space,
+        metric=args.metric,
+    )
+    print(
+        "wrote TTNN Direct validation report: "
+        f"{args.out_dir / 'validation_report.json'}"
+    )
+    print(f"  status: {report['status']}")
+    return 0 if report["status"] == "pass" else 1
 
 
 def main(argv: list[str] | None = None) -> int:

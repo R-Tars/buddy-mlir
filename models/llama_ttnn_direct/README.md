@@ -479,3 +479,36 @@ The future op shapes are documented in:
 ```text
 models/llama_ttnn_direct/buddy_ttnn_direct/custom_ops/README.md
 ```
+
+## Phase 2 Kickoff: Direct Path Validation
+
+The first follow-up from the Phase 1 review is a unified `validate-direct`
+command. It runs the existing device-free checks in one place:
+
+```text
+import-llama
+plan
+diff-plan
+emit-config
+prepare-artifacts
+build-program
+py_compile generated Python
+search --dry-run
+package-program
+```
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  validate-direct \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --out-dir /tmp/validate_ttnn_direct
+```
+
+The command writes `/tmp/validate_ttnn_direct/validation_report.json` plus the
+intermediate semantic graph, execution plan, plan diff, parameter config,
+offline manifests, generated program, search artifacts, and package directory.
+It does not import TTNN, open a Tenstorrent device, load full tensor payloads,
+or add new runtime behavior.
