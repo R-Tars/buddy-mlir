@@ -433,8 +433,28 @@ class ValidateDirectTest(unittest.TestCase):
                 "passed",
             )
             self.assertEqual(
+                report["steps"]["smoke_decode_step"]["trace"]["iterations"],
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["smoke_decode_step"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
+            )
+            self.assertEqual(
                 report["steps"]["profile_decode_step"]["reference_status"],
                 "passed",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["trace"]["iterations"],
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
             )
             self.assertEqual(report["acceptance"]["status"], "passed")
             self.assertTrue(report["acceptance"]["passed"])
@@ -511,6 +531,22 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.tensorization_ttnn_memory_configs",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.trace_iterations",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.trace_execute_sample_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.trace_iterations",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.trace_execute_sample_count",
                 acceptance_check_names,
             )
             self.assertEqual(
@@ -653,6 +689,30 @@ class ValidateDirectTest(unittest.TestCase):
                     "trace_status"
                 ],
                 "captured_and_executed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
+                    "iterations"
+                ],
+                2,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"]["trace"][
+                    "iterations"
+                ],
+                2,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -819,6 +879,91 @@ class ValidateDirectTest(unittest.TestCase):
                     "batch_size"
                 ],
                 3,
+            )
+
+    def test_validate_real_decode_fails_on_trace_iteration_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_smoke = validation_module.run_smoke_decode_step
+
+            def smoke_with_wrong_trace_iterations(*args, **kwargs):
+                smoke = original_smoke(*args, **kwargs)
+                smoke["trace"]["iterations"] = 1
+                return smoke
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_step",
+                side_effect=smoke_with_wrong_trace_iterations,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        trace=True,
+                        trace_iterations=2,
+                        require_trace=True,
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["smoke_decode_step.trace_iterations"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["smoke_decode_step.trace_iterations"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
+                    "iterations"
+                ],
+                1,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
             )
 
     def test_validate_real_decode_fails_without_tt_metal_commit(self) -> None:

@@ -857,6 +857,7 @@ def validate_real_decode(
                 "tensor_conversion_count"
             ),
             "trace_status": smoke_report.get("trace", {}).get("status"),
+            "trace": _trace_summary(smoke_report.get("trace")),
             "ttnn_environment": smoke_report.get("ttnn_environment"),
             "parameter_setup": smoke_report.get("parameter_setup"),
             **_reference_summary(smoke_report),
@@ -896,6 +897,7 @@ def validate_real_decode(
             "throughput_summary": profile_report.get("throughput_summary"),
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
+            "trace": _trace_summary(profile_report.get("trace")),
             "ttnn_environment": profile_report.get("ttnn_environment"),
             "parameter_setup": profile_report.get("parameter_setup"),
             **_reference_summary(profile_report),
@@ -1046,6 +1048,27 @@ def _resolve_runtime_dimension(
     return resolved
 
 
+def _trace_summary(trace: Any) -> dict[str, Any]:
+    if not isinstance(trace, dict):
+        return {}
+    execute_samples = trace.get("execute_samples_ms")
+    if isinstance(execute_samples, list):
+        execute_sample_count = len(execute_samples)
+    else:
+        execute_sample_count = None
+    summary = {
+        "requested": trace.get("requested"),
+        "status": trace.get("status"),
+        "iterations": trace.get("iterations"),
+        "capture_latency_ms": trace.get("capture_latency_ms"),
+        "execute_latency_ms": trace.get("execute_latency_ms"),
+        "execute_sample_count": execute_sample_count,
+    }
+    if trace.get("error") is not None:
+        summary["error"] = trace.get("error")
+    return summary
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -1154,6 +1177,7 @@ def _real_decode_evidence_manifest(
                     "tensor_conversion_count"
                 ),
                 "trace_status": smoke.get("trace_status"),
+                "trace": smoke.get("trace"),
                 "reference_status": smoke.get("reference_status"),
                 "reference_kind": smoke.get("reference_kind"),
                 "reference_failed_checks": smoke.get(
@@ -1174,6 +1198,7 @@ def _real_decode_evidence_manifest(
                 ),
                 "tensor_conversion_ms": profile.get("tensor_conversion_ms"),
                 "trace_status": profile.get("trace_status"),
+                "trace": profile.get("trace"),
                 "reference_status": profile.get("reference_status"),
                 "reference_kind": profile.get("reference_kind"),
                 "reference_failed_checks": profile.get(
@@ -1282,10 +1307,13 @@ def _real_decode_acceptance(
     profile_tensorization = _step_tensorization_summary(profile)
     smoke_environment = _step_ttnn_environment(smoke)
     profile_environment = _step_ttnn_environment(profile)
+    smoke_trace = _step_trace_summary(smoke)
+    profile_trace = _step_trace_summary(profile)
     expected_layers = report.get("layers")
     expected_layer_ids = _expected_layer_ids(expected_layers)
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
+    expected_trace_iterations = report.get("trace_iterations")
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1509,10 +1537,46 @@ def _real_decode_acceptance(
                     expected="captured_and_executed",
                 ),
                 _acceptance_check(
+                    "smoke_decode_step.trace_iterations",
+                    _int_equal(
+                        smoke_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=smoke_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "smoke_decode_step.trace_execute_sample_count",
+                    _int_equal(
+                        smoke_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=smoke_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
                     "profile_decode_step.trace_status",
                     profile.get("trace_status") == "captured_and_executed",
                     observed=profile.get("trace_status"),
                     expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_iterations",
+                    _int_equal(
+                        profile_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=profile_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_execute_sample_count",
+                    _int_equal(
+                        profile_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=profile_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
                 ),
             ]
         )
@@ -1589,6 +1653,11 @@ def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
 def _step_ttnn_environment(step: dict[str, Any]) -> dict[str, Any]:
     environment = step.get("ttnn_environment") or {}
     return environment if isinstance(environment, dict) else {}
+
+
+def _step_trace_summary(step: dict[str, Any]) -> dict[str, Any]:
+    trace = step.get("trace") or {}
+    return trace if isinstance(trace, dict) else {}
 
 
 def _non_empty_string(value: Any) -> bool:
