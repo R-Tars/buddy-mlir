@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import py_compile
 import traceback
 from collections.abc import Callable
@@ -641,6 +642,23 @@ def validate_real_decode(
     report_path = root / "real_decode_validation_report.json"
     program_dir = Path(program_dir)
     model_path = Path(model_path)
+    program_config = _load_program_config(program_dir)
+    program_num_layers = int(program_config["num_layers"])
+    if layer_count > program_num_layers:
+        raise ValueError(
+            "layers must be <= generated config num_layers "
+            f"({program_num_layers})"
+        )
+    resolved_batch_size = _resolve_runtime_dimension(
+        "batch_size",
+        requested=batch_size,
+        fallback=program_config.get("batch_size"),
+    )
+    resolved_cache_len = _resolve_runtime_dimension(
+        "cache_len",
+        requested=cache_len,
+        fallback=program_config.get("max_cache_len"),
+    )
     decode_step_search_space_path = (
         Path(decode_step_search_space_path)
         if decode_step_search_space_path is not None
@@ -666,9 +684,12 @@ def validate_real_decode(
         "model_path": str(model_path),
         "out_dir": str(root),
         "decode_step_search_space": str(decode_step_search_space_path),
+        "program_num_layers": program_num_layers,
         "layers": layer_count,
-        "batch_size": batch_size,
-        "cache_len": cache_len,
+        "requested_batch_size": batch_size,
+        "requested_cache_len": cache_len,
+        "batch_size": resolved_batch_size,
+        "cache_len": resolved_cache_len,
         "device": device,
         "device_id": device_id,
         "dtype_seed": dtype_seed,
@@ -790,6 +811,7 @@ def validate_real_decode(
             "status": _runtime_step_status(shell_report, dry_run=dry_run),
             "decode_shell_report": str(paths["decode_shell_report"]),
             "runtime_status": shell_report["status"],
+            "layers": shell_report.get("layers_requested"),
             "parameter_source": shell_report.get("parameter_source"),
             "input_source": shell_report.get("input_source"),
             "runtime_input_tensor_count": shell_report.get(
@@ -813,8 +835,8 @@ def validate_real_decode(
             model_path=None if dry_run else model_path,
             device=device,
             device_id=device_id,
-            batch_size=batch_size,
-            cache_len=cache_len,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
             dtype_seed=dtype_seed,
             trace=trace,
             trace_iterations=trace_iterations,
@@ -826,6 +848,9 @@ def validate_real_decode(
             "status": _runtime_step_status(smoke_report, dry_run=dry_run),
             "smoke_report": str(paths["smoke_report"]),
             "runtime_status": smoke_report["status"],
+            "layers": smoke_report.get("layers"),
+            "batch_size": smoke_report.get("batch_size"),
+            "cache_len": smoke_report.get("cache_len"),
             "parameter_source": smoke_report.get("parameter_source"),
             "input_source": smoke_report.get("input_source"),
             "tensor_conversion_count": smoke_report.get(
@@ -845,8 +870,8 @@ def validate_real_decode(
             model_path=None if dry_run else model_path,
             device=device,
             device_id=device_id,
-            batch_size=batch_size,
-            cache_len=cache_len,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
             dtype_seed=dtype_seed,
             trace=trace,
             trace_iterations=trace_iterations,
@@ -859,6 +884,9 @@ def validate_real_decode(
             "status": _runtime_step_status(profile_report, dry_run=dry_run),
             "profile_report": str(paths["profile_report"]),
             "runtime_status": profile_report["status"],
+            "layers": profile_report.get("layers"),
+            "batch_size": profile_report.get("batch_size"),
+            "cache_len": profile_report.get("cache_len"),
             "parameter_source": profile_report.get("parameter_source"),
             "input_source": profile_report.get("input_source"),
             "tensor_conversion_count": profile_report.get(
@@ -885,8 +913,8 @@ def validate_real_decode(
             space=load_search_space(decode_step_search_space_path),
             out=paths["autotune_report"],
             layers=layer_count,
-            batch_size=batch_size,
-            cache_len=cache_len,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
             metric=metric,
             candidates_dir=paths["autotune_candidates_dir"],
             dry_run=dry_run,
@@ -993,6 +1021,31 @@ def _runtime_step_status(
     return str(runtime_report.get("status", "fail"))
 
 
+def _load_program_config(program_dir: Path) -> dict[str, Any]:
+    config_path = program_dir / "config.json"
+    config = json.loads(config_path.read_text())
+    for key in ("num_layers", "batch_size", "max_cache_len"):
+        if key not in config:
+            raise ValueError(f"generated program config missing {key!r}")
+    return config
+
+
+def _resolve_runtime_dimension(
+    name: str,
+    *,
+    requested: int | None,
+    fallback: Any,
+) -> int:
+    value = fallback if requested is None else requested
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if resolved <= 0:
+        raise ValueError(f"{name} must be positive")
+    return resolved
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -1025,7 +1078,10 @@ def _real_decode_evidence_manifest(
             "dry_run": report.get("dry_run"),
             "program_dir": report.get("program_dir"),
             "model_path": report.get("model_path"),
+            "program_num_layers": report.get("program_num_layers"),
             "layers": report.get("layers"),
+            "requested_batch_size": report.get("requested_batch_size"),
+            "requested_cache_len": report.get("requested_cache_len"),
             "batch_size": report.get("batch_size"),
             "cache_len": report.get("cache_len"),
             "device": report.get("device"),
@@ -1073,6 +1129,7 @@ def _real_decode_evidence_manifest(
             "decode_shell": {
                 "status": decode_shell.get("status"),
                 "runtime_status": decode_shell.get("runtime_status"),
+                "layers": decode_shell.get("layers"),
                 "parameter_source": decode_shell.get("parameter_source"),
                 "input_source": decode_shell.get("input_source"),
                 "reference_status": decode_shell.get("reference_status"),
@@ -1088,6 +1145,9 @@ def _real_decode_evidence_manifest(
             "smoke_decode_step": {
                 "status": smoke.get("status"),
                 "runtime_status": smoke.get("runtime_status"),
+                "layers": smoke.get("layers"),
+                "batch_size": smoke.get("batch_size"),
+                "cache_len": smoke.get("cache_len"),
                 "parameter_source": smoke.get("parameter_source"),
                 "input_source": smoke.get("input_source"),
                 "tensor_conversion_count": smoke.get(
@@ -1104,6 +1164,9 @@ def _real_decode_evidence_manifest(
             "profile_decode_step": {
                 "status": profile.get("status"),
                 "runtime_status": profile.get("runtime_status"),
+                "layers": profile.get("layers"),
+                "batch_size": profile.get("batch_size"),
+                "cache_len": profile.get("cache_len"),
                 "parameter_source": profile.get("parameter_source"),
                 "input_source": profile.get("input_source"),
                 "tensor_conversion_count": profile.get(
@@ -1219,12 +1282,28 @@ def _real_decode_acceptance(
     profile_tensorization = _step_tensorization_summary(profile)
     smoke_environment = _step_ttnn_environment(smoke)
     profile_environment = _step_ttnn_environment(profile)
+    expected_layers = report.get("layers")
+    expected_layer_ids = _expected_layer_ids(expected_layers)
+    expected_batch_size = report.get("batch_size")
+    expected_cache_len = report.get("cache_len")
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
             _positive_number(materialize.get("tensor_count")),
             observed=materialize.get("tensor_count"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "materialize_parameters.layer_ids",
+            materialize.get("materialized_layer_ids") == expected_layer_ids,
+            observed=materialize.get("materialized_layer_ids"),
+            expected=expected_layer_ids,
+        ),
+        _acceptance_check(
+            "decode_shell.layers",
+            _int_equal(decode_shell.get("layers"), expected_layers),
+            observed=decode_shell.get("layers"),
+            expected=expected_layers,
         ),
         _acceptance_check(
             "decode_shell.parameter_source",
@@ -1243,6 +1322,24 @@ def _real_decode_acceptance(
             smoke.get("parameter_source") == "hf_model",
             observed=smoke.get("parameter_source"),
             expected="hf_model",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.layers",
+            _int_equal(smoke.get("layers"), expected_layers),
+            observed=smoke.get("layers"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.batch_size",
+            _int_equal(smoke.get("batch_size"), expected_batch_size),
+            observed=smoke.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.cache_len",
+            _int_equal(smoke.get("cache_len"), expected_cache_len),
+            observed=smoke.get("cache_len"),
+            expected=expected_cache_len,
         ),
         _acceptance_check(
             "smoke_decode_step.tensor_conversion_count",
@@ -1311,6 +1408,24 @@ def _real_decode_acceptance(
             profile.get("parameter_source") == "hf_model",
             observed=profile.get("parameter_source"),
             expected="hf_model",
+        ),
+        _acceptance_check(
+            "profile_decode_step.layers",
+            _int_equal(profile.get("layers"), expected_layers),
+            observed=profile.get("layers"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "profile_decode_step.batch_size",
+            _int_equal(profile.get("batch_size"), expected_batch_size),
+            observed=profile.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "profile_decode_step.cache_len",
+            _int_equal(profile.get("cache_len"), expected_cache_len),
+            observed=profile.get("cache_len"),
+            expected=expected_cache_len,
         ),
         _acceptance_check(
             "profile_decode_step.tensor_conversion_count",
@@ -1446,6 +1561,23 @@ def _positive_number(value: Any) -> bool:
         return float(value) > 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _int_equal(observed: Any, expected: Any) -> bool:
+    try:
+        return int(observed) == int(expected)
+    except (TypeError, ValueError):
+        return False
+
+
+def _expected_layer_ids(layers: Any) -> list[int]:
+    try:
+        layer_count = int(layers)
+    except (TypeError, ValueError):
+        return []
+    if layer_count <= 0:
+        return []
+    return list(range(layer_count))
 
 
 def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:

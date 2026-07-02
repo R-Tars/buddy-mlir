@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from models.llama_ttnn_direct.buddy_ttnn_direct import (
+    validation as validation_module,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
@@ -253,6 +256,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["command"], "validate-real-decode")
             self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(report["requested_batch_size"], 2)
+            self.assertEqual(report["requested_cache_len"], 16)
+            self.assertEqual(report["batch_size"], 2)
+            self.assertEqual(report["cache_len"], 16)
             self.assertEqual(
                 list(report["results"]),
                 list(REAL_DECODE_VALIDATION_STEPS),
@@ -303,6 +310,8 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(evidence["status"], "dry_run")
             self.assertEqual(evidence["validation"]["status"], "dry_run")
+            self.assertEqual(evidence["validation"]["batch_size"], 2)
+            self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["requirements"]["require_trace"])
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
             artifact_names = {
@@ -372,6 +381,11 @@ class ValidateDirectTest(unittest.TestCase):
                 )
 
             self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["program_num_layers"], 2)
+            self.assertEqual(report["requested_batch_size"], 2)
+            self.assertEqual(report["requested_cache_len"], 16)
+            self.assertEqual(report["batch_size"], 2)
+            self.assertEqual(report["cache_len"], 16)
             self.assertEqual(report["evidence"]["status"], "accepted")
             self.assertEqual(
                 report["results"],
@@ -382,9 +396,16 @@ class ValidateDirectTest(unittest.TestCase):
                 21,
             )
             self.assertEqual(
+                report["steps"]["materialize_parameters"][
+                    "materialized_layer_ids"
+                ],
+                [0],
+            )
+            self.assertEqual(
                 report["steps"]["decode_shell"]["parameter_source"],
                 "hf_model",
             )
+            self.assertEqual(report["steps"]["decode_shell"]["layers"], 1)
             self.assertEqual(
                 report["steps"]["decode_shell"]["reference_status"],
                 "passed",
@@ -397,10 +418,16 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["smoke_decode_step"]["parameter_source"],
                 "hf_model",
             )
+            self.assertEqual(report["steps"]["smoke_decode_step"]["layers"], 1)
+            self.assertEqual(report["steps"]["smoke_decode_step"]["batch_size"], 2)
+            self.assertEqual(report["steps"]["smoke_decode_step"]["cache_len"], 16)
             self.assertEqual(
                 report["steps"]["profile_decode_step"]["parameter_source"],
                 "hf_model",
             )
+            self.assertEqual(report["steps"]["profile_decode_step"]["layers"], 1)
+            self.assertEqual(report["steps"]["profile_decode_step"]["batch_size"], 2)
+            self.assertEqual(report["steps"]["profile_decode_step"]["cache_len"], 16)
             self.assertEqual(
                 report["steps"]["smoke_decode_step"]["reference_status"],
                 "passed",
@@ -420,6 +447,22 @@ class ValidateDirectTest(unittest.TestCase):
             ]
             self.assertIn(
                 "materialize_parameters.tensor_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "materialize_parameters.layer_ids",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_shell.layers",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.batch_size",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.cache_len",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -444,6 +487,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.tensor_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.batch_size",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.cache_len",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -583,6 +634,8 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(evidence["validation"]["batch_size"], 2)
+            self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["acceptance"]["passed"])
             self.assertEqual(evidence["acceptance"]["failed_checks"], [])
             self.assertEqual(
@@ -600,6 +653,18 @@ class ValidateDirectTest(unittest.TestCase):
                     "trace_status"
                 ],
                 "captured_and_executed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "batch_size"
+                ],
+                2,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "cache_len"
+                ],
+                16,
             )
             self.assertEqual(
                 evidence["device_evidence"]["profile_ttnn_environment"][
@@ -678,6 +743,82 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 ["profile_decode_step.tokens_per_second_per_user"],
+            )
+
+    def test_validate_real_decode_fails_on_runtime_shape_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_profile = validation_module.profile_decode_step
+
+            def profile_with_wrong_batch_size(*args, **kwargs):
+                profile = original_profile(*args, **kwargs)
+                profile["batch_size"] = int(profile["batch_size"]) + 1
+                return profile
+
+            with patch.object(
+                validation_module,
+                "profile_decode_step",
+                side_effect=profile_with_wrong_batch_size,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["profile_decode_step.batch_size"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_decode_step.batch_size"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "batch_size"
+                ],
+                3,
             )
 
     def test_validate_real_decode_fails_without_tt_metal_commit(self) -> None:
