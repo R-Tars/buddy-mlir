@@ -89,6 +89,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)
             self.assertIn("--min-tokens-per-second-per-user", package_readme)
+            self.assertIn("--decode-shell-pcc-threshold", package_readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

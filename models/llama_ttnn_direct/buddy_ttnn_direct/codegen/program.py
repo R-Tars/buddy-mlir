@@ -144,6 +144,11 @@ def main(argv=None):
         default=None,
     )
     parser.add_argument(
+        "--decode-shell-pcc-threshold",
+        type=float,
+        default=0.99,
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -236,6 +241,7 @@ def main(argv=None):
         skip_autotune=args.skip_autotune,
         require_trace=args.require_trace,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
+        decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
     )
     report_path = out_dir / "real_decode_validation_report.json"
     print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -337,6 +343,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --trace-iterations 10 \
           --require-trace \
           --min-tokens-per-second-per-user 1.0 \
+          --decode-shell-pcc-threshold 0.99 \
           --out-dir /tmp/validate_ttnn_direct_real
         ```
 

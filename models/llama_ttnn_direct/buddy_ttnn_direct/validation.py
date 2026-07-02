@@ -76,6 +76,7 @@ VALIDATION_STEPS = (
 
 REAL_DECODE_VALIDATION_STEPS = (
     "materialize_parameters",
+    "decode_shell",
     "smoke_decode_step",
     "profile_decode_step",
     "decode_step_autotune",
@@ -618,6 +619,7 @@ def validate_real_decode(
     skip_autotune: bool = False,
     require_trace: bool = False,
     min_tokens_per_second_per_user: float | None = None,
+    decode_shell_pcc_threshold: float = 0.99,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -646,6 +648,7 @@ def validate_real_decode(
 
     paths = {
         "materialize_report": root / "parameter_materialization_report.json",
+        "decode_shell_report": root / "decode_shell_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
         "autotune_report": root / "decode_step_autotune_report.json",
@@ -673,6 +676,7 @@ def validate_real_decode(
         "skip_autotune": skip_autotune,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
         "results": {
             step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
         },
@@ -757,6 +761,42 @@ def validate_real_decode(
             ),
             "tensor_count": materialize_report["tensor_count"],
             "lm_head_split_count": materialize_report["lm_head"]["split_count"],
+        }
+
+    def decode_shell_step() -> dict[str, Any]:
+        shell_report = run_smoke_decode_shell(
+            out=paths["decode_shell_report"],
+            program_dir=program_dir,
+            layers=layer_count,
+            disable_attention=True,
+            model_path=None if dry_run else model_path,
+            device=device,
+            device_id=device_id,
+            dry_run=dry_run,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+            pcc_threshold=decode_shell_pcc_threshold,
+        )
+        numeric_reference = (
+            shell_report.get("reference", {}).get("numeric_reference", {})
+        )
+        return {
+            "status": _runtime_step_status(shell_report, dry_run=dry_run),
+            "decode_shell_report": str(paths["decode_shell_report"]),
+            "runtime_status": shell_report["status"],
+            "parameter_source": shell_report.get("parameter_source"),
+            "input_source": shell_report.get("input_source"),
+            "runtime_input_tensor_count": shell_report.get(
+                "runtime_input_tensor_count"
+            ),
+            "numeric_reference_status": numeric_reference.get("status"),
+            "numeric_reference_kind": numeric_reference.get("kind"),
+            "pcc": numeric_reference.get("pcc"),
+            "pcc_threshold": numeric_reference.get(
+                "pcc_threshold",
+                decode_shell_pcc_threshold,
+            ),
+            **_reference_summary(shell_report),
         }
 
     def smoke_step() -> dict[str, Any]:
@@ -893,6 +933,7 @@ def validate_real_decode(
 
     step_actions = {
         "materialize_parameters": materialize_step,
+        "decode_shell": decode_shell_step,
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
         "decode_step_autotune": autotune_step,
@@ -950,9 +991,16 @@ def _real_decode_acceptance(
         }
 
     steps = report.get("steps", {})
+    decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     checks = [
+        _acceptance_check(
+            "decode_shell.reference_status",
+            decode_shell.get("reference_status") == "passed",
+            observed=decode_shell.get("reference_status"),
+            expected="passed",
+        ),
         _acceptance_check(
             "smoke_decode_step.reference_status",
             smoke.get("reference_status") == "passed",

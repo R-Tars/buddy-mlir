@@ -256,6 +256,7 @@ class ValidateDirectTest(unittest.TestCase):
                 list(REAL_DECODE_VALIDATION_STEPS),
             )
             self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
+            self.assertEqual(report["results"]["decode_shell"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
@@ -271,6 +272,10 @@ class ValidateDirectTest(unittest.TestCase):
                 "dry_run",
             )
             self.assertEqual(
+                report["steps"]["decode_shell"]["reference_status"],
+                "dry_run",
+            )
+            self.assertEqual(
                 report["steps"]["smoke_decode_step"]["ttnn_environment"][
                     "module_available"
                 ],
@@ -283,6 +288,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(
                 (out_dir / "parameter_materialization_report.json").is_file()
             )
+            self.assertTrue((out_dir / "decode_shell_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
 
@@ -349,6 +355,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["materialize_parameters"]["tensor_count"],
                 21,
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["parameter_source"],
+                "hf_model",
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["numeric_reference_status"],
+                "not_run",
             )
             self.assertEqual(
                 report["steps"]["smoke_decode_step"]["parameter_source"],

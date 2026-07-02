@@ -366,6 +366,7 @@ python /tmp/llama31_ttnn_program/run_decode.py \
   --trace-iterations 10 \
   --require-trace \
   --min-tokens-per-second-per-user 1.0 \
+  --decode-shell-pcc-threshold 0.99 \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
@@ -581,16 +582,21 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --trace-iterations 10 \
   --require-trace \
   --min-tokens-per-second-per-user 1.0 \
+  --decode-shell-pcc-threshold 0.99 \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
 The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
-materialization, smoke, profile, and autotune subreports. Use `--skip-autotune`
-to stop after materialize/smoke/profile during bring-up, or `--dry-run` to
-write the schema without loading safetensors or opening a TTNN device. With
-`--require-trace` and/or `--min-tokens-per-second-per-user`, the final report
-includes an `acceptance` block that checks structural references, trace
+materialization, attention-disabled decode shell, smoke, profile, and autotune
+subreports. The decode shell gate runs before full decode-step smoke/profile
+so embedding/RMSNorm/MLP/LM-head correctness can fail early; when a torch
+reference can run, `--decode-shell-pcc-threshold` gates the final-hidden PCC.
+Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
+bring-up, or `--dry-run` to write the schema without loading safetensors or
+opening a TTNN device. With `--require-trace` and/or
+`--min-tokens-per-second-per-user`, the final report includes an `acceptance`
+block that checks shell and decode-step structural references, trace
 capture/execute status, and profile throughput before marking the validation as
 accepted.
 

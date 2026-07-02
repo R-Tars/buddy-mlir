@@ -239,6 +239,8 @@ class BuildProgramTest(unittest.TestCase):
                     "--require-trace",
                     "--min-tokens-per-second-per-user",
                     "1.0",
+                    "--decode-shell-pcc-threshold",
+                    "0.5",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -263,6 +265,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 validation_payload["min_tokens_per_second_per_user"],
                 1.0,
+            )
+            self.assertEqual(
+                validation_payload["decode_shell_pcc_threshold"],
+                0.5,
             )
             self.assertEqual(validation_payload["acceptance"]["status"], "dry_run")
             self.assertTrue(validation_payload["acceptance"]["require_trace"])

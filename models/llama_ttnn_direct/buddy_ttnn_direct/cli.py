@@ -1191,6 +1191,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--decode-shell-pcc-threshold",
+        type=float,
+        default=0.99,
+        help=(
+            "Minimum final-hidden PCC for the attention-disabled decode shell "
+            "gate when a torch numeric reference can run."
+        ),
+    )
+    validate_real.add_argument(
         "--dry-run",
         action="store_true",
         help=(
@@ -1709,6 +1718,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         skip_autotune=args.skip_autotune,
         require_trace=args.require_trace,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
+        decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
     )
     print(
         "wrote TTNN Direct real decode validation report: "
