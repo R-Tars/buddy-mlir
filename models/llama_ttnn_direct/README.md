@@ -108,3 +108,42 @@ Validate the generated Python syntax with:
 ```bash
 python -m py_compile /tmp/buddy_ttnn_codegen/model.py
 ```
+
+## Phase 4: Parameter Metadata
+
+Phase 4 emits dtype, layout, packing, split, and KV-cache metadata for Llama
+weights. It does not read or convert tensor payloads.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  emit-config \
+  --semantic-json /tmp/llama_semantic.json \
+  --lm-head-split-count 8 \
+  --kv-page-block-size 32 \
+  --out /tmp/llama_parameter_config.json
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  emit-config \
+  --semantic-json /tmp/llama_semantic.json \
+  --out /tmp/llama_parameter_config.json \
+  --dry-run
+```
+
+The seed recipe is:
+
+```text
+attention q/k/v/o weights -> bfloat8_b, tile
+MLP gate/up weights        -> bfloat4_b, tile, gate_up_group
+MLP down weights           -> bfloat8_b, tile
+RMSNorm weights            -> bfloat16, row_major
+embedding weights          -> bfloat16, row_major
+LM-head weights            -> bfloat8_b, tile, vocab_split
+activations                -> bfloat16
+KV cache                   -> bfloat8_b, paged
+```

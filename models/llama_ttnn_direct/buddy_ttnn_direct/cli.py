@@ -4,6 +4,12 @@ import argparse
 import json
 from pathlib import Path
 
+from .codegen.config_emit import (
+    SEED_RECIPE,
+    dump_parameter_config,
+    emit_parameter_config,
+    parameter_config_dry_run_report,
+)
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
@@ -107,6 +113,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and report generated artifact paths without writing.",
     )
     codegen_python.set_defaults(func=_cmd_codegen_python)
+
+    emit_config = subparsers.add_parser(
+        "emit-config",
+        help="Emit parameter dtype/layout/packing metadata for a Llama graph.",
+    )
+    emit_config.add_argument(
+        "--semantic-json",
+        type=Path,
+        required=True,
+        help="Input semantic graph JSON from import-llama.",
+    )
+    emit_config.add_argument(
+        "--recipe",
+        default=SEED_RECIPE,
+        help="Parameter metadata recipe name.",
+    )
+    emit_config.add_argument(
+        "--lm-head-split-count",
+        type=int,
+        default=8,
+        help="Number of vocab shards for split LM-head metadata.",
+    )
+    emit_config.add_argument(
+        "--kv-page-block-size",
+        type=int,
+        default=32,
+        help="Paged KV cache block size in tokens.",
+    )
+    emit_config.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output parameter metadata JSON path.",
+    )
+    emit_config.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and report metadata summary without writing.",
+    )
+    emit_config.set_defaults(func=_cmd_emit_config)
     return parser
 
 
@@ -144,6 +190,33 @@ def _cmd_codegen_python(args: argparse.Namespace) -> int:
     print(f"wrote Python TTNN skeleton: {args.out_dir}")
     for name in sorted(paths):
         print(f"  {name}: {paths[name]}")
+    return 0
+
+
+def _cmd_emit_config(args: argparse.Namespace) -> int:
+    graph = load_graph_json(args.semantic_json)
+    if args.dry_run:
+        print(
+            json.dumps(
+                parameter_config_dry_run_report(
+                    graph,
+                    recipe=args.recipe,
+                    lm_head_split_count=args.lm_head_split_count,
+                    kv_page_block_size=args.kv_page_block_size,
+                ),
+                indent=2,
+            )
+        )
+        return 0
+
+    config = emit_parameter_config(
+        graph,
+        recipe=args.recipe,
+        lm_head_split_count=args.lm_head_split_count,
+        kv_page_block_size=args.kv_page_block_size,
+    )
+    dump_parameter_config(config, args.out)
+    print(f"wrote parameter metadata config: {args.out}")
     return 0
 
 
