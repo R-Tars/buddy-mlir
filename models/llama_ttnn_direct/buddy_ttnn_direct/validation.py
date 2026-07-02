@@ -1603,6 +1603,12 @@ def _real_decode_acceptance(
             expected="hf_model",
         ),
         _acceptance_check(
+            "decode_shell.runtime_status",
+            decode_shell.get("runtime_status") == "passed",
+            observed=decode_shell.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
             "decode_shell.reference_status",
             decode_shell.get("reference_status") == "passed",
             observed=decode_shell.get("reference_status"),
@@ -1646,6 +1652,12 @@ def _real_decode_acceptance(
             _positive_number(smoke.get("tensor_conversion_count")),
             observed=smoke.get("tensor_conversion_count"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.runtime_status",
+            smoke.get("runtime_status") == "passed",
+            observed=smoke.get("runtime_status"),
+            expected="passed",
         ),
         _acceptance_check(
             "smoke_decode_step.ttnn_module_available",
@@ -1753,6 +1765,12 @@ def _real_decode_acceptance(
             _nonnegative_number(profile.get("tensor_conversion_ms")),
             observed=profile.get("tensor_conversion_ms"),
             minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.runtime_status",
+            profile.get("runtime_status") == "profiled",
+            observed=profile.get("runtime_status"),
+            expected="profiled",
         ),
         _acceptance_check(
             "profile_decode_step.ttnn_module_available",

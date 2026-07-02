@@ -612,9 +612,10 @@ and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, resolved
 layer/batch/cache runtime shape, TTNN module availability, TTNN version and
-tt-metal git commit evidence, decode-step tensor conversion counts, shell
-numeric/structural references, decode-step tensorization roles and memory
-config evidence, required tensorized decode weight paths for smoke/profile,
+tt-metal git commit evidence, successful shell/smoke/profile runtime status,
+decode-step tensor conversion counts, shell numeric/structural references,
+decode-step tensorization roles and memory config evidence, required
+tensorized decode weight paths for smoke/profile,
 decode-step structural references, generated observed op sequence coverage for
 the shell/smoke/profile paths, trace capture/execute status plus requested
 execute iteration/sample-count evidence, measured profile latency, complete
