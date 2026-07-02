@@ -1,0 +1,629 @@
+from __future__ import annotations
+
+import importlib
+import json
+import time
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
+from .smoke_attention_primitive import (
+    _maybe_managed_device,
+    _randn,
+    _ttnn_dtype,
+    _zeros,
+)
+from .smoke_decode_shell import _dtype, _load_generated_model, _shape, _to_namespace
+from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
+from .templates.ttnn_ops import UnsupportedTTNNOp
+
+
+SINGLE_LAYER_DECODE_OPS = [
+    "embedding",
+    "rms_norm.attn",
+    "qkv_linear",
+    "nlp_create_qkv_heads_decode",
+    "rotary_embedding_decode",
+    "paged_update_cache.k",
+    "paged_update_cache.v",
+    "paged_scaled_dot_product_attention_decode",
+    "nlp_concat_heads_decode",
+    "o_proj_linear",
+    "residual_add.attn",
+    "rms_norm.mlp",
+    "mlp_gate",
+    "mlp_up",
+    "mul_silu",
+    "mlp_down",
+    "residual_add.mlp",
+    "rms_norm.final",
+    "split_lm_head",
+    "argmax_or_sampling",
+]
+
+
+def run_smoke_single_layer_decode(
+    *,
+    out: str | Path,
+    program_dir: str | Path,
+    device: str,
+    device_id: int = 0,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    dtype_seed: str = "bf16",
+    dry_run: bool = False,
+    ttnn_module: Any | None = None,
+    torch_module: Any | None = None,
+    parameters: Any | None = None,
+    token_ids: Any | None = None,
+    page_table: Any | None = None,
+    cache_position: Any | None = None,
+    kv_cache: Any | None = None,
+) -> dict[str, Any]:
+    program_root = Path(program_dir)
+    config = json.loads((program_root / "config.json").read_text())
+    batch_size = int(batch_size or config["batch_size"])
+    cache_len = int(cache_len or config["max_cache_len"])
+    plan = _single_layer_decode_plan(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        config=config,
+    )
+
+    if dry_run:
+        report = _base_report(
+            program_dir=program_root,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            dry_run=True,
+            plan=plan,
+        )
+        report.update(
+            {
+                "passed": True,
+                "status": "dry_run",
+                "latency_ms": 0.0,
+                "output_shapes": None,
+                "tensor_conversion_count": plan["tensor_conversion_count"],
+                "error": None,
+                "ttnn_version": None,
+                "message": "Dry run only; TTNN device is not required.",
+            }
+        )
+        _write_report(out, report)
+        return report
+
+    try:
+        ttnn = (
+            ttnn_module
+            if ttnn_module is not None
+            else importlib.import_module("ttnn")
+        )
+    except ImportError as err:
+        report = _no_device_report(
+            program_dir=program_root,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            plan=plan,
+            detail=str(err),
+        )
+        _write_report(out, report)
+        return report
+
+    try:
+        torch = (
+            torch_module
+            if torch_module is not None
+            else importlib.import_module("torch")
+        )
+    except ImportError as err:
+        if parameters is None or any(
+            item is None for item in (token_ids, page_table, cache_position, kv_cache)
+        ):
+            report = _failed_report(
+                program_dir=program_root,
+                device=device,
+                device_id=device_id,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                dtype_seed=dtype_seed,
+                plan=plan,
+                status="missing_torch",
+                message=(
+                    "torch is required to synthesize single-layer decode "
+                    "parameters and inputs."
+                ),
+                detail=str(err),
+                ttnn_version=getattr(ttnn, "__version__", None),
+            )
+            _write_report(out, report)
+            return report
+        torch = None
+
+    try:
+        with _maybe_managed_device(ttnn, device_id, ttnn_module) as ttnn_device:
+            if parameters is None:
+                assert torch is not None
+                synthetic = _build_synthetic_decode_state(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=ttnn_device,
+                    dtype_seed=dtype_seed,
+                    plan=plan,
+                )
+                parameters = synthetic.parameters
+                token_ids = synthetic.token_ids
+                page_table = synthetic.page_table
+                cache_position = synthetic.cache_position
+                kv_cache = synthetic.kv_cache
+                tensor_conversion_count = synthetic.tensor_conversion_count
+            else:
+                tensor_conversion_count = 0
+
+            if any(
+                item is None for item in (token_ids, page_table, cache_position, kv_cache)
+            ):
+                raise ValueError(
+                    "token_ids, page_table, cache_position, and kv_cache are "
+                    "required when parameters are injected"
+                )
+
+            report = _run_generated_single_layer_decode(
+                ttnn=ttnn,
+                program_dir=program_root,
+                parameters=parameters,
+                config=config,
+                device=ttnn_device,
+                token_ids=token_ids,
+                page_table=page_table,
+                cache_position=cache_position,
+                kv_cache=kv_cache,
+                tensor_conversion_count=tensor_conversion_count,
+            )
+            report.update(
+                {
+                    **_base_report(
+                        program_dir=program_root,
+                        device=device,
+                        device_id=device_id,
+                        batch_size=batch_size,
+                        cache_len=cache_len,
+                        dtype_seed=dtype_seed,
+                        dry_run=False,
+                        plan=plan,
+                    ),
+                    **report,
+                }
+            )
+    except NoTTNNDeviceError as err:
+        report = _no_device_report(
+            program_dir=program_root,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            plan=plan,
+            detail=str(err),
+        )
+    except UnsupportedTTNNOp as err:
+        report = _failed_report(
+            program_dir=program_root,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            plan=plan,
+            status="api_mismatch",
+            message=str(err),
+            detail=err.op_name,
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+    except Exception as err:
+        report = _failed_report(
+            program_dir=program_root,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            plan=plan,
+            status="runtime_error",
+            message=f"{type(err).__name__}: {err}",
+            detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+
+    _write_report(out, report)
+    return report
+
+
+def _run_generated_single_layer_decode(
+    *,
+    ttnn: Any,
+    program_dir: Path,
+    parameters: Any,
+    config: dict[str, Any],
+    device: Any,
+    token_ids: Any,
+    page_table: Any,
+    cache_position: Any,
+    kv_cache: Any,
+    tensor_conversion_count: int,
+) -> dict[str, Any]:
+    generated = _load_generated_model(program_dir / "model.py", ttnn)
+    single_layer_config = dict(config)
+    single_layer_config["num_layers"] = 1
+    model = generated.BuddyLlama31TTNN(
+        device=device,
+        parameters=parameters,
+        config=_to_namespace(single_layer_config),
+    )
+
+    start = time.perf_counter()
+    token, kv_cache = model.decode_step(
+        token_ids,
+        page_table,
+        cache_position,
+        kv_cache,
+    )
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
+    latency_ms = (time.perf_counter() - start) * 1000.0
+
+    return {
+        "passed": True,
+        "status": "passed",
+        "latency_ms": latency_ms,
+        "output_shapes": {
+            "token": _shape(token),
+            "key_cache": _shape(kv_cache[0].k),
+            "value_cache": _shape(kv_cache[0].v),
+        },
+        "output": {
+            "shape": _shape(token),
+            "dtype": _dtype(token),
+            "repr": repr(token),
+        },
+        "tensor_conversion_count": tensor_conversion_count,
+        "error": None,
+        "ttnn_version": getattr(ttnn, "__version__", None),
+        "reference": {
+            "status": "not_run",
+            "reason": (
+                "This smoke validates generated single-layer decode execution "
+                "and shapes with synthetic parameters."
+            ),
+        },
+    }
+
+
+def _build_synthetic_decode_state(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    plan: dict[str, Any],
+) -> SimpleNamespace:
+    dtype = _ttnn_dtype(ttnn, dtype_seed)
+    layout = getattr(ttnn, "TILE_LAYOUT", None)
+    tensor_conversion_count = 0
+
+    def tensor(shape: list[int], *, name: str, zeros: bool = False) -> Any:
+        nonlocal tensor_conversion_count
+        host_tensor = _zeros(torch, shape) if zeros else _randn(torch, shape, dtype_seed)
+        try:
+            host_tensor.name = name
+        except AttributeError:
+            pass
+        tensor_conversion_count += 1
+        return ttnn.from_torch(
+            host_tensor,
+            dtype=dtype,
+            layout=layout,
+            device=device,
+        )
+
+    inputs = plan["input_shapes"]
+    params = plan["parameter_shapes"]
+    lm_head_splits = []
+    for shard_id, shape in enumerate(params["lm_head_splits"]):
+        lm_head_splits.append(
+            SimpleNamespace(
+                shard_id=shard_id,
+                weight=tensor(shape, name=f"lm_head_{shard_id}"),
+            )
+        )
+
+    parameters = SimpleNamespace(
+        embedding=SimpleNamespace(
+            weight=tensor(params["embedding"], name="embedding")
+        ),
+        layers=[
+            SimpleNamespace(
+                attention=SimpleNamespace(
+                    wqkv_packed=SimpleNamespace(
+                        weight=tensor(
+                            params["attention_wqkv"],
+                            name="attention_wqkv",
+                        )
+                    ),
+                    o_proj=SimpleNamespace(
+                        weight=tensor(params["attention_o_proj"], name="o_proj")
+                    ),
+                    rotary=SimpleNamespace(
+                        cos_matrix=tensor(
+                            params["rotary_cos_matrix"],
+                            name="rotary_cos",
+                        ),
+                        sin_matrix=tensor(
+                            params["rotary_sin_matrix"],
+                            name="rotary_sin",
+                        ),
+                        transformation_matrix=tensor(
+                            params["rotary_transformation_matrix"],
+                            name="rotary_transform",
+                        ),
+                    ),
+                ),
+                input_norm=SimpleNamespace(
+                    weight=tensor(params["input_norm"], name="input_norm")
+                ),
+                post_attention_norm=SimpleNamespace(
+                    weight=tensor(
+                        params["post_attention_norm"],
+                        name="post_attention_norm",
+                    )
+                ),
+                mlp=SimpleNamespace(
+                    gate_proj=SimpleNamespace(
+                        weight=tensor(params["mlp_gate"], name="mlp_gate")
+                    ),
+                    up_proj=SimpleNamespace(
+                        weight=tensor(params["mlp_up"], name="mlp_up")
+                    ),
+                    down_proj=SimpleNamespace(
+                        weight=tensor(params["mlp_down"], name="mlp_down")
+                    ),
+                ),
+            )
+        ],
+        final_norm=SimpleNamespace(
+            weight=tensor(params["final_norm"], name="final_norm")
+        ),
+        lm_head=SimpleNamespace(splits=lm_head_splits),
+    )
+    token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
+    page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
+    cache_position = tensor(
+        inputs["cache_position"],
+        name="cache_position",
+        zeros=True,
+    )
+    kv_cache = [
+        SimpleNamespace(
+            k=tensor(inputs["key_cache"], name="key_cache", zeros=True),
+            v=tensor(inputs["value_cache"], name="value_cache", zeros=True),
+        )
+    ]
+
+    return SimpleNamespace(
+        parameters=parameters,
+        token_ids=token_ids,
+        page_table=page_table,
+        cache_position=cache_position,
+        kv_cache=kv_cache,
+        tensor_conversion_count=tensor_conversion_count,
+    )
+
+
+def _single_layer_decode_plan(
+    *,
+    batch_size: int,
+    cache_len: int,
+    config: dict[str, Any],
+) -> dict[str, Any]:
+    hidden_size = int(config["hidden_size"])
+    intermediate_size = int(config["intermediate_size"])
+    num_heads = int(config["num_attention_heads"])
+    num_kv_heads = int(config["num_key_value_heads"])
+    head_dim = int(config["head_dim"])
+    vocab_size = int(config["vocab_size"])
+    qkv_size = (num_heads + 2 * num_kv_heads) * head_dim
+    page_count = max(1, (cache_len + 31) // 32)
+    lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
+    input_shapes = {
+        "token_ids": [batch_size, 1],
+        "page_table": [batch_size, page_count],
+        "cache_position": [batch_size],
+        "key_cache": [batch_size, cache_len, num_kv_heads, head_dim],
+        "value_cache": [batch_size, cache_len, num_kv_heads, head_dim],
+    }
+    parameter_shapes = {
+        "embedding": [vocab_size, hidden_size],
+        "input_norm": [hidden_size],
+        "post_attention_norm": [hidden_size],
+        "attention_wqkv": [hidden_size, qkv_size],
+        "attention_o_proj": [num_heads * head_dim, hidden_size],
+        "rotary_cos_matrix": [1, 1, head_dim, head_dim],
+        "rotary_sin_matrix": [1, 1, head_dim, head_dim],
+        "rotary_transformation_matrix": [1, 1, head_dim, head_dim],
+        "mlp_gate": [hidden_size, intermediate_size],
+        "mlp_up": [hidden_size, intermediate_size],
+        "mlp_down": [intermediate_size, hidden_size],
+        "final_norm": [hidden_size],
+        "lm_head_splits": lm_head_splits,
+    }
+    return {
+        "input_shapes": input_shapes,
+        "parameter_shapes": parameter_shapes,
+        "expected_intermediate_shapes": {
+            "embedding": [batch_size, 1, hidden_size],
+            "qkv": [batch_size, 1, qkv_size],
+            "query": [batch_size, num_heads, 1, head_dim],
+            "key": [batch_size, num_kv_heads, 1, head_dim],
+            "value": [batch_size, num_kv_heads, 1, head_dim],
+            "attention": [batch_size, num_heads, 1, head_dim],
+            "concat_heads": [batch_size, 1, num_heads * head_dim],
+            "attention_output": [batch_size, 1, hidden_size],
+            "mlp_intermediate": [batch_size, 1, intermediate_size],
+        },
+        "expected_output_shapes": {
+            "token": [batch_size, 1],
+            "key_cache": input_shapes["key_cache"],
+            "value_cache": input_shapes["value_cache"],
+        },
+        "tensor_conversion_count": (
+            len(input_shapes)
+            + len(parameter_shapes)
+            - 1
+            + len(lm_head_splits)
+        ),
+    }
+
+
+def _lm_head_split_shapes(
+    config: dict[str, Any],
+    hidden_size: int,
+    vocab_size: int,
+) -> list[list[int]]:
+    lm_head_config = config.get("lm_head", {})
+    split_count = int(lm_head_config.get("split_count", 1))
+    split_configs = lm_head_config.get("splits")
+    if split_configs:
+        shapes = []
+        for split in split_configs:
+            vocab_start = int(split["vocab_start"])
+            vocab_end = int(split["vocab_end"])
+            shapes.append([hidden_size, vocab_end - vocab_start])
+        return shapes
+
+    base = vocab_size // split_count
+    remainder = vocab_size % split_count
+    shapes = []
+    for shard_id in range(split_count):
+        width = base + (1 if shard_id < remainder else 0)
+        shapes.append([hidden_size, width])
+    return shapes
+
+
+def _base_report(
+    *,
+    program_dir: Path,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    dry_run: bool,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "template": "single_layer_decode",
+        "program_dir": str(program_dir),
+        "layers": 1,
+        "device": device,
+        "device_id": device_id,
+        "batch_size": batch_size,
+        "cache_len": cache_len,
+        "dtype_seed": dtype_seed,
+        "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
+        "layout": "tile",
+        "dry_run": dry_run,
+        "op_sequence": list(SINGLE_LAYER_DECODE_OPS),
+        "input_shapes": plan["input_shapes"],
+        "parameter_shapes": plan["parameter_shapes"],
+        "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
+        "expected_output_shapes": plan["expected_output_shapes"],
+    }
+
+
+def _no_device_report(
+    *,
+    program_dir: Path,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    plan: dict[str, Any],
+    detail: str,
+) -> dict[str, Any]:
+    report = _base_report(
+        program_dir=program_dir,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        dry_run=False,
+        plan=plan,
+    )
+    report.update(
+        {
+            "passed": False,
+            "status": "no_device",
+            "latency_ms": None,
+            "output_shapes": None,
+            "tensor_conversion_count": 0,
+            "error": NO_TTNN_DEVICE_MESSAGE,
+            "detail": detail,
+            "ttnn_version": None,
+        }
+    )
+    return report
+
+
+def _failed_report(
+    *,
+    program_dir: Path,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    plan: dict[str, Any],
+    status: str,
+    message: str,
+    detail: str,
+    ttnn_version: str | None = None,
+) -> dict[str, Any]:
+    report = _base_report(
+        program_dir=program_dir,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        dry_run=False,
+        plan=plan,
+    )
+    report.update(
+        {
+            "passed": False,
+            "status": status,
+            "latency_ms": None,
+            "output_shapes": None,
+            "tensor_conversion_count": 0,
+            "error": message,
+            "detail": detail,
+            "ttnn_version": ttnn_version,
+        }
+    )
+    return report
+
+
+def _write_report(out: str | Path, report: dict[str, Any]) -> None:
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2) + "\n")

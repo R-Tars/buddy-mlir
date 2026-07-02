@@ -48,6 +48,7 @@ from .smoke_attention_primitive import (
     run_smoke_attention_primitive,
 )
 from .smoke_attention_layer import run_smoke_attention_layer
+from .smoke_single_layer_decode import run_smoke_single_layer_decode
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -489,6 +490,60 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output attention layer smoke report JSON path.",
     )
     smoke_attention_layer.set_defaults(func=_cmd_smoke_attention_layer)
+
+    smoke_single_layer_decode = subparsers.add_parser(
+        "smoke-single-layer-decode",
+        help=(
+            "Run or dry-run generated single-layer decode with attention, "
+            "MLP, final norm, and LM-head."
+        ),
+    )
+    smoke_single_layer_decode.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the smoke report.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override generated batch size for synthetic decode tensors.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--cache-len",
+        type=int,
+        default=None,
+        help="Override generated max cache length for synthetic decode tensors.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the generated decode report schema without opening a device.",
+    )
+    smoke_single_layer_decode.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output generated single-layer decode smoke report JSON path.",
+    )
+    smoke_single_layer_decode.set_defaults(func=_cmd_smoke_single_layer_decode)
 
     profile = subparsers.add_parser(
         "profile-template",
@@ -946,6 +1001,24 @@ def _cmd_smoke_attention_layer(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote attention layer smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_smoke_single_layer_decode(args: argparse.Namespace) -> int:
+    report = run_smoke_single_layer_decode(
+        out=args.out,
+        program_dir=args.program_dir,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote single-layer decode smoke report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

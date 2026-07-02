@@ -747,3 +747,48 @@ official JSON when available. The report records missing fields, mismatches,
 extra fields, matching fields, and per-section summaries. Its purpose is to
 make parity gaps explicit before tuning dtype, compute fidelity, program
 config, memory config, core grid, LM-head strategy, or paged attention config.
+
+## Performance Step 2: Generated Single-Layer Decode Smoke
+
+`smoke-single-layer-decode` composes the generated decode program into a
+single-layer execution path:
+
+```text
+embedding -> layer0 attention -> residual add -> layer0 MLP -> residual add
+-> final norm -> split LM-head -> argmax
+```
+
+The non-dry-run path uses synthetic TTNN tensors for parameters, token ids,
+page table, cache position, and KV cache. It is meant to validate generated
+`decode_step()` control flow and TTNN API/shape composition before loading real
+Llama weights or attempting full 32-layer decode.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-single-layer-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/single_layer_decode_report.json
+```
+
+Dry-run mode writes the same report schema without importing TTNN or opening a
+device:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-single-layer-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/single_layer_decode_report.json
+```
+
+The report records the expanded generated op sequence, synthetic input and
+parameter shapes, expected intermediate shapes, output shapes, tensor
+conversion count, TTNN version, and explicit `api_mismatch` / `no_device`
+status when a required TTNN op or device is unavailable.
