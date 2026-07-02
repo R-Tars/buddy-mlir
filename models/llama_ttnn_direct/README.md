@@ -702,9 +702,10 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 On a P150A system, drop `--dry-run` to execute the selected primitive with
 synthetic tensors. The report records input shapes, expected/output shapes,
-dtype seed, layout, memory-config placeholder, TTNN version when available,
-and explicit `api_mismatch` errors when a wrapper cannot find the expected
-TTNN API. This command deliberately does not compose a full attention layer.
+dtype seed, layout, memory-config placeholder, host-to-device tensor conversion
+count, TTNN version when available, and explicit `api_mismatch` errors when a
+wrapper cannot find the expected TTNN API. This command deliberately does not
+compose a full attention layer.
 
 ## Phase 2 PR-F: One-Layer Attention Smoke
 
@@ -738,10 +739,10 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 On a P150A system, drop `--dry-run` to execute the synthetic layer. The report
-records per-primitive latency, output shapes, expected output shapes,
-host-to-device tensor conversion count, memory-config conversion count, dtype,
-layout, memory config placeholder, and TTNN version when available. This smoke
-path is still independent from full generated decode execution so individual
+records per-primitive latency, input/output shapes, expected output shapes,
+dtype, layout, memory config, host-to-device tensor conversion count,
+memory-config conversion count, and TTNN version when available. This smoke path
+is still independent from full generated decode execution so individual
 attention issues stay easier to isolate.
 
 ## Performance Step 1: Official Config Diff

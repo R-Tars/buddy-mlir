@@ -72,6 +72,13 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
             self.assertEqual(len(report["primitive_reports"]), len(ATTENTION_LAYER_OPS))
+            first = report["primitive_reports"][0]
+            self.assertEqual(first["primitive"], "qkv_linear")
+            self.assertEqual(first["input_shapes"]["hidden"], [2, 1, 16])
+            self.assertEqual(first["input_shapes"]["qkv_weight"], [16, 32])
+            self.assertEqual(first["dtype"], "bfloat16")
+            self.assertEqual(first["layout"], "tile")
+            self.assertEqual(first["memory_config"], "default_or_l1")
 
     def test_run_smoke_attention_layer_executes_fake_full_sequence(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -122,6 +129,20 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
+            primitive_reports = report["primitive_reports"]
+            self.assertEqual(
+                primitive_reports[2]["input_shapes"]["query"],
+                [2, 4, 1, 4],
+            )
+            self.assertEqual(
+                primitive_reports[5]["input_shapes"]["value_cache"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(primitive_reports[5]["dtype"], "bfloat16")
+            self.assertEqual(
+                primitive_reports[5]["memory_config"],
+                "ttnn.L1_MEMORY_CONFIG",
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
             called_ops = [call["op"] for call in fake_ttnn.calls]

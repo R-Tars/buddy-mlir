@@ -55,6 +55,9 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                 [32, 32, 1, 128],
             )
             self.assertEqual(report["layout"], "tile")
+            self.assertEqual(report["dtype"], "bfloat16")
+            self.assertEqual(report["memory_config"], "default_or_l1")
+            self.assertEqual(report["tensor_conversion_count"], 5)
 
     def test_each_attention_primitive_runs_with_fake_ttnn(self) -> None:
         all_called_ops = []
@@ -80,6 +83,13 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                     self.assertTrue(report["passed"])
                     self.assertEqual(report["status"], "passed")
                     self.assertIsNotNone(report["output_shapes"])
+                    self.assertEqual(
+                        report["tensor_conversion_count"],
+                        len(report["input_shapes"]),
+                    )
+                    self.assertEqual(report["dtype"], "bfloat16")
+                    self.assertEqual(report["layout"], "tile")
+                    self.assertEqual(report["memory_config"], "default_or_l1")
                     self.assertEqual(json.loads(out.read_text()), report)
                     all_called_ops.extend(
                         call["op"] for call in fake_ttnn.calls

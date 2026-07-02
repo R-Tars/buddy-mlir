@@ -412,7 +412,9 @@ def _primitive_plan(
             },
         },
     }
-    return plans[primitive]
+    plan = dict(plans[primitive])
+    plan["tensor_conversion_count"] = len(plan["input_shapes"])
+    return plan
 
 
 def _base_report(
@@ -450,6 +452,7 @@ def _base_report(
         "input_shapes": plan["input_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
         "output_shapes": None,
+        "tensor_conversion_count": plan["tensor_conversion_count"],
     }
 
 

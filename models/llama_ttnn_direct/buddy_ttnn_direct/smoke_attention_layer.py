@@ -98,7 +98,11 @@ def run_smoke_attention_layer(
                 "status": "dry_run",
                 "latency_ms": 0.0,
                 "primitive_reports": [
-                    _planned_op_report(op_name, plan)
+                    _planned_op_report(
+                        op_name,
+                        plan,
+                        dtype=_dtype_name(dtype_seed),
+                    )
                     for op_name in ATTENTION_LAYER_OPS
                 ],
                 "output_shapes": None,
@@ -287,6 +291,7 @@ def _run_attention_layer(
     head_dim: int,
 ) -> dict[str, Any]:
     dtype = _ttnn_dtype(ttnn, dtype_seed)
+    dtype_name = _dtype_name(dtype_seed)
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     memory_config = _memory_config(ttnn)
     tensor_conversion_count = 0
@@ -316,6 +321,8 @@ def _run_attention_layer(
         primitive_reports,
         "qkv_linear",
         lambda: ttnn.linear(hidden, qkv_weight, memory_config=memory_config),
+        input_shapes=_op_input_shapes("qkv_linear", plan),
+        dtype=dtype_name,
         memory_config=memory_config,
     )
     q, k, v = _time_op(
@@ -328,6 +335,8 @@ def _run_attention_layer(
             num_kv_heads=num_kv_heads,
             memory_config=memory_config,
         ),
+        input_shapes=_op_input_shapes("nlp_create_qkv_heads_decode", plan),
+        dtype=dtype_name,
         memory_config=memory_config,
     )
 
@@ -345,6 +354,8 @@ def _run_attention_layer(
             sin_matrix=sin,
             transformation_matrix=transform,
         ),
+        input_shapes=_op_input_shapes("rotary_embedding_decode", plan),
+        dtype=dtype_name,
         memory_config=None,
     )
 
@@ -362,6 +373,8 @@ def _run_attention_layer(
             update_idxs_tensor=cache_position,
             page_table=page_table,
         ),
+        input_shapes=_op_input_shapes("paged_update_cache.k", plan),
+        dtype=dtype_name,
         memory_config=None,
     )
     value_cache = _time_op(
@@ -374,6 +387,8 @@ def _run_attention_layer(
             update_idxs_tensor=cache_position,
             page_table=page_table,
         ),
+        input_shapes=_op_input_shapes("paged_update_cache.v", plan),
+        dtype=dtype_name,
         memory_config=None,
     )
     attention = _time_op(
@@ -389,6 +404,11 @@ def _run_attention_layer(
             scale=float(head_dim) ** -0.5,
             memory_config=memory_config,
         ),
+        input_shapes=_op_input_shapes(
+            "paged_scaled_dot_product_attention_decode",
+            plan,
+        ),
+        dtype=dtype_name,
         memory_config=memory_config,
     )
     concat = _time_op(
@@ -400,6 +420,8 @@ def _run_attention_layer(
             num_heads=num_heads,
             memory_config=memory_config,
         ),
+        input_shapes=_op_input_shapes("nlp_concat_heads_decode", plan),
+        dtype=dtype_name,
         memory_config=memory_config,
     )
     if memory_config is not None:
@@ -410,6 +432,8 @@ def _run_attention_layer(
         primitive_reports,
         "o_proj_linear",
         lambda: ttnn.linear(concat, o_proj_weight, memory_config=memory_config),
+        input_shapes=_op_input_shapes("o_proj_linear", plan),
+        dtype=dtype_name,
         memory_config=memory_config,
     )
 
@@ -428,6 +452,8 @@ def _time_op(
     name: str,
     fn: Callable[[], Any],
     *,
+    input_shapes: dict[str, list[int]],
+    dtype: str,
     memory_config: Any | None,
 ) -> Any:
     start = time.perf_counter()
@@ -438,7 +464,9 @@ def _time_op(
             "primitive": name,
             "status": "passed",
             "latency_ms": latency_ms,
+            "input_shapes": input_shapes,
             "output_shapes": _output_shapes(output),
+            "dtype": dtype,
             "layout": "tile",
             "memory_config": _string_or_none(memory_config),
         }
@@ -488,14 +516,64 @@ def _attention_layer_plan(
     }
 
 
-def _planned_op_report(name: str, plan: dict[str, Any]) -> dict[str, Any]:
+def _planned_op_report(
+    name: str,
+    plan: dict[str, Any],
+    *,
+    dtype: str,
+) -> dict[str, Any]:
     return {
         "primitive": name,
         "status": "planned",
         "latency_ms": 0.0,
+        "input_shapes": _op_input_shapes(name, plan),
         "output_shapes": None,
+        "dtype": dtype,
         "layout": "tile",
         "memory_config": "default_or_l1",
+    }
+
+
+def _op_input_shapes(name: str, plan: dict[str, Any]) -> dict[str, list[int]]:
+    shapes = {
+        **plan["input_shapes"],
+        **plan["expected_intermediate_shapes"],
+    }
+    inputs_by_op = {
+        "qkv_linear": ["hidden", "qkv_weight"],
+        "nlp_create_qkv_heads_decode": ["qkv"],
+        "rotary_embedding_decode": [
+            "query",
+            "key",
+            "cos_matrix",
+            "sin_matrix",
+            "transformation_matrix",
+        ],
+        "paged_update_cache.k": [
+            "key_cache",
+            "key",
+            "cache_position",
+            "page_table",
+        ],
+        "paged_update_cache.v": [
+            "value_cache",
+            "value",
+            "cache_position",
+            "page_table",
+        ],
+        "paged_scaled_dot_product_attention_decode": [
+            "query",
+            "key_cache",
+            "value_cache",
+            "page_table",
+            "cache_position",
+        ],
+        "nlp_concat_heads_decode": ["attention"],
+        "o_proj_linear": ["concat_heads", "o_proj_weight"],
+    }
+    return {
+        input_name: list(shapes[input_name])
+        for input_name in inputs_by_op[name]
     }
 
 
@@ -529,7 +607,7 @@ def _base_report(
         "head_dim": head_dim,
         "cache_len": cache_len,
         "dtype_seed": dtype_seed,
-        "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
+        "dtype": _dtype_name(dtype_seed),
         "layout": "tile",
         "memory_config": "default_or_l1",
         "dry_run": dry_run,
@@ -658,6 +736,10 @@ def _shape(tensor: Any) -> list[int] | None:
 
 def _string_or_none(value: Any | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _dtype_name(dtype_seed: str) -> str:
+    return "bfloat16" if dtype_seed == "bf16" else "float32"
 
 
 def _write_report(out: str | Path, report: dict[str, Any]) -> None:
