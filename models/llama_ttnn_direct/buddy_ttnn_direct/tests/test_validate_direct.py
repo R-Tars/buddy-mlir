@@ -540,6 +540,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "profile_decode_step.tensor_conversion_ms",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "profile_decode_step.batch_size",
                 acceptance_check_names,
             )
@@ -561,6 +565,22 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.required_tensorized_tensor_paths",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.section_latency_ms",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.layer_profile_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.layer_profile_sections",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.bottleneck_summary",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -714,11 +734,28 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 {"dram": 17},
             )
+            self.assertIn(
+                "embedding_ms",
+                profile_report["section_latency_ms"],
+            )
+            self.assertEqual(
+                [layer["layer_id"] for layer in profile_report["layer_profiles"]],
+                [0],
+            )
+            self.assertIn(
+                "per_layer_attention_ms",
+                profile_report["bottleneck_summary"]["sections_ms"],
+            )
             self.assertEqual(
                 report["steps"]["profile_decode_step"][
                     "missing_required_tensorized_tensor_paths"
                 ],
                 [],
+            )
+            profile_step = report["steps"]["profile_decode_step"]
+            self.assertEqual(
+                [layer["layer_id"] for layer in profile_step["layer_profiles"]],
+                [0],
             )
             self.assertEqual(
                 profile_report["throughput_summary"]["status"],
@@ -810,6 +847,27 @@ class ValidateDirectTest(unittest.TestCase):
                     "latency_ms"
                 ],
                 0.0,
+            )
+            self.assertIn(
+                "embedding_ms",
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "section_latency_ms"
+                ],
+            )
+            self.assertEqual(
+                [
+                    layer["layer_id"]
+                    for layer in evidence["runtime_evidence"][
+                        "profile_decode_step"
+                    ]["layer_profiles"]
+                ],
+                [0],
+            )
+            self.assertIn(
+                "per_layer_mlp_ms",
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "bottleneck_summary"
+                ]["sections_ms"],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -1211,6 +1269,92 @@ class ValidateDirectTest(unittest.TestCase):
                     "missing_required_tensorized_tensor_paths"
                 ],
                 [missing_path],
+            )
+
+    def test_validate_real_decode_fails_without_layer_profile_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_profile = validation_module.profile_decode_step
+
+            def profile_without_layer_profiles(*args, **kwargs):
+                profile = original_profile(*args, **kwargs)
+                profile["layer_profiles"] = []
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(profile, indent=2) + "\n")
+                return profile
+
+            with patch.object(
+                validation_module,
+                "profile_decode_step",
+                side_effect=profile_without_layer_profiles,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                [
+                    "profile_decode_step.layer_profile_count",
+                    "profile_decode_step.layer_profile_sections",
+                ],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                [
+                    "profile_decode_step.layer_profile_count",
+                    "profile_decode_step.layer_profile_sections",
+                ],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "layer_profiles"
+                ],
+                [],
             )
 
     def test_validate_real_decode_fails_on_runtime_shape_mismatch(self) -> None:

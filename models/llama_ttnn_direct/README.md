@@ -613,8 +613,10 @@ tt-metal git commit evidence, decode-step tensor conversion counts, shell
 numeric/structural references, decode-step tensorization roles and memory
 config evidence, required tensorized decode weight paths for smoke/profile,
 decode-step structural references, trace capture/execute status plus requested
-execute iteration/sample-count evidence, measured profile latency, and positive
-profile throughput before marking the validation as accepted.
+execute iteration/sample-count evidence, measured profile latency, complete
+profile attribution sections, per-layer attention/MLP timing records,
+bottleneck summary, and positive profile throughput before marking the
+validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

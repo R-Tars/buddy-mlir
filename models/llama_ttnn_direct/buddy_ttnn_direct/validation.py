@@ -84,6 +84,37 @@ REAL_DECODE_VALIDATION_STEPS = (
     "decode_step_autotune",
 )
 
+PROFILE_SECTION_LATENCY_KEYS = (
+    "embedding_ms",
+    "final_norm_ms",
+    "lm_head_ms",
+    "argmax_ms",
+    "host_copy_ms",
+)
+
+PROFILE_LAYER_LATENCY_KEYS = (
+    "rms_norm_attn_ms",
+    "attention_ms",
+    "residual_add_attn_ms",
+    "rms_norm_mlp_ms",
+    "mlp_ms",
+    "residual_add_mlp_ms",
+    "total_ms",
+)
+
+PROFILE_BOTTLENECK_SECTION_KEYS = (
+    "tensor_conversion_ms",
+    "embedding_ms",
+    "per_layer_attention_ms",
+    "per_layer_mlp_ms",
+    "layer_stack_ms",
+    "final_norm_ms",
+    "lm_head_ms",
+    "argmax_ms",
+    "host_copy_ms",
+    "trace_execute_ms",
+)
+
 
 def default_official_template_path() -> Path:
     return (
@@ -947,7 +978,11 @@ def validate_real_decode(
             ),
             "tensor_conversion_ms": profile_report.get("tensor_conversion_ms"),
             "latency_ms": profile_report.get("latency_ms"),
+            "section_latency_ms": profile_report.get("section_latency_ms"),
+            "layer_profiles": profile_report.get("layer_profiles", []),
+            "lm_head_profile": profile_report.get("lm_head_profile"),
             "throughput_summary": profile_report.get("throughput_summary"),
+            "bottleneck_summary": bottleneck,
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
             "trace": _trace_summary(profile_report.get("trace")),
@@ -1346,6 +1381,9 @@ def _real_decode_evidence_manifest(
                 ),
                 "tensor_conversion_ms": profile.get("tensor_conversion_ms"),
                 "latency_ms": profile.get("latency_ms"),
+                "section_latency_ms": profile.get("section_latency_ms"),
+                "layer_profiles": profile.get("layer_profiles", []),
+                "lm_head_profile": profile.get("lm_head_profile"),
                 "trace_status": profile.get("trace_status"),
                 "trace": profile.get("trace"),
                 "reference_status": profile.get("reference_status"),
@@ -1355,6 +1393,7 @@ def _real_decode_evidence_manifest(
                     [],
                 ),
                 "throughput_summary": profile.get("throughput_summary"),
+                "bottleneck_summary": profile.get("bottleneck_summary"),
                 "max_section": profile.get("max_section"),
             },
             "decode_step_autotune": {
@@ -1473,6 +1512,9 @@ def _real_decode_acceptance(
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
     throughput = profile.get("throughput_summary") or {}
+    profile_section_latency = profile.get("section_latency_ms")
+    profile_layer_profiles = profile.get("layer_profiles")
+    profile_bottleneck = profile.get("bottleneck_summary")
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1639,6 +1681,12 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "profile_decode_step.tensor_conversion_ms",
+            _nonnegative_number(profile.get("tensor_conversion_ms")),
+            observed=profile.get("tensor_conversion_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
             "profile_decode_step.ttnn_module_available",
             profile_environment.get("module_available") is True,
             observed=profile_environment.get("module_available"),
@@ -1699,6 +1747,36 @@ def _real_decode_acceptance(
             profile.get("reference_status") == "passed",
             observed=profile.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.section_latency_ms",
+            _has_nonnegative_fields(
+                profile_section_latency,
+                PROFILE_SECTION_LATENCY_KEYS,
+            ),
+            observed=_field_keys(profile_section_latency),
+            expected=list(PROFILE_SECTION_LATENCY_KEYS),
+        ),
+        _acceptance_check(
+            "profile_decode_step.layer_profile_count",
+            _layer_profile_ids(profile_layer_profiles) == expected_layer_ids,
+            observed=_layer_profile_ids(profile_layer_profiles),
+            expected=expected_layer_ids,
+        ),
+        _acceptance_check(
+            "profile_decode_step.layer_profile_sections",
+            _layer_profiles_have_nonnegative_fields(
+                profile_layer_profiles,
+                PROFILE_LAYER_LATENCY_KEYS,
+            ),
+            observed=_layer_profile_field_keys(profile_layer_profiles),
+            expected=list(PROFILE_LAYER_LATENCY_KEYS),
+        ),
+        _acceptance_check(
+            "profile_decode_step.bottleneck_summary",
+            _bottleneck_summary_complete(profile_bottleneck),
+            observed=_bottleneck_summary_observed(profile_bottleneck),
+            expected=list(PROFILE_BOTTLENECK_SECTION_KEYS),
         ),
         _acceptance_check(
             "profile_decode_step.throughput_status",
@@ -1849,6 +1927,93 @@ def _positive_number(value: Any) -> bool:
         return float(value) > 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _nonnegative_number(value: Any) -> bool:
+    try:
+        return float(value) >= 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _has_nonnegative_fields(value: Any, fields: tuple[str, ...]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(
+        field in value and _nonnegative_number(value.get(field))
+        for field in fields
+    )
+
+
+def _field_keys(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    return sorted(str(key) for key in value)
+
+
+def _layer_profile_ids(layer_profiles: Any) -> list[int]:
+    if not isinstance(layer_profiles, list):
+        return []
+    layer_ids = []
+    for profile in layer_profiles:
+        if not isinstance(profile, dict):
+            return []
+        try:
+            layer_ids.append(int(profile["layer_id"]))
+        except (KeyError, TypeError, ValueError):
+            return []
+    return layer_ids
+
+
+def _layer_profiles_have_nonnegative_fields(
+    layer_profiles: Any,
+    fields: tuple[str, ...],
+) -> bool:
+    if not isinstance(layer_profiles, list) or not layer_profiles:
+        return False
+    return all(
+        isinstance(profile, dict)
+        and _has_nonnegative_fields(profile, fields)
+        for profile in layer_profiles
+    )
+
+
+def _layer_profile_field_keys(layer_profiles: Any) -> list[list[str]]:
+    if not isinstance(layer_profiles, list):
+        return []
+    return [
+        _field_keys(profile)
+        for profile in layer_profiles
+        if isinstance(profile, dict)
+    ]
+
+
+def _bottleneck_summary_complete(summary: Any) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    sections = summary.get("sections_ms")
+    max_section = summary.get("max_section")
+    return (
+        _non_empty_string(max_section)
+        and isinstance(sections, dict)
+        and str(max_section) in sections
+        and _nonnegative_number(summary.get("max_section_ms"))
+        and _has_nonnegative_fields(
+            sections,
+            PROFILE_BOTTLENECK_SECTION_KEYS,
+        )
+    )
+
+
+def _bottleneck_summary_observed(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        return {}
+    sections = summary.get("sections_ms")
+    return {
+        "max_section": summary.get("max_section"),
+        "max_section_ms": summary.get("max_section_ms"),
+        "sections_ms": _field_keys(sections),
+    }
 
 
 def _number_at_least(value: Any, minimum: Any) -> bool:
