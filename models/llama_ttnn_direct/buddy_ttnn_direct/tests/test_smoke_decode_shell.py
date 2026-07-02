@@ -12,6 +12,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_decode_shell import (
     DECODE_SHELL_OPS,
     run_smoke_decode_shell,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+    _fake_torch,
+)
 
 
 class SmokeDecodeShellTest(unittest.TestCase):
@@ -61,6 +64,8 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(report["status"], "dry_run")
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["ttnn_ops"], DECODE_SHELL_OPS)
+            self.assertEqual(report["input_shapes"]["token_ids"], [32, 1])
+            self.assertEqual(report["input_source"], "planned")
             self.assertEqual(report["reference"]["status"], "dry_run")
             self.assertEqual(
                 report["reference"]["numeric_reference"]["status"],
@@ -108,6 +113,8 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["layers"][0]["attention"], "disabled")
+            self.assertEqual(report["input_source"], "injected")
+            self.assertEqual(report["runtime_input_tensor_count"], 0)
             self.assertEqual(report["reference"]["status"], "passed")
             self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
             self.assertEqual(
@@ -146,6 +153,56 @@ class SmokeDecodeShellTest(unittest.TestCase):
                 "paged_scaled_dot_product_attention_decode",
                 [call["op"] for call in fake_ttnn.calls],
             )
+
+    def test_run_smoke_decode_shell_synthesizes_token_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_shell_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            report = run_smoke_decode_shell(
+                out=report_json,
+                program_dir=program_dir,
+                layers=1,
+                disable_attention=True,
+                device="p150a",
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+                parameters=_fake_parameters(split_count=8),
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["input_source"], "synthetic")
+            self.assertEqual(report["input_shapes"]["token_ids"], [32, 1])
+            self.assertEqual(report["runtime_input_tensor_count"], 1)
+            self.assertEqual(fake_ttnn.calls[0]["op"], "from_torch")
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"]["layout"],
+                "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(fake_ttnn.calls[1]["op"], "embedding")
+            self.assertIsInstance(fake_ttnn.calls[1]["token_ids"], FakeTensor)
+            self.assertEqual(json.loads(report_json.read_text()), report)
 
 
 class FakeTensor:
@@ -197,6 +254,7 @@ def _fake_parameters(split_count: int):
 def _make_fake_ttnn():
     module = types.ModuleType("ttnn")
     module.calls = []
+    module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
 
     class UnaryOpType:
         SILU = "SILU"
@@ -214,6 +272,20 @@ def _make_fake_ttnn():
             }
         )
         return FakeTensor(f"embedding:{weight}", mem_config=kwargs.get("memory_config"))
+
+    def from_torch(tensor, **kwargs):
+        module.calls.append(
+            {
+                "op": "from_torch",
+                "shape": list(tensor.shape),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor(
+            getattr(tensor, "name", "torch_tensor"),
+            list(tensor.shape),
+            dtype=str(getattr(tensor, "dtype", None)),
+        )
 
     def rms_norm(hidden, **kwargs):
         module.calls.append(
@@ -284,6 +356,7 @@ def _make_fake_ttnn():
 
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
+    module.from_torch = from_torch
     module.embedding = embedding
     module.rms_norm = rms_norm
     module.linear = linear

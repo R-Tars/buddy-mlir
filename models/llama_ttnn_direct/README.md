@@ -707,7 +707,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 Device mode additionally needs the local model path so host parameters can be
-materialized and converted for the shell:
+materialized and converted for the shell. If token ids are not injected by a
+test harness, the smoke synthesizes a row-major TTNN `token_ids` tensor instead
+of passing a Python placeholder through generated embedding:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -728,7 +730,10 @@ Successful non-dry-run reports now include a `reference` block with
 `kind=structural_shape_dtype`. It checks the expected layer count, disabled
 attention status, per-layer hidden shape/dtype, and final token shape/dtype.
 This is not a numeric PCC reference; `numeric_reference.status` remains
-`not_run` until a torch correctness reference is added.
+`not_run` until a torch correctness reference is added. Reports also record
+`input_source`, `input_shapes.token_ids`, and `runtime_input_tensor_count` so
+real device bring-up can distinguish injected inputs from synthesized runtime
+inputs.
 
 ## Phase 2 PR-E: Attention Primitive Smoke
 
