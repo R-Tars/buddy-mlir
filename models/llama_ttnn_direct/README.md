@@ -68,3 +68,43 @@ rmsnorm
 official_split_lm_head
 device_argmax_greedy
 ```
+
+## Phase 3: Python TTNN Skeleton
+
+Phase 3 turns an execution plan into a readable Python TTNN skeleton. The
+generated program imports `ttnn` and exposes the decode dataflow, but template
+bodies remain TODO stubs with `NotImplementedError`.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  codegen-python \
+  --plan-json /tmp/llama_ttnn_plan.json \
+  --out-dir /tmp/buddy_ttnn_codegen
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  codegen-python \
+  --plan-json /tmp/llama_ttnn_plan.json \
+  --out-dir /tmp/buddy_ttnn_codegen \
+  --dry-run
+```
+
+Generated files:
+
+```text
+/tmp/buddy_ttnn_codegen/model.py
+/tmp/buddy_ttnn_codegen/config.json
+/tmp/buddy_ttnn_codegen/plan.json
+/tmp/buddy_ttnn_codegen/README.md
+```
+
+Validate the generated Python syntax with:
+
+```bash
+python -m py_compile /tmp/buddy_ttnn_codegen/model.py
+```

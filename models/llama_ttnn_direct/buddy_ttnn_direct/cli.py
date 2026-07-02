@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
+from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
+    load_execution_plan,
     load_template_config,
 )
 
@@ -81,6 +84,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output execution plan JSON path.",
     )
     plan.set_defaults(func=_cmd_plan)
+
+    codegen_python = subparsers.add_parser(
+        "codegen-python",
+        help="Generate a Python TTNN skeleton from an execution plan.",
+    )
+    codegen_python.add_argument(
+        "--plan-json",
+        type=Path,
+        required=True,
+        help="Input execution plan JSON from plan.",
+    )
+    codegen_python.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for generated Python TTNN skeleton artifacts.",
+    )
+    codegen_python.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate and report generated artifact paths without writing.",
+    )
+    codegen_python.set_defaults(func=_cmd_codegen_python)
     return parser
 
 
@@ -105,6 +131,19 @@ def _cmd_plan(args: argparse.Namespace) -> int:
     plan = build_execution_plan(graph, config)
     dump_execution_plan(plan, args.out)
     print(f"wrote TTNN Direct execution plan: {args.out}")
+    return 0
+
+
+def _cmd_codegen_python(args: argparse.Namespace) -> int:
+    plan = load_execution_plan(args.plan_json)
+    if args.dry_run:
+        print(json.dumps(dry_run_report(plan, args.out_dir), indent=2))
+        return 0
+
+    paths = write_python_ttnn_skeleton(plan, args.out_dir)
+    print(f"wrote Python TTNN skeleton: {args.out_dir}")
+    for name in sorted(paths):
+        print(f"  {name}: {paths[name]}")
     return 0
 
 
