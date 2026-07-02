@@ -607,13 +607,14 @@ bring-up, or `--dry-run` to write the schema without loading safetensors or
 opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
 and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
-`hf_model` parameter sources, resolved layer/batch/cache runtime shape,
-TTNN module availability, TTNN version and tt-metal git commit evidence,
-decode-step tensor conversion counts, shell numeric/structural references,
-decode-step tensorization roles and memory config evidence, decode-step
-structural references, trace capture/execute status plus requested execute
-iteration/sample-count evidence, measured profile latency, and positive
-profile throughput before marking the validation as accepted.
+`hf_model` parameter sources, required materialized tensor paths, resolved
+layer/batch/cache runtime shape, TTNN module availability, TTNN version and
+tt-metal git commit evidence, decode-step tensor conversion counts, shell
+numeric/structural references, decode-step tensorization roles and memory
+config evidence, decode-step structural references, trace capture/execute
+status plus requested execute iteration/sample-count evidence, measured
+profile latency, and positive profile throughput before marking the validation
+as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

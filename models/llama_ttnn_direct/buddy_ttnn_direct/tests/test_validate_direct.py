@@ -396,6 +396,24 @@ class ValidateDirectTest(unittest.TestCase):
                 21,
             )
             self.assertEqual(
+                len(
+                    report["steps"]["materialize_parameters"][
+                        "required_tensor_paths"
+                    ]
+                ),
+                21,
+            )
+            self.assertEqual(
+                report["steps"]["materialize_parameters"][
+                    "missing_required_tensor_paths"
+                ],
+                [],
+            )
+            self.assertIn(
+                "layers.0.attention.wqkv_packed.weight",
+                report["steps"]["materialize_parameters"]["key_tensors"],
+            )
+            self.assertEqual(
                 report["steps"]["materialize_parameters"][
                     "materialized_layer_ids"
                 ],
@@ -471,6 +489,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "materialize_parameters.layer_ids",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "materialize_parameters.lm_head_split_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "materialize_parameters.required_tensor_paths",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -716,6 +742,20 @@ class ValidateDirectTest(unittest.TestCase):
                 21,
             )
             self.assertEqual(
+                evidence["weight_evidence"]["materialization"][
+                    "missing_required_tensor_paths"
+                ],
+                [],
+            )
+            self.assertIn(
+                "embedding.weight",
+                evidence["weight_evidence"]["materialization"]["key_tensors"],
+            )
+            self.assertIn(
+                "lm_head.splits.0.weight",
+                evidence["weight_evidence"]["materialization"]["key_tensors"],
+            )
+            self.assertEqual(
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "memory_config_counts"
                 ],
@@ -948,6 +988,93 @@ class ValidateDirectTest(unittest.TestCase):
                     "throughput_summary"
                 ]["status"],
                 "unavailable",
+            )
+
+    def test_validate_real_decode_fails_when_required_weight_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_materialize = (
+                validation_module.materialize_parameters_from_program
+            )
+            missing_path = "layers.0.attention.wqkv_packed.weight"
+
+            def materialize_without_required_path(*args, **kwargs):
+                report = original_materialize(*args, **kwargs)
+                report["tensors"].pop(missing_path)
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "materialize_parameters_from_program",
+                side_effect=materialize_without_required_path,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["materialize_parameters.required_tensor_paths"],
+            )
+            self.assertEqual(
+                report["steps"]["materialize_parameters"][
+                    "missing_required_tensor_paths"
+                ],
+                [missing_path],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["materialize_parameters.required_tensor_paths"],
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["materialization"][
+                    "missing_required_tensor_paths"
+                ],
+                [missing_path],
             )
 
     def test_validate_real_decode_fails_on_runtime_shape_mismatch(self) -> None:

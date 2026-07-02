@@ -757,6 +757,10 @@ def validate_real_decode(
 
     def materialize_step() -> dict[str, Any]:
         if dry_run:
+            required_tensor_paths = _required_materialized_tensor_paths(
+                layer_count=layer_count,
+                lm_head_split_count=None,
+            )
             materialize_report = {
                 "schema_version": 1,
                 "status": "dry_run",
@@ -764,6 +768,7 @@ def validate_real_decode(
                 "model_path": str(model_path),
                 "program_dir": str(program_dir),
                 "materialized_layer_ids": layers_to_materialize,
+                "required_tensor_paths": required_tensor_paths,
                 "message": "Dry run only; safetensors payloads were not loaded.",
             }
             _write_json(paths["materialize_report"], materialize_report)
@@ -771,6 +776,7 @@ def validate_real_decode(
                 "status": "dry_run",
                 "materialize_report": str(paths["materialize_report"]),
                 "materialized_layer_ids": layers_to_materialize,
+                "required_tensor_paths": required_tensor_paths,
             }
 
         materialize_report = materialize_parameters_from_program(
@@ -780,6 +786,14 @@ def validate_real_decode(
             layers=layers_to_materialize,
             out=paths["materialize_report"],
         )
+        materialized_tensor_paths = sorted(
+            (materialize_report.get("tensors") or {}).keys()
+        )
+        lm_head_split_count = materialize_report["lm_head"]["split_count"]
+        required_tensor_paths = _required_materialized_tensor_paths(
+            layer_count=layer_count,
+            lm_head_split_count=lm_head_split_count,
+        )
         return {
             "status": "pass",
             "materialize_report": str(paths["materialize_report"]),
@@ -787,7 +801,16 @@ def validate_real_decode(
                 materialize_report["materialized_layer_ids"]
             ),
             "tensor_count": materialize_report["tensor_count"],
-            "lm_head_split_count": materialize_report["lm_head"]["split_count"],
+            "lm_head_split_count": lm_head_split_count,
+            "materialized_tensor_paths": materialized_tensor_paths,
+            "required_tensor_paths": required_tensor_paths,
+            "missing_required_tensor_paths": sorted(
+                set(required_tensor_paths) - set(materialized_tensor_paths)
+            ),
+            "key_tensors": _materialization_key_tensors(
+                materialize_report.get("tensors") or {},
+                required_tensor_paths,
+            ),
         }
 
     def decode_shell_step() -> dict[str, Any]:
@@ -1070,6 +1093,62 @@ def _trace_summary(trace: Any) -> dict[str, Any]:
     return summary
 
 
+def _required_materialized_tensor_paths(
+    *,
+    layer_count: int,
+    lm_head_split_count: int | None,
+) -> list[str]:
+    paths = [
+        "embedding.weight",
+        "final_norm.weight",
+        "lm_head.weight",
+    ]
+    for layer_id in range(layer_count):
+        paths.extend(
+            [
+                f"layers.{layer_id}.attention.q_proj.weight",
+                f"layers.{layer_id}.attention.k_proj.weight",
+                f"layers.{layer_id}.attention.v_proj.weight",
+                f"layers.{layer_id}.attention.o_proj.weight",
+                f"layers.{layer_id}.attention.wqkv_packed.weight",
+                f"layers.{layer_id}.mlp.gate_proj.weight",
+                f"layers.{layer_id}.mlp.up_proj.weight",
+                f"layers.{layer_id}.mlp.down_proj.weight",
+                f"layers.{layer_id}.input_norm.weight",
+                f"layers.{layer_id}.post_attention_norm.weight",
+            ]
+        )
+    if lm_head_split_count is not None:
+        paths.extend(
+            f"lm_head.splits.{shard_id}.weight"
+            for shard_id in range(int(lm_head_split_count))
+        )
+    return paths
+
+
+def _materialization_key_tensors(
+    tensors: dict[str, Any],
+    required_tensor_paths: list[str],
+) -> dict[str, Any]:
+    key_paths = []
+    for path in (
+        "embedding.weight",
+        "final_norm.weight",
+        "layers.0.attention.wqkv_packed.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.down_proj.weight",
+        "lm_head.weight",
+        "lm_head.splits.0.weight",
+    ):
+        if path in required_tensor_paths:
+            key_paths.append(path)
+    return {
+        path: tensors[path]
+        for path in key_paths
+        if path in tensors
+    }
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -1145,6 +1224,15 @@ def _real_decode_evidence_manifest(
                 ),
                 "tensor_count": materialize.get("tensor_count"),
                 "lm_head_split_count": materialize.get("lm_head_split_count"),
+                "required_tensor_paths": materialize.get(
+                    "required_tensor_paths",
+                    [],
+                ),
+                "missing_required_tensor_paths": materialize.get(
+                    "missing_required_tensor_paths",
+                    [],
+                ),
+                "key_tensors": materialize.get("key_tensors", {}),
             },
             "smoke_tensorization": _tensorization_evidence(smoke),
             "profile_tensorization": _tensorization_evidence(profile),
@@ -1329,6 +1417,18 @@ def _real_decode_acceptance(
             materialize.get("materialized_layer_ids") == expected_layer_ids,
             observed=materialize.get("materialized_layer_ids"),
             expected=expected_layer_ids,
+        ),
+        _acceptance_check(
+            "materialize_parameters.lm_head_split_count",
+            _positive_number(materialize.get("lm_head_split_count")),
+            observed=materialize.get("lm_head_split_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "materialize_parameters.required_tensor_paths",
+            materialize.get("missing_required_tensor_paths") == [],
+            observed=materialize.get("missing_required_tensor_paths"),
+            expected=[],
         ),
         _acceptance_check(
             "decode_shell.layers",
