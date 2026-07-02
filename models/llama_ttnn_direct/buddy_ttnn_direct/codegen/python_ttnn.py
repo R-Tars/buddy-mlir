@@ -72,6 +72,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         "seq_len": plan["seq_len"],
         "max_cache_len": plan["max_cache_len"],
         "hidden_size": plan.get("hidden_size"),
+        "intermediate_size": plan.get("intermediate_size"),
         "num_attention_heads": plan.get("num_attention_heads"),
         "num_key_value_heads": plan.get("num_key_value_heads"),
         "head_dim": head_dim,

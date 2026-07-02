@@ -124,6 +124,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             config = json.loads((out_dir / "config.json").read_text())
             self.assertEqual(config["num_layers"], 2)
             self.assertEqual(config["hidden_size"], 16)
+            self.assertEqual(config["intermediate_size"], 32)
             self.assertEqual(config["num_attention_heads"], 4)
             self.assertEqual(config["num_key_value_heads"], 2)
             self.assertEqual(config["head_dim"], 4)

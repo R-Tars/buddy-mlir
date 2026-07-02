@@ -294,3 +294,25 @@ available, it writes a failed report with:
 ```text
 No TTNN device detected. Use --dry-run or run on P150A.
 ```
+
+## Phase 10: Template Profiling Reports
+
+Phase 10 adds `profile-template` for MLP profiling reports with warmup,
+iteration count, optional trace mode, and dry-run schema output:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  profile-template \
+  --template mlp_decode \
+  --config /tmp/buddy_ttnn_codegen/config.json \
+  --warmup 5 \
+  --iterations 20 \
+  --trace \
+  --dry-run \
+  --out /tmp/profile_mlp.json
+```
+
+The report records `latency_ms.mean/p50/p90`, the expected MLP op counts, and a
+trace status. With TTNN hardware available, the command attempts eager MLP
+profiling and uses TTNN trace capture/execute APIs when present. Without
+hardware, `--dry-run` still writes the full JSON schema.

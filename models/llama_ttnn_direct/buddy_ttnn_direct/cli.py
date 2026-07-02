@@ -14,6 +14,7 @@ from .codegen.config_emit import (
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
+from .profile_template import profile_template
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .templates.registry import (
     build_execution_plan,
@@ -257,6 +258,53 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output smoke report JSON path.",
     )
     smoke_mlp.set_defaults(func=_cmd_smoke_mlp)
+
+    profile = subparsers.add_parser(
+        "profile-template",
+        help="Profile or dry-run a generated TTNN template.",
+    )
+    profile.add_argument(
+        "--template",
+        choices=("mlp_decode",),
+        required=True,
+        help="Template to profile. Phase 10 supports mlp_decode only.",
+    )
+    profile.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Generated config.json or template config JSON.",
+    )
+    profile.add_argument("--warmup", type=int, default=0)
+    profile.add_argument("--iterations", type=int, default=1)
+    profile.add_argument(
+        "--trace",
+        action="store_true",
+        help="Try TTNN trace capture/execute when hardware APIs exist.",
+    )
+    profile.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the profiling report schema without opening a device.",
+    )
+    profile.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    profile.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    profile.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output profiling report JSON path.",
+    )
+    profile.set_defaults(func=_cmd_profile_template)
     return parser
 
 
@@ -366,6 +414,25 @@ def _cmd_smoke_mlp(args: argparse.Namespace) -> int:
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
     return 0 if report.get("passed") else 1
+
+
+def _cmd_profile_template(args: argparse.Namespace) -> int:
+    report = profile_template(
+        template=args.template,
+        config_path=args.config,
+        out=args.out,
+        warmup=args.warmup,
+        iterations=args.iterations,
+        trace=args.trace,
+        dry_run=args.dry_run,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+    )
+    print(f"wrote template profiling report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("status") in {"dry_run", "profiled"} else 1
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -76,6 +76,8 @@ class TemplateRegistryTest(unittest.TestCase):
         self.assertEqual(plan["schema_version"], 1)
         self.assertEqual(plan["mode"], "decode")
         self.assertEqual(plan["vocab_size"], 128)
+        self.assertEqual(plan["hidden_size"], 16)
+        self.assertEqual(plan["intermediate_size"], 32)
         self.assertEqual(len(plan["layers"]), 3)
         self.assertEqual(
             plan["layers"][0]["templates"], expected_layer_templates
