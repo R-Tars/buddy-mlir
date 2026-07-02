@@ -676,3 +676,41 @@ synthetic tensors. The report records input shapes, expected/output shapes,
 dtype seed, layout, memory-config placeholder, TTNN version when available,
 and explicit `api_mismatch` errors when a wrapper cannot find the expected
 TTNN API. This command deliberately does not compose a full attention layer.
+
+## Phase 2 PR-F: One-Layer Attention Smoke
+
+`smoke-attention-layer` composes the validated primitive wrappers into a single
+synthetic attention decode layer:
+
+```text
+hidden
+qkv_linear
+nlp_create_qkv_heads_decode
+rotary_embedding_decode
+paged_update_cache.k
+paged_update_cache.v
+paged_scaled_dot_product_attention_decode
+nlp_concat_heads_decode
+o_proj_linear
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-attention-layer \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layer 0 \
+  --device p150a \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/attention_layer_report.json
+```
+
+On a P150A system, drop `--dry-run` to execute the synthetic layer. The report
+records per-primitive latency, output shapes, expected output shapes,
+host-to-device tensor conversion count, memory-config conversion count, dtype,
+layout, memory config placeholder, and TTNN version when available. This smoke
+path is still independent from full generated decode execution so individual
+attention issues stay easier to isolate.
