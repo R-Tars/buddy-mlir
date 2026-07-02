@@ -512,3 +512,42 @@ intermediate semantic graph, execution plan, plan diff, parameter config,
 offline manifests, generated program, search artifacts, and package directory.
 It does not import TTNN, open a Tenstorrent device, load full tensor payloads,
 or add new runtime behavior.
+
+## Phase 2 PR-B: Torch-Side Parameter Materialization
+
+`materialize-parameters` turns a generated program's `weights_manifest.json`
+into the nested host-side parameter object expected by generated `model.py`.
+This step still does not create TTNN device tensors.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  materialize-parameters \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --backend torch \
+  --layers 0 \
+  --out /tmp/parameter_report.json
+```
+
+The first implementation supports:
+
+```text
+params.embedding.weight
+params.layers[i].attention.{q_proj,k_proj,v_proj,o_proj}.weight
+params.layers[i].attention.wqkv_packed.weight
+params.layers[i].mlp.{gate_proj,up_proj,down_proj}.weight
+params.layers[i].input_norm.weight
+params.layers[i].post_attention_norm.weight
+params.final_norm.weight
+params.lm_head.weight
+params.lm_head.splits[j].weight
+```
+
+Use `--layers 0` or another comma-separated layer list while bringing up real
+models. The materializer dynamically imports `torch` and `safetensors` only
+when the torch backend is used, reads individual safetensors keys through
+`safe_open` when available, packs QKV on output-feature axis `0`, and slices
+the LM-head on vocab axis `0`. The output report records each materialized
+tensor's source key and shape.

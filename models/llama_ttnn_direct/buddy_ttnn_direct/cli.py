@@ -15,6 +15,11 @@ from .codegen.package import (
     package_dry_run_report,
     package_ttnn_direct_program,
 )
+from .codegen.parameters import (
+    ParameterMaterializationError,
+    materialize_parameters_from_program,
+    parse_layer_ids,
+)
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .codegen.program import write_decode_program_bundle
 from .semantic.dump import dump_graph_json, load_graph_json
@@ -366,6 +371,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     package_program.set_defaults(func=_cmd_package_program)
 
+    materialize_parameters = subparsers.add_parser(
+        "materialize-parameters",
+        help=(
+            "Materialize host-side Llama parameters for a generated TTNN "
+            "Direct program."
+        ),
+    )
+    materialize_parameters.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF Llama model directory containing safetensors files.",
+    )
+    materialize_parameters.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    materialize_parameters.add_argument(
+        "--backend",
+        choices=("torch",),
+        default="torch",
+        help="Host tensor backend. PR-B supports torch only.",
+    )
+    materialize_parameters.add_argument(
+        "--layers",
+        default=None,
+        help=(
+            "Optional comma-separated decoder layer ids to materialize, "
+            "for example --layers 0."
+        ),
+    )
+    materialize_parameters.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output parameter materialization report JSON path.",
+    )
+    materialize_parameters.set_defaults(func=_cmd_materialize_parameters)
+
     search = subparsers.add_parser(
         "search",
         help="Enumerate semantic-level TTNN Direct autotune candidates.",
@@ -630,6 +676,38 @@ def _cmd_package_program(args: argparse.Namespace) -> int:
     print(f"wrote TTNN Direct program package: {args.out_dir}")
     for name in sorted(paths):
         print(f"  {name}: {paths[name]}")
+    return 0
+
+
+def _cmd_materialize_parameters(args: argparse.Namespace) -> int:
+    try:
+        report = materialize_parameters_from_program(
+            model_path=args.model_path,
+            program_dir=args.program_dir,
+            backend=args.backend,
+            layers=parse_layer_ids(args.layers),
+            out=args.out,
+        )
+    except ParameterMaterializationError as exc:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        report = {
+            "schema_version": 1,
+            "status": "fail",
+            "backend": args.backend,
+            "model_path": str(args.model_path),
+            "program_dir": str(args.program_dir),
+            "error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            },
+        }
+        args.out.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"wrote parameter materialization report: {args.out}")
+        print(f"  status: {report['status']}")
+        return 1
+
+    print(f"wrote parameter materialization report: {args.out}")
+    print(f"  status: {report['status']}")
     return 0
 
 
