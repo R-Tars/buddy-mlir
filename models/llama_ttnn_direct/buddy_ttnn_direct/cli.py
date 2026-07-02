@@ -4,6 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
+from .codegen.artifacts import prepare_offline_artifacts
 from .codegen.config_emit import (
     SEED_RECIPE,
     dump_parameter_config,
@@ -182,6 +183,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output structural diff JSON path.",
     )
     diff_plan.set_defaults(func=_cmd_diff_plan)
+
+    prepare_artifacts = subparsers.add_parser(
+        "prepare-artifacts",
+        help="Prepare offline TTNN Direct weight and cache manifests.",
+    )
+    prepare_artifacts.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF model directory containing safetensors metadata.",
+    )
+    prepare_artifacts.add_argument(
+        "--semantic-json",
+        type=Path,
+        required=True,
+        help="Input semantic graph JSON from import-llama.",
+    )
+    prepare_artifacts.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Parameter metadata JSON from emit-config.",
+    )
+    prepare_artifacts.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for offline manifest artifacts.",
+    )
+    prepare_artifacts.set_defaults(func=_cmd_prepare_artifacts)
     return parser
 
 
@@ -255,6 +286,21 @@ def _cmd_diff_plan(args: argparse.Namespace) -> int:
     diff = diff_plan_against_official(plan, official_template)
     dump_plan_diff(diff, args.out)
     print(f"wrote TTNN Direct plan diff: {args.out}")
+    return 0
+
+
+def _cmd_prepare_artifacts(args: argparse.Namespace) -> int:
+    graph = load_graph_json(args.semantic_json)
+    config = json.loads(args.config.read_text())
+    paths = prepare_offline_artifacts(
+        args.model_path,
+        graph,
+        config,
+        args.out_dir,
+    )
+    print(f"wrote TTNN Direct artifact manifests: {args.out_dir}")
+    for name in sorted(paths):
+        print(f"  {name}: {paths[name]}")
     return 0
 
 

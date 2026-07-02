@@ -238,3 +238,33 @@ Experimental and transformer TTNN calls go through `TTNNCompatOps` wrappers so
 API-name differences stay localized. Rotary embedding and paged KV-cache update
 remain explicit template boundaries in this phase; attention is not expected to
 run end-to-end on hardware yet.
+
+## Phase 8: Offline Artifact Manifests
+
+Phase 8 adds `prepare-artifacts`, which reads model weight metadata and writes
+offline manifests without requiring a Tenstorrent device or loading full tensor
+payloads:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  prepare-artifacts \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --semantic-json /tmp/llama_semantic.json \
+  --config /tmp/llama_parameter_config.json \
+  --out-dir /tmp/buddy_ttnn_artifacts
+```
+
+Generated files:
+
+```text
+weights_manifest.json
+packed_qkv_manifest.json
+mlp_manifest.json
+lm_head_splits_manifest.json
+kv_cache_manifest.json
+```
+
+The first implementation parses safetensors headers directly and records lazy
+manifest entries for packed QKV, MLP weights, LM-head vocab splits, and paged
+KV-cache metadata. Tensor conversion and materialized TTNN files remain future
+work.
