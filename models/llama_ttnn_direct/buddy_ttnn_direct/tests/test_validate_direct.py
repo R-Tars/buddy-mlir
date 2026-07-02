@@ -536,6 +536,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "smoke_decode_step.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "profile_decode_step.tensor_conversion_count",
                 acceptance_check_names,
             )
@@ -581,6 +585,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.bottleneck_summary",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.observed_op_sequence",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -723,6 +731,10 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 [],
             )
+            self.assertIn(
+                "qkv_linear",
+                report["steps"]["smoke_decode_step"]["reference_observed_ops"],
+            )
             profile_report = json.loads(
                 (out_dir / "decode_step_profile_report.json").read_text()
             )
@@ -756,6 +768,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 [layer["layer_id"] for layer in profile_step["layer_profiles"]],
                 [0],
+            )
+            self.assertIn(
+                "mlp_gate",
+                profile_step["reference_observed_ops"],
             )
             self.assertEqual(
                 profile_report["throughput_summary"]["status"],
@@ -868,6 +884,12 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["profile_decode_step"][
                     "bottleneck_summary"
                 ]["sections_ms"],
+            )
+            self.assertIn(
+                "qkv_linear",
+                evidence["runtime_evidence"]["smoke_decode_step"][
+                    "reference_observed_ops"
+                ],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -1269,6 +1291,88 @@ class ValidateDirectTest(unittest.TestCase):
                     "missing_required_tensorized_tensor_paths"
                 ],
                 [missing_path],
+            )
+
+    def test_validate_real_decode_fails_when_observed_op_missing(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_smoke = validation_module.run_smoke_decode_step
+            missing_op = "qkv_linear"
+
+            def smoke_without_required_observed_op(*args, **kwargs):
+                report = original_smoke(*args, **kwargs)
+                observed_ops = report["reference"]["observed_ops"]
+                observed_ops.remove(missing_op)
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_step",
+                side_effect=smoke_without_required_observed_op,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["smoke_decode_step.observed_op_sequence"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["smoke_decode_step.observed_op_sequence"],
+            )
+            self.assertNotIn(
+                missing_op,
+                evidence["runtime_evidence"]["smoke_decode_step"][
+                    "reference_observed_ops"
+                ],
             )
 
     def test_validate_real_decode_fails_without_layer_profile_evidence(

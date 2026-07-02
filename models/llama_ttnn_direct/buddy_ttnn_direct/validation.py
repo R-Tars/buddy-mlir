@@ -1363,6 +1363,8 @@ def _real_decode_evidence_manifest(
                 "trace": smoke.get("trace"),
                 "reference_status": smoke.get("reference_status"),
                 "reference_kind": smoke.get("reference_kind"),
+                "reference_planned_ops": smoke.get("reference_planned_ops"),
+                "reference_observed_ops": smoke.get("reference_observed_ops"),
                 "reference_failed_checks": smoke.get(
                     "reference_failed_checks",
                     [],
@@ -1388,6 +1390,10 @@ def _real_decode_evidence_manifest(
                 "trace": profile.get("trace"),
                 "reference_status": profile.get("reference_status"),
                 "reference_kind": profile.get("reference_kind"),
+                "reference_planned_ops": profile.get("reference_planned_ops"),
+                "reference_observed_ops": profile.get(
+                    "reference_observed_ops"
+                ),
                 "reference_failed_checks": profile.get(
                     "reference_failed_checks",
                     [],
@@ -1651,6 +1657,15 @@ def _real_decode_acceptance(
             expected="passed",
         ),
         _acceptance_check(
+            "smoke_decode_step.observed_op_sequence",
+            _observed_ops_cover_planned(
+                smoke.get("reference_planned_ops"),
+                smoke.get("reference_observed_ops"),
+            ),
+            observed=smoke.get("reference_observed_ops"),
+            expected=smoke.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
             "profile_decode_step.parameter_source",
             profile.get("parameter_source") == "hf_model",
             observed=profile.get("parameter_source"),
@@ -1747,6 +1762,15 @@ def _real_decode_acceptance(
             profile.get("reference_status") == "passed",
             observed=profile.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.observed_op_sequence",
+            _observed_ops_cover_planned(
+                profile.get("reference_planned_ops"),
+                profile.get("reference_observed_ops"),
+            ),
+            observed=profile.get("reference_observed_ops"),
+            expected=profile.get("reference_planned_ops"),
         ),
         _acceptance_check(
             "profile_decode_step.section_latency_ms",
@@ -2016,6 +2040,19 @@ def _bottleneck_summary_observed(summary: Any) -> dict[str, Any]:
     }
 
 
+def _observed_ops_cover_planned(planned_ops: Any, observed_ops: Any) -> bool:
+    if not isinstance(planned_ops, list) or not isinstance(observed_ops, list):
+        return False
+    planned_index = 0
+    for observed in observed_ops:
+        if (
+            planned_index < len(planned_ops)
+            and str(observed) == str(planned_ops[planned_index])
+        ):
+            planned_index += 1
+    return planned_index == len(planned_ops)
+
+
 def _number_at_least(value: Any, minimum: Any) -> bool:
     try:
         return float(value) >= float(minimum)
@@ -2100,6 +2137,8 @@ def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
     return {
         "reference_status": reference.get("status"),
         "reference_kind": reference.get("kind"),
+        "reference_planned_ops": reference.get("planned_ops"),
+        "reference_observed_ops": reference.get("observed_ops"),
         "reference_failed_checks": [
             check.get("name")
             for check in checks

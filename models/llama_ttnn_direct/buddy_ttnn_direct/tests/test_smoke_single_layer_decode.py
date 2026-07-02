@@ -139,11 +139,21 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
             self.assertEqual(report["tensor_conversion_count"], 0)
             self.assertEqual(report["reference"]["status"], "passed")
-            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertEqual(
+                report["reference"]["kind"],
+                "structural_shape_dtype_op_sequence",
+            )
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
             )
-            self.assertIn("embedding", report["reference"]["observed_ops"])
+            op_check = next(
+                check
+                for check in report["reference"]["checks"]
+                if check["name"] == "observed_op_sequence"
+            )
+            self.assertTrue(op_check["passed"])
+            self.assertEqual(op_check["expected"], SINGLE_LAYER_DECODE_OPS)
+            self.assertIn("qkv_linear", report["reference"]["observed_ops"])
             self.assertEqual(json.loads(report_json.read_text()), report)
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls],
@@ -573,9 +583,16 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertGreaterEqual(report["tensor_conversion_ms"], 0.0)
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(report["reference"]["status"], "passed")
-            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertEqual(
+                report["reference"]["kind"],
+                "structural_shape_dtype_op_sequence",
+            )
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
+            )
+            self.assertIn(
+                "observed_op_sequence",
+                [check["name"] for check in report["reference"]["checks"]],
             )
             self.assertEqual(report["lm_head_profile"]["split_count"], 8)
             self.assertEqual(report["lm_head_profile"]["argmax_status"], "profiled")

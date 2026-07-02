@@ -351,7 +351,7 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["best"]["reference_status"], "passed")
             self.assertEqual(
                 report["best"]["reference_kind"],
-                "structural_shape_dtype",
+                "structural_shape_dtype_op_sequence",
             )
             self.assertIsInstance(report["best"]["metric"], float)
             self.assertGreater(report["best"]["metric"], 0.0)

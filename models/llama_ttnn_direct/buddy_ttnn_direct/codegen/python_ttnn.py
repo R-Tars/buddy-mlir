@@ -215,8 +215,21 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
             class TTNNCompatOps:
                 def __init__(self, ttnn_module):
                     self.ttnn = ttnn_module
+                    self.op_log = []
 
-                def add(self, left, right, *, memory_config=None, dtype=None):
+                def _record(self, op_name):
+                    self.op_log.append(op_name)
+
+                def add(
+                    self,
+                    left,
+                    right,
+                    *,
+                    memory_config=None,
+                    dtype=None,
+                    op_name="residual_add",
+                ):
+                    self._record(op_name)
                     kwargs = {{}}
                     if memory_config is not None:
                         kwargs["memory_config"] = memory_config
@@ -233,7 +246,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     program_config=None,
                     compute_kernel_config=None,
                     dtype=None,
+                    op_name="linear",
                 ):
+                    self._record(op_name)
                     kwargs = {{}}
                     if memory_config is not None:
                         kwargs["memory_config"] = memory_config
@@ -252,7 +267,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     *,
                     memory_config=None,
                     dtype=None,
+                    op_name="mul_silu",
                 ):
+                    self._record(op_name)
                     kwargs = {{}}
                     activation = self._silu_activation()
                     if activation is not None:
@@ -285,7 +302,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     *,
                     memory_config=None,
                     dtype=None,
+                    op_name="embedding",
                 ):
+                    self._record(op_name)
                     op = getattr(self.ttnn, "embedding", None)
                     if op is None:
                         raise ttnn_ops.UnsupportedTTNNOp(
@@ -307,7 +326,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     epsilon,
                     memory_config=None,
                     dtype=None,
+                    op_name="rms_norm",
                 ):
+                    self._record(op_name)
                     op = getattr(self.ttnn, "rms_norm", None)
                     if op is None:
                         op = getattr(self.ttnn, "rmsnorm", None)
@@ -330,7 +351,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     num_heads,
                     num_kv_heads,
                     memory_config=None,
+                    op_name="nlp_create_qkv_heads_decode",
                 ):
+                    self._record(op_name)
                     return ttnn_ops.nlp_create_qkv_heads_decode(
                         self.ttnn,
                         qkv,
@@ -348,7 +371,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     sin_matrix,
                     transformation_matrix,
                     is_decode_mode=True,
+                    op_name="rotary_embedding_decode",
                 ):
+                    self._record(op_name)
                     return ttnn_ops.rotary_embedding_decode(
                         self.ttnn,
                         q,
@@ -367,7 +392,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     update_idxs_tensor=None,
                     update_idxs=None,
                     page_table=None,
+                    op_name="paged_update_cache",
                 ):
+                    self._record(op_name)
                     return ttnn_ops.paged_update_cache(
                         self.ttnn,
                         cache_tensor,
@@ -389,7 +416,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     memory_config=None,
                     program_config=None,
                     compute_kernel_config=None,
+                    op_name="paged_scaled_dot_product_attention_decode",
                 ):
+                    self._record(op_name)
                     return ttnn_ops.paged_sdpa_decode(
                         self.ttnn,
                         query,
@@ -409,7 +438,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     *,
                     num_heads,
                     memory_config=None,
+                    op_name="nlp_concat_heads_decode",
                 ):
+                    self._record(op_name)
                     return ttnn_ops.nlp_concat_heads_decode(
                         self.ttnn,
                         attn,
@@ -417,13 +448,22 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         memory_config=memory_config,
                     )
 
-                def concat(self, tensors, *, dim=-1, memory_config=None):
+                def concat(
+                    self,
+                    tensors,
+                    *,
+                    dim=-1,
+                    memory_config=None,
+                    op_name="concat",
+                ):
+                    self._record(op_name)
                     kwargs = {{"dim": dim}}
                     if memory_config is not None:
                         kwargs["memory_config"] = memory_config
                     return self.ttnn.concat(tensors, **kwargs)
 
-                def argmax(self, tensor, *, dim=-1):
+                def argmax(self, tensor, *, dim=-1, op_name="argmax_or_sampling"):
+                    self._record(op_name)
                     return self.ttnn.argmax(tensor, dim=dim)
 
 
@@ -458,11 +498,19 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         cache_position,
                         kv_cache,
                     )
-                    hidden = self.ops.add(residual, hidden)
+                    hidden = self.ops.add(
+                        residual,
+                        hidden,
+                        op_name="residual_add.attn",
+                    )
                     residual = hidden
                     hidden = self.rmsnorm(hidden, layer_id, kind="mlp")
                     hidden = self.mlp_decode(layer_id, hidden)
-                    hidden = self.ops.add(residual, hidden)
+                    hidden = self.ops.add(
+                        residual,
+                        hidden,
+                        op_name="residual_add.mlp",
+                    )
                     return hidden
 
                 def embed(self, token_ids):
@@ -488,15 +536,20 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         norm_params = layer_params.post_attention_norm
                     else:
                         raise ValueError(f"unknown RMSNorm kind: {{kind}}")
-                    return self._rmsnorm_with_weight(hidden, norm_params.weight)
+                    return self._rmsnorm_with_weight(
+                        hidden,
+                        norm_params.weight,
+                        op_name=f"rms_norm.{{kind}}",
+                    )
 
                 def final_norm(self, hidden):
                     return self._rmsnorm_with_weight(
                         hidden,
                         self.parameters.final_norm.weight,
+                        op_name="rms_norm.final",
                     )
 
-                def _rmsnorm_with_weight(self, hidden, weight):
+                def _rmsnorm_with_weight(self, hidden, weight, op_name):
                     rms_config = _optional_attr(self.config, "rms_norm", None)
                     epsilon = _optional_attr(
                         rms_config, "eps", GENERATED_RMS_NORM_EPS
@@ -509,6 +562,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                             rms_config, "output_memory_config"
                         ),
                         dtype=_optional_attr(rms_config, "output_dtype"),
+                        op_name=op_name,
                     )
 
                 def attention_decode(
@@ -538,6 +592,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         dtype=_optional_attr(
                             attention_config, "qkv_output_dtype"
                         ),
+                        op_name="qkv_linear",
                     )
 
                     q, k, v = self.ops.nlp_create_qkv_heads_decode(
@@ -547,6 +602,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         memory_config=_optional_attr(
                             attention_config, "qkv_heads_memory_config"
                         ),
+                        op_name="nlp_create_qkv_heads_decode",
                     )
 
                     q, k = self.rotary_embedding_decode(
@@ -604,6 +660,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         dtype=_optional_attr(
                             attention_config, "o_proj_output_dtype"
                         ),
+                        op_name="o_proj_linear",
                     )
 
                 def rotary_embedding_decode(self, layer_id, q, k, cache_position):
@@ -633,6 +690,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         is_decode_mode=_optional_attr(
                             rotary_config, "is_decode_mode", True
                         ),
+                        op_name="rotary_embedding_decode",
                     )
 
                 def paged_update_kv_cache(
@@ -650,12 +708,14 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         k,
                         update_idxs_tensor=cache_position,
                         page_table=page_table,
+                        op_name="paged_update_cache.k",
                     )
                     self.ops.paged_update_cache(
                         layer_cache.v,
                         v,
                         update_idxs_tensor=cache_position,
                         page_table=page_table,
+                        op_name="paged_update_cache.v",
                     )
                     return kv_cache
 
@@ -681,6 +741,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         compute_kernel_config=compute_kernel_config,
                         dtype=intermediate_dtype,
+                        op_name="mlp_gate",
                     )
                     up = self.ops.linear(
                         hidden,
@@ -693,12 +754,14 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         compute_kernel_config=compute_kernel_config,
                         dtype=intermediate_dtype,
+                        op_name="mlp_up",
                     )
                     mid = self.ops.mul_silu(
                         gate,
                         up,
                         memory_config=_tensor_memory_config(gate),
                         dtype=intermediate_dtype,
+                        op_name="mul_silu",
                     )
                     return self.ops.linear(
                         mid,
@@ -711,6 +774,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         compute_kernel_config=compute_kernel_config,
                         dtype=_optional_attr(mlp_config, "output_dtype"),
+                        op_name="mlp_down",
                     )
 
                 def lm_head_argmax(self, hidden):
@@ -755,6 +819,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                                 lm_head_config, "compute_kernel_config"
                             ),
                             dtype=_optional_attr(lm_head_config, "output_dtype"),
+                            op_name="split_lm_head",
                         )
                         shard_logits.append(logits_i)
 
@@ -764,6 +829,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         memory_config=_optional_attr(
                             lm_head_config, "concat_memory_config"
                         ),
+                        op_name="split_lm_head.concat",
                     )
                     generation_config = _optional_attr(
                         self.config, "generation", None
@@ -775,7 +841,11 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         _optional_attr(lm_head_config, "retain_logits", False)
                     )
                     if generation_mode == "greedy" and not retain_logits:
-                        return self.ops.argmax(logits, dim=-1)
+                        return self.ops.argmax(
+                            logits,
+                            dim=-1,
+                            op_name="argmax_or_sampling",
+                        )
                     return logits
 
 

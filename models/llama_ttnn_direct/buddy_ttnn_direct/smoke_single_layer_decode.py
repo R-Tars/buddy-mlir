@@ -819,7 +819,7 @@ def _run_generated_decode_step(
         layer_count=layer_count,
         output_shapes=output_shapes,
         output=output,
-        observed_ops=_observed_op_sequence(ttnn),
+        observed_ops=_generated_observed_op_sequence(model, ttnn),
     )
     passed = bool(reference["passed"])
 
@@ -888,9 +888,15 @@ def _decode_step_reference(
             ]
         )
 
+    checks.append(
+        _op_sequence_coverage_check(
+            planned_ops=plan["op_sequence"],
+            observed_ops=observed_ops,
+        )
+    )
     passed = all(check["passed"] for check in checks)
     return {
-        "kind": "structural_shape_dtype",
+        "kind": "structural_shape_dtype_op_sequence",
         "status": "passed" if passed else "failed",
         "passed": passed,
         "numeric_reference": {
@@ -900,6 +906,47 @@ def _decode_step_reference(
         "planned_ops": list(plan["op_sequence"]),
         "observed_ops": observed_ops,
         "checks": checks,
+    }
+
+
+def _generated_observed_op_sequence(model: Any, ttnn: Any) -> list[str] | None:
+    ops = getattr(model, "ops", None)
+    op_log = getattr(ops, "op_log", None)
+    if isinstance(op_log, list):
+        return [str(item) for item in op_log]
+    return _observed_op_sequence(ttnn)
+
+
+def _op_sequence_coverage_check(
+    *,
+    planned_ops: list[str],
+    observed_ops: list[str] | None,
+) -> dict[str, Any]:
+    if not isinstance(observed_ops, list):
+        return {
+            "name": "observed_op_sequence",
+            "type": "sequence_coverage",
+            "actual": None,
+            "expected": planned_ops,
+            "passed": False,
+            "reason": "generated op instrumentation was not available",
+        }
+
+    planned_index = 0
+    for observed in observed_ops:
+        if (
+            planned_index < len(planned_ops)
+            and observed == planned_ops[planned_index]
+        ):
+            planned_index += 1
+    missing = planned_ops[planned_index:]
+    return {
+        "name": "observed_op_sequence",
+        "type": "sequence_coverage",
+        "actual": observed_ops,
+        "expected": planned_ops,
+        "missing_from_ordered_coverage": missing,
+        "passed": planned_index == len(planned_ops),
     }
 
 
@@ -964,6 +1011,7 @@ def _run_generated_decode_profile(
             lambda residual=residual, hidden=hidden: model.ops.add(
                 residual,
                 hidden,
+                op_name="residual_add.attn",
             ),
             ttnn=ttnn,
             device=device,
@@ -991,6 +1039,7 @@ def _run_generated_decode_profile(
             lambda residual=residual, hidden=hidden: model.ops.add(
                 residual,
                 hidden,
+                op_name="residual_add.mlp",
             ),
             ttnn=ttnn,
             device=device,
@@ -1076,7 +1125,7 @@ def _run_generated_decode_profile(
         layer_count=layer_count,
         output_shapes=output_shapes,
         output=output,
-        observed_ops=_observed_op_sequence(ttnn),
+        observed_ops=_generated_observed_op_sequence(model, ttnn),
     )
     passed = bool(reference["passed"])
 
@@ -1144,6 +1193,7 @@ def _profile_lm_head_and_argmax(
                 "compute_kernel_config",
             ),
             dtype=_optional_attr(lm_head_config, "output_dtype"),
+            op_name="split_lm_head",
         )
         shard_logits.append(logits_i)
 
@@ -1154,6 +1204,7 @@ def _profile_lm_head_and_argmax(
             lm_head_config,
             "concat_memory_config",
         ),
+        op_name="split_lm_head.concat",
     )
     _synchronize(ttnn, device)
     lm_head_ms = (time.perf_counter() - split_start) * 1000.0
@@ -1163,7 +1214,11 @@ def _profile_lm_head_and_argmax(
     retain_logits = bool(_optional_attr(lm_head_config, "retain_logits", False))
     if generation_mode == "greedy" and not retain_logits:
         token, argmax_ms = _time_section(
-            lambda: model.ops.argmax(logits, dim=-1),
+            lambda: model.ops.argmax(
+                logits,
+                dim=-1,
+                op_name="argmax_or_sampling",
+            ),
             ttnn=ttnn,
             device=device,
         )
