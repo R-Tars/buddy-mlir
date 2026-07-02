@@ -396,6 +396,21 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(
                 all(check["passed"] for check in report["acceptance"]["checks"])
             )
+            acceptance_check_names = [
+                check["name"] for check in report["acceptance"]["checks"]
+            ]
+            self.assertIn(
+                "materialize_parameters.tensor_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.tensor_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.tensor_conversion_count",
+                acceptance_check_names,
+            )
             self.assertEqual(
                 report["steps"]["profile_decode_step"]["ttnn_environment"][
                     "version"

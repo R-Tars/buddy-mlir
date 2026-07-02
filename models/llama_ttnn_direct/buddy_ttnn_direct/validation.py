@@ -1002,10 +1002,23 @@ def _real_decode_acceptance(
         }
 
     steps = report.get("steps", {})
+    materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     checks = [
+        _acceptance_check(
+            "materialize_parameters.tensor_count",
+            _positive_number(materialize.get("tensor_count")),
+            observed=materialize.get("tensor_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "decode_shell.parameter_source",
+            decode_shell.get("parameter_source") == "hf_model",
+            observed=decode_shell.get("parameter_source"),
+            expected="hf_model",
+        ),
         _acceptance_check(
             "decode_shell.reference_status",
             decode_shell.get("reference_status") == "passed",
@@ -1013,10 +1026,34 @@ def _real_decode_acceptance(
             expected="passed",
         ),
         _acceptance_check(
+            "smoke_decode_step.parameter_source",
+            smoke.get("parameter_source") == "hf_model",
+            observed=smoke.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensor_conversion_count",
+            _positive_number(smoke.get("tensor_conversion_count")),
+            observed=smoke.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
             "smoke_decode_step.reference_status",
             smoke.get("reference_status") == "passed",
             observed=smoke.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.parameter_source",
+            profile.get("parameter_source") == "hf_model",
+            observed=profile.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensor_conversion_count",
+            _positive_number(profile.get("tensor_conversion_count")),
+            observed=profile.get("tensor_conversion_count"),
+            minimum=1,
         ),
         _acceptance_check(
             "profile_decode_step.reference_status",
@@ -1089,6 +1126,13 @@ def _acceptance_check(
     }
     check.update(details)
     return check
+
+
+def _positive_number(value: Any) -> bool:
+    try:
+        return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
 
 
 def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:

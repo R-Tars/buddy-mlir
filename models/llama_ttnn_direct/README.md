@@ -600,9 +600,11 @@ Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
 bring-up, or `--dry-run` to write the schema without loading safetensors or
 opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
 and/or `--min-tokens-per-second-per-user`, the final report includes an
-`acceptance` block that checks shell numeric/structural references, decode-step
-structural references, trace capture/execute status, and profile throughput
-before marking the validation as accepted.
+`acceptance` block that checks materialized tensor count, real-weight
+`hf_model` parameter sources, decode-step tensor conversion counts, shell
+numeric/structural references, decode-step structural references, trace
+capture/execute status, and profile throughput before marking the validation as
+accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 
