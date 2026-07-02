@@ -598,8 +598,11 @@ The validation also writes
 `/tmp/validate_ttnn_direct_real/real_decode_evidence_manifest.json`, a compact
 evidence bundle index that records artifact existence, TTNN environment,
 materialization/tensorization summaries, trace status, throughput summary,
-autotune status, and failed acceptance checks. Use this manifest as the
-primary attachment for P150A acceptance runs.
+autotune status, failed runtime steps, skipped follow-up steps, and failed
+acceptance checks. If a runtime gate stops early, the manifest is still written
+with `status=incomplete` so the failed bring-up attempt has an inspectable
+evidence bundle. Use this manifest as the primary attachment for P150A
+acceptance runs.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during

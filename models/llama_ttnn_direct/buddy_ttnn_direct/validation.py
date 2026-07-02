@@ -745,6 +745,20 @@ def validate_real_decode(
     def persist() -> None:
         _write_json(report_path, report)
 
+    def write_evidence_summary() -> dict[str, Any]:
+        evidence = _real_decode_evidence_manifest(report, paths)
+        _write_json(paths["evidence_manifest"], evidence)
+        report["evidence"] = {
+            "status": evidence["status"],
+            "manifest": str(paths["evidence_manifest"]),
+            "artifact_count": len(evidence["artifacts"]),
+            "failed_acceptance_checks": evidence["acceptance"][
+                "failed_checks"
+            ],
+        }
+        persist()
+        return evidence
+
     def run_step(
         name: str,
         action: Callable[[], dict[str, Any]],
@@ -1068,6 +1082,7 @@ def validate_real_decode(
 
     for step in REAL_DECODE_VALIDATION_STEPS:
         if not run_step(step, step_actions[step]):
+            write_evidence_summary()
             return report
 
     acceptance = _real_decode_acceptance(
@@ -1086,17 +1101,7 @@ def validate_real_decode(
         if acceptance["passed"]
         else "acceptance_failed"
     )
-    evidence = _real_decode_evidence_manifest(report, paths)
-    _write_json(paths["evidence_manifest"], evidence)
-    report["evidence"] = {
-        "status": evidence["status"],
-        "manifest": str(paths["evidence_manifest"]),
-        "artifact_count": len(evidence["artifacts"]),
-        "failed_acceptance_checks": evidence["acceptance"][
-            "failed_checks"
-        ],
-    }
-    persist()
+    write_evidence_summary()
     return report
 
 
@@ -1265,6 +1270,7 @@ def _real_decode_evidence_manifest(
         status = "accepted"
     else:
         status = "incomplete"
+    results = report.get("results") or {}
 
     return {
         "schema_version": 1,
@@ -1288,6 +1294,15 @@ def _real_decode_evidence_manifest(
             "trace_iterations": report.get("trace_iterations"),
             "metric": report.get("metric"),
             "skip_autotune": report.get("skip_autotune"),
+            "results": dict(results),
+            "failed_steps": _step_names_with_status(
+                results,
+                failing=True,
+            ),
+            "skipped_steps": _step_names_with_status(
+                results,
+                status="skipped",
+            ),
         },
         "requirements": {
             "require_trace": report.get("require_trace"),
@@ -1458,6 +1473,25 @@ def _artifact_evidence(name: str, path: Path) -> dict[str, Any]:
         "exists": path.exists(),
         "kind": kind,
     }
+
+
+def _step_names_with_status(
+    results: Any,
+    *,
+    status: str | None = None,
+    failing: bool = False,
+) -> list[str]:
+    if not isinstance(results, dict):
+        return []
+    names = []
+    passing_statuses = {"pass", "dry_run", "skipped", "pending"}
+    for name, value in results.items():
+        value = str(value)
+        if status is not None and value == status:
+            names.append(str(name))
+        elif failing and value not in passing_statuses:
+            names.append(str(name))
+    return names
 
 
 def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
