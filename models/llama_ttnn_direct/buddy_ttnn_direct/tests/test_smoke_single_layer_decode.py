@@ -566,6 +566,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 self.assertIn(name, sections)
             self.assertEqual(report["trace"]["status"], "captured_and_executed")
             self.assertEqual(report["trace"]["iterations"], 2)
+            self.assertEqual(report["ttnn_environment"]["version"], "fake-ttnn")
+            self.assertEqual(
+                report["ttnn_environment"]["tt_metal_git_commit"],
+                "fake-tt-metal",
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_run_smoke_decode_step_executes_two_generated_layers(self) -> None:
@@ -611,6 +616,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(len(report["output_shapes"]["kv_cache_layers"]), 2)
             self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(report["ttnn_environment"]["version"], "fake-ttnn")
             self.assertEqual(
                 report["reference"]["planned_ops"].count("qkv_linear"),
                 2,
@@ -761,6 +767,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module = types.ModuleType("ttnn")
     module.calls = []
     module.__version__ = "fake-ttnn"
+    module.__tt_metal_commit__ = "fake-tt-metal"
     module.bfloat16 = "ttnn.bfloat16"
     module.float32 = "ttnn.float32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"

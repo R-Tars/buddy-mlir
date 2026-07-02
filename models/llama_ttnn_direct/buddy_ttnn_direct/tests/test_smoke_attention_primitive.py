@@ -58,6 +58,10 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             self.assertEqual(report["dtype"], "bfloat16")
             self.assertEqual(report["memory_config"], "default_or_l1")
             self.assertEqual(report["tensor_conversion_count"], 5)
+            self.assertEqual(
+                report["ttnn_environment"]["module_available"],
+                False,
+            )
             self.assertEqual(report["reference"]["status"], "dry_run")
             self.assertEqual(
                 report["reference"]["numeric_reference"]["status"],
@@ -107,6 +111,14 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                     self.assertEqual(report["dtype"], "bfloat16")
                     self.assertEqual(report["layout"], "tile")
                     self.assertEqual(report["memory_config"], "default_or_l1")
+                    self.assertEqual(
+                        report["ttnn_environment"]["version"],
+                        "fake-ttnn",
+                    )
+                    self.assertEqual(
+                        report["ttnn_environment"]["tt_metal_git_commit"],
+                        "fake-tt-metal",
+                    )
                     self.assertEqual(json.loads(out.read_text()), report)
                     all_called_ops.extend(
                         call["op"] for call in fake_ttnn.calls
@@ -190,6 +202,7 @@ def _fake_torch():
 def _fake_ttnn(*, with_transformer: bool = True):
     module = types.SimpleNamespace(calls=[])
     module.__version__ = "fake-ttnn"
+    module.__tt_metal_commit__ = "fake-tt-metal"
     module.bfloat16 = "ttnn.bfloat16"
     module.float32 = "ttnn.float32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"

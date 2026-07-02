@@ -16,6 +16,7 @@ from .codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
     to_ttnn_parameters,
 )
+from .runtime_environment import collect_ttnn_environment
 from .smoke_attention_primitive import (
     _maybe_managed_device,
     _randn,
@@ -209,6 +210,7 @@ def run_smoke_decode_step(
                 ),
                 detail=str(err),
                 ttnn_version=getattr(ttnn, "__version__", None),
+                ttnn_module=ttnn,
             )
             _write_report(out, report)
             return report
@@ -333,6 +335,7 @@ def run_smoke_decode_step(
             message=str(err),
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
     except UnsupportedTTNNOp as err:
         report = _failed_report(
@@ -350,6 +353,7 @@ def run_smoke_decode_step(
             message=str(err),
             detail=err.op_name,
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
     except Exception as err:
         report = _failed_report(
@@ -367,6 +371,7 @@ def run_smoke_decode_step(
             message=f"{type(err).__name__}: {err}",
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
 
     _write_report(out, report)
@@ -517,6 +522,7 @@ def profile_decode_step(
                 ),
                 detail=str(err),
                 ttnn_version=getattr(ttnn, "__version__", None),
+                ttnn_module=ttnn,
             )
             _write_report(out, report)
             return report
@@ -652,6 +658,7 @@ def profile_decode_step(
             message=str(err),
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
     except UnsupportedTTNNOp as err:
         report = _profile_unavailable_report(
@@ -669,6 +676,7 @@ def profile_decode_step(
             message=str(err),
             detail=err.op_name,
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
     except Exception as err:
         report = _profile_unavailable_report(
@@ -686,6 +694,7 @@ def profile_decode_step(
             message=f"{type(err).__name__}: {err}",
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
 
     _write_report(out, report)
@@ -812,6 +821,7 @@ def _run_generated_decode_step(
         "tensor_conversion_count": tensor_conversion_count,
         "error": None if passed else "decode-step structural reference mismatch",
         "ttnn_version": getattr(ttnn, "__version__", None),
+        "ttnn_environment": collect_ttnn_environment(ttnn),
         "trace": trace_report,
         "reference": reference,
     }
@@ -1073,6 +1083,7 @@ def _run_generated_decode_profile(
         "trace": trace_report,
         "error": None if passed else "decode-step profile structural mismatch",
         "ttnn_version": getattr(ttnn, "__version__", None),
+        "ttnn_environment": collect_ttnn_environment(ttnn),
         "reference": reference,
     }
 
@@ -1749,6 +1760,7 @@ def _base_report(
         "layer_parameter_shapes": plan["layer_parameter_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
+        "ttnn_environment": collect_ttnn_environment(None),
     }
 
 
@@ -1789,6 +1801,7 @@ def _no_device_report(
             "error": NO_TTNN_DEVICE_MESSAGE,
             "detail": detail,
             "ttnn_version": None,
+            "ttnn_environment": collect_ttnn_environment(None),
             "trace": _trace_report(
                 requested=trace,
                 status="unavailable" if trace else "disabled",
@@ -1815,6 +1828,7 @@ def _failed_report(
     message: str,
     detail: str,
     ttnn_version: str | None = None,
+    ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
     report = _base_report(
         program_dir=program_dir,
@@ -1839,6 +1853,7 @@ def _failed_report(
             "error": message,
             "detail": detail,
             "ttnn_version": ttnn_version,
+            "ttnn_environment": collect_ttnn_environment(ttnn_module),
             "trace": _trace_report(
                 requested=trace,
                 status="unavailable" if trace else "disabled",
@@ -1911,6 +1926,7 @@ def _profile_unavailable_report(
     message: str,
     detail: str,
     ttnn_version: str | None = None,
+    ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
     report = _base_profile_report(
         program_dir=program_dir,
@@ -1950,6 +1966,7 @@ def _profile_unavailable_report(
             "error": message,
             "detail": detail,
             "ttnn_version": ttnn_version,
+            "ttnn_environment": collect_ttnn_environment(ttnn_module),
         }
     )
     return report

@@ -136,6 +136,11 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
+            self.assertEqual(report["ttnn_environment"]["version"], "fake-ttnn")
+            self.assertEqual(
+                report["ttnn_environment"]["tt_metal_git_commit"],
+                "fake-tt-metal",
+            )
             self.assertEqual(report["reference"]["status"], "passed")
             self.assertEqual(report["reference"]["kind"], "structural_shape")
             self.assertTrue(

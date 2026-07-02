@@ -21,6 +21,7 @@ from .smoke_decode_shell import (
     _value_check,
 )
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
+from .runtime_environment import collect_ttnn_environment
 from .templates import ttnn_ops
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
@@ -171,6 +172,8 @@ def run_smoke_attention_layer(
             status="missing_torch",
             message="torch is required for attention layer smoke tensors.",
             detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
         _write_report(out, report)
         return report
@@ -236,6 +239,7 @@ def run_smoke_attention_layer(
                     else "attention layer structural reference mismatch"
                 ),
                 "ttnn_version": getattr(ttnn, "__version__", None),
+                "ttnn_environment": collect_ttnn_environment(ttnn),
                 "reference": reference,
             }
         )
@@ -273,6 +277,7 @@ def run_smoke_attention_layer(
             message=str(err),
             detail=err.op_name,
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
     except Exception as err:
         report = _failed_report(
@@ -292,6 +297,7 @@ def run_smoke_attention_layer(
             message=f"{type(err).__name__}: {err}",
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
+            ttnn_module=ttnn,
         )
 
     _write_report(out, report)
@@ -693,6 +699,7 @@ def _base_report(
         "input_shapes": plan["input_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
+        "ttnn_environment": collect_ttnn_environment(None),
     }
 
 
@@ -739,6 +746,7 @@ def _no_device_report(
             "error": NO_TTNN_DEVICE_MESSAGE,
             "detail": detail,
             "ttnn_version": None,
+            "ttnn_environment": collect_ttnn_environment(None),
         }
     )
     return report
@@ -762,6 +770,7 @@ def _failed_report(
     message: str,
     detail: str,
     ttnn_version: str | None = None,
+    ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
     report = _base_report(
         program_dir=program_dir,
@@ -790,6 +799,7 @@ def _failed_report(
             "error": message,
             "detail": detail,
             "ttnn_version": ttnn_version,
+            "ttnn_environment": collect_ttnn_environment(ttnn_module),
         }
     )
     return report

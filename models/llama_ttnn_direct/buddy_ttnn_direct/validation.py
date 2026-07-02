@@ -467,6 +467,7 @@ def validate_direct(
             "layers": smoke_report["layers"],
             "dry_run": smoke_report["dry_run"],
             "trace_status": smoke_report["trace"]["status"],
+            "ttnn_environment": smoke_report.get("ttnn_environment"),
             "smoke_status": smoke_report["status"],
             "op_count": len(smoke_report["op_sequence"]),
             **_reference_summary(smoke_report),
@@ -491,6 +492,7 @@ def validate_direct(
             "layers": profile_report["layers"],
             "dry_run": profile_report["dry_run"],
             "trace_status": profile_report["trace"]["status"],
+            "ttnn_environment": profile_report.get("ttnn_environment"),
             "profile_status": profile_report["status"],
             "bottleneck": profile_report["bottleneck_summary"]["max_section"],
             **_reference_summary(profile_report),
@@ -779,6 +781,7 @@ def validate_real_decode(
                 "tensor_conversion_count"
             ),
             "trace_status": smoke_report.get("trace", {}).get("status"),
+            "ttnn_environment": smoke_report.get("ttnn_environment"),
             **_reference_summary(smoke_report),
         }
 
@@ -812,6 +815,7 @@ def validate_real_decode(
             "tensor_conversion_ms": profile_report.get("tensor_conversion_ms"),
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
+            "ttnn_environment": profile_report.get("ttnn_environment"),
             **_reference_summary(profile_report),
         }
 

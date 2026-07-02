@@ -772,9 +772,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 On a P150A system, drop `--dry-run` to execute the selected primitive with
 synthetic tensors. The report records input shapes, expected/output shapes,
 dtype seed, layout, memory-config placeholder, host-to-device tensor conversion
-count, TTNN version when available, and explicit `api_mismatch` errors when a
-wrapper cannot find the expected TTNN API. This command deliberately does not
-compose a full attention layer. Successful non-dry-run reports include
+count, TTNN environment metadata (`ttnn_environment.version`, module file, and
+detected tt-metal git commit when available), and explicit `api_mismatch`
+errors when a wrapper cannot find the expected TTNN API. This command
+deliberately does not compose a full attention layer. Successful non-dry-run
+reports include
 `reference.kind=structural_shape`, which checks observed output shapes against
 the primitive plan while keeping `numeric_reference.status=not_run`.
 
@@ -812,9 +814,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 On a P150A system, drop `--dry-run` to execute the synthetic layer. The report
 records per-primitive latency, input/output shapes, expected output shapes,
 dtype, layout, memory config, host-to-device tensor conversion count,
-memory-config conversion count, and TTNN version when available. This smoke path
-is still independent from full generated decode execution so individual
-attention issues stay easier to isolate. Successful non-dry-run reports include
+memory-config conversion count, and TTNN environment metadata when available.
+This smoke path is still independent from full generated decode execution so
+individual attention issues stay easier to isolate. Successful non-dry-run reports include
 `reference.kind=structural_shape` for the final attention output and paged KV
 cache shapes; each primitive report also records `expected_output_shapes`, and
 the reference checks include intermediate QKV, rotary, SDPA, concat-heads, and
@@ -895,8 +897,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report records the expanded generated op sequence, synthetic input and
 parameter shapes, expected intermediate shapes, output shapes, tensor
-conversion count, TTNN version, and explicit `api_mismatch` / `no_device`
-status when a required TTNN op or device is unavailable.
+conversion count, TTNN environment metadata, and explicit `api_mismatch` /
+`no_device` status when a required TTNN op or device is unavailable.
 
 When a local HF model directory is available, add `--model-path` in device mode
 to materialize real weights through `materialize-parameters` and tensorize the

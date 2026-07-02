@@ -255,6 +255,12 @@ class ValidateDirectTest(unittest.TestCase):
                 "dry_run",
             )
             self.assertEqual(
+                report["steps"]["smoke_decode_step"]["ttnn_environment"][
+                    "module_available"
+                ],
+                False,
+            )
+            self.assertEqual(
                 report["steps"]["profile_decode_step"]["reference_status"],
                 "dry_run",
             )
@@ -341,6 +347,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["profile_decode_step"]["reference_status"],
                 "passed",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["ttnn_environment"][
+                    "version"
+                ],
+                "fake-ttnn",
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["candidate_count"],
