@@ -250,6 +250,9 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "2",
                     "--cache-len",
                     "16",
+                    "--trace",
+                    "--trace-iterations",
+                    "2",
                     "--dry-run",
                     "--out",
                     str(report_json),
@@ -265,6 +268,73 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["op_sequence"].count("qkv_linear"), 2)
             self.assertEqual(report["op_sequence"].count("rms_norm.final"), 1)
             self.assertEqual(report["tensor_conversion_count"], 37)
+            self.assertTrue(report["trace_enabled"])
+            self.assertEqual(report["trace_iterations"], 2)
+            self.assertEqual(report["trace"]["status"], "dry_run")
+
+    def test_run_smoke_decode_step_trace_executes_fake_trace_apis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_trace_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            report = run_smoke_decode_step(
+                out=report_json,
+                program_dir=program_dir,
+                layers=1,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                trace=True,
+                trace_iterations=2,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["trace"]["status"], "captured_and_executed")
+            self.assertEqual(report["trace"]["iterations"], 2)
+            self.assertEqual(len(report["trace"]["execute_samples_ms"]), 2)
+            trace_ops = [
+                call["op"]
+                for call in fake_ttnn.calls
+                if call["op"]
+                in {
+                    "begin_trace_capture",
+                    "end_trace_capture",
+                    "execute_trace",
+                    "release_trace",
+                }
+            ]
+            self.assertEqual(
+                trace_ops,
+                [
+                    "begin_trace_capture",
+                    "end_trace_capture",
+                    "execute_trace",
+                    "execute_trace",
+                    "release_trace",
+                ],
+            )
 
     def test_run_smoke_decode_step_executes_two_generated_layers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -626,6 +696,45 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
         )
         return FakeTensor("argmax", shape)
 
+    def begin_trace_capture(device, **kwargs):
+        module.calls.append(
+            {
+                "op": "begin_trace_capture",
+                "device": device,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return "fake_trace_id"
+
+    def end_trace_capture(device, trace_id, **kwargs):
+        module.calls.append(
+            {
+                "op": "end_trace_capture",
+                "device": device,
+                "trace_id": trace_id,
+                "kwargs": dict(kwargs),
+            }
+        )
+
+    def execute_trace(device, trace_id, **kwargs):
+        module.calls.append(
+            {
+                "op": "execute_trace",
+                "device": device,
+                "trace_id": trace_id,
+                "kwargs": dict(kwargs),
+            }
+        )
+
+    def release_trace(device, trace_id):
+        module.calls.append(
+            {
+                "op": "release_trace",
+                "device": device,
+                "trace_id": trace_id,
+            }
+        )
+
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
     module.from_torch = from_torch
@@ -636,6 +745,10 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.begin_trace_capture = begin_trace_capture
+    module.end_trace_capture = end_trace_capture
+    module.execute_trace = execute_trace
+    module.release_trace = release_trace
     module.experimental = types.SimpleNamespace(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         rotary_embedding_llama=rotary_embedding_llama,

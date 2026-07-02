@@ -596,6 +596,17 @@ def build_parser() -> argparse.ArgumentParser:
         default="bf16",
     )
     smoke_decode_step.add_argument(
+        "--trace",
+        action="store_true",
+        help="Capture generated decode_step once and execute the trace.",
+    )
+    smoke_decode_step.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=1,
+        help="Number of execute_trace iterations after capture.",
+    )
+    smoke_decode_step.add_argument(
         "--dry-run",
         action="store_true",
         help="Write the generated decode report schema without opening a device.",
@@ -1098,6 +1109,8 @@ def _cmd_smoke_decode_step(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         cache_len=args.cache_len,
         dtype_seed=args.dtype_seed,
+        trace=args.trace,
+        trace_iterations=args.trace_iterations,
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step smoke report: {args.out}")

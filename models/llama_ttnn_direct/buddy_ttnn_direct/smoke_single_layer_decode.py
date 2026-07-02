@@ -69,6 +69,8 @@ def run_smoke_decode_step(
     batch_size: int | None = None,
     cache_len: int | None = None,
     dtype_seed: str = "bf16",
+    trace: bool = False,
+    trace_iterations: int = 1,
     dry_run: bool = False,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
@@ -88,6 +90,8 @@ def run_smoke_decode_step(
         raise ValueError(
             f"layers must be <= generated config num_layers ({num_layers})"
         )
+    if trace_iterations <= 0:
+        raise ValueError("trace_iterations must be positive")
     batch_size = int(batch_size or config["batch_size"])
     cache_len = int(cache_len or config["max_cache_len"])
     plan = _decode_step_plan(
@@ -106,6 +110,8 @@ def run_smoke_decode_step(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
             dry_run=True,
             plan=plan,
         )
@@ -118,6 +124,11 @@ def run_smoke_decode_step(
                 "tensor_conversion_count": plan["tensor_conversion_count"],
                 "error": None,
                 "ttnn_version": None,
+                "trace": _trace_report(
+                    requested=trace,
+                    status="dry_run" if trace else "disabled",
+                    iterations=trace_iterations if trace else 0,
+                ),
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
@@ -139,6 +150,8 @@ def run_smoke_decode_step(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
             plan=plan,
             detail=str(err),
         )
@@ -163,6 +176,8 @@ def run_smoke_decode_step(
                 batch_size=batch_size,
                 cache_len=cache_len,
                 dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
                 plan=plan,
                 status="missing_torch",
                 message=(
@@ -216,6 +231,8 @@ def run_smoke_decode_step(
                 cache_position=cache_position,
                 kv_cache=kv_cache,
                 tensor_conversion_count=tensor_conversion_count,
+                trace=trace,
+                trace_iterations=trace_iterations,
             )
             report.update(
                 {
@@ -227,6 +244,8 @@ def run_smoke_decode_step(
                         batch_size=batch_size,
                         cache_len=cache_len,
                         dtype_seed=dtype_seed,
+                        trace=trace,
+                        trace_iterations=trace_iterations,
                         dry_run=False,
                         plan=plan,
                     ),
@@ -242,6 +261,8 @@ def run_smoke_decode_step(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
             plan=plan,
             detail=str(err),
         )
@@ -254,6 +275,8 @@ def run_smoke_decode_step(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
             plan=plan,
             status="api_mismatch",
             message=str(err),
@@ -269,6 +292,8 @@ def run_smoke_decode_step(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
             plan=plan,
             status="runtime_error",
             message=f"{type(err).__name__}: {err}",
@@ -293,6 +318,8 @@ def _run_generated_decode_step(
     cache_position: Any,
     kv_cache: Any,
     tensor_conversion_count: int,
+    trace: bool,
+    trace_iterations: int,
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
@@ -303,17 +330,63 @@ def _run_generated_decode_step(
         config=_to_namespace(decode_config),
     )
 
-    start = time.perf_counter()
-    token, kv_cache = model.decode_step(
-        token_ids,
-        page_table,
-        cache_position,
-        kv_cache,
-    )
-    synchronize = getattr(ttnn, "synchronize_device", None)
-    if callable(synchronize):
-        synchronize(device)
-    latency_ms = (time.perf_counter() - start) * 1000.0
+    trace_report = _trace_report(requested=trace, status="disabled")
+    if trace:
+        if _trace_apis_available(ttnn):
+            try:
+                token, kv_cache, latency_ms, trace_report = (
+                    _run_decode_step_with_trace(
+                        ttnn=ttnn,
+                        model=model,
+                        device=device,
+                        token_ids=token_ids,
+                        page_table=page_table,
+                        cache_position=cache_position,
+                        kv_cache=kv_cache,
+                        iterations=trace_iterations,
+                    )
+                )
+            except Exception as err:
+                trace_report = _trace_report(
+                    requested=True,
+                    status="trace_failed_fell_back_to_eager",
+                    iterations=trace_iterations,
+                    error=f"{type(err).__name__}: {err}",
+                )
+                token, kv_cache, latency_ms = _time_decode_step(
+                    ttnn=ttnn,
+                    model=model,
+                    device=device,
+                    token_ids=token_ids,
+                    page_table=page_table,
+                    cache_position=cache_position,
+                    kv_cache=kv_cache,
+                )
+        else:
+            trace_report = _trace_report(
+                requested=True,
+                status="trace_api_unavailable_fell_back_to_eager",
+                iterations=trace_iterations,
+            )
+            token, kv_cache, latency_ms = _time_decode_step(
+                ttnn=ttnn,
+                model=model,
+                device=device,
+                token_ids=token_ids,
+                page_table=page_table,
+                cache_position=cache_position,
+                kv_cache=kv_cache,
+            )
+    else:
+        token, kv_cache, latency_ms = _time_decode_step(
+            ttnn=ttnn,
+            model=model,
+            device=device,
+            token_ids=token_ids,
+            page_table=page_table,
+            cache_position=cache_position,
+            kv_cache=kv_cache,
+        )
 
     return {
         "passed": True,
@@ -340,6 +413,7 @@ def _run_generated_decode_step(
         "tensor_conversion_count": tensor_conversion_count,
         "error": None,
         "ttnn_version": getattr(ttnn, "__version__", None),
+        "trace": trace_report,
         "reference": {
             "status": "not_run",
             "reason": (
@@ -348,6 +422,79 @@ def _run_generated_decode_step(
             ),
         },
     }
+
+
+def _time_decode_step(
+    *,
+    ttnn: Any,
+    model: Any,
+    device: Any,
+    token_ids: Any,
+    page_table: Any,
+    cache_position: Any,
+    kv_cache: Any,
+) -> tuple[Any, Any, float]:
+    start = time.perf_counter()
+    token, kv_cache = model.decode_step(
+        token_ids,
+        page_table,
+        cache_position,
+        kv_cache,
+    )
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    return token, kv_cache, latency_ms
+
+
+def _run_decode_step_with_trace(
+    *,
+    ttnn: Any,
+    model: Any,
+    device: Any,
+    token_ids: Any,
+    page_table: Any,
+    cache_position: Any,
+    kv_cache: Any,
+    iterations: int,
+) -> tuple[Any, Any, float, dict[str, Any]]:
+    trace_id = None
+    release_trace = getattr(ttnn, "release_trace", None)
+    try:
+        capture_start = time.perf_counter()
+        trace_id = ttnn.begin_trace_capture(device, cq_id=0)
+        token, kv_cache = model.decode_step(
+            token_ids,
+            page_table,
+            cache_position,
+            kv_cache,
+        )
+        ttnn.end_trace_capture(device, trace_id, cq_id=0)
+        capture_latency_ms = (time.perf_counter() - capture_start) * 1000.0
+
+        execute_samples = []
+        for _ in range(iterations):
+            execute_start = time.perf_counter()
+            ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+            synchronize = getattr(ttnn, "synchronize_device", None)
+            if callable(synchronize):
+                synchronize(device)
+            execute_samples.append((time.perf_counter() - execute_start) * 1000.0)
+        execute_latency_ms = sum(execute_samples)
+        trace_report = _trace_report(
+            requested=True,
+            status="captured_and_executed",
+            iterations=iterations,
+            trace_id=trace_id,
+            capture_latency_ms=capture_latency_ms,
+            execute_latency_ms=execute_latency_ms,
+            execute_samples_ms=execute_samples,
+        )
+        return token, kv_cache, capture_latency_ms + execute_latency_ms, trace_report
+    finally:
+        if trace_id is not None and callable(release_trace):
+            release_trace(device, trace_id)
 
 
 def _build_synthetic_decode_state(
@@ -599,6 +746,8 @@ def _base_report(
     batch_size: int,
     cache_len: int,
     dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
     dry_run: bool,
     plan: dict[str, Any],
 ) -> dict[str, Any]:
@@ -615,6 +764,8 @@ def _base_report(
         "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
         "layout": "tile",
         "dry_run": dry_run,
+        "trace_enabled": trace,
+        "trace_iterations": trace_iterations if trace else 0,
         "op_sequence": plan["op_sequence"],
         "input_shapes": plan["input_shapes"],
         "parameter_shapes": plan["parameter_shapes"],
@@ -633,6 +784,8 @@ def _no_device_report(
     batch_size: int,
     cache_len: int,
     dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
     plan: dict[str, Any],
     detail: str,
 ) -> dict[str, Any]:
@@ -644,6 +797,8 @@ def _no_device_report(
         batch_size=batch_size,
         cache_len=cache_len,
         dtype_seed=dtype_seed,
+        trace=trace,
+        trace_iterations=trace_iterations,
         dry_run=False,
         plan=plan,
     )
@@ -657,6 +812,11 @@ def _no_device_report(
             "error": NO_TTNN_DEVICE_MESSAGE,
             "detail": detail,
             "ttnn_version": None,
+            "trace": _trace_report(
+                requested=trace,
+                status="unavailable" if trace else "disabled",
+                iterations=trace_iterations if trace else 0,
+            ),
         }
     )
     return report
@@ -671,6 +831,8 @@ def _failed_report(
     batch_size: int,
     cache_len: int,
     dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
     plan: dict[str, Any],
     status: str,
     message: str,
@@ -685,6 +847,8 @@ def _failed_report(
         batch_size=batch_size,
         cache_len=cache_len,
         dtype_seed=dtype_seed,
+        trace=trace,
+        trace_iterations=trace_iterations,
         dry_run=False,
         plan=plan,
     )
@@ -698,8 +862,53 @@ def _failed_report(
             "error": message,
             "detail": detail,
             "ttnn_version": ttnn_version,
+            "trace": _trace_report(
+                requested=trace,
+                status="unavailable" if trace else "disabled",
+                iterations=trace_iterations if trace else 0,
+            ),
         }
     )
+    return report
+
+
+def _trace_apis_available(ttnn: Any) -> bool:
+    return all(
+        callable(getattr(ttnn, name, None))
+        for name in (
+            "begin_trace_capture",
+            "end_trace_capture",
+            "execute_trace",
+        )
+    )
+
+
+def _trace_report(
+    *,
+    requested: bool,
+    status: str,
+    iterations: int = 0,
+    trace_id: Any | None = None,
+    capture_latency_ms: float | None = None,
+    execute_latency_ms: float | None = None,
+    execute_samples_ms: list[float] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "requested": requested,
+        "status": status,
+        "iterations": iterations,
+    }
+    if trace_id is not None:
+        report["trace_id"] = trace_id
+    if capture_latency_ms is not None:
+        report["capture_latency_ms"] = capture_latency_ms
+    if execute_latency_ms is not None:
+        report["execute_latency_ms"] = execute_latency_ms
+    if execute_samples_ms is not None:
+        report["execute_samples_ms"] = execute_samples_ms
+    if error is not None:
+        report["error"] = error
     return report
 
 

@@ -831,3 +831,27 @@ The report records the repeated generated op sequence, layer count, synthetic
 per-layer parameter shapes, expected output shapes, tensor conversion count,
 and per-layer KV cache output shapes. This remains a functional-path smoke; it
 does not yet load real Llama weights or claim official performance parity.
+
+## Performance Step 4: Decode-Step Trace Smoke
+
+`smoke-decode-step` can also exercise TTNN trace capture and execution for the
+generated decode path:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-decode-step \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 2 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --trace \
+  --trace-iterations 10 \
+  --out /tmp/decode_step_trace_report.json
+```
+
+When TTNN exposes `begin_trace_capture`, `end_trace_capture`, `execute_trace`,
+and optionally `release_trace`, the smoke captures one generated decode step
+and executes the captured trace `--trace-iterations` times. If trace APIs are
+unavailable or capture fails, the report records an explicit fallback status
+instead of silently pretending trace was used.
