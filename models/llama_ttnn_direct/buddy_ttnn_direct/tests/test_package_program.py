@@ -72,8 +72,21 @@ class PackageProgramTest(unittest.TestCase):
                 manifest["weights_manifest"], "weights_manifest.json"
             )
             self.assertFalse(manifest["runtime"]["buddy_cli_supported"])
+            self.assertTrue(manifest["runtime"]["python_runner_supported"])
+            self.assertEqual(manifest["runtime"]["python_runner"], "run_decode.py")
+            self.assertEqual(
+                manifest["runtime"]["runner_modes"],
+                ["inspect", "smoke", "profile", "validate-real"],
+            )
+            self.assertTrue(manifest["runtime"]["dry_run_supported"])
+            self.assertTrue(
+                manifest["runtime"]["real_weight_validation_supported"]
+            )
             self.assertEqual(manifest["model_name"], "fake-package-program")
             self.assertEqual(manifest["num_layers"], 2)
+            package_readme = (package_dir / "PACKAGE_README.md").read_text()
+            self.assertIn("python run_decode.py --mode smoke", package_readme)
+            self.assertIn("validate-real", package_readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -122,6 +135,9 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(
                 report["manifest"]["entrypoint"],
                 "model.py",
+            )
+            self.assertTrue(
+                report["manifest"]["runtime"]["python_runner_supported"]
             )
             self.assertIn("manifest.json", report["artifacts"])
 

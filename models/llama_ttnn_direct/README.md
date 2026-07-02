@@ -421,9 +421,20 @@ The package writes `manifest.json` with:
   "entrypoint": "model.py",
   "semantic_graph": "semantic_graph.json",
   "execution_plan": "execution_plan.json",
-  "weights_manifest": "weights_manifest.json"
+  "weights_manifest": "weights_manifest.json",
+  "runtime": {
+    "buddy_cli_supported": false,
+    "python_runner": "run_decode.py",
+    "python_runner_supported": true,
+    "runner_modes": ["inspect", "smoke", "profile", "validate-real"]
+  }
 }
 ```
+
+The packaged `PACKAGE_README.md` points at the same runner modes exposed by the
+generated bundle. Use `python run_decode.py --mode smoke/profile/validate-real`
+from the package directory for Python TTNN bring-up; `buddy-cli` dispatch remains
+out of scope for this phase.
 
 CMake exposes an additive target behind
 `BUDDY_BUILD_LLAMA31_TTNN_DIRECT_MODEL=ON`:

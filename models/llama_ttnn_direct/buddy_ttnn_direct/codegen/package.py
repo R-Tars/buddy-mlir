@@ -47,9 +47,20 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
         ),
         "runtime": {
             "buddy_cli_supported": False,
+            "python_runner": "run_decode.py",
+            "python_runner_supported": True,
+            "runner_modes": [
+                "inspect",
+                "smoke",
+                "profile",
+                "validate-real",
+            ],
+            "dry_run_supported": True,
+            "real_weight_validation_supported": True,
             "notes": (
-                "Phase 13 packages the TTNN Direct Python program artifacts "
-                "only; buddy-cli runtime dispatch is intentionally not wired."
+                "buddy-cli runtime dispatch is intentionally not wired; use "
+                "run_decode.py for inspect, smoke, profile, and real-weight "
+                "validation flows."
             ),
         },
         "artifacts": {
@@ -111,11 +122,14 @@ Entrypoint: `{manifest["entrypoint"]}`
 Model: `{manifest.get("model_name")}`
 
 This package directory contains a generated Python TTNN Direct decode program
-and JSON metadata manifests. Phase 13 does not wire this package into
-`buddy-cli`; inspect the generated decode op sequence with:
+and JSON metadata manifests. The package is not wired into `buddy-cli`, but the
+Python runner can inspect and exercise the generated decode path:
 
 ```bash
-python run_decode.py --dry-run
+python run_decode.py
+python run_decode.py --mode smoke --dry-run --out /tmp/decode_step_smoke.json
+python run_decode.py --mode profile --dry-run --out /tmp/decode_step_profile.json
+python run_decode.py --mode validate-real --dry-run --out-dir /tmp/validate_real
 ```
 """
 
