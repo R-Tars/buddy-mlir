@@ -297,6 +297,23 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue((out_dir / "decode_shell_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "dry_run")
+            self.assertEqual(evidence["validation"]["status"], "dry_run")
+            self.assertTrue(evidence["requirements"]["require_trace"])
+            self.assertEqual(evidence["acceptance"]["status"], "dry_run")
+            artifact_names = {
+                artifact["name"]: artifact for artifact in evidence["artifacts"]
+            }
+            self.assertTrue(artifact_names["report"]["exists"])
+            self.assertTrue(artifact_names["smoke_report"]["exists"])
+            self.assertFalse(artifact_names["autotune_report"]["exists"])
+            self.assertEqual(
+                report["evidence"]["manifest"],
+                str(out_dir / "real_decode_evidence_manifest.json"),
+            )
 
     def test_validate_real_decode_runs_fake_real_weight_gates(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -354,6 +371,7 @@ class ValidateDirectTest(unittest.TestCase):
                 )
 
             self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["evidence"]["status"], "accepted")
             self.assertEqual(
                 report["results"],
                 {step: "pass" for step in REAL_DECODE_VALIDATION_STEPS},
@@ -538,6 +556,34 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 {"dram": 11},
             )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "accepted")
+            self.assertTrue(evidence["acceptance"]["passed"])
+            self.assertEqual(evidence["acceptance"]["failed_checks"], [])
+            self.assertEqual(
+                evidence["weight_evidence"]["materialization"]["tensor_count"],
+                21,
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["smoke_tensorization"][
+                    "memory_config_counts"
+                ],
+                {"dram": 17},
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "trace_status"
+                ],
+                "captured_and_executed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_reference_status"
+                ],
+                "passed",
+            )
 
     def test_validate_real_decode_fails_acceptance_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -588,6 +634,14 @@ class ValidateDirectTest(unittest.TestCase):
             ]
             self.assertEqual(
                 [check["name"] for check in failed_checks],
+                ["profile_decode_step.tokens_per_second_per_user"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
                 ["profile_decode_step.tokens_per_second_per_user"],
             )
 

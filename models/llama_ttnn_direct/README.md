@@ -594,6 +594,12 @@ materialization, attention-disabled decode shell, smoke, profile, and autotune
 subreports. The decode shell gate runs before full decode-step smoke/profile
 so embedding/RMSNorm/MLP/LM-head correctness can fail early; when a torch
 reference can run, `--decode-shell-pcc-threshold` gates the final-hidden PCC.
+The validation also writes
+`/tmp/validate_ttnn_direct_real/real_decode_evidence_manifest.json`, a compact
+evidence bundle index that records artifact existence, TTNN environment,
+materialization/tensorization summaries, trace status, throughput summary,
+autotune status, and failed acceptance checks. Use this manifest as the
+primary attachment for P150A acceptance runs.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during

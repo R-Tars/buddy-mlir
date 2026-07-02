@@ -655,6 +655,7 @@ def validate_real_decode(
         "profile_report": root / "decode_step_profile_report.json",
         "autotune_report": root / "decode_step_autotune_report.json",
         "autotune_candidates_dir": root / "decode_step_autotune_candidates",
+        "evidence_manifest": root / "real_decode_evidence_manifest.json",
         "report": report_path,
     }
     report: dict[str, Any] = {
@@ -966,6 +967,16 @@ def validate_real_decode(
         if acceptance["passed"]
         else "acceptance_failed"
     )
+    evidence = _real_decode_evidence_manifest(report, paths)
+    _write_json(paths["evidence_manifest"], evidence)
+    report["evidence"] = {
+        "status": evidence["status"],
+        "manifest": str(paths["evidence_manifest"]),
+        "artifact_count": len(evidence["artifacts"]),
+        "failed_acceptance_checks": evidence["acceptance"][
+            "failed_checks"
+        ],
+    }
     persist()
     return report
 
@@ -980,6 +991,201 @@ def _runtime_step_status(
     if runtime_report.get("passed"):
         return "pass"
     return str(runtime_report.get("status", "fail"))
+
+
+def _real_decode_evidence_manifest(
+    report: dict[str, Any],
+    paths: dict[str, Path],
+) -> dict[str, Any]:
+    steps = report.get("steps", {})
+    materialize = steps.get("materialize_parameters", {})
+    decode_shell = steps.get("decode_shell", {})
+    smoke = steps.get("smoke_decode_step", {})
+    profile = steps.get("profile_decode_step", {})
+    autotune = steps.get("decode_step_autotune", {})
+    acceptance = report.get("acceptance", {})
+    failed_checks = [
+        check
+        for check in acceptance.get("checks", [])
+        if isinstance(check, dict) and not check.get("passed")
+    ]
+    if report.get("dry_run"):
+        status = "dry_run"
+    elif report.get("status") == "pass" and acceptance.get("passed"):
+        status = "accepted"
+    else:
+        status = "incomplete"
+
+    return {
+        "schema_version": 1,
+        "status": status,
+        "validation": {
+            "command": report.get("command"),
+            "status": report.get("status"),
+            "dry_run": report.get("dry_run"),
+            "program_dir": report.get("program_dir"),
+            "model_path": report.get("model_path"),
+            "layers": report.get("layers"),
+            "batch_size": report.get("batch_size"),
+            "cache_len": report.get("cache_len"),
+            "device": report.get("device"),
+            "device_id": report.get("device_id"),
+            "dtype_seed": report.get("dtype_seed"),
+            "trace_enabled": report.get("trace_enabled"),
+            "trace_iterations": report.get("trace_iterations"),
+            "metric": report.get("metric"),
+            "skip_autotune": report.get("skip_autotune"),
+        },
+        "requirements": {
+            "require_trace": report.get("require_trace"),
+            "min_tokens_per_second_per_user": report.get(
+                "min_tokens_per_second_per_user"
+            ),
+            "decode_shell_pcc_threshold": report.get(
+                "decode_shell_pcc_threshold"
+            ),
+            "require_decode_shell_numeric_reference": report.get(
+                "require_decode_shell_numeric_reference"
+            ),
+        },
+        "artifacts": [
+            _artifact_evidence(name, path)
+            for name, path in paths.items()
+            if name != "evidence_manifest"
+        ],
+        "device_evidence": {
+            "smoke_ttnn_environment": smoke.get("ttnn_environment"),
+            "profile_ttnn_environment": profile.get("ttnn_environment"),
+        },
+        "weight_evidence": {
+            "materialization": {
+                "status": materialize.get("status"),
+                "materialized_layer_ids": materialize.get(
+                    "materialized_layer_ids"
+                ),
+                "tensor_count": materialize.get("tensor_count"),
+                "lm_head_split_count": materialize.get("lm_head_split_count"),
+            },
+            "smoke_tensorization": _tensorization_evidence(smoke),
+            "profile_tensorization": _tensorization_evidence(profile),
+        },
+        "runtime_evidence": {
+            "decode_shell": {
+                "status": decode_shell.get("status"),
+                "runtime_status": decode_shell.get("runtime_status"),
+                "parameter_source": decode_shell.get("parameter_source"),
+                "input_source": decode_shell.get("input_source"),
+                "reference_status": decode_shell.get("reference_status"),
+                "numeric_reference_status": decode_shell.get(
+                    "numeric_reference_status"
+                ),
+                "numeric_reference_kind": decode_shell.get(
+                    "numeric_reference_kind"
+                ),
+                "pcc": decode_shell.get("pcc"),
+                "pcc_threshold": decode_shell.get("pcc_threshold"),
+            },
+            "smoke_decode_step": {
+                "status": smoke.get("status"),
+                "runtime_status": smoke.get("runtime_status"),
+                "parameter_source": smoke.get("parameter_source"),
+                "input_source": smoke.get("input_source"),
+                "tensor_conversion_count": smoke.get(
+                    "tensor_conversion_count"
+                ),
+                "trace_status": smoke.get("trace_status"),
+                "reference_status": smoke.get("reference_status"),
+                "reference_kind": smoke.get("reference_kind"),
+                "reference_failed_checks": smoke.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+            },
+            "profile_decode_step": {
+                "status": profile.get("status"),
+                "runtime_status": profile.get("runtime_status"),
+                "parameter_source": profile.get("parameter_source"),
+                "input_source": profile.get("input_source"),
+                "tensor_conversion_count": profile.get(
+                    "tensor_conversion_count"
+                ),
+                "tensor_conversion_ms": profile.get("tensor_conversion_ms"),
+                "trace_status": profile.get("trace_status"),
+                "reference_status": profile.get("reference_status"),
+                "reference_kind": profile.get("reference_kind"),
+                "reference_failed_checks": profile.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+                "throughput_summary": profile.get("throughput_summary"),
+                "max_section": profile.get("max_section"),
+            },
+            "decode_step_autotune": {
+                "status": autotune.get("status"),
+                "candidate_count": autotune.get("candidate_count"),
+                "passed_candidate_count": autotune.get(
+                    "passed_candidate_count"
+                ),
+                "failed_candidate_count": autotune.get(
+                    "failed_candidate_count"
+                ),
+                "best": autotune.get("best"),
+                "best_reference_status": autotune.get(
+                    "best_reference_status"
+                ),
+                "status_counts": autotune.get("status_counts", {}),
+                "reference_status_counts": autotune.get(
+                    "reference_status_counts",
+                    {},
+                ),
+                "trace_status_counts": autotune.get(
+                    "trace_status_counts",
+                    {},
+                ),
+            },
+        },
+        "acceptance": {
+            "status": acceptance.get("status"),
+            "passed": acceptance.get("passed"),
+            "check_count": len(acceptance.get("checks", [])),
+            "failed_checks": [check.get("name") for check in failed_checks],
+        },
+    }
+
+
+def _artifact_evidence(name: str, path: Path) -> dict[str, Any]:
+    if path.is_file():
+        kind = "file"
+    elif path.is_dir():
+        kind = "directory"
+    else:
+        kind = "missing"
+    return {
+        "name": name,
+        "path": str(path),
+        "exists": path.exists(),
+        "kind": kind,
+    }
+
+
+def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
+    tensorization = _step_tensorization_summary(step)
+    return {
+        "status": tensorization.get("status"),
+        "roles": tensorization.get("roles"),
+        "tensor_count": tensorization.get("tensor_count"),
+        "target_dtype_counts": tensorization.get("target_dtype_counts", {}),
+        "layout_counts": tensorization.get("layout_counts", {}),
+        "memory_config_counts": tensorization.get("memory_config_counts", {}),
+        "ttnn_dtype_counts": tensorization.get("ttnn_dtype_counts", {}),
+        "ttnn_layout_counts": tensorization.get("ttnn_layout_counts", {}),
+        "ttnn_memory_config_counts": tensorization.get(
+            "ttnn_memory_config_counts",
+            {},
+        ),
+        "key_paths": tensorization.get("key_paths", []),
+        "key_tensors": tensorization.get("key_tensors", {}),
+    }
 
 
 def _real_decode_acceptance(
