@@ -20,6 +20,9 @@ from .codegen.program import write_decode_program_bundle
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
+from .search.report import dump_search_report
+from .search.runner import run_lm_head_search
+from .search.space import load_search_space
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .templates.registry import (
     build_execution_plan,
@@ -357,6 +360,55 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validate and print package manifest JSON without writing.",
     )
     package_program.set_defaults(func=_cmd_package_program)
+
+    search = subparsers.add_parser(
+        "search",
+        help="Enumerate semantic-level TTNN Direct autotune candidates.",
+    )
+    search.add_argument(
+        "--semantic-json",
+        type=Path,
+        required=True,
+        help="Input semantic graph JSON from import-llama.",
+    )
+    search.add_argument(
+        "--base-config",
+        type=Path,
+        required=True,
+        help="Base template config JSON.",
+    )
+    search.add_argument(
+        "--space",
+        type=Path,
+        required=True,
+        help="Search space JSON.",
+    )
+    search.add_argument(
+        "--metric",
+        default="latency_ms",
+        help="Metric name to optimize. Phase 14 supports latency_ms only.",
+    )
+    search.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output search report JSON path.",
+    )
+    search.add_argument(
+        "--candidates-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Optional output directory for candidate configs/plans/codegen. "
+            "Defaults to <out-stem>_candidates next to --out."
+        ),
+    )
+    search.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate candidate artifacts without running hardware metrics.",
+    )
+    search.set_defaults(func=_cmd_search)
     return parser
 
 
@@ -529,6 +581,25 @@ def _cmd_package_program(args: argparse.Namespace) -> int:
     print(f"wrote TTNN Direct program package: {args.out_dir}")
     for name in sorted(paths):
         print(f"  {name}: {paths[name]}")
+    return 0
+
+
+def _cmd_search(args: argparse.Namespace) -> int:
+    graph = load_graph_json(args.semantic_json)
+    base_config = load_template_config(args.base_config)
+    space = load_search_space(args.space)
+    report = run_lm_head_search(
+        graph=graph,
+        base_config=base_config,
+        space=space,
+        metric=args.metric,
+        out=args.out,
+        candidates_dir=args.candidates_dir,
+        dry_run=args.dry_run,
+    )
+    dump_search_report(report, args.out)
+    print(f"wrote TTNN Direct search report: {args.out}")
+    print(f"  candidates: {report['candidates_dir']}")
     return 0
 
 

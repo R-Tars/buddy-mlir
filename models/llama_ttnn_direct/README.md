@@ -420,3 +420,40 @@ By default the target uses a config-only Llama 3.1 8B model description so it
 does not require weights or TTNN hardware. Set
 `BUDDY_LLAMA31_TTNN_DIRECT_MODEL_PATH` to package from a local Hugging Face
 model directory.
+
+## Phase 14: Minimal Semantic Autotune
+
+Phase 14 adds a small reusable search path that only enumerates LM-head split
+count and generation template candidates:
+
+```json
+{
+  "lm_head_split_count": [1, 2, 4, 8, 16],
+  "generation_template": ["full_logits", "device_argmax_greedy"]
+}
+```
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  search \
+  --semantic-json /tmp/llama_semantic.json \
+  --base-config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --space models/llama_ttnn_direct/buddy_ttnn_direct/search/spaces/lm_head_minimal.json \
+  --metric latency_ms \
+  --out /tmp/search_report.json \
+  --dry-run
+```
+
+The command writes `/tmp/search_report.json` and a sibling
+`/tmp/search_report_candidates/` directory. Each candidate contains:
+
+```text
+config.json
+execution_plan.json
+codegen/
+```
+
+Phase 14 does not run device measurements yet. Reports set `best` to `null`
+and mark dry-run candidates as `dry_run_generated`.

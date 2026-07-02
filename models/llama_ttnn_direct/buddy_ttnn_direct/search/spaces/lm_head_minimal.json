@@ -1,0 +1,4 @@
+{
+  "lm_head_split_count": [1, 2, 4, 8, 16],
+  "generation_template": ["full_logits", "device_argmax_greedy"]
+}

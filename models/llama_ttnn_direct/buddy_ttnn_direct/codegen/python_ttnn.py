@@ -133,7 +133,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
     )
     mlp_template = _template_name(plan, "official_gated_mlp_decode")
     lm_head_template = _template_name(plan, "official_split_lm_head")
-    generation_template = _template_name(plan, "device_argmax_greedy")
+    generation_template = config["generation"]["template"]
     lm_head_split_count = int(config["lm_head"]["split_count"])
 
     return (
