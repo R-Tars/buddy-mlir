@@ -469,6 +469,7 @@ def validate_direct(
             "trace_status": smoke_report["trace"]["status"],
             "smoke_status": smoke_report["status"],
             "op_count": len(smoke_report["op_sequence"]),
+            **_reference_summary(smoke_report),
         }
 
     def decode_step_profile_dry_run_step() -> dict[str, Any]:
@@ -492,6 +493,7 @@ def validate_direct(
             "trace_status": profile_report["trace"]["status"],
             "profile_status": profile_report["status"],
             "bottleneck": profile_report["bottleneck_summary"]["max_section"],
+            **_reference_summary(profile_report),
         }
 
     def search_step() -> dict[str, Any]:
@@ -768,6 +770,7 @@ def validate_real_decode(
                 "tensor_conversion_count"
             ),
             "trace_status": smoke_report.get("trace", {}).get("status"),
+            **_reference_summary(smoke_report),
         }
 
     def profile_step() -> dict[str, Any]:
@@ -800,6 +803,7 @@ def validate_real_decode(
             "tensor_conversion_ms": profile_report.get("tensor_conversion_ms"),
             "max_section": bottleneck.get("max_section"),
             "trace_status": profile_report.get("trace", {}).get("status"),
+            **_reference_summary(profile_report),
         }
 
     def autotune_step() -> dict[str, Any]:
@@ -842,6 +846,14 @@ def validate_real_decode(
             "best": autotune_report.get("best", {}).get("id")
             if autotune_report.get("best") is not None
             else None,
+            "best_reference_status": (
+                autotune_report.get("best", {}).get("reference_status")
+                if autotune_report.get("best") is not None
+                else None
+            ),
+            "reference_status_counts": _candidate_reference_status_counts(
+                autotune_report
+            ),
             "dry_run": autotune_report["dry_run"],
         }
 
@@ -871,6 +883,30 @@ def _runtime_step_status(
     if runtime_report.get("passed"):
         return "pass"
     return str(runtime_report.get("status", "fail"))
+
+
+def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
+    reference = runtime_report.get("reference") or {}
+    checks = reference.get("checks") or []
+    return {
+        "reference_status": reference.get("status"),
+        "reference_kind": reference.get("kind"),
+        "reference_failed_checks": [
+            check.get("name")
+            for check in checks
+            if isinstance(check, dict) and not check.get("passed")
+        ],
+    }
+
+
+def _candidate_reference_status_counts(report: dict[str, Any]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in report.get("candidates", []):
+        status = candidate.get("reference_status")
+        if status is None:
+            continue
+        counts[str(status)] = counts.get(str(status), 0) + 1
+    return counts
 
 
 def dump_validation_report(report: dict[str, Any], out: str | Path) -> None:

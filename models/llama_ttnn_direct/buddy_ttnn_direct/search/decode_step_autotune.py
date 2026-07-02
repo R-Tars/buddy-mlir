@@ -93,6 +93,9 @@ def run_decode_step_autotune(
             "bottleneck_summary": None,
             "parameter_source": None,
             "parameter_setup": None,
+            "reference_status": None,
+            "reference_kind": None,
+            "reference_failed_checks": [],
         }
         if not dry_run:
             profile = profile_decode_step(
@@ -113,6 +116,7 @@ def run_decode_step_autotune(
             record["status"] = str(profile["status"])
             record["parameter_source"] = profile.get("parameter_source")
             record["parameter_setup"] = profile.get("parameter_setup")
+            record.update(_reference_summary(profile))
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,
@@ -195,6 +199,20 @@ def apply_decode_step_candidate_config(
         candidate.get("attention_concat_heads_output_memory_config")
     )
     return config
+
+
+def _reference_summary(report: dict[str, Any]) -> dict[str, Any]:
+    reference = report.get("reference") or {}
+    checks = reference.get("checks") or []
+    return {
+        "reference_status": reference.get("status"),
+        "reference_kind": reference.get("kind"),
+        "reference_failed_checks": [
+            check.get("name")
+            for check in checks
+            if isinstance(check, dict) and not check.get("passed")
+        ],
+    }
 
 
 def _candidate_knobs(candidate: dict[str, Any]) -> dict[str, Any]:

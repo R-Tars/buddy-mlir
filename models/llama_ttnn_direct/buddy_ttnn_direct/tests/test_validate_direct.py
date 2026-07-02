@@ -163,6 +163,18 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
                 32,
             )
+            self.assertEqual(
+                report["steps"]["decode_step_smoke_dry_run"][
+                    "reference_status"
+                ],
+                "dry_run",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_profile_dry_run"][
+                    "reference_status"
+                ],
+                "dry_run",
+            )
 
     def test_cli_validate_real_decode_dry_run_writes_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -222,6 +234,14 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
+            self.assertEqual(
+                report["steps"]["smoke_decode_step"]["reference_status"],
+                "dry_run",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["reference_status"],
+                "dry_run",
+            )
             self.assertTrue(
                 (out_dir / "parameter_materialization_report.json").is_file()
             )
@@ -299,10 +319,26 @@ class ValidateDirectTest(unittest.TestCase):
                 "hf_model",
             )
             self.assertEqual(
+                report["steps"]["smoke_decode_step"]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
                 report["steps"]["decode_step_autotune"]["candidate_count"],
                 1,
             )
             self.assertIsNotNone(report["steps"]["decode_step_autotune"]["best"])
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["best_reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["reference_status_counts"],
+                {"passed": 1},
+            )
             smoke_report = json.loads(
                 (out_dir / "decode_step_smoke_report.json").read_text()
             )
@@ -318,6 +354,11 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(profile_report["trace"]["status"], "captured_and_executed")
             autotune_report = json.loads(
                 (out_dir / "decode_step_autotune_report.json").read_text()
+            )
+            self.assertEqual(autotune_report["best"]["reference_status"], "passed")
+            self.assertEqual(
+                autotune_report["candidates"][0]["reference_status"],
+                "passed",
             )
             self.assertEqual(
                 autotune_report["best"]["parameter_setup"]["tensorization"][

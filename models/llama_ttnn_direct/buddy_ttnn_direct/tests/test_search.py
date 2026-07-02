@@ -334,10 +334,19 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["candidate_count"], 1)
             self.assertIsNotNone(report["best"])
             self.assertEqual(report["best"]["status"], "profiled")
+            self.assertEqual(report["best"]["reference_status"], "passed")
+            self.assertEqual(
+                report["best"]["reference_kind"],
+                "structural_shape_dtype",
+            )
             self.assertIsInstance(report["best"]["metric"], float)
             self.assertEqual(
                 report["candidates"][0]["knobs"]["lm_head_split_count"],
                 2,
+            )
+            self.assertEqual(
+                report["candidates"][0]["reference_status"],
+                "passed",
             )
 
     def test_decode_step_autotune_profiles_fake_model_weights(self) -> None:
@@ -389,12 +398,14 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["candidate_count"], 1)
             self.assertIsNotNone(report["best"])
             self.assertEqual(report["best"]["status"], "profiled")
+            self.assertEqual(report["best"]["reference_status"], "passed")
             self.assertEqual(report["best"]["parameter_source"], "hf_model")
             self.assertEqual(
                 report["best"]["parameter_setup"]["tensorization"]["tensor_count"],
                 11,
             )
             candidate = report["candidates"][0]
+            self.assertEqual(candidate["reference_status"], "passed")
             self.assertEqual(candidate["parameter_source"], "hf_model")
             self.assertEqual(
                 candidate["parameter_setup"]["materialization"]["tensor_count"],
