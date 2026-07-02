@@ -118,12 +118,23 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(report["input_source"], "injected")
             self.assertEqual(report["runtime_input_tensor_count"], 0)
             self.assertEqual(report["reference"]["status"], "passed")
-            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertEqual(
+                report["reference"]["kind"],
+                "structural_shape_dtype_op_sequence",
+            )
             self.assertEqual(
                 report["reference"]["numeric_reference"]["status"],
                 "not_run",
             )
             self.assertEqual(report["reference"]["observed_ops"][0], "embedding")
+            op_check = next(
+                check
+                for check in report["reference"]["checks"]
+                if check["name"] == "observed_op_sequence"
+            )
+            self.assertTrue(op_check["passed"])
+            self.assertEqual(op_check["expected"], DECODE_SHELL_OPS)
+            self.assertIn("mlp_gate", report["reference"]["observed_ops"])
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
             )
@@ -201,6 +212,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(numeric["kind"], "torch_decode_shell")
             self.assertGreaterEqual(numeric["pcc"], 0.999999)
             self.assertTrue(all(check["passed"] for check in numeric["checks"]))
+            self.assertIn("mlp_down", report["reference"]["observed_ops"])
             self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_run_smoke_decode_shell_synthesizes_token_ids(self) -> None:

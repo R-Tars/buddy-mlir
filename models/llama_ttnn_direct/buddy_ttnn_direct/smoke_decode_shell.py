@@ -29,10 +29,10 @@ from .smoke_mlp import (
 DECODE_SHELL_OPS = [
     "embedding",
     "rms_norm.mlp",
-    "linear.mlp_gate",
-    "linear.mlp_up",
-    "mul.silu",
-    "linear.mlp_down",
+    "mlp_gate",
+    "mlp_up",
+    "mul_silu",
+    "mlp_down",
     "residual_add",
     "rms_norm.final",
     "split_lm_head",
@@ -289,7 +289,7 @@ def _run_generated_decode_shell(
         token=token,
         reference_parameters=reference_parameters,
         token_ids=token_ids,
-        observed_ops=_observed_op_sequence(ttnn),
+        observed_ops=_generated_observed_op_sequence(model, ttnn),
         layer_count=layer_count,
         pcc_threshold=pcc_threshold,
     )
@@ -515,14 +515,62 @@ def _decode_shell_reference(
     passed = all(check["passed"] for check in checks)
     if numeric_reference.get("passed") is False:
         passed = False
+    checks.append(
+        _op_sequence_coverage_check(
+            planned_ops=list(DECODE_SHELL_OPS),
+            observed_ops=observed_ops,
+        )
+    )
+    passed = passed and checks[-1]["passed"]
     return {
-        "kind": "structural_shape_dtype",
+        "kind": "structural_shape_dtype_op_sequence",
         "status": "passed" if passed else "failed",
         "passed": passed,
         "numeric_reference": numeric_reference,
         "planned_ops": list(DECODE_SHELL_OPS),
         "observed_ops": observed_ops,
         "checks": checks,
+    }
+
+
+def _generated_observed_op_sequence(model: Any, ttnn: Any) -> list[str] | None:
+    ops = getattr(model, "ops", None)
+    op_log = getattr(ops, "op_log", None)
+    if isinstance(op_log, list):
+        return [str(item) for item in op_log]
+    return _observed_op_sequence(ttnn)
+
+
+def _op_sequence_coverage_check(
+    *,
+    planned_ops: list[str],
+    observed_ops: list[str] | None,
+) -> dict[str, Any]:
+    if not isinstance(observed_ops, list):
+        return {
+            "name": "observed_op_sequence",
+            "type": "sequence_coverage",
+            "actual": None,
+            "expected": planned_ops,
+            "passed": False,
+            "reason": "generated op instrumentation was not available",
+        }
+
+    planned_index = 0
+    for observed in observed_ops:
+        if (
+            planned_index < len(planned_ops)
+            and observed == planned_ops[planned_index]
+        ):
+            planned_index += 1
+    missing = planned_ops[planned_index:]
+    return {
+        "name": "observed_op_sequence",
+        "type": "sequence_coverage",
+        "actual": observed_ops,
+        "expected": planned_ops,
+        "missing_from_ordered_coverage": missing,
+        "passed": planned_index == len(planned_ops),
     }
 
 

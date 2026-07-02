@@ -1347,6 +1347,16 @@ def _real_decode_evidence_manifest(
                 ),
                 "pcc": decode_shell.get("pcc"),
                 "pcc_threshold": decode_shell.get("pcc_threshold"),
+                "reference_planned_ops": decode_shell.get(
+                    "reference_planned_ops"
+                ),
+                "reference_observed_ops": decode_shell.get(
+                    "reference_observed_ops"
+                ),
+                "reference_failed_checks": decode_shell.get(
+                    "reference_failed_checks",
+                    [],
+                ),
             },
             "smoke_decode_step": {
                 "status": smoke.get("status"),
@@ -1563,6 +1573,15 @@ def _real_decode_acceptance(
             decode_shell.get("reference_status") == "passed",
             observed=decode_shell.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "decode_shell.observed_op_sequence",
+            _observed_ops_cover_planned(
+                decode_shell.get("reference_planned_ops"),
+                decode_shell.get("reference_observed_ops"),
+            ),
+            observed=decode_shell.get("reference_observed_ops"),
+            expected=decode_shell.get("reference_planned_ops"),
         ),
         _acceptance_check(
             "smoke_decode_step.parameter_source",
