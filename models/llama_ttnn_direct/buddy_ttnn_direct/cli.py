@@ -3,8 +3,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .semantic.dump import dump_graph_json
+from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
+from .templates.registry import (
+    build_execution_plan,
+    dump_execution_plan,
+    load_template_config,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -52,6 +57,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output semantic graph JSON path.",
     )
     import_llama.set_defaults(func=_cmd_import_llama)
+
+    plan = subparsers.add_parser(
+        "plan",
+        help="Map a Llama semantic graph to official-like TTNN templates.",
+    )
+    plan.add_argument(
+        "--semantic-json",
+        type=Path,
+        required=True,
+        help="Input semantic graph JSON from import-llama.",
+    )
+    plan.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Template seed config JSON.",
+    )
+    plan.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output execution plan JSON path.",
+    )
+    plan.set_defaults(func=_cmd_plan)
     return parser
 
 
@@ -67,6 +96,15 @@ def _cmd_import_llama(args: argparse.Namespace) -> int:
     dump_graph_json(graph, args.out)
     suffix = " (dry-run)" if args.dry_run else ""
     print(f"wrote Llama semantic graph{suffix}: {args.out}")
+    return 0
+
+
+def _cmd_plan(args: argparse.Namespace) -> int:
+    graph = load_graph_json(args.semantic_json)
+    config = load_template_config(args.config)
+    plan = build_execution_plan(graph, config)
+    dump_execution_plan(plan, args.out)
+    print(f"wrote TTNN Direct execution plan: {args.out}")
     return 0
 
 

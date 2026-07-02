@@ -33,3 +33,38 @@ The importer reads local `config.json` directly. If present, it also reads
 file metadata for state-dict keys. If metadata is missing, canonical HF Llama
 weight names are inferred from the config so dry-run CI can still exercise the
 path with a tiny fake model directory.
+
+## Phase 2: Template Plan
+
+Phase 2 maps each semantic graph node to an official-style TTNN template name.
+It still does not import TTNN, require a Tenstorrent device, or load full
+weights.
+
+Example:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  plan \
+  --semantic-json /tmp/llama_semantic.json \
+  --config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --out /tmp/llama_ttnn_plan.json
+```
+
+The generated plan has a deterministic per-layer template sequence:
+
+```text
+rmsnorm
+official_paged_attention_decode
+residual_add
+rmsnorm
+official_gated_mlp_decode
+residual_add
+```
+
+The final sequence is:
+
+```text
+rmsnorm
+official_split_lm_head
+device_argmax_greedy
+```

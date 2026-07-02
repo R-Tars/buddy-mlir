@@ -1,0 +1,15 @@
+{
+  "device": "generic",
+  "model": "llama",
+  "batch_size": 1,
+  "decode_seq_len": 1,
+  "prefill_seq_len": 128,
+  "max_cache_len": 1024,
+  "attention_template": "official_paged_attention_decode",
+  "mlp_template": "official_gated_mlp_decode",
+  "lm_head_template": "official_split_lm_head",
+  "kv_cache_template": "paged_kv_cache",
+  "generation_template": "device_argmax_greedy",
+  "lm_head_split_count": 1,
+  "dtype_recipe": "official_like_functional_seed"
+}
