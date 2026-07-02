@@ -511,6 +511,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Input directory from build-program.",
     )
     smoke_single_layer_decode.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local HF model directory. When provided in device mode, "
+            "weights are materialized and tensorized instead of using synthetic "
+            "parameters."
+        ),
+    )
+    smoke_single_layer_decode.add_argument(
         "--device",
         default="p150a",
         help="Target device label recorded in the smoke report.",
@@ -563,6 +573,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Input directory from build-program.",
+    )
+    smoke_decode_step.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local HF model directory. When provided in device mode, "
+            "weights are materialized and tensorized instead of using synthetic "
+            "parameters."
+        ),
     )
     smoke_decode_step.add_argument(
         "--layers",
@@ -634,6 +654,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help="Input directory from build-program.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local HF model directory. When provided in device mode, "
+            "weights are materialized and tensorized instead of using synthetic "
+            "parameters."
+        ),
     )
     profile_decode_step_parser.add_argument(
         "--layers",
@@ -1237,6 +1267,7 @@ def _cmd_smoke_single_layer_decode(args: argparse.Namespace) -> int:
     report = run_smoke_single_layer_decode(
         out=args.out,
         program_dir=args.program_dir,
+        model_path=args.model_path,
         device=args.device,
         device_id=args.device_id,
         batch_size=args.batch_size,
@@ -1256,6 +1287,7 @@ def _cmd_smoke_decode_step(args: argparse.Namespace) -> int:
         out=args.out,
         program_dir=args.program_dir,
         layers=args.layers,
+        model_path=args.model_path,
         device=args.device,
         device_id=args.device_id,
         batch_size=args.batch_size,
@@ -1277,6 +1309,7 @@ def _cmd_profile_decode_step(args: argparse.Namespace) -> int:
         out=args.out,
         program_dir=args.program_dir,
         layers=args.layers,
+        model_path=args.model_path,
         device=args.device,
         device_id=args.device_id,
         batch_size=args.batch_size,

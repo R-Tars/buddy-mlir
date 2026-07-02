@@ -822,12 +822,35 @@ parameter shapes, expected intermediate shapes, output shapes, tensor
 conversion count, TTNN version, and explicit `api_mismatch` / `no_device`
 status when a required TTNN op or device is unavailable.
 
+When a local HF model directory is available, add `--model-path` in device mode
+to materialize real weights through `materialize-parameters` and tensorize the
+generated decode roles through `tensorize-parameters`. Token ids, page table,
+cache position, paged KV cache, and rotary matrices remain synthetic for this
+bring-up step:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-single-layer-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/single_layer_decode_real_weights_report.json
+```
+
+The report sets `parameter_source` to `hf_model` for this path and
+`input_source` to `synthetic`.
+
 ## Performance Step 2b: Generated Decode Layer Stack Smoke
 
 `smoke-decode-step` extends the generated decode smoke path from one layer to a
-configurable layer stack. It still uses synthetic TTNN tensors, but it now
-builds per-layer attention/MLP parameters and per-layer paged KV cache entries
-before calling generated `decode_step()` with `config.num_layers = --layers`.
+configurable layer stack. By default it uses synthetic TTNN tensors for both
+parameters and runtime inputs, but it can also take `--model-path` to
+materialize/tensorize real generated decode weights while keeping token ids,
+page table, cache position, rotary matrices, and per-layer paged KV cache
+synthetic. It then calls generated `decode_step()` with
+`config.num_layers = --layers`.
 
 Use it to walk the review plan from 2 layers to 4 layers and finally the full
 generated layer count:
@@ -856,10 +879,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --out /tmp/decode_step_4l_report.json
 ```
 
-The report records the repeated generated op sequence, layer count, synthetic
+The report records the repeated generated op sequence, layer count, planned
 per-layer parameter shapes, expected output shapes, tensor conversion count,
-and per-layer KV cache output shapes. This remains a functional-path smoke; it
-does not yet load real Llama weights or claim official performance parity.
+parameter/input source, and per-layer KV cache output shapes. This remains a
+functional-path smoke; loading real weights does not yet claim official
+performance parity.
 
 ## Performance Step 4: Decode-Step Trace Smoke
 
@@ -888,7 +912,8 @@ instead of silently pretending trace was used.
 ## Performance Step 5: Decode-Step Bottleneck Profile
 
 `profile-decode-step` runs the generated decode path with synthetic TTNN
-tensors and records section-level latency for bottleneck attribution:
+tensors, or with real generated decode weights when `--model-path` is provided,
+and records section-level latency for bottleneck attribution:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \

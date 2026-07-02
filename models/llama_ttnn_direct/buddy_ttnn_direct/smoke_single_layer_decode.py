@@ -7,6 +7,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from .codegen.parameters import (
+    ParameterMaterializationError,
+    load_llama_parameters_from_manifests,
+)
+from .codegen.ttnn_tensorizer import (
+    TTNNTensorizationError,
+    load_parameter_config_from_program,
+    to_ttnn_parameters,
+)
 from .smoke_attention_primitive import (
     _maybe_managed_device,
     _randn,
@@ -42,6 +51,7 @@ DECODE_FINAL_OPS = [
     "split_lm_head",
     "argmax_or_sampling",
 ]
+DECODE_PARAMETER_ROLES = ["embedding", "norm", "attention", "mlp", "lm_head"]
 
 
 def _decode_op_sequence(layers: int) -> list[str]:
@@ -68,6 +78,7 @@ def run_smoke_decode_step(
     device_id: int = 0,
     batch_size: int | None = None,
     cache_len: int | None = None,
+    model_path: str | Path | None = None,
     dtype_seed: str = "bf16",
     trace: bool = False,
     trace_iterations: int = 1,
@@ -195,21 +206,34 @@ def run_smoke_decode_step(
         with _maybe_managed_device(ttnn, device_id, ttnn_module) as ttnn_device:
             if parameters is None:
                 assert torch is not None
-                synthetic = _build_synthetic_decode_state(
-                    ttnn=ttnn,
-                    torch=torch,
-                    device=ttnn_device,
-                    dtype_seed=dtype_seed,
-                    plan=plan,
-                )
-                parameters = synthetic.parameters
-                token_ids = synthetic.token_ids
-                page_table = synthetic.page_table
-                cache_position = synthetic.cache_position
-                kv_cache = synthetic.kv_cache
-                tensor_conversion_count = synthetic.tensor_conversion_count
+                if model_path is None:
+                    state = _build_synthetic_decode_state(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        dtype_seed=dtype_seed,
+                        plan=plan,
+                    )
+                else:
+                    state = _build_model_decode_state(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        dtype_seed=dtype_seed,
+                        plan=plan,
+                        program_dir=program_root,
+                        model_path=Path(model_path),
+                    )
+                parameters = state.parameters
+                token_ids = state.token_ids
+                page_table = state.page_table
+                cache_position = state.cache_position
+                kv_cache = state.kv_cache
+                tensor_conversion_count = state.tensor_conversion_count
+                parameter_source = state.parameter_source
             else:
                 tensor_conversion_count = 0
+                parameter_source = "injected"
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -233,6 +257,16 @@ def run_smoke_decode_step(
                 tensor_conversion_count=tensor_conversion_count,
                 trace=trace,
                 trace_iterations=trace_iterations,
+            )
+            report["parameter_source"] = parameter_source
+            report["input_source"] = (
+                "injected"
+                if any(
+                    item is not None
+                    for item in (token_ids, page_table, cache_position, kv_cache)
+                )
+                and parameter_source == "injected"
+                else "synthetic"
             )
             report.update(
                 {
@@ -265,6 +299,23 @@ def run_smoke_decode_step(
             trace_iterations=trace_iterations,
             plan=plan,
             detail=str(err),
+        )
+    except (ParameterMaterializationError, TTNNTensorizationError) as err:
+        report = _failed_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="parameter_setup_error",
+            message=str(err),
+            detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
         )
     except UnsupportedTTNNOp as err:
         report = _failed_report(
@@ -314,6 +365,7 @@ def profile_decode_step(
     device_id: int = 0,
     batch_size: int | None = None,
     cache_len: int | None = None,
+    model_path: str | Path | None = None,
     dtype_seed: str = "bf16",
     trace: bool = False,
     trace_iterations: int = 1,
@@ -458,13 +510,24 @@ def profile_decode_step(
             if parameters is None:
                 assert torch is not None
                 conversion_start = time.perf_counter()
-                synthetic = _build_synthetic_decode_state(
-                    ttnn=ttnn,
-                    torch=torch,
-                    device=ttnn_device,
-                    dtype_seed=dtype_seed,
-                    plan=plan,
-                )
+                if model_path is None:
+                    synthetic = _build_synthetic_decode_state(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        dtype_seed=dtype_seed,
+                        plan=plan,
+                    )
+                else:
+                    synthetic = _build_model_decode_state(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        dtype_seed=dtype_seed,
+                        plan=plan,
+                        program_dir=program_root,
+                        model_path=Path(model_path),
+                    )
                 tensor_conversion_ms = (time.perf_counter() - conversion_start) * 1000.0
                 parameters = synthetic.parameters
                 token_ids = synthetic.token_ids
@@ -472,8 +535,10 @@ def profile_decode_step(
                 cache_position = synthetic.cache_position
                 kv_cache = synthetic.kv_cache
                 tensor_conversion_count = synthetic.tensor_conversion_count
+                parameter_source = synthetic.parameter_source
             else:
                 tensor_conversion_count = 0
+                parameter_source = "injected"
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -512,6 +577,16 @@ def profile_decode_step(
             )
             profile["tensor_conversion_count"] = tensor_conversion_count
             profile["tensor_conversion_ms"] = tensor_conversion_ms
+            profile["parameter_source"] = parameter_source
+            profile["input_source"] = (
+                "injected"
+                if any(
+                    item is not None
+                    for item in (token_ids, page_table, cache_position, kv_cache)
+                )
+                and parameter_source == "injected"
+                else "synthetic"
+            )
             profile["bottleneck_summary"] = _bottleneck_summary(
                 profile["section_latency_ms"],
                 profile["layer_profiles"],
@@ -535,6 +610,23 @@ def profile_decode_step(
             plan=plan,
             status="no_device",
             message=NO_TTNN_DEVICE_MESSAGE,
+            detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+    except (ParameterMaterializationError, TTNNTensorizationError) as err:
+        report = _profile_unavailable_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="parameter_setup_error",
+            message=str(err),
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
         )
@@ -690,7 +782,7 @@ def _run_generated_decode_step(
             "status": "not_run",
             "reason": (
                 "This smoke validates generated decode-step execution and "
-                "shapes with synthetic parameters."
+                "shapes; it does not run a torch correctness reference."
             ),
         },
     }
@@ -1060,25 +1152,12 @@ def _build_synthetic_decode_state(
     dtype_seed: str,
     plan: dict[str, Any],
 ) -> SimpleNamespace:
-    dtype = _ttnn_dtype(ttnn, dtype_seed)
-    layout = getattr(ttnn, "TILE_LAYOUT", None)
-    tensor_conversion_count = 0
-
-    def tensor(shape: list[int], *, name: str, zeros: bool = False) -> Any:
-        nonlocal tensor_conversion_count
-        host_tensor = _zeros(torch, shape) if zeros else _randn(torch, shape, dtype_seed)
-        try:
-            host_tensor.name = name
-        except AttributeError:
-            pass
-        tensor_conversion_count += 1
-        return ttnn.from_torch(
-            host_tensor,
-            dtype=dtype,
-            layout=layout,
-            device=device,
-        )
-
+    tensor, tensor_count = _synthetic_tensor_factory(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+    )
     inputs = plan["input_shapes"]
     params = plan["parameter_shapes"]
     layer_params = plan["layer_parameter_shapes"]
@@ -1196,8 +1275,182 @@ def _build_synthetic_decode_state(
         page_table=page_table,
         cache_position=cache_position,
         kv_cache=kv_cache,
-        tensor_conversion_count=tensor_conversion_count,
+        tensor_conversion_count=tensor_count(),
+        parameter_source="synthetic",
+        input_source="synthetic",
     )
+
+
+def _build_model_decode_state(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    plan: dict[str, Any],
+    program_dir: Path,
+    model_path: Path,
+) -> SimpleNamespace:
+    host_params = load_llama_parameters_from_manifests(
+        model_path=model_path,
+        weights_manifest=program_dir / "weights_manifest.json",
+        config=program_dir / "config.json",
+        tensor_backend="torch",
+        layers=range(int(plan["layers"])),
+    )
+    result = to_ttnn_parameters(
+        host_params,
+        device,
+        load_parameter_config_from_program(program_dir),
+        roles=DECODE_PARAMETER_ROLES,
+        layers=range(int(plan["layers"])),
+        ttnn_module=ttnn,
+    )
+    assert result.parameters is not None
+    tensor_conversion_count = int(result.report["tensor_count"])
+    tensor_conversion_count += _attach_synthetic_rotary_parameters(
+        parameters=result.parameters,
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+        plan=plan,
+    )
+    synthetic_inputs = _build_synthetic_decode_inputs(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+        plan=plan,
+    )
+    return SimpleNamespace(
+        parameters=result.parameters,
+        token_ids=synthetic_inputs.token_ids,
+        page_table=synthetic_inputs.page_table,
+        cache_position=synthetic_inputs.cache_position,
+        kv_cache=synthetic_inputs.kv_cache,
+        tensor_conversion_count=(
+            tensor_conversion_count + synthetic_inputs.tensor_conversion_count
+        ),
+        parameter_source="hf_model",
+        input_source="synthetic",
+        tensorization_report=result.report,
+    )
+
+
+def _build_synthetic_decode_inputs(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    plan: dict[str, Any],
+) -> SimpleNamespace:
+    tensor, tensor_count = _synthetic_tensor_factory(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+    )
+    inputs = plan["input_shapes"]
+    token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
+    page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
+    cache_position = tensor(
+        inputs["cache_position"],
+        name="cache_position",
+        zeros=True,
+    )
+    kv_cache = []
+    for layer_id in range(int(plan["layers"])):
+        kv_cache.append(
+            SimpleNamespace(
+                k=tensor(
+                    inputs["key_cache"],
+                    name=f"layers.{layer_id}.key_cache",
+                    zeros=True,
+                ),
+                v=tensor(
+                    inputs["value_cache"],
+                    name=f"layers.{layer_id}.value_cache",
+                    zeros=True,
+                ),
+            )
+        )
+    return SimpleNamespace(
+        token_ids=token_ids,
+        page_table=page_table,
+        cache_position=cache_position,
+        kv_cache=kv_cache,
+        tensor_conversion_count=tensor_count(),
+    )
+
+
+def _attach_synthetic_rotary_parameters(
+    *,
+    parameters: Any,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    plan: dict[str, Any],
+) -> int:
+    tensor, tensor_count = _synthetic_tensor_factory(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+    )
+    layer_params = plan["layer_parameter_shapes"]
+    for layer_id in range(int(plan["layers"])):
+        layer = parameters.layers[layer_id]
+        attention = getattr(layer, "attention", None)
+        if attention is None:
+            attention = SimpleNamespace()
+            layer.attention = attention
+        attention.rotary = SimpleNamespace(
+            cos_matrix=tensor(
+                layer_params["rotary_cos_matrix"],
+                name=f"layers.{layer_id}.rotary_cos",
+            ),
+            sin_matrix=tensor(
+                layer_params["rotary_sin_matrix"],
+                name=f"layers.{layer_id}.rotary_sin",
+            ),
+            transformation_matrix=tensor(
+                layer_params["rotary_transformation_matrix"],
+                name=f"layers.{layer_id}.rotary_transform",
+            ),
+        )
+    return tensor_count()
+
+
+def _synthetic_tensor_factory(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+) -> tuple[Any, Any]:
+    dtype = _ttnn_dtype(ttnn, dtype_seed)
+    layout = getattr(ttnn, "TILE_LAYOUT", None)
+    tensor_conversion_count = 0
+
+    def tensor(shape: list[int], *, name: str, zeros: bool = False) -> Any:
+        nonlocal tensor_conversion_count
+        host_tensor = _zeros(torch, shape) if zeros else _randn(torch, shape, dtype_seed)
+        try:
+            host_tensor.name = name
+        except AttributeError:
+            pass
+        tensor_conversion_count += 1
+        return ttnn.from_torch(
+            host_tensor,
+            dtype=dtype,
+            layout=layout,
+            device=device,
+        )
+
+    return tensor, lambda: tensor_conversion_count
 
 
 def _decode_step_plan(

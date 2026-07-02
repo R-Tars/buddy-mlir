@@ -20,6 +20,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_decode_shell im
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
     _fake_torch,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+    _fake_torch_and_safetensors,
+    _fake_weight_specs,
+    _write_fake_model_weights,
+)
 
 
 class SmokeSingleLayerDecodeTest(unittest.TestCase):
@@ -213,6 +218,62 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 "paged_scaled_dot_product_attention_decode",
                 [call["op"] for call in fake_ttnn.calls],
             )
+
+    def test_run_smoke_single_layer_decode_can_materialize_fake_model_weights(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "single_layer_decode_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            with _fake_torch_and_safetensors():
+                report = run_smoke_single_layer_decode(
+                    out=report_json,
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    device="p150a",
+                    batch_size=2,
+                    cache_len=16,
+                    ttnn_module=fake_ttnn,
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["parameter_source"], "hf_model")
+            self.assertEqual(report["input_source"], "synthetic")
+            self.assertEqual(report["tensor_conversion_count"], 25)
+            self.assertEqual(report["output_shapes"]["token"], [2, 1])
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls[:17]],
+                ["from_torch"] * 17,
+            )
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"]["layout"],
+                "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_cli_smoke_decode_step_dry_run_two_layers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -648,6 +709,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.bfloat16 = "ttnn.bfloat16"
     module.float32 = "ttnn.float32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
+    module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
 
     class UnaryOpType:
         SILU = "SILU"
