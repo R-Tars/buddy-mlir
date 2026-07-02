@@ -7,10 +7,12 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
+    ATTENTION_LAYER_EXPECTED_OBSERVED_OPS,
     ATTENTION_LAYER_OPS,
     run_smoke_attention_layer,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+    FakeTTNNTensor,
     _fake_torch,
     _fake_ttnn,
 )
@@ -142,13 +144,21 @@ class SmokeAttentionLayerTest(unittest.TestCase):
                 "fake-tt-metal",
             )
             self.assertEqual(report["reference"]["status"], "passed")
-            self.assertEqual(report["reference"]["kind"], "structural_shape")
+            self.assertEqual(
+                report["reference"]["kind"],
+                "structural_shape_op_sequence",
+            )
+            self.assertEqual(
+                report["reference"]["planned_observed_ops"],
+                ATTENTION_LAYER_EXPECTED_OBSERVED_OPS,
+            )
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
             )
             check_names = {
                 check["name"] for check in report["reference"]["checks"]
             }
+            self.assertIn("observed_op_sequence", check_names)
             self.assertIn("primitive.qkv_linear.qkv", check_names)
             self.assertIn(
                 "primitive.o_proj_linear.attention_output",
@@ -188,6 +198,79 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertIn("paged_update_cache", called_ops)
             self.assertIn("paged_scaled_dot_product_attention_decode", called_ops)
             self.assertIn("nlp_concat_heads_decode", called_ops)
+
+    def test_attention_layer_observed_op_mismatch_fails_reference(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "attention_layer_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _fake_ttnn()
+
+            def wrong_sdpa(q, k_cache, v_cache, **kwargs):
+                fake_ttnn.calls.append(
+                    {
+                        "op": "wrong_sdpa_decode",
+                        "query": q.name,
+                        "kwargs": dict(kwargs),
+                    }
+                )
+                return FakeTTNNTensor("attention", q.shape)
+
+            fake_ttnn.transformer.paged_scaled_dot_product_attention_decode = (
+                wrong_sdpa
+            )
+            report = run_smoke_attention_layer(
+                out=report_json,
+                program_dir=program_dir,
+                layer=0,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status"], "reference_mismatch")
+            self.assertEqual(report["reference"]["status"], "failed")
+            failed_checks = [
+                check
+                for check in report["reference"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["observed_op_sequence"],
+            )
+            self.assertEqual(
+                failed_checks[0]["missing_from_ordered_coverage"],
+                [
+                    "paged_scaled_dot_product_attention_decode",
+                    "to_memory_config",
+                    "nlp_concat_heads_decode",
+                    "linear",
+                ],
+            )
+            self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_attention_layer_api_mismatch_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

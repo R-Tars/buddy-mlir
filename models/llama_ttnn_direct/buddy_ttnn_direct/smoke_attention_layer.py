@@ -17,6 +17,8 @@ from .smoke_attention_primitive import (
 from .smoke_decode_shell import (
     NUMERIC_REFERENCE_NOT_RUN_REASON,
     _dry_run_reference,
+    _observed_op_sequence,
+    _op_sequence_coverage_check,
     _shape_check,
     _value_check,
 )
@@ -35,6 +37,19 @@ ATTENTION_LAYER_OPS = [
     "paged_scaled_dot_product_attention_decode",
     "nlp_concat_heads_decode",
     "o_proj_linear",
+]
+
+ATTENTION_LAYER_EXPECTED_OBSERVED_OPS = [
+    "linear",
+    "nlp_create_qkv_heads_decode",
+    "rotary_embedding_llama",
+    "rotary_embedding_llama",
+    "paged_update_cache",
+    "paged_update_cache",
+    "paged_scaled_dot_product_attention_decode",
+    "to_memory_config",
+    "nlp_concat_heads_decode",
+    "linear",
 ]
 
 
@@ -220,6 +235,7 @@ def run_smoke_attention_layer(
             plan=plan,
             output_shapes=output_shapes,
             primitive_reports=layer_result["primitive_reports"],
+            observed_ops=_observed_op_sequence(ttnn),
         )
         passed = bool(reference["passed"])
         report.update(
@@ -810,6 +826,7 @@ def _attention_layer_reference(
     plan: dict[str, Any],
     output_shapes: dict[str, list[int] | None],
     primitive_reports: list[dict[str, Any]],
+    observed_ops: list[str] | None,
 ) -> dict[str, Any]:
     checks = [
         _value_check(
@@ -843,9 +860,15 @@ def _attention_layer_reference(
                 expected=shape,
             )
         )
+    checks.append(
+        _op_sequence_coverage_check(
+            planned_ops=list(ATTENTION_LAYER_EXPECTED_OBSERVED_OPS),
+            observed_ops=observed_ops,
+        )
+    )
     passed = all(check["passed"] for check in checks)
     return {
-        "kind": "structural_shape",
+        "kind": "structural_shape_op_sequence",
         "status": "passed" if passed else "failed",
         "passed": passed,
         "numeric_reference": {
@@ -853,6 +876,8 @@ def _attention_layer_reference(
             "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
         },
         "planned_ops": list(ATTENTION_LAYER_OPS),
+        "planned_observed_ops": list(ATTENTION_LAYER_EXPECTED_OBSERVED_OPS),
+        "observed_ops": observed_ops,
         "checks": checks,
     }
 

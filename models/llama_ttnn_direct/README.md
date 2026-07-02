@@ -863,10 +863,11 @@ dtype, layout, memory config, host-to-device tensor conversion count,
 memory-config conversion count, and TTNN environment metadata when available.
 This smoke path is still independent from full generated decode execution so
 individual attention issues stay easier to isolate. Successful non-dry-run reports include
-`reference.kind=structural_shape` for the final attention output and paged KV
-cache shapes; each primitive report also records `expected_output_shapes`, and
-the reference checks include intermediate QKV, rotary, SDPA, concat-heads, and
-O-projection shapes. This is still not a torch PCC check.
+`reference.kind=structural_shape_op_sequence` for the final attention output,
+paged KV cache shapes, and expected raw TTNN wrapper call coverage. Each
+primitive report also records `expected_output_shapes`, and the reference
+checks include intermediate QKV, rotary, SDPA, concat-heads, and O-projection
+shapes. This is still not a torch PCC check.
 
 ## Performance Step 1: Official Config Diff
 
