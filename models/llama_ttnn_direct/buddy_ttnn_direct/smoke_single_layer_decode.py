@@ -18,8 +18,7 @@ from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
 
-SINGLE_LAYER_DECODE_OPS = [
-    "embedding",
+DECODE_LAYER_OPS = [
     "rms_norm.attn",
     "qkv_linear",
     "nlp_create_qkv_heads_decode",
@@ -36,16 +35,35 @@ SINGLE_LAYER_DECODE_OPS = [
     "mul_silu",
     "mlp_down",
     "residual_add.mlp",
+]
+
+DECODE_FINAL_OPS = [
     "rms_norm.final",
     "split_lm_head",
     "argmax_or_sampling",
 ]
 
 
-def run_smoke_single_layer_decode(
+def _decode_op_sequence(layers: int) -> list[str]:
+    ops = ["embedding"]
+    for _ in range(layers):
+        ops.extend(DECODE_LAYER_OPS)
+    ops.extend(DECODE_FINAL_OPS)
+    return ops
+
+
+SINGLE_LAYER_DECODE_OPS = _decode_op_sequence(1)
+
+
+def run_smoke_single_layer_decode(**kwargs: Any) -> dict[str, Any]:
+    return run_smoke_decode_step(layers=1, **kwargs)
+
+
+def run_smoke_decode_step(
     *,
     out: str | Path,
     program_dir: str | Path,
+    layers: int = 1,
     device: str,
     device_id: int = 0,
     batch_size: int | None = None,
@@ -62,9 +80,18 @@ def run_smoke_single_layer_decode(
 ) -> dict[str, Any]:
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
+    layer_count = int(layers)
+    num_layers = int(config["num_layers"])
+    if layer_count <= 0:
+        raise ValueError("layers must be positive")
+    if layer_count > num_layers:
+        raise ValueError(
+            f"layers must be <= generated config num_layers ({num_layers})"
+        )
     batch_size = int(batch_size or config["batch_size"])
     cache_len = int(cache_len or config["max_cache_len"])
-    plan = _single_layer_decode_plan(
+    plan = _decode_step_plan(
+        layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
         config=config,
@@ -73,6 +100,7 @@ def run_smoke_single_layer_decode(
     if dry_run:
         report = _base_report(
             program_dir=program_root,
+            layers=layer_count,
             device=device,
             device_id=device_id,
             batch_size=batch_size,
@@ -105,6 +133,7 @@ def run_smoke_single_layer_decode(
     except ImportError as err:
         report = _no_device_report(
             program_dir=program_root,
+            layers=layer_count,
             device=device,
             device_id=device_id,
             batch_size=batch_size,
@@ -128,6 +157,7 @@ def run_smoke_single_layer_decode(
         ):
             report = _failed_report(
                 program_dir=program_root,
+                layers=layer_count,
                 device=device,
                 device_id=device_id,
                 batch_size=batch_size,
@@ -136,7 +166,7 @@ def run_smoke_single_layer_decode(
                 plan=plan,
                 status="missing_torch",
                 message=(
-                    "torch is required to synthesize single-layer decode "
+                    "torch is required to synthesize generated decode "
                     "parameters and inputs."
                 ),
                 detail=str(err),
@@ -174,11 +204,12 @@ def run_smoke_single_layer_decode(
                     "required when parameters are injected"
                 )
 
-            report = _run_generated_single_layer_decode(
+            report = _run_generated_decode_step(
                 ttnn=ttnn,
                 program_dir=program_root,
                 parameters=parameters,
                 config=config,
+                layer_count=layer_count,
                 device=ttnn_device,
                 token_ids=token_ids,
                 page_table=page_table,
@@ -190,6 +221,7 @@ def run_smoke_single_layer_decode(
                 {
                     **_base_report(
                         program_dir=program_root,
+                        layers=layer_count,
                         device=device,
                         device_id=device_id,
                         batch_size=batch_size,
@@ -204,6 +236,7 @@ def run_smoke_single_layer_decode(
     except NoTTNNDeviceError as err:
         report = _no_device_report(
             program_dir=program_root,
+            layers=layer_count,
             device=device,
             device_id=device_id,
             batch_size=batch_size,
@@ -215,6 +248,7 @@ def run_smoke_single_layer_decode(
     except UnsupportedTTNNOp as err:
         report = _failed_report(
             program_dir=program_root,
+            layers=layer_count,
             device=device,
             device_id=device_id,
             batch_size=batch_size,
@@ -229,6 +263,7 @@ def run_smoke_single_layer_decode(
     except Exception as err:
         report = _failed_report(
             program_dir=program_root,
+            layers=layer_count,
             device=device,
             device_id=device_id,
             batch_size=batch_size,
@@ -245,12 +280,13 @@ def run_smoke_single_layer_decode(
     return report
 
 
-def _run_generated_single_layer_decode(
+def _run_generated_decode_step(
     *,
     ttnn: Any,
     program_dir: Path,
     parameters: Any,
     config: dict[str, Any],
+    layer_count: int,
     device: Any,
     token_ids: Any,
     page_table: Any,
@@ -259,12 +295,12 @@ def _run_generated_single_layer_decode(
     tensor_conversion_count: int,
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
-    single_layer_config = dict(config)
-    single_layer_config["num_layers"] = 1
+    decode_config = dict(config)
+    decode_config["num_layers"] = layer_count
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
-        config=_to_namespace(single_layer_config),
+        config=_to_namespace(decode_config),
     )
 
     start = time.perf_counter()
@@ -287,6 +323,14 @@ def _run_generated_single_layer_decode(
             "token": _shape(token),
             "key_cache": _shape(kv_cache[0].k),
             "value_cache": _shape(kv_cache[0].v),
+            "kv_cache_layers": [
+                {
+                    "layer_id": layer_id,
+                    "key_cache": _shape(layer_cache.k),
+                    "value_cache": _shape(layer_cache.v),
+                }
+                for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
+            ],
         },
         "output": {
             "shape": _shape(token),
@@ -299,8 +343,8 @@ def _run_generated_single_layer_decode(
         "reference": {
             "status": "not_run",
             "reason": (
-                "This smoke validates generated single-layer decode execution "
-                "and shapes with synthetic parameters."
+                "This smoke validates generated decode-step execution and "
+                "shapes with synthetic parameters."
             ),
         },
     }
@@ -335,6 +379,7 @@ def _build_synthetic_decode_state(
 
     inputs = plan["input_shapes"]
     params = plan["parameter_shapes"]
+    layer_params = plan["layer_parameter_shapes"]
     lm_head_splits = []
     for shard_id, shape in enumerate(params["lm_head_splits"]):
         lm_head_splits.append(
@@ -348,60 +393,77 @@ def _build_synthetic_decode_state(
         embedding=SimpleNamespace(
             weight=tensor(params["embedding"], name="embedding")
         ),
-        layers=[
-            SimpleNamespace(
-                attention=SimpleNamespace(
-                    wqkv_packed=SimpleNamespace(
-                        weight=tensor(
-                            params["attention_wqkv"],
-                            name="attention_wqkv",
-                        )
-                    ),
-                    o_proj=SimpleNamespace(
-                        weight=tensor(params["attention_o_proj"], name="o_proj")
-                    ),
-                    rotary=SimpleNamespace(
-                        cos_matrix=tensor(
-                            params["rotary_cos_matrix"],
-                            name="rotary_cos",
-                        ),
-                        sin_matrix=tensor(
-                            params["rotary_sin_matrix"],
-                            name="rotary_sin",
-                        ),
-                        transformation_matrix=tensor(
-                            params["rotary_transformation_matrix"],
-                            name="rotary_transform",
-                        ),
-                    ),
-                ),
-                input_norm=SimpleNamespace(
-                    weight=tensor(params["input_norm"], name="input_norm")
-                ),
-                post_attention_norm=SimpleNamespace(
-                    weight=tensor(
-                        params["post_attention_norm"],
-                        name="post_attention_norm",
-                    )
-                ),
-                mlp=SimpleNamespace(
-                    gate_proj=SimpleNamespace(
-                        weight=tensor(params["mlp_gate"], name="mlp_gate")
-                    ),
-                    up_proj=SimpleNamespace(
-                        weight=tensor(params["mlp_up"], name="mlp_up")
-                    ),
-                    down_proj=SimpleNamespace(
-                        weight=tensor(params["mlp_down"], name="mlp_down")
-                    ),
-                ),
-            )
-        ],
+        layers=[],
         final_norm=SimpleNamespace(
             weight=tensor(params["final_norm"], name="final_norm")
         ),
         lm_head=SimpleNamespace(splits=lm_head_splits),
     )
+    for layer_id in range(int(plan["layers"])):
+        parameters.layers.append(
+            SimpleNamespace(
+                attention=SimpleNamespace(
+                    wqkv_packed=SimpleNamespace(
+                        weight=tensor(
+                            layer_params["attention_wqkv"],
+                            name=f"layers.{layer_id}.attention_wqkv",
+                        )
+                    ),
+                    o_proj=SimpleNamespace(
+                        weight=tensor(
+                            layer_params["attention_o_proj"],
+                            name=f"layers.{layer_id}.o_proj",
+                        )
+                    ),
+                    rotary=SimpleNamespace(
+                        cos_matrix=tensor(
+                            layer_params["rotary_cos_matrix"],
+                            name=f"layers.{layer_id}.rotary_cos",
+                        ),
+                        sin_matrix=tensor(
+                            layer_params["rotary_sin_matrix"],
+                            name=f"layers.{layer_id}.rotary_sin",
+                        ),
+                        transformation_matrix=tensor(
+                            layer_params["rotary_transformation_matrix"],
+                            name=f"layers.{layer_id}.rotary_transform",
+                        ),
+                    ),
+                ),
+                input_norm=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["input_norm"],
+                        name=f"layers.{layer_id}.input_norm",
+                    )
+                ),
+                post_attention_norm=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["post_attention_norm"],
+                        name=f"layers.{layer_id}.post_attention_norm",
+                    )
+                ),
+                mlp=SimpleNamespace(
+                    gate_proj=SimpleNamespace(
+                        weight=tensor(
+                            layer_params["mlp_gate"],
+                            name=f"layers.{layer_id}.mlp_gate",
+                        )
+                    ),
+                    up_proj=SimpleNamespace(
+                        weight=tensor(
+                            layer_params["mlp_up"],
+                            name=f"layers.{layer_id}.mlp_up",
+                        )
+                    ),
+                    down_proj=SimpleNamespace(
+                        weight=tensor(
+                            layer_params["mlp_down"],
+                            name=f"layers.{layer_id}.mlp_down",
+                        )
+                    ),
+                ),
+            )
+        )
     token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
     page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
     cache_position = tensor(
@@ -409,12 +471,22 @@ def _build_synthetic_decode_state(
         name="cache_position",
         zeros=True,
     )
-    kv_cache = [
-        SimpleNamespace(
-            k=tensor(inputs["key_cache"], name="key_cache", zeros=True),
-            v=tensor(inputs["value_cache"], name="value_cache", zeros=True),
+    kv_cache = []
+    for layer_id in range(int(plan["layers"])):
+        kv_cache.append(
+            SimpleNamespace(
+                k=tensor(
+                    inputs["key_cache"],
+                    name=f"layers.{layer_id}.key_cache",
+                    zeros=True,
+                ),
+                v=tensor(
+                    inputs["value_cache"],
+                    name=f"layers.{layer_id}.value_cache",
+                    zeros=True,
+                ),
+            )
         )
-    ]
 
     return SimpleNamespace(
         parameters=parameters,
@@ -426,8 +498,9 @@ def _build_synthetic_decode_state(
     )
 
 
-def _single_layer_decode_plan(
+def _decode_step_plan(
     *,
+    layers: int,
     batch_size: int,
     cache_len: int,
     config: dict[str, Any],
@@ -448,8 +521,7 @@ def _single_layer_decode_plan(
         "key_cache": [batch_size, cache_len, num_kv_heads, head_dim],
         "value_cache": [batch_size, cache_len, num_kv_heads, head_dim],
     }
-    parameter_shapes = {
-        "embedding": [vocab_size, hidden_size],
+    layer_parameter_shapes = {
         "input_norm": [hidden_size],
         "post_attention_norm": [hidden_size],
         "attention_wqkv": [hidden_size, qkv_size],
@@ -460,12 +532,18 @@ def _single_layer_decode_plan(
         "mlp_gate": [hidden_size, intermediate_size],
         "mlp_up": [hidden_size, intermediate_size],
         "mlp_down": [intermediate_size, hidden_size],
+    }
+    parameter_shapes = {
+        "embedding": [vocab_size, hidden_size],
+        **layer_parameter_shapes,
         "final_norm": [hidden_size],
         "lm_head_splits": lm_head_splits,
     }
     return {
+        "layers": layers,
         "input_shapes": input_shapes,
         "parameter_shapes": parameter_shapes,
+        "layer_parameter_shapes": layer_parameter_shapes,
         "expected_intermediate_shapes": {
             "embedding": [batch_size, 1, hidden_size],
             "qkv": [batch_size, 1, qkv_size],
@@ -482,12 +560,8 @@ def _single_layer_decode_plan(
             "key_cache": input_shapes["key_cache"],
             "value_cache": input_shapes["value_cache"],
         },
-        "tensor_conversion_count": (
-            len(input_shapes)
-            + len(parameter_shapes)
-            - 1
-            + len(lm_head_splits)
-        ),
+        "tensor_conversion_count": 5 + len(lm_head_splits) + 12 * layers,
+        "op_sequence": _decode_op_sequence(layers),
     }
 
 
@@ -519,6 +593,7 @@ def _lm_head_split_shapes(
 def _base_report(
     *,
     program_dir: Path,
+    layers: int,
     device: str,
     device_id: int,
     batch_size: int,
@@ -529,9 +604,9 @@ def _base_report(
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "template": "single_layer_decode",
+        "template": "generated_decode_step",
         "program_dir": str(program_dir),
-        "layers": 1,
+        "layers": layers,
         "device": device,
         "device_id": device_id,
         "batch_size": batch_size,
@@ -540,9 +615,10 @@ def _base_report(
         "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
         "layout": "tile",
         "dry_run": dry_run,
-        "op_sequence": list(SINGLE_LAYER_DECODE_OPS),
+        "op_sequence": plan["op_sequence"],
         "input_shapes": plan["input_shapes"],
         "parameter_shapes": plan["parameter_shapes"],
+        "layer_parameter_shapes": plan["layer_parameter_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
     }
@@ -551,6 +627,7 @@ def _base_report(
 def _no_device_report(
     *,
     program_dir: Path,
+    layers: int,
     device: str,
     device_id: int,
     batch_size: int,
@@ -561,6 +638,7 @@ def _no_device_report(
 ) -> dict[str, Any]:
     report = _base_report(
         program_dir=program_dir,
+        layers=layers,
         device=device,
         device_id=device_id,
         batch_size=batch_size,
@@ -587,6 +665,7 @@ def _no_device_report(
 def _failed_report(
     *,
     program_dir: Path,
+    layers: int,
     device: str,
     device_id: int,
     batch_size: int,
@@ -600,6 +679,7 @@ def _failed_report(
 ) -> dict[str, Any]:
     report = _base_report(
         program_dir=program_dir,
+        layers=layers,
         device=device,
         device_id=device_id,
         batch_size=batch_size,

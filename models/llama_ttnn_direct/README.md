@@ -792,3 +792,42 @@ The report records the expanded generated op sequence, synthetic input and
 parameter shapes, expected intermediate shapes, output shapes, tensor
 conversion count, TTNN version, and explicit `api_mismatch` / `no_device`
 status when a required TTNN op or device is unavailable.
+
+## Performance Step 2b: Generated Decode Layer Stack Smoke
+
+`smoke-decode-step` extends the generated decode smoke path from one layer to a
+configurable layer stack. It still uses synthetic TTNN tensors, but it now
+builds per-layer attention/MLP parameters and per-layer paged KV cache entries
+before calling generated `decode_step()` with `config.num_layers = --layers`.
+
+Use it to walk the review plan from 2 layers to 4 layers and finally the full
+generated layer count:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-decode-step \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 2 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/decode_step_2l_report.json
+```
+
+For inspection without TTNN:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-decode-step \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 4 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/decode_step_4l_report.json
+```
+
+The report records the repeated generated op sequence, layer count, synthetic
+per-layer parameter shapes, expected output shapes, tensor conversion count,
+and per-layer KV cache output shapes. This remains a functional-path smoke; it
+does not yet load real Llama weights or claim official performance parity.

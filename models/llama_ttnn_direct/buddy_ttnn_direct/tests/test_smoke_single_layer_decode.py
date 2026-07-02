@@ -9,6 +9,7 @@ from pathlib import Path
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_single_layer_decode import (
     SINGLE_LAYER_DECODE_OPS,
+    run_smoke_decode_step,
     run_smoke_single_layer_decode,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_decode_shell import (
@@ -211,6 +212,115 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 "paged_scaled_dot_product_attention_decode",
                 [call["op"] for call in fake_ttnn.calls],
             )
+
+    def test_cli_smoke_decode_step_dry_run_two_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "smoke-decode-step",
+                    "--program-dir",
+                    str(program_dir),
+                    "--layers",
+                    "2",
+                    "--device",
+                    "p150a",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(report["template"], "generated_decode_step")
+            self.assertEqual(report["layers"], 2)
+            self.assertEqual(report["op_sequence"].count("qkv_linear"), 2)
+            self.assertEqual(report["op_sequence"].count("rms_norm.final"), 1)
+            self.assertEqual(report["tensor_conversion_count"], 37)
+
+    def test_run_smoke_decode_step_executes_two_generated_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            report = run_smoke_decode_step(
+                out=report_json,
+                program_dir=program_dir,
+                layers=2,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["layers"], 2)
+            self.assertEqual(report["tensor_conversion_count"], 37)
+            self.assertEqual(report["output_shapes"]["token"], [2, 1])
+            self.assertEqual(len(report["output_shapes"]["kv_cache_layers"]), 2)
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls[:37]],
+                ["from_torch"] * 37,
+            )
+            generated_ops = [call["op"] for call in fake_ttnn.calls[37:]]
+            self.assertEqual(
+                generated_ops.count("paged_scaled_dot_product_attention_decode"),
+                2,
+            )
+            self.assertEqual(generated_ops.count("add"), 4)
+            self.assertEqual(generated_ops.count("rms_norm"), 5)
+            self.assertEqual(generated_ops.count("linear"), 18)
+            self.assertEqual(generated_ops.count("argmax"), 1)
 
     def test_single_layer_decode_api_mismatch_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
