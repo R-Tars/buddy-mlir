@@ -22,7 +22,18 @@ from .smoke_attention_primitive import (
     _ttnn_dtype,
     _zeros,
 )
-from .smoke_decode_shell import _dtype, _load_generated_model, _shape, _to_namespace
+from .smoke_decode_shell import (
+    NUMERIC_REFERENCE_NOT_RUN_REASON,
+    _dry_run_reference,
+    _dtype,
+    _dtype_check,
+    _load_generated_model,
+    _observed_op_sequence,
+    _shape,
+    _shape_check,
+    _to_namespace,
+    _value_check,
+)
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
@@ -140,6 +151,7 @@ def run_smoke_decode_step(
                     status="dry_run" if trace else "disabled",
                     iterations=trace_iterations if trace else 0,
                 ),
+                "reference": _dry_run_reference("generated_decode_step"),
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
@@ -259,6 +271,7 @@ def run_smoke_decode_step(
                 tensor_conversion_count=tensor_conversion_count,
                 trace=trace,
                 trace_iterations=trace_iterations,
+                plan=plan,
             )
             report["parameter_source"] = parameter_source
             if parameter_setup is not None:
@@ -692,6 +705,7 @@ def _run_generated_decode_step(
     tensor_conversion_count: int,
     trace: bool,
     trace_iterations: int,
+    plan: dict[str, Any],
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
@@ -760,39 +774,109 @@ def _run_generated_decode_step(
             kv_cache=kv_cache,
         )
 
+    output_shapes = {
+        "token": _shape(token),
+        "key_cache": _shape(kv_cache[0].k),
+        "value_cache": _shape(kv_cache[0].v),
+        "kv_cache_layers": [
+            {
+                "layer_id": layer_id,
+                "key_cache": _shape(layer_cache.k),
+                "value_cache": _shape(layer_cache.v),
+            }
+            for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
+        ],
+    }
+    output = {
+        "shape": _shape(token),
+        "dtype": _dtype(token),
+        "repr": repr(token),
+    }
+    reference = _decode_step_reference(
+        plan=plan,
+        layer_count=layer_count,
+        output_shapes=output_shapes,
+        output=output,
+        observed_ops=_observed_op_sequence(ttnn),
+    )
+    passed = bool(reference["passed"])
+
     return {
-        "passed": True,
-        "status": "passed",
+        "passed": passed,
+        "status": "passed" if passed else "reference_mismatch",
         "latency_ms": latency_ms,
-        "output_shapes": {
-            "token": _shape(token),
-            "key_cache": _shape(kv_cache[0].k),
-            "value_cache": _shape(kv_cache[0].v),
-            "kv_cache_layers": [
-                {
-                    "layer_id": layer_id,
-                    "key_cache": _shape(layer_cache.k),
-                    "value_cache": _shape(layer_cache.v),
-                }
-                for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
-            ],
-        },
-        "output": {
-            "shape": _shape(token),
-            "dtype": _dtype(token),
-            "repr": repr(token),
-        },
+        "output_shapes": output_shapes,
+        "output": output,
         "tensor_conversion_count": tensor_conversion_count,
-        "error": None,
+        "error": None if passed else "decode-step structural reference mismatch",
         "ttnn_version": getattr(ttnn, "__version__", None),
         "trace": trace_report,
-        "reference": {
+        "reference": reference,
+    }
+
+
+def _decode_step_reference(
+    *,
+    plan: dict[str, Any],
+    layer_count: int,
+    output_shapes: dict[str, Any],
+    output: dict[str, Any],
+    observed_ops: list[str] | None,
+) -> dict[str, Any]:
+    expected_outputs = plan["expected_output_shapes"]
+    expected_token = expected_outputs["token"]
+    accepted_token_shapes = [
+        expected_token,
+        [expected_token[0]],
+    ]
+    checks: list[dict[str, Any]] = [
+        _value_check("layer_count", layer_count, plan["layers"]),
+        _shape_check(
+            "output.token",
+            output_shapes.get("token"),
+            accepted=accepted_token_shapes,
+        ),
+        _dtype_check("output.token", output.get("dtype")),
+        _shape_check(
+            "output.key_cache",
+            output_shapes.get("key_cache"),
+            expected=expected_outputs["key_cache"],
+        ),
+        _shape_check(
+            "output.value_cache",
+            output_shapes.get("value_cache"),
+            expected=expected_outputs["value_cache"],
+        ),
+    ]
+    for layer in output_shapes.get("kv_cache_layers", []):
+        layer_id = int(layer["layer_id"])
+        checks.extend(
+            [
+                _shape_check(
+                    f"kv_cache_layers.{layer_id}.key_cache",
+                    layer.get("key_cache"),
+                    expected=expected_outputs["key_cache"],
+                ),
+                _shape_check(
+                    f"kv_cache_layers.{layer_id}.value_cache",
+                    layer.get("value_cache"),
+                    expected=expected_outputs["value_cache"],
+                ),
+            ]
+        )
+
+    passed = all(check["passed"] for check in checks)
+    return {
+        "kind": "structural_shape_dtype",
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "numeric_reference": {
             "status": "not_run",
-            "reason": (
-                "This smoke validates generated decode-step execution and "
-                "shapes; it does not run a torch correctness reference."
-            ),
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
         },
+        "planned_ops": list(plan["op_sequence"]),
+        "observed_ops": observed_ops,
+        "checks": checks,
     }
 
 

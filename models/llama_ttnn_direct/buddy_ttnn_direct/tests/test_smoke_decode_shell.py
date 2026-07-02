@@ -61,6 +61,11 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(report["status"], "dry_run")
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["ttnn_ops"], DECODE_SHELL_OPS)
+            self.assertEqual(report["reference"]["status"], "dry_run")
+            self.assertEqual(
+                report["reference"]["numeric_reference"]["status"],
+                "not_run",
+            )
 
     def test_run_smoke_decode_shell_executes_fake_attention_disabled_shell(
         self,
@@ -103,6 +108,16 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["layers"][0]["attention"], "disabled")
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertEqual(
+                report["reference"]["numeric_reference"]["status"],
+                "not_run",
+            )
+            self.assertEqual(report["reference"]["observed_ops"][0], "embedding")
+            self.assertTrue(
+                all(check["passed"] for check in report["reference"]["checks"])
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls],

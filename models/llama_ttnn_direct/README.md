@@ -724,6 +724,12 @@ This smoke command intentionally does not execute attention. Its purpose is to
 validate that generated embedding/RMSNorm/MLP/LM-head code can be loaded and
 composed before attention primitive bring-up.
 
+Successful non-dry-run reports now include a `reference` block with
+`kind=structural_shape_dtype`. It checks the expected layer count, disabled
+attention status, per-layer hidden shape/dtype, and final token shape/dtype.
+This is not a numeric PCC reference; `numeric_reference.status` remains
+`not_run` until a torch correctness reference is added.
+
 ## Phase 2 PR-E: Attention Primitive Smoke
 
 `smoke-attention-primitive` validates one official decode attention primitive
@@ -943,9 +949,12 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report records the repeated generated op sequence, layer count, planned
 per-layer parameter shapes, expected output shapes, tensor conversion count,
-parameter/input source, and per-layer KV cache output shapes. This remains a
-functional-path smoke; loading real weights does not yet claim official
-performance parity.
+parameter/input source, and per-layer KV cache output shapes. Successful
+non-dry-run reports also include a `reference` block with structural
+shape/dtype checks for token and KV-cache outputs, plus observed fake-op
+sequences when the injected test TTNN module exposes them. This remains a
+functional-path smoke; loading real weights does not yet claim numeric
+correctness or official performance parity.
 
 ## Performance Step 4: Decode-Step Trace Smoke
 

@@ -81,6 +81,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 [2, 16, 2, 4],
             )
             self.assertEqual(report["parameter_shapes"]["attention_wqkv"], [16, 32])
+            self.assertEqual(report["reference"]["status"], "dry_run")
+            self.assertEqual(
+                report["reference"]["numeric_reference"]["status"],
+                "not_run",
+            )
 
     def test_run_smoke_single_layer_decode_executes_generated_decode_step(
         self,
@@ -133,6 +138,12 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
             self.assertEqual(report["tensor_conversion_count"], 0)
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(report["reference"]["kind"], "structural_shape_dtype")
+            self.assertTrue(
+                all(check["passed"] for check in report["reference"]["checks"])
+            )
+            self.assertIn("embedding", report["reference"]["observed_ops"])
             self.assertEqual(json.loads(report_json.read_text()), report)
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls],
@@ -210,6 +221,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["tensor_conversion_count"], 25)
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
+            self.assertEqual(report["reference"]["status"], "passed")
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls[:25]],
                 ["from_torch"] * 25,
@@ -359,6 +371,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertTrue(report["trace_enabled"])
             self.assertEqual(report["trace_iterations"], 2)
             self.assertEqual(report["trace"]["status"], "dry_run")
+            self.assertEqual(report["reference"]["status"], "dry_run")
 
     def test_run_smoke_decode_step_trace_executes_fake_trace_apis(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -402,6 +415,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["trace"]["status"], "captured_and_executed")
             self.assertEqual(report["trace"]["iterations"], 2)
             self.assertEqual(len(report["trace"]["execute_samples_ms"]), 2)
+            self.assertEqual(report["reference"]["status"], "passed")
             trace_ops = [
                 call["op"]
                 for call in fake_ttnn.calls
@@ -586,6 +600,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["tensor_conversion_count"], 37)
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(len(report["output_shapes"]["kv_cache_layers"]), 2)
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(
+                report["reference"]["planned_ops"].count("qkv_linear"),
+                2,
+            )
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls[:37]],
                 ["from_torch"] * 37,

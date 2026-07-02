@@ -40,6 +40,13 @@ DECODE_SHELL_OPS = [
 ]
 
 
+NUMERIC_REFERENCE_NOT_RUN_REASON = (
+    "No torch numeric reference is executed by this smoke path yet; "
+    "the reference evidence is limited to generated-path structure, "
+    "shape, and dtype checks."
+)
+
+
 def run_smoke_decode_shell(
     *,
     out: str | Path,
@@ -78,6 +85,7 @@ def run_smoke_decode_shell(
                 "passed": True,
                 "status": "dry_run",
                 "latency_ms": 0.0,
+                "reference": _dry_run_reference("decode_shell"),
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
@@ -225,20 +233,28 @@ def _run_generated_decode_shell(
         synchronize(device)
     latency_ms = (time.perf_counter() - start) * 1000.0
 
+    output = {
+        "shape": _shape(token),
+        "dtype": _dtype(token),
+        "repr": repr(token),
+    }
+    reference = _decode_shell_reference(
+        config=config,
+        layer_reports=layer_reports,
+        output=output,
+        observed_ops=_observed_op_sequence(ttnn),
+        layer_count=layer_count,
+    )
+    passed = bool(reference["passed"])
+
     return {
-        "passed": True,
-        "status": "passed",
+        "passed": passed,
+        "status": "passed" if passed else "reference_mismatch",
         "latency_ms": latency_ms,
         "layers": layer_reports,
-        "output": {
-            "shape": _shape(token),
-            "dtype": _dtype(token),
-            "repr": repr(token),
-        },
-        "reference": {
-            "status": "not_run",
-            "reason": "PR-D validates generated shell execution and shapes only.",
-        },
+        "output": output,
+        "reference": reference,
+        "error": None if passed else "decode shell structural reference mismatch",
     }
 
 
@@ -312,6 +328,130 @@ def _shape(tensor: Any) -> list[int] | None:
 def _dtype(tensor: Any) -> str | None:
     dtype = getattr(tensor, "dtype", None)
     return str(dtype) if dtype is not None else None
+
+
+def _dry_run_reference(kind: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "status": "dry_run",
+        "passed": None,
+        "numeric_reference": {
+            "status": "not_run",
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
+        },
+        "checks": [],
+    }
+
+
+def _decode_shell_reference(
+    *,
+    config: dict[str, Any],
+    layer_reports: list[dict[str, Any]],
+    output: dict[str, Any],
+    observed_ops: list[str] | None,
+    layer_count: int,
+) -> dict[str, Any]:
+    batch_size = int(config["batch_size"])
+    seq_len = int(config["seq_len"])
+    hidden_size = int(config["hidden_size"])
+    expected_hidden_shape = [batch_size, seq_len, hidden_size]
+    accepted_token_shapes = [[batch_size, seq_len], [batch_size]]
+    checks: list[dict[str, Any]] = [
+        _value_check("layer_count", len(layer_reports), layer_count),
+        _shape_check(
+            "output.token",
+            output.get("shape"),
+            accepted=accepted_token_shapes,
+        ),
+        _dtype_check("output.token", output.get("dtype")),
+    ]
+    for layer_report in layer_reports:
+        layer_id = int(layer_report["layer_id"])
+        checks.extend(
+            [
+                _value_check(
+                    f"layers.{layer_id}.attention",
+                    layer_report.get("attention"),
+                    "disabled",
+                ),
+                _shape_check(
+                    f"layers.{layer_id}.output",
+                    layer_report.get("output_shape"),
+                    expected=expected_hidden_shape,
+                ),
+                _dtype_check(
+                    f"layers.{layer_id}.output",
+                    layer_report.get("output_dtype"),
+                ),
+            ]
+        )
+
+    passed = all(check["passed"] for check in checks)
+    return {
+        "kind": "structural_shape_dtype",
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "numeric_reference": {
+            "status": "not_run",
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
+        },
+        "planned_ops": list(DECODE_SHELL_OPS),
+        "observed_ops": observed_ops,
+        "checks": checks,
+    }
+
+
+def _shape_check(
+    name: str,
+    actual: list[int] | None,
+    *,
+    expected: list[int] | None = None,
+    accepted: list[list[int]] | None = None,
+) -> dict[str, Any]:
+    accepted_shapes = accepted if accepted is not None else [expected]
+    accepted_shapes = [
+        shape for shape in accepted_shapes if shape is not None
+    ]
+    return {
+        "name": name,
+        "type": "shape",
+        "actual": actual,
+        "expected": expected,
+        "accepted": accepted_shapes,
+        "passed": actual in accepted_shapes,
+    }
+
+
+def _dtype_check(name: str, actual: str | None) -> dict[str, Any]:
+    return {
+        "name": name,
+        "type": "dtype",
+        "actual": actual,
+        "passed": actual is not None,
+    }
+
+
+def _value_check(name: str, actual: Any, expected: Any) -> dict[str, Any]:
+    return {
+        "name": name,
+        "type": "value",
+        "actual": actual,
+        "expected": expected,
+        "passed": actual == expected,
+    }
+
+
+def _observed_op_sequence(ttnn: Any) -> list[str] | None:
+    calls = getattr(ttnn, "calls", None)
+    if not isinstance(calls, list):
+        return None
+    observed = []
+    for call in calls:
+        if isinstance(call, dict) and "op" in call:
+            observed.append(str(call["op"]))
+        else:
+            observed.append(str(call))
+    return observed
 
 
 def _base_report(
