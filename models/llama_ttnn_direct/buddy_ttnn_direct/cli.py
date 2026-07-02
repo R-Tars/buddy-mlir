@@ -49,6 +49,7 @@ from .smoke_attention_primitive import (
 )
 from .smoke_attention_layer import run_smoke_attention_layer
 from .smoke_single_layer_decode import (
+    profile_decode_step,
     run_smoke_decode_step,
     run_smoke_single_layer_decode,
 )
@@ -619,6 +620,67 @@ def build_parser() -> argparse.ArgumentParser:
     )
     smoke_decode_step.set_defaults(func=_cmd_smoke_decode_step)
 
+    profile_decode_step_parser = subparsers.add_parser(
+        "profile-decode-step",
+        help=(
+            "Profile generated decode_step by section for bottleneck "
+            "attribution."
+        ),
+    )
+    profile_decode_step_parser.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of generated decoder layers to profile.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the profile report.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    profile_decode_step_parser.add_argument("--batch-size", type=int, default=None)
+    profile_decode_step_parser.add_argument("--cache-len", type=int, default=None)
+    profile_decode_step_parser.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    profile_decode_step_parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Also capture/execute a generated decode_step trace.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=1,
+        help="Number of execute_trace iterations after capture.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the profile report schema without opening a device.",
+    )
+    profile_decode_step_parser.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output generated decode-step profile report JSON path.",
+    )
+    profile_decode_step_parser.set_defaults(func=_cmd_profile_decode_step)
+
     profile = subparsers.add_parser(
         "profile-template",
         help="Profile or dry-run a generated TTNN template.",
@@ -1114,6 +1176,27 @@ def _cmd_smoke_decode_step(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_profile_decode_step(args: argparse.Namespace) -> int:
+    report = profile_decode_step(
+        out=args.out,
+        program_dir=args.program_dir,
+        layers=args.layers,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        trace=args.trace,
+        trace_iterations=args.trace_iterations,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote decode-step profile report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

@@ -305,6 +305,278 @@ def run_smoke_decode_step(
     return report
 
 
+def profile_decode_step(
+    *,
+    out: str | Path,
+    program_dir: str | Path,
+    layers: int = 1,
+    device: str,
+    device_id: int = 0,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    dtype_seed: str = "bf16",
+    trace: bool = False,
+    trace_iterations: int = 1,
+    dry_run: bool = False,
+    ttnn_module: Any | None = None,
+    torch_module: Any | None = None,
+    parameters: Any | None = None,
+    token_ids: Any | None = None,
+    page_table: Any | None = None,
+    cache_position: Any | None = None,
+    kv_cache: Any | None = None,
+) -> dict[str, Any]:
+    program_root = Path(program_dir)
+    config = json.loads((program_root / "config.json").read_text())
+    layer_count = int(layers)
+    num_layers = int(config["num_layers"])
+    if layer_count <= 0:
+        raise ValueError("layers must be positive")
+    if layer_count > num_layers:
+        raise ValueError(
+            f"layers must be <= generated config num_layers ({num_layers})"
+        )
+    if trace_iterations <= 0:
+        raise ValueError("trace_iterations must be positive")
+    batch_size = int(batch_size or config["batch_size"])
+    cache_len = int(cache_len or config["max_cache_len"])
+    plan = _decode_step_plan(
+        layers=layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        config=config,
+    )
+
+    if dry_run:
+        report = _base_profile_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            dry_run=True,
+            plan=plan,
+        )
+        report.update(
+            {
+                "passed": True,
+                "status": "dry_run",
+                "latency_ms": 0.0,
+                "section_latency_ms": _empty_section_latency(),
+                "layer_profiles": [
+                    _planned_layer_profile(layer_id)
+                    for layer_id in range(layer_count)
+                ],
+                "bottleneck_summary": _bottleneck_summary(
+                    _empty_section_latency(),
+                    [],
+                    tensor_conversion_ms=0.0,
+                    trace_execute_ms=0.0,
+                ),
+                "output_shapes": None,
+                "tensor_conversion_count": plan["tensor_conversion_count"],
+                "tensor_conversion_ms": 0.0,
+                "host_copy_ms": 0.0,
+                "trace": _trace_report(
+                    requested=trace,
+                    status="dry_run" if trace else "disabled",
+                    iterations=trace_iterations if trace else 0,
+                ),
+                "error": None,
+                "ttnn_version": None,
+                "message": "Dry run only; TTNN device is not required.",
+            }
+        )
+        _write_report(out, report)
+        return report
+
+    try:
+        ttnn = (
+            ttnn_module
+            if ttnn_module is not None
+            else importlib.import_module("ttnn")
+        )
+    except ImportError as err:
+        report = _profile_unavailable_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="no_device",
+            message=NO_TTNN_DEVICE_MESSAGE,
+            detail=str(err),
+        )
+        _write_report(out, report)
+        return report
+
+    try:
+        torch = (
+            torch_module
+            if torch_module is not None
+            else importlib.import_module("torch")
+        )
+    except ImportError as err:
+        if parameters is None or any(
+            item is None for item in (token_ids, page_table, cache_position, kv_cache)
+        ):
+            report = _profile_unavailable_report(
+                program_dir=program_root,
+                layers=layer_count,
+                device=device,
+                device_id=device_id,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
+                plan=plan,
+                status="missing_torch",
+                message=(
+                    "torch is required to synthesize generated decode "
+                    "parameters and inputs."
+                ),
+                detail=str(err),
+                ttnn_version=getattr(ttnn, "__version__", None),
+            )
+            _write_report(out, report)
+            return report
+        torch = None
+
+    try:
+        with _maybe_managed_device(ttnn, device_id, ttnn_module) as ttnn_device:
+            tensor_conversion_ms = 0.0
+            if parameters is None:
+                assert torch is not None
+                conversion_start = time.perf_counter()
+                synthetic = _build_synthetic_decode_state(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=ttnn_device,
+                    dtype_seed=dtype_seed,
+                    plan=plan,
+                )
+                tensor_conversion_ms = (time.perf_counter() - conversion_start) * 1000.0
+                parameters = synthetic.parameters
+                token_ids = synthetic.token_ids
+                page_table = synthetic.page_table
+                cache_position = synthetic.cache_position
+                kv_cache = synthetic.kv_cache
+                tensor_conversion_count = synthetic.tensor_conversion_count
+            else:
+                tensor_conversion_count = 0
+
+            if any(
+                item is None for item in (token_ids, page_table, cache_position, kv_cache)
+            ):
+                raise ValueError(
+                    "token_ids, page_table, cache_position, and kv_cache are "
+                    "required when parameters are injected"
+                )
+
+            profile = _run_generated_decode_profile(
+                ttnn=ttnn,
+                program_dir=program_root,
+                parameters=parameters,
+                config=config,
+                layer_count=layer_count,
+                device=ttnn_device,
+                token_ids=token_ids,
+                page_table=page_table,
+                cache_position=cache_position,
+                kv_cache=kv_cache,
+                trace=trace,
+                trace_iterations=trace_iterations,
+            )
+            report = _base_profile_report(
+                program_dir=program_root,
+                layers=layer_count,
+                device=device,
+                device_id=device_id,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
+                dry_run=False,
+                plan=plan,
+            )
+            profile["tensor_conversion_count"] = tensor_conversion_count
+            profile["tensor_conversion_ms"] = tensor_conversion_ms
+            profile["bottleneck_summary"] = _bottleneck_summary(
+                profile["section_latency_ms"],
+                profile["layer_profiles"],
+                tensor_conversion_ms=tensor_conversion_ms,
+                trace_execute_ms=float(
+                    profile["trace"].get("execute_latency_ms") or 0.0
+                ),
+            )
+            report.update(profile)
+    except NoTTNNDeviceError as err:
+        report = _profile_unavailable_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="no_device",
+            message=NO_TTNN_DEVICE_MESSAGE,
+            detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+    except UnsupportedTTNNOp as err:
+        report = _profile_unavailable_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="api_mismatch",
+            message=str(err),
+            detail=err.op_name,
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+    except Exception as err:
+        report = _profile_unavailable_report(
+            program_dir=program_root,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            plan=plan,
+            status="runtime_error",
+            message=f"{type(err).__name__}: {err}",
+            detail=str(err),
+            ttnn_version=getattr(ttnn, "__version__", None),
+        )
+
+    _write_report(out, report)
+    return report
+
+
 def _run_generated_decode_step(
     *,
     ttnn: Any,
@@ -424,6 +696,270 @@ def _run_generated_decode_step(
     }
 
 
+def _run_generated_decode_profile(
+    *,
+    ttnn: Any,
+    program_dir: Path,
+    parameters: Any,
+    config: dict[str, Any],
+    layer_count: int,
+    device: Any,
+    token_ids: Any,
+    page_table: Any,
+    cache_position: Any,
+    kv_cache: Any,
+    trace: bool,
+    trace_iterations: int,
+) -> dict[str, Any]:
+    generated = _load_generated_model(program_dir / "model.py", ttnn)
+    decode_config = dict(config)
+    decode_config["num_layers"] = layer_count
+    model = generated.BuddyLlama31TTNN(
+        device=device,
+        parameters=parameters,
+        config=_to_namespace(decode_config),
+    )
+
+    section_latency = _empty_section_latency()
+    layer_profiles: list[dict[str, Any]] = []
+    total_start = time.perf_counter()
+
+    hidden, section_latency["embedding_ms"] = _time_section(
+        lambda: model.embed(token_ids),
+        ttnn=ttnn,
+        device=device,
+    )
+    for layer_id in range(layer_count):
+        layer_start = time.perf_counter()
+        residual = hidden
+        hidden, attn_norm_ms = _time_section(
+            lambda layer_id=layer_id, hidden=hidden: model.rmsnorm(
+                hidden,
+                layer_id,
+                kind="attn",
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+        hidden, attention_ms = _time_section(
+            lambda layer_id=layer_id, hidden=hidden: model.attention_decode(
+                layer_id,
+                hidden,
+                page_table,
+                cache_position,
+                kv_cache,
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+        hidden, attn_residual_ms = _time_section(
+            lambda residual=residual, hidden=hidden: model.ops.add(
+                residual,
+                hidden,
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+
+        residual = hidden
+        hidden, mlp_norm_ms = _time_section(
+            lambda layer_id=layer_id, hidden=hidden: model.rmsnorm(
+                hidden,
+                layer_id,
+                kind="mlp",
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+        hidden, mlp_ms = _time_section(
+            lambda layer_id=layer_id, hidden=hidden: model.mlp_decode(
+                layer_id,
+                hidden,
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+        hidden, mlp_residual_ms = _time_section(
+            lambda residual=residual, hidden=hidden: model.ops.add(
+                residual,
+                hidden,
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
+        layer_total_ms = (time.perf_counter() - layer_start) * 1000.0
+        layer_profiles.append(
+            {
+                "layer_id": layer_id,
+                "rms_norm_attn_ms": attn_norm_ms,
+                "attention_ms": attention_ms,
+                "residual_add_attn_ms": attn_residual_ms,
+                "rms_norm_mlp_ms": mlp_norm_ms,
+                "mlp_ms": mlp_ms,
+                "residual_add_mlp_ms": mlp_residual_ms,
+                "total_ms": layer_total_ms,
+            }
+        )
+
+    hidden, section_latency["final_norm_ms"] = _time_section(
+        lambda: model.final_norm(hidden),
+        ttnn=ttnn,
+        device=device,
+    )
+    token, lm_head_profile = _profile_lm_head_and_argmax(
+        model=model,
+        hidden=hidden,
+        ttnn=ttnn,
+        device=device,
+    )
+    section_latency["lm_head_ms"] = lm_head_profile["lm_head_ms"]
+    section_latency["argmax_ms"] = lm_head_profile["argmax_ms"]
+    section_latency["host_copy_ms"] = 0.0
+
+    trace_report = _trace_report(requested=trace, status="disabled")
+    if trace:
+        if _trace_apis_available(ttnn):
+            try:
+                _, _, _, trace_report = _run_decode_step_with_trace(
+                    ttnn=ttnn,
+                    model=model,
+                    device=device,
+                    token_ids=token_ids,
+                    page_table=page_table,
+                    cache_position=cache_position,
+                    kv_cache=kv_cache,
+                    iterations=trace_iterations,
+                )
+            except Exception as err:
+                trace_report = _trace_report(
+                    requested=True,
+                    status="trace_failed_after_profile",
+                    iterations=trace_iterations,
+                    error=f"{type(err).__name__}: {err}",
+                )
+        else:
+            trace_report = _trace_report(
+                requested=True,
+                status="trace_api_unavailable",
+                iterations=trace_iterations,
+            )
+
+    latency_ms = (time.perf_counter() - total_start) * 1000.0
+    return {
+        "passed": True,
+        "status": "profiled",
+        "latency_ms": latency_ms,
+        "section_latency_ms": section_latency,
+        "layer_profiles": layer_profiles,
+        "lm_head_profile": lm_head_profile,
+        "output_shapes": {
+            "token": _shape(token),
+            "key_cache": _shape(kv_cache[0].k),
+            "value_cache": _shape(kv_cache[0].v),
+            "kv_cache_layers": [
+                {
+                    "layer_id": layer_id,
+                    "key_cache": _shape(layer_cache.k),
+                    "value_cache": _shape(layer_cache.v),
+                }
+                for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
+            ],
+        },
+        "output": {
+            "shape": _shape(token),
+            "dtype": _dtype(token),
+            "repr": repr(token),
+        },
+        "host_copy_ms": 0.0,
+        "host_copy_status": "not_performed",
+        "trace": trace_report,
+        "error": None,
+        "ttnn_version": getattr(ttnn, "__version__", None),
+    }
+
+
+def _profile_lm_head_and_argmax(
+    *,
+    model: Any,
+    hidden: Any,
+    ttnn: Any,
+    device: Any,
+) -> tuple[Any, dict[str, Any]]:
+    lm_head_config = model.config.lm_head
+    split_count = int(
+        _optional_attr(
+            lm_head_config,
+            "split_count",
+            len(model.parameters.lm_head.splits),
+        )
+    )
+    program_configs = _optional_attr(lm_head_config, "program_configs", None)
+    split_configs = _optional_attr(lm_head_config, "splits", None)
+    shard_logits = []
+
+    split_start = time.perf_counter()
+    for shard_id in range(split_count):
+        split_params = model.parameters.lm_head.splits[shard_id]
+        split_config = None
+        if split_configs is not None and shard_id < len(split_configs):
+            split_config = split_configs[shard_id]
+        program_config = _optional_attr(split_config, "program_config", None)
+        if (
+            program_config is None
+            and program_configs is not None
+            and shard_id < len(program_configs)
+        ):
+            program_config = program_configs[shard_id]
+        logits_i = model.ops.linear(
+            hidden,
+            split_params.weight,
+            memory_config=_optional_attr(
+                lm_head_config,
+                "output_memory_config",
+            ),
+            program_config=program_config,
+            compute_kernel_config=_optional_attr(
+                lm_head_config,
+                "compute_kernel_config",
+            ),
+            dtype=_optional_attr(lm_head_config, "output_dtype"),
+        )
+        shard_logits.append(logits_i)
+
+    logits = model.ops.concat(
+        shard_logits,
+        dim=-1,
+        memory_config=_optional_attr(
+            lm_head_config,
+            "concat_memory_config",
+        ),
+    )
+    _synchronize(ttnn, device)
+    lm_head_ms = (time.perf_counter() - split_start) * 1000.0
+
+    generation_config = _optional_attr(model.config, "generation", None)
+    generation_mode = _optional_attr(generation_config, "mode", "greedy")
+    retain_logits = bool(_optional_attr(lm_head_config, "retain_logits", False))
+    if generation_mode == "greedy" and not retain_logits:
+        token, argmax_ms = _time_section(
+            lambda: model.ops.argmax(logits, dim=-1),
+            ttnn=ttnn,
+            device=device,
+        )
+        argmax_status = "profiled"
+    else:
+        token = logits
+        argmax_ms = 0.0
+        argmax_status = "skipped"
+
+    return token, {
+        "split_count": split_count,
+        "lm_head_ms": lm_head_ms,
+        "argmax_ms": argmax_ms,
+        "argmax_status": argmax_status,
+    }
+
+
 def _time_decode_step(
     *,
     ttnn: Any,
@@ -495,6 +1031,25 @@ def _run_decode_step_with_trace(
     finally:
         if trace_id is not None and callable(release_trace):
             release_trace(device, trace_id)
+
+
+def _time_section(fn: Any, *, ttnn: Any, device: Any) -> tuple[Any, float]:
+    start = time.perf_counter()
+    output = fn()
+    _synchronize(ttnn, device)
+    return output, (time.perf_counter() - start) * 1000.0
+
+
+def _synchronize(ttnn: Any, device: Any) -> None:
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
+
+
+def _optional_attr(obj: Any, name: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    return getattr(obj, name, default)
 
 
 def _build_synthetic_decode_state(
@@ -870,6 +1425,165 @@ def _failed_report(
         }
     )
     return report
+
+
+def _base_profile_report(
+    *,
+    program_dir: Path,
+    layers: int,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
+    dry_run: bool,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    report = _base_report(
+        program_dir=program_dir,
+        layers=layers,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        trace=trace,
+        trace_iterations=trace_iterations,
+        dry_run=dry_run,
+        plan=plan,
+    )
+    report.update(
+        {
+            "template": "generated_decode_step_profile",
+            "profile_sections": [
+                "tensor_conversion_ms",
+                "embedding_ms",
+                "per_layer_attention_ms",
+                "per_layer_mlp_ms",
+                "final_norm_ms",
+                "lm_head_ms",
+                "argmax_ms",
+                "host_copy_ms",
+                "trace_execute_ms",
+            ],
+        }
+    )
+    return report
+
+
+def _profile_unavailable_report(
+    *,
+    program_dir: Path,
+    layers: int,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
+    plan: dict[str, Any],
+    status: str,
+    message: str,
+    detail: str,
+    ttnn_version: str | None = None,
+) -> dict[str, Any]:
+    report = _base_profile_report(
+        program_dir=program_dir,
+        layers=layers,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        trace=trace,
+        trace_iterations=trace_iterations,
+        dry_run=False,
+        plan=plan,
+    )
+    report.update(
+        {
+            "passed": False,
+            "status": status,
+            "latency_ms": None,
+            "section_latency_ms": _empty_section_latency(),
+            "layer_profiles": [],
+            "bottleneck_summary": _bottleneck_summary(
+                _empty_section_latency(),
+                [],
+                tensor_conversion_ms=0.0,
+                trace_execute_ms=0.0,
+            ),
+            "output_shapes": None,
+            "tensor_conversion_count": 0,
+            "tensor_conversion_ms": 0.0,
+            "host_copy_ms": 0.0,
+            "trace": _trace_report(
+                requested=trace,
+                status="unavailable" if trace else "disabled",
+                iterations=trace_iterations if trace else 0,
+            ),
+            "error": message,
+            "detail": detail,
+            "ttnn_version": ttnn_version,
+        }
+    )
+    return report
+
+
+def _empty_section_latency() -> dict[str, float]:
+    return {
+        "embedding_ms": 0.0,
+        "final_norm_ms": 0.0,
+        "lm_head_ms": 0.0,
+        "argmax_ms": 0.0,
+        "host_copy_ms": 0.0,
+    }
+
+
+def _planned_layer_profile(layer_id: int) -> dict[str, Any]:
+    return {
+        "layer_id": layer_id,
+        "rms_norm_attn_ms": 0.0,
+        "attention_ms": 0.0,
+        "residual_add_attn_ms": 0.0,
+        "rms_norm_mlp_ms": 0.0,
+        "mlp_ms": 0.0,
+        "residual_add_mlp_ms": 0.0,
+        "total_ms": 0.0,
+    }
+
+
+def _bottleneck_summary(
+    section_latency: dict[str, float],
+    layer_profiles: list[dict[str, Any]],
+    *,
+    tensor_conversion_ms: float,
+    trace_execute_ms: float,
+) -> dict[str, Any]:
+    attention_ms = sum(float(layer["attention_ms"]) for layer in layer_profiles)
+    mlp_ms = sum(float(layer["mlp_ms"]) for layer in layer_profiles)
+    layer_total_ms = sum(float(layer["total_ms"]) for layer in layer_profiles)
+    sections = {
+        "tensor_conversion_ms": tensor_conversion_ms,
+        "embedding_ms": float(section_latency["embedding_ms"]),
+        "per_layer_attention_ms": attention_ms,
+        "per_layer_mlp_ms": mlp_ms,
+        "layer_stack_ms": layer_total_ms,
+        "final_norm_ms": float(section_latency["final_norm_ms"]),
+        "lm_head_ms": float(section_latency["lm_head_ms"]),
+        "argmax_ms": float(section_latency["argmax_ms"]),
+        "host_copy_ms": float(section_latency["host_copy_ms"]),
+        "trace_execute_ms": trace_execute_ms,
+    }
+    bottleneck = max(sections.items(), key=lambda item: item[1])
+    return {
+        "sections_ms": sections,
+        "max_section": bottleneck[0],
+        "max_section_ms": bottleneck[1],
+    }
 
 
 def _trace_apis_available(ttnn: Any) -> bool:

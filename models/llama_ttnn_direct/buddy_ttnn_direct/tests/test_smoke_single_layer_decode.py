@@ -9,6 +9,7 @@ from pathlib import Path
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_single_layer_decode import (
     SINGLE_LAYER_DECODE_OPS,
+    profile_decode_step,
     run_smoke_decode_step,
     run_smoke_single_layer_decode,
 )
@@ -335,6 +336,126 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "release_trace",
                 ],
             )
+
+    def test_cli_profile_decode_step_dry_run_two_layers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_profile_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "profile-decode-step",
+                    "--program-dir",
+                    str(program_dir),
+                    "--layers",
+                    "2",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--trace",
+                    "--trace-iterations",
+                    "2",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(report["template"], "generated_decode_step_profile")
+            self.assertEqual(len(report["layer_profiles"]), 2)
+            self.assertIn("embedding_ms", report["profile_sections"])
+            self.assertIn(
+                "tensor_conversion_ms",
+                report["bottleneck_summary"]["sections_ms"],
+            )
+            self.assertEqual(report["trace"]["status"], "dry_run")
+
+    def test_profile_decode_step_reports_fake_bottleneck_sections(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_profile_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            report = profile_decode_step(
+                out=report_json,
+                program_dir=program_dir,
+                layers=2,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                trace=True,
+                trace_iterations=2,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "profiled")
+            self.assertEqual(report["layers"], 2)
+            self.assertEqual(len(report["layer_profiles"]), 2)
+            self.assertEqual(report["tensor_conversion_count"], 37)
+            self.assertGreaterEqual(report["tensor_conversion_ms"], 0.0)
+            self.assertEqual(report["output_shapes"]["token"], [2, 1])
+            self.assertEqual(report["lm_head_profile"]["split_count"], 8)
+            self.assertEqual(report["lm_head_profile"]["argmax_status"], "profiled")
+            sections = report["bottleneck_summary"]["sections_ms"]
+            for name in (
+                "embedding_ms",
+                "per_layer_attention_ms",
+                "per_layer_mlp_ms",
+                "lm_head_ms",
+                "argmax_ms",
+                "host_copy_ms",
+                "trace_execute_ms",
+                "tensor_conversion_ms",
+            ):
+                self.assertIn(name, sections)
+            self.assertEqual(report["trace"]["status"], "captured_and_executed")
+            self.assertEqual(report["trace"]["iterations"], 2)
+            self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_run_smoke_decode_step_executes_two_generated_layers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

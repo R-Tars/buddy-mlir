@@ -855,3 +855,28 @@ and optionally `release_trace`, the smoke captures one generated decode step
 and executes the captured trace `--trace-iterations` times. If trace APIs are
 unavailable or capture fails, the report records an explicit fallback status
 instead of silently pretending trace was used.
+
+## Performance Step 5: Decode-Step Bottleneck Profile
+
+`profile-decode-step` runs the generated decode path with synthetic TTNN
+tensors and records section-level latency for bottleneck attribution:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  profile-decode-step \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 2 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --trace \
+  --trace-iterations 10 \
+  --out /tmp/decode_step_profile_report.json
+```
+
+The report includes tensor conversion time, embedding time, per-layer
+attention time, per-layer MLP time, final norm time, LM-head split/concat time,
+argmax time, host-copy time, trace execute time, and a `bottleneck_summary`
+that identifies the largest measured section. LM-head profiling mirrors the
+generated split LM-head code but separates device argmax into its own timed
+section.
