@@ -6,6 +6,7 @@ from typing import Any
 
 from ..semantic.graph import LlamaModelGraph
 from ..semantic.validate import validate_llama_graph
+from ..templates.lm_head import build_lm_head_split_ranges
 
 
 SEED_RECIPE = "official_like_performance_seed"
@@ -155,6 +156,9 @@ def emit_parameter_config(
             "weight": graph.lm_head.weight,
             "split_count": lm_head_split_count,
             "split_axis": "vocab",
+            "splits": build_lm_head_split_ranges(
+                graph.vocab_size, lm_head_split_count
+            ),
             "target_dtype": "bfloat8_b",
             "tied_to_embedding": graph.lm_head.tied_to_embedding,
         },

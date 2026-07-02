@@ -124,6 +124,7 @@ def build_execution_plan(
         "batch_size": graph.batch_size,
         "seq_len": graph.seq_len,
         "max_cache_len": graph.max_cache_len,
+        "vocab_size": graph.vocab_size,
         "template_config": {
             "device": config["device"],
             "model": config["model"],

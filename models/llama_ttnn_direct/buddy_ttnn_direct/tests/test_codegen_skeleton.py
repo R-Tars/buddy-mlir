@@ -10,6 +10,10 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.python_ttnn import (
+    build_codegen_config,
+    render_python_ttnn_model,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
 )
@@ -19,7 +23,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 )
 
 
-def _fake_plan(num_layers: int = 2) -> dict[str, object]:
+def _fake_plan(
+    num_layers: int = 2, lm_head_split_count: int = 8
+) -> dict[str, object]:
     graph = import_hf_llama(
         "/tmp/fake-llama-codegen",
         config={
@@ -55,7 +61,7 @@ def _fake_plan(num_layers: int = 2) -> dict[str, object]:
             "lm_head_template": "official_split_lm_head",
             "kv_cache_template": "paged_kv_cache",
             "generation_template": "device_argmax_greedy",
-            "lm_head_split_count": 8,
+            "lm_head_split_count": lm_head_split_count,
             "dtype_recipe": "official_like_performance_seed",
         },
     )
@@ -95,6 +101,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("self.ops.add(residual, hidden)", source)
             self.assertIn("self.ops.linear", source)
             self.assertIn("self.ops.mul_silu", source)
+            self.assertIn("self.ops.concat", source)
+            self.assertIn("self.ops.argmax", source)
+            self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 8", source)
             self.assertIn(
                 "TODO: ttnn.experimental.nlp_create_qkv_heads_decode",
                 source,
@@ -112,9 +121,48 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             config = json.loads((out_dir / "config.json").read_text())
             self.assertEqual(config["num_layers"], 2)
+            self.assertEqual(config["vocab_size"], 128)
             self.assertEqual(config["template_config"]["device"], "p150a")
+            self.assertEqual(config["lm_head"]["split_count"], 8)
+            self.assertEqual(len(config["lm_head"]["splits"]), 8)
+            self.assertEqual(
+                config["lm_head"]["splits"][0],
+                {"shard_id": 0, "vocab_start": 0, "vocab_end": 16},
+            )
+            self.assertEqual(
+                config["lm_head"]["splits"][-1],
+                {"shard_id": 7, "vocab_start": 112, "vocab_end": 128},
+            )
+            self.assertEqual(config["generation"]["mode"], "greedy")
             copied_plan = json.loads((out_dir / "plan.json").read_text())
             self.assertEqual(copied_plan["layers"], plan["layers"])
+
+    def test_lm_head_split_count_changes_codegen_and_config(self) -> None:
+        configs = {}
+        sources = {}
+        for split_count in (1, 2, 8):
+            plan = _fake_plan(num_layers=1, lm_head_split_count=split_count)
+            configs[split_count] = build_codegen_config(plan)
+            sources[split_count] = render_python_ttnn_model(plan)
+
+        self.assertNotEqual(sources[1], sources[2])
+        self.assertNotEqual(sources[2], sources[8])
+        self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 1", sources[1])
+        self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 2", sources[2])
+        self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 8", sources[8])
+
+        self.assertEqual(
+            configs[1]["lm_head"]["splits"],
+            [{"shard_id": 0, "vocab_start": 0, "vocab_end": 128}],
+        )
+        self.assertEqual(
+            configs[2]["lm_head"]["splits"],
+            [
+                {"shard_id": 0, "vocab_start": 0, "vocab_end": 64},
+                {"shard_id": 1, "vocab_start": 64, "vocab_end": 128},
+            ],
+        )
+        self.assertEqual(configs[8]["lm_head"]["splits"][3]["vocab_end"], 64)
 
     def test_generated_mlp_decode_uses_mockable_ttnn_wrappers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -214,6 +262,97 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 },
             )
 
+    def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(
+                _fake_plan(num_layers=1, lm_head_split_count=2), plan_json
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            parameters = _ns(
+                lm_head=_ns(
+                    splits=[
+                        _ns(weight="lm_head_shard0"),
+                        _ns(weight="lm_head_shard1"),
+                    ]
+                )
+            )
+            config = _ns(
+                lm_head=_ns(
+                    split_count=2,
+                    output_memory_config="lm_mem",
+                    concat_memory_config="concat_mem",
+                    output_dtype="bf8",
+                    compute_kernel_config="compute_cfg",
+                    program_configs=["pc0", "pc1"],
+                    retain_logits=False,
+                ),
+                generation=_ns(mode="greedy"),
+            )
+            model = generated.BuddyLlama31TTNN(
+                device=None,
+                parameters=parameters,
+                config=config,
+            )
+
+            out = model.lm_head_argmax(_FakeTensor("hidden", "hidden_mem"))
+
+            self.assertEqual(
+                out.name,
+                "argmax:concat:linear:lm_head_shard0,linear:lm_head_shard1",
+            )
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls],
+                ["linear", "linear", "concat", "argmax"],
+            )
+            self.assertEqual(fake_ttnn.calls[0]["weight"], "lm_head_shard0")
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"],
+                {
+                    "memory_config": "lm_mem",
+                    "program_config": "pc0",
+                    "compute_kernel_config": "compute_cfg",
+                    "dtype": "bf8",
+                },
+            )
+            self.assertEqual(fake_ttnn.calls[1]["weight"], "lm_head_shard1")
+            self.assertEqual(fake_ttnn.calls[1]["kwargs"]["program_config"], "pc1")
+            self.assertEqual(
+                fake_ttnn.calls[2]["tensors"],
+                ["linear:lm_head_shard0", "linear:lm_head_shard1"],
+            )
+            self.assertEqual(
+                fake_ttnn.calls[2]["kwargs"],
+                {"dim": -1, "memory_config": "concat_mem"},
+            )
+            self.assertEqual(
+                fake_ttnn.calls[3]["kwargs"],
+                {"dim": -1},
+            )
+
     def test_codegen_python_dry_run_does_not_write_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -291,11 +430,37 @@ def _make_fake_ttnn_module():
         )
         return _FakeTensor("add_out", kwargs.get("memory_config"))
 
+    def concat(tensors, **kwargs):
+        tensor_names = [getattr(tensor, "name", tensor) for tensor in tensors]
+        module.calls.append(
+            {
+                "op": "concat",
+                "tensors": tensor_names,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(
+            "concat:" + ",".join(tensor_names),
+            kwargs.get("memory_config"),
+        )
+
+    def argmax(tensor, **kwargs):
+        module.calls.append(
+            {
+                "op": "argmax",
+                "tensor": getattr(tensor, "name", tensor),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(f"argmax:{getattr(tensor, 'name', tensor)}")
+
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
     module.linear = linear
     module.mul = mul
     module.add = add
+    module.concat = concat
+    module.argmax = argmax
     return module
 
 

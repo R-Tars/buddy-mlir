@@ -12,6 +12,7 @@ from .artifacts import (
     write_json,
     write_text,
 )
+from ..templates.lm_head import build_lm_head_split_ranges
 
 
 def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
@@ -46,6 +47,15 @@ def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
 
 def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
     validate_execution_plan_for_codegen(plan)
+    template_config = copy.deepcopy(plan["template_config"])
+    lm_head_split_count = int(template_config["lm_head_split_count"])
+    vocab_size = plan.get("vocab_size")
+    generation_template = (
+        "device_argmax_greedy"
+        if "device_argmax_greedy" in plan["final"]
+        else "full_logits"
+    )
+    retain_logits = generation_template != "device_argmax_greedy"
     return {
         "schema_version": 1,
         "model_name": plan["model_name"],
@@ -54,9 +64,33 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         "batch_size": plan["batch_size"],
         "seq_len": plan["seq_len"],
         "max_cache_len": plan["max_cache_len"],
-        "template_config": copy.deepcopy(plan["template_config"]),
+        "vocab_size": vocab_size,
+        "template_config": template_config,
         "layers": copy.deepcopy(plan["layers"]),
         "final": copy.deepcopy(plan["final"]),
+        "lm_head": {
+            "template": "official_split_lm_head",
+            "split_count": lm_head_split_count,
+            "split_axis": "vocab",
+            "retain_logits": retain_logits,
+            "output_memory_config": None,
+            "concat_memory_config": None,
+            "output_dtype": None,
+            "compute_kernel_config": None,
+            "program_configs": [None] * lm_head_split_count,
+            "splits": build_lm_head_split_ranges(
+                vocab_size, lm_head_split_count
+            ),
+        },
+        "generation": {
+            "template": generation_template,
+            "mode": (
+                "greedy"
+                if generation_template == "device_argmax_greedy"
+                else "full_logits"
+            ),
+            "retain_logits": retain_logits,
+        },
     }
 
 
@@ -70,6 +104,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
     mlp_template = _template_name(plan, "official_gated_mlp_decode")
     lm_head_template = _template_name(plan, "official_split_lm_head")
     generation_template = _template_name(plan, "device_argmax_greedy")
+    lm_head_split_count = int(config["lm_head"]["split_count"])
 
     return (
         textwrap.dedent(
@@ -174,6 +209,15 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     if silu is None:
                         return None
                     return unary_with_param(silu)
+
+                def concat(self, tensors, *, dim=-1, memory_config=None):
+                    kwargs = {{"dim": dim}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    return self.ttnn.concat(tensors, **kwargs)
+
+                def argmax(self, tensor, *, dim=-1):
+                    return self.ttnn.argmax(tensor, dim=dim)
 
 
             class {model_class}:
@@ -308,15 +352,72 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                 def lm_head_argmax(self, hidden):
                     # Template: {lm_head_template} + {generation_template}
-                    # TODO: split LM-head projection
-                    # TODO: concat shard logits
-                    # TODO: device greedy argmax
-                    raise NotImplementedError(
-                        "LM-head template {lm_head_template} is a Phase 3 skeleton."
+                    lm_head_config = self.config.lm_head
+                    split_count = int(
+                        _optional_attr(
+                            lm_head_config,
+                            "split_count",
+                            GENERATED_LM_HEAD_SPLIT_COUNT,
+                        )
                     )
+                    program_configs = _optional_attr(
+                        lm_head_config, "program_configs", None
+                    )
+                    split_configs = _optional_attr(
+                        lm_head_config, "splits", None
+                    )
+                    shard_logits = []
+                    for shard_id in range(split_count):
+                        split_params = self.parameters.lm_head.splits[shard_id]
+                        split_config = None
+                        if split_configs is not None and shard_id < len(split_configs):
+                            split_config = split_configs[shard_id]
+                        program_config = _optional_attr(
+                            split_config, "program_config", None
+                        )
+                        if (
+                            program_config is None
+                            and program_configs is not None
+                            and shard_id < len(program_configs)
+                        ):
+                            program_config = program_configs[shard_id]
+                        logits_i = self.ops.linear(
+                            hidden,
+                            split_params.weight,
+                            memory_config=_optional_attr(
+                                lm_head_config, "output_memory_config"
+                            ),
+                            program_config=program_config,
+                            compute_kernel_config=_optional_attr(
+                                lm_head_config, "compute_kernel_config"
+                            ),
+                            dtype=_optional_attr(lm_head_config, "output_dtype"),
+                        )
+                        shard_logits.append(logits_i)
+
+                    logits = self.ops.concat(
+                        shard_logits,
+                        dim=-1,
+                        memory_config=_optional_attr(
+                            lm_head_config, "concat_memory_config"
+                        ),
+                    )
+                    generation_config = _optional_attr(
+                        self.config, "generation", None
+                    )
+                    generation_mode = _optional_attr(
+                        generation_config, "mode", "greedy"
+                    )
+                    retain_logits = bool(
+                        _optional_attr(lm_head_config, "retain_logits", False)
+                    )
+                    if generation_mode == "greedy" and not retain_logits:
+                        return self.ops.argmax(logits, dim=-1)
+                    return logits
 
 
             GENERATED_NUM_LAYERS = {num_layers}
+            GENERATED_LM_HEAD_SPLIT_COUNT = {lm_head_split_count}
             '''
         ).lstrip()
     )
@@ -330,9 +431,9 @@ def render_codegen_readme(plan: dict[str, Any]) -> str:
 
         This directory was generated from a Buddy-TTNN Direct execution plan.
         The generated `model.py` defines the decode program structure and
-        template method boundaries. The MLP decode template emits real TTNN
-        calls through a small compatibility wrapper; attention, embedding,
-        RMSNorm, and LM-head template bodies still intentionally raise
+        template method boundaries. The MLP decode and LM-head templates emit
+        real TTNN calls through a small compatibility wrapper; attention,
+        embedding, and RMSNorm template bodies still intentionally raise
         `NotImplementedError`.
 
         Model: `{config["model_name"]}`

@@ -195,5 +195,25 @@ The generated model routes these calls through `TTNNCompatOps`, a small wrapper
 around `ttnn.linear`, `ttnn.mul`, and `ttnn.add`. This keeps API-version
 adaptation localized and lets tests mock TTNN without a device.
 
-Attention, embedding, RMSNorm, and LM-head codegen remain explicit
-`NotImplementedError` boundaries in this phase.
+At the end of Phase 5, attention, embedding, RMSNorm, and LM-head codegen
+remain explicit `NotImplementedError` boundaries.
+
+## Phase 6: Split LM-head + Greedy Argmax
+
+Phase 6 replaces the generated `lm_head_argmax()` stub with conservative TTNN
+call structure:
+
+```text
+for each vocab shard:
+  logits_i = ttnn.linear(hidden, lm_head_split_i, ...)
+logits = ttnn.concat(shard_logits, dim=-1)
+token  = ttnn.argmax(logits, dim=-1)
+```
+
+The generated `config.json` now records `lm_head.split_count`,
+`lm_head.splits[*].vocab_start`, and `lm_head.splits[*].vocab_end`. Changing
+`lm_head_split_count` to 1, 2, or 8 changes both generated config metadata and
+the generated model constant.
+
+This phase still materializes full logits before argmax. It does not add a
+custom fused local/global argmax region.

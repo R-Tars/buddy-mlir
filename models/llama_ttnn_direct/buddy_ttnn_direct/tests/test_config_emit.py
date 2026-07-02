@@ -115,6 +115,15 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(config["activations"]["target_dtype"], "bfloat16")
         self.assertEqual(config["lm_head"]["split_count"], 8)
         self.assertEqual(config["lm_head"]["split_axis"], "vocab")
+        self.assertEqual(len(config["lm_head"]["splits"]), 8)
+        self.assertEqual(
+            config["lm_head"]["splits"][0],
+            {"shard_id": 0, "vocab_start": 0, "vocab_end": 16},
+        )
+        self.assertEqual(
+            config["lm_head"]["splits"][-1],
+            {"shard_id": 7, "vocab_start": 112, "vocab_end": 128},
+        )
         self.assertEqual(config["kv_cache"]["policy"], "paged")
         self.assertEqual(config["kv_cache"]["page_block_size"], 32)
         self.assertEqual(config["kv_cache"]["dtype"], "bfloat8_b")
@@ -138,6 +147,15 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(shared["shared_roles"], ["embedding", "lm_head"])
         self.assertTrue(config["lm_head"]["tied_to_embedding"])
         self.assertEqual(config["lm_head"]["split_count"], 4)
+        self.assertEqual(
+            config["lm_head"]["splits"],
+            [
+                {"shard_id": 0, "vocab_start": 0, "vocab_end": 32},
+                {"shard_id": 1, "vocab_start": 32, "vocab_end": 64},
+                {"shard_id": 2, "vocab_start": 64, "vocab_end": 96},
+                {"shard_id": 3, "vocab_start": 96, "vocab_end": 128},
+            ],
+        )
 
     def test_cli_emit_config_writes_metadata_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -163,6 +181,13 @@ class ParameterConfigEmitTest(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             dumped = json.loads(out.read_text())
             self.assertEqual(dumped["lm_head"]["split_count"], 2)
+            self.assertEqual(
+                dumped["lm_head"]["splits"],
+                [
+                    {"shard_id": 0, "vocab_start": 0, "vocab_end": 64},
+                    {"shard_id": 1, "vocab_start": 64, "vocab_end": 128},
+                ],
+            )
             self.assertEqual(dumped["kv_cache"]["page_block_size"], 16)
             self.assertIn(
                 "model.layers.0.self_attn.v_proj.weight",
