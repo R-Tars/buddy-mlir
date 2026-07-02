@@ -178,3 +178,22 @@ linear.o_proj
 ```
 
 The output records `missing_ops`, `extra_ops`, and `order_mismatch`.
+
+## Phase 5: Gated MLP TTNN Template
+
+Phase 5 replaces the generated `mlp_decode()` stub with real TTNN call
+structure:
+
+```text
+gate = ttnn.linear(...)
+up   = ttnn.linear(...)
+mid  = ttnn.mul(gate, up, input_tensor_a_activations=[SILU])
+out  = ttnn.linear(mid, ...)
+```
+
+The generated model routes these calls through `TTNNCompatOps`, a small wrapper
+around `ttnn.linear`, `ttnn.mul`, and `ttnn.add`. This keeps API-version
+adaptation localized and lets tests mock TTNN without a device.
+
+Attention, embedding, RMSNorm, and LM-head codegen remain explicit
+`NotImplementedError` boundaries in this phase.

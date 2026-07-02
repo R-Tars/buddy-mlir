@@ -98,11 +98,90 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     return _to_namespace(json.load(handle))
 
 
+            def _optional_attr(obj, name, default=None):
+                return getattr(obj, name, default)
+
+
+            def _tensor_memory_config(tensor):
+                memory_config = getattr(tensor, "memory_config", None)
+                if callable(memory_config):
+                    return memory_config()
+                return None
+
+
+            class TTNNCompatOps:
+                def __init__(self, ttnn_module):
+                    self.ttnn = ttnn_module
+
+                def add(self, left, right, *, memory_config=None, dtype=None):
+                    kwargs = {{}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if dtype is not None:
+                        kwargs["dtype"] = dtype
+                    return self.ttnn.add(left, right, **kwargs)
+
+                def linear(
+                    self,
+                    activation,
+                    weight,
+                    *,
+                    memory_config=None,
+                    program_config=None,
+                    compute_kernel_config=None,
+                    dtype=None,
+                ):
+                    kwargs = {{}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if program_config is not None:
+                        kwargs["program_config"] = program_config
+                    if compute_kernel_config is not None:
+                        kwargs["compute_kernel_config"] = compute_kernel_config
+                    if dtype is not None:
+                        kwargs["dtype"] = dtype
+                    return self.ttnn.linear(activation, weight, **kwargs)
+
+                def mul_silu(
+                    self,
+                    gate,
+                    up,
+                    *,
+                    memory_config=None,
+                    dtype=None,
+                ):
+                    kwargs = {{}}
+                    activation = self._silu_activation()
+                    if activation is not None:
+                        kwargs["input_tensor_a_activations"] = [activation]
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if dtype is not None:
+                        kwargs["dtype"] = dtype
+                    mul = getattr(self.ttnn, "mul", None)
+                    if mul is None:
+                        mul = getattr(self.ttnn, "multiply", None)
+                    if mul is None:
+                        raise AttributeError("ttnn must provide mul or multiply")
+                    return mul(gate, up, **kwargs)
+
+                def _silu_activation(self):
+                    unary_with_param = getattr(self.ttnn, "UnaryWithParam", None)
+                    unary_op_type = getattr(self.ttnn, "UnaryOpType", None)
+                    if unary_with_param is None or unary_op_type is None:
+                        return None
+                    silu = getattr(unary_op_type, "SILU", None)
+                    if silu is None:
+                        return None
+                    return unary_with_param(silu)
+
+
             class {model_class}:
                 def __init__(self, device, parameters, config):
                     self.device = device
                     self.parameters = parameters
                     self.config = config
+                    self.ops = TTNNCompatOps(ttnn)
 
                 def decode_step(self, token_ids, page_table, cache_position, kv_cache):
                     hidden = self.embed(token_ids)
@@ -128,11 +207,11 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         cache_position,
                         kv_cache,
                     )
-                    hidden = ttnn.add(residual, hidden)
+                    hidden = self.ops.add(residual, hidden)
                     residual = hidden
                     hidden = self.rmsnorm(hidden, layer_id, kind="mlp")
                     hidden = self.mlp_decode(layer_id, hidden)
-                    hidden = ttnn.add(residual, hidden)
+                    hidden = self.ops.add(residual, hidden)
                     return hidden
 
                 def embed(self, token_ids):
@@ -175,12 +254,56 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                 def mlp_decode(self, layer_id, hidden):
                     # Template: {mlp_template}
-                    # TODO: gate projection with ttnn.linear
-                    # TODO: up projection with ttnn.linear
-                    # TODO: fused silu + multiply
-                    # TODO: down projection with ttnn.linear
-                    raise NotImplementedError(
-                        "MLP template {mlp_template} is a Phase 3 skeleton."
+                    layer_params = self.parameters.layers[layer_id].mlp
+                    mlp_config = self.config.mlp
+                    compute_kernel_config = _optional_attr(
+                        mlp_config, "compute_kernel_config"
+                    )
+                    intermediate_dtype = _optional_attr(
+                        mlp_config, "intermediate_dtype"
+                    )
+
+                    gate = self.ops.linear(
+                        hidden,
+                        layer_params.gate_proj.weight,
+                        memory_config=_optional_attr(
+                            mlp_config, "gate_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            mlp_config, "gate_program_config"
+                        ),
+                        compute_kernel_config=compute_kernel_config,
+                        dtype=intermediate_dtype,
+                    )
+                    up = self.ops.linear(
+                        hidden,
+                        layer_params.up_proj.weight,
+                        memory_config=_optional_attr(
+                            mlp_config, "up_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            mlp_config, "up_program_config"
+                        ),
+                        compute_kernel_config=compute_kernel_config,
+                        dtype=intermediate_dtype,
+                    )
+                    mid = self.ops.mul_silu(
+                        gate,
+                        up,
+                        memory_config=_tensor_memory_config(gate),
+                        dtype=intermediate_dtype,
+                    )
+                    return self.ops.linear(
+                        mid,
+                        layer_params.down_proj.weight,
+                        memory_config=_optional_attr(
+                            mlp_config, "down_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            mlp_config, "down_program_config"
+                        ),
+                        compute_kernel_config=compute_kernel_config,
+                        dtype=_optional_attr(mlp_config, "output_dtype"),
                     )
 
                 def lm_head_argmax(self, hidden):
@@ -206,9 +329,11 @@ def render_codegen_readme(plan: dict[str, Any]) -> str:
         # Buddy-TTNN Direct Generated Skeleton
 
         This directory was generated from a Buddy-TTNN Direct execution plan.
-        The generated `model.py` is a Phase 3 TTNN skeleton: it defines the
-        decode program structure and template method boundaries, but heavy TTNN
-        template bodies intentionally raise `NotImplementedError`.
+        The generated `model.py` defines the decode program structure and
+        template method boundaries. The MLP decode template emits real TTNN
+        calls through a small compatibility wrapper; attention, embedding,
+        RMSNorm, and LM-head template bodies still intentionally raise
+        `NotImplementedError`.
 
         Model: `{config["model_name"]}`
         Layers: `{config["num_layers"]}`

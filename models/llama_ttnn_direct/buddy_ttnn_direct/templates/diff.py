@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .mlp_decode import official_gated_mlp_decode_op_sequence
+
 
 ATTENTION_DECODE_OPS = [
     "linear.qkv_packed",
@@ -16,12 +18,7 @@ ATTENTION_DECODE_OPS = [
     "linear.o_proj",
 ]
 
-GATED_MLP_DECODE_OPS = [
-    "linear.mlp_gate",
-    "linear.mlp_up",
-    "mul.silu",
-    "linear.mlp_down",
-]
+GATED_MLP_DECODE_OPS = official_gated_mlp_decode_op_sequence()
 
 TEMPLATE_TO_OPS = {
     "official_paged_attention_decode": ATTENTION_DECODE_OPS,

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import py_compile
+import importlib.util
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -88,7 +91,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("class BuddyLlama31TTNN", source)
             self.assertIn("def decode_step", source)
             self.assertIn("def decode_layer", source)
-            self.assertIn("ttnn.add(residual, hidden)", source)
+            self.assertIn("class TTNNCompatOps", source)
+            self.assertIn("self.ops.add(residual, hidden)", source)
+            self.assertIn("self.ops.linear", source)
+            self.assertIn("self.ops.mul_silu", source)
             self.assertIn(
                 "TODO: ttnn.experimental.nlp_create_qkv_heads_decode",
                 source,
@@ -110,6 +116,104 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             copied_plan = json.loads((out_dir / "plan.json").read_text())
             self.assertEqual(copied_plan["layers"], plan["layers"])
 
+    def test_generated_mlp_decode_uses_mockable_ttnn_wrappers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            parameters = _ns(
+                layers=[
+                    _ns(
+                        mlp=_ns(
+                            gate_proj=_ns(weight="gate_weight"),
+                            up_proj=_ns(weight="up_weight"),
+                            down_proj=_ns(weight="down_weight"),
+                        )
+                    )
+                ]
+            )
+            config = _ns(
+                num_layers=1,
+                mlp=_ns(
+                    gate_output_memory_config="gate_mem",
+                    gate_program_config="gate_pc",
+                    up_output_memory_config="up_mem",
+                    up_program_config="up_pc",
+                    down_output_memory_config="down_mem",
+                    down_program_config="down_pc",
+                    compute_kernel_config="compute_cfg",
+                    intermediate_dtype="bf16",
+                    output_dtype="bf8",
+                ),
+            )
+            model = generated.BuddyLlama31TTNN(
+                device=None,
+                parameters=parameters,
+                config=config,
+            )
+
+            out = model.mlp_decode(0, _FakeTensor("hidden", "hidden_mem"))
+
+            self.assertEqual(out.name, "linear:down_weight")
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls],
+                ["linear", "linear", "mul", "linear"],
+            )
+            self.assertEqual(fake_ttnn.calls[0]["weight"], "gate_weight")
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"],
+                {
+                    "memory_config": "gate_mem",
+                    "program_config": "gate_pc",
+                    "compute_kernel_config": "compute_cfg",
+                    "dtype": "bf16",
+                },
+            )
+            self.assertEqual(fake_ttnn.calls[1]["weight"], "up_weight")
+            self.assertEqual(fake_ttnn.calls[2]["lhs"], "linear:gate_weight")
+            self.assertEqual(fake_ttnn.calls[2]["rhs"], "linear:up_weight")
+            self.assertEqual(
+                fake_ttnn.calls[2]["kwargs"],
+                {
+                    "input_tensor_a_activations": [
+                        ("UnaryWithParam", "SILU")
+                    ],
+                    "memory_config": "gate_mem",
+                    "dtype": "bf16",
+                },
+            )
+            self.assertEqual(fake_ttnn.calls[3]["weight"], "down_weight")
+            self.assertEqual(
+                fake_ttnn.calls[3]["kwargs"],
+                {
+                    "memory_config": "down_mem",
+                    "program_config": "down_pc",
+                    "compute_kernel_config": "compute_cfg",
+                    "dtype": "bf8",
+                },
+            )
+
     def test_codegen_python_dry_run_does_not_write_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -130,6 +234,83 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertFalse(out_dir.exists())
+
+class _FakeTensor:
+    def __init__(self, name: str, mem_config: str | None = None):
+        self.name = name
+        self._mem_config = mem_config
+
+    def memory_config(self):
+        return self._mem_config
+
+
+def _ns(**kwargs):
+    return types.SimpleNamespace(**kwargs)
+
+
+def _make_fake_ttnn_module():
+    module = types.ModuleType("ttnn")
+    module.calls = []
+
+    class UnaryOpType:
+        SILU = "SILU"
+
+    def unary_with_param(op):
+        return ("UnaryWithParam", op)
+
+    def linear(activation, weight, **kwargs):
+        module.calls.append(
+            {
+                "op": "linear",
+                "activation": getattr(activation, "name", activation),
+                "weight": weight,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(f"linear:{weight}", kwargs.get("memory_config"))
+
+    def mul(lhs, rhs, **kwargs):
+        module.calls.append(
+            {
+                "op": "mul",
+                "lhs": getattr(lhs, "name", lhs),
+                "rhs": getattr(rhs, "name", rhs),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor("mul_out", kwargs.get("memory_config"))
+
+    def add(lhs, rhs, **kwargs):
+        module.calls.append(
+            {
+                "op": "add",
+                "lhs": getattr(lhs, "name", lhs),
+                "rhs": getattr(rhs, "name", rhs),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor("add_out", kwargs.get("memory_config"))
+
+    module.UnaryOpType = UnaryOpType
+    module.UnaryWithParam = unary_with_param
+    module.linear = linear
+    module.mul = mul
+    module.add = add
+    return module
+
+
+def _load_generated_model(path: Path):
+    module_name = "generated_buddy_ttnn_model"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(module_name, None)
+    return module
 
 
 if __name__ == "__main__":

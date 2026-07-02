@@ -13,6 +13,7 @@ from .diff import (
     expand_plan_ops,
     load_official_template,
 )
+from .mlp_decode import official_gated_mlp_decode_op_sequence
 
 __all__ = [
     "build_execution_plan",
@@ -23,5 +24,6 @@ __all__ = [
     "load_execution_plan",
     "load_official_template",
     "load_template_config",
+    "official_gated_mlp_decode_op_sequence",
     "validate_template_config",
 ]
