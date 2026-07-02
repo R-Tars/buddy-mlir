@@ -92,6 +92,7 @@ def run_decode_step_autotune(
             "profile_report": None,
             "bottleneck_summary": None,
             "parameter_source": None,
+            "parameter_setup": None,
         }
         if not dry_run:
             profile = profile_decode_step(
@@ -111,6 +112,7 @@ def run_decode_step_autotune(
             )
             record["status"] = str(profile["status"])
             record["parameter_source"] = profile.get("parameter_source")
+            record["parameter_setup"] = profile.get("parameter_setup")
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,

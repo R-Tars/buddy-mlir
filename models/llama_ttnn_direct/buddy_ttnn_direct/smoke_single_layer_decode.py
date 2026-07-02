@@ -231,9 +231,11 @@ def run_smoke_decode_step(
                 kv_cache = state.kv_cache
                 tensor_conversion_count = state.tensor_conversion_count
                 parameter_source = state.parameter_source
+                parameter_setup = getattr(state, "parameter_setup", None)
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
+                parameter_setup = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -259,6 +261,8 @@ def run_smoke_decode_step(
                 trace_iterations=trace_iterations,
             )
             report["parameter_source"] = parameter_source
+            if parameter_setup is not None:
+                report["parameter_setup"] = parameter_setup
             report["input_source"] = (
                 "injected"
                 if any(
@@ -536,9 +540,11 @@ def profile_decode_step(
                 kv_cache = synthetic.kv_cache
                 tensor_conversion_count = synthetic.tensor_conversion_count
                 parameter_source = synthetic.parameter_source
+                parameter_setup = getattr(synthetic, "parameter_setup", None)
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
+                parameter_setup = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -578,6 +584,8 @@ def profile_decode_step(
             profile["tensor_conversion_count"] = tensor_conversion_count
             profile["tensor_conversion_ms"] = tensor_conversion_ms
             profile["parameter_source"] = parameter_source
+            if parameter_setup is not None:
+                profile["parameter_setup"] = parameter_setup
             profile["input_source"] = (
                 "injected"
                 if any(
@@ -1298,6 +1306,7 @@ def _build_model_decode_state(
         tensor_backend="torch",
         layers=range(int(plan["layers"])),
     )
+    materialization_summary = _materialization_summary(host_params)
     result = to_ttnn_parameters(
         host_params,
         device,
@@ -1308,7 +1317,7 @@ def _build_model_decode_state(
     )
     assert result.parameters is not None
     tensor_conversion_count = int(result.report["tensor_count"])
-    tensor_conversion_count += _attach_synthetic_rotary_parameters(
+    synthetic_rotary_count = _attach_synthetic_rotary_parameters(
         parameters=result.parameters,
         ttnn=ttnn,
         torch=torch,
@@ -1316,6 +1325,7 @@ def _build_model_decode_state(
         dtype_seed=dtype_seed,
         plan=plan,
     )
+    tensor_conversion_count += synthetic_rotary_count
     synthetic_inputs = _build_synthetic_decode_inputs(
         ttnn=ttnn,
         torch=torch,
@@ -1334,8 +1344,68 @@ def _build_model_decode_state(
         ),
         parameter_source="hf_model",
         input_source="synthetic",
-        tensorization_report=result.report,
+        parameter_setup={
+            "materialization": materialization_summary,
+            "tensorization": _tensorization_summary(result.report),
+            "synthetic_rotary_tensor_count": synthetic_rotary_count,
+            "synthetic_runtime_input_tensor_count": (
+                synthetic_inputs.tensor_conversion_count
+            ),
+        },
     )
+
+
+def _materialization_summary(params: Any) -> dict[str, Any]:
+    metadata = dict(getattr(params, "metadata", {}))
+    tensors = metadata.get("tensors", {})
+    key_paths = [
+        path
+        for path in (
+            "embedding.weight",
+            "layers.0.attention.wqkv_packed.weight",
+            "layers.0.attention.o_proj.weight",
+            "layers.0.mlp.gate_proj.weight",
+            "layers.0.mlp.down_proj.weight",
+            "final_norm.weight",
+            "lm_head.splits.0.weight",
+        )
+        if path in tensors
+    ]
+    return {
+        "backend": metadata.get("backend"),
+        "model_name": metadata.get("model_name"),
+        "num_layers": metadata.get("num_layers"),
+        "materialized_layer_ids": list(
+            metadata.get("materialized_layer_ids", [])
+        ),
+        "tensor_count": metadata.get("tensor_count"),
+        "key_paths": key_paths,
+    }
+
+
+def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
+    tensors = report.get("tensors", [])
+    key_paths = [
+        record["path"]
+        for record in tensors
+        if record.get("path")
+        in {
+            "embedding.weight",
+            "layers.0.attention.wqkv_packed.weight",
+            "layers.0.attention.o_proj.weight",
+            "layers.0.mlp.gate_proj.weight",
+            "layers.0.mlp.down_proj.weight",
+            "final_norm.weight",
+            "lm_head.splits.0.weight",
+        }
+    ]
+    return {
+        "status": report.get("status"),
+        "backend": "ttnn",
+        "roles": list(report.get("roles", [])),
+        "tensor_count": report.get("tensor_count"),
+        "key_paths": key_paths,
+    }
 
 
 def _build_synthetic_decode_inputs(

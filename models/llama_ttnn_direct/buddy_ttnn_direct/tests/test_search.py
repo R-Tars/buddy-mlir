@@ -390,14 +390,36 @@ class SearchTest(unittest.TestCase):
             self.assertIsNotNone(report["best"])
             self.assertEqual(report["best"]["status"], "profiled")
             self.assertEqual(report["best"]["parameter_source"], "hf_model")
+            self.assertEqual(
+                report["best"]["parameter_setup"]["tensorization"]["tensor_count"],
+                11,
+            )
             candidate = report["candidates"][0]
             self.assertEqual(candidate["parameter_source"], "hf_model")
+            self.assertEqual(
+                candidate["parameter_setup"]["materialization"]["tensor_count"],
+                15,
+            )
             profile_report = json.loads(
                 (root / candidate["profile_report"]).read_text()
             )
             self.assertEqual(profile_report["parameter_source"], "hf_model")
             self.assertEqual(profile_report["input_source"], "synthetic")
             self.assertEqual(profile_report["tensor_conversion_count"], 19)
+            self.assertEqual(
+                profile_report["parameter_setup"]["tensorization"]["tensor_count"],
+                11,
+            )
+            self.assertEqual(
+                profile_report["parameter_setup"]["synthetic_rotary_tensor_count"],
+                3,
+            )
+            self.assertEqual(
+                profile_report["parameter_setup"][
+                    "synthetic_runtime_input_tensor_count"
+                ],
+                5,
+            )
             candidate_root = root / report["candidates_dir"] / candidate["id"]
             self.assertTrue((candidate_root / "semantic_graph.json").is_file())
             self.assertTrue((candidate_root / "weights_manifest.json").is_file())

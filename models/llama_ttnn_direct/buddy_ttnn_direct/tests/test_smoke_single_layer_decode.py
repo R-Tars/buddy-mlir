@@ -264,6 +264,32 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["parameter_source"], "hf_model")
             self.assertEqual(report["input_source"], "synthetic")
             self.assertEqual(report["tensor_conversion_count"], 25)
+            self.assertEqual(
+                report["parameter_setup"]["materialization"][
+                    "materialized_layer_ids"
+                ],
+                [0],
+            )
+            self.assertEqual(
+                report["parameter_setup"]["materialization"]["tensor_count"],
+                21,
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"]["roles"],
+                ["embedding", "norm", "attention", "mlp", "lm_head"],
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"]["tensor_count"],
+                17,
+            )
+            self.assertEqual(
+                report["parameter_setup"]["synthetic_rotary_tensor_count"],
+                3,
+            )
+            self.assertEqual(
+                report["parameter_setup"]["synthetic_runtime_input_tensor_count"],
+                5,
+            )
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls[:17]],
