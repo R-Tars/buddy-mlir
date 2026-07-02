@@ -12,6 +12,7 @@ from .codegen.config_emit import (
     parameter_config_dry_run_report,
 )
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
+from .codegen.program import write_decode_program_bundle
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
@@ -305,6 +306,30 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output profiling report JSON path.",
     )
     profile.set_defaults(func=_cmd_profile_template)
+
+    build_program = subparsers.add_parser(
+        "build-program",
+        help="Build a complete TTNN Direct decode program bundle.",
+    )
+    build_program.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF Llama model directory or model id.",
+    )
+    build_program.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Template seed config JSON.",
+    )
+    build_program.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for the decode program bundle.",
+    )
+    build_program.set_defaults(func=_cmd_build_program)
     return parser
 
 
@@ -433,6 +458,34 @@ def _cmd_profile_template(args: argparse.Namespace) -> int:
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
     return 0 if report.get("status") in {"dry_run", "profiled"} else 1
+
+
+def _cmd_build_program(args: argparse.Namespace) -> int:
+    config = load_template_config(args.config)
+    graph = import_hf_llama(
+        args.model_path,
+        mode="decode",
+        batch_size=int(config["batch_size"]),
+        seq_len=int(config["decode_seq_len"]),
+        max_cache_len=int(config["max_cache_len"]),
+        generation_mode=(
+            "greedy"
+            if config["generation_template"] == "device_argmax_greedy"
+            else "sampling"
+        ),
+    )
+    plan = build_execution_plan(graph, config)
+    paths = write_decode_program_bundle(
+        graph=graph,
+        plan=plan,
+        template_config=config,
+        model_path=args.model_path,
+        out_dir=args.out_dir,
+    )
+    print(f"wrote TTNN Direct decode program: {args.out_dir}")
+    for name in sorted(paths):
+        print(f"  {name}: {paths[name]}")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -314,7 +314,8 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         op = getattr(self.ttnn, name, None)
                     if op is None:
                         raise AttributeError(
-                            "ttnn experimental op is unavailable: " + name
+                            "Attention template official_paged_attention_decode "
+                            "requires TTNN op wrapper implementation: " + name
                         )
                     return op
 
@@ -325,7 +326,8 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         op = getattr(self.ttnn, name, None)
                     if op is None:
                         raise AttributeError(
-                            "ttnn transformer op is unavailable: " + name
+                            "Attention template official_paged_attention_decode "
+                            "requires TTNN op wrapper implementation: " + name
                         )
                     return op
 

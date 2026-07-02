@@ -316,3 +316,33 @@ The report records `latency_ms.mean/p50/p90`, the expected MLP op counts, and a
 trace status. With TTNN hardware available, the command attempts eager MLP
 profiling and uses TTNN trace capture/execute APIs when present. Without
 hardware, `--dry-run` still writes the full JSON schema.
+
+## Phase 11: Full Decode Program Builder
+
+Phase 11 adds `build-program`, which wires semantic import, template planning,
+Python TTNN codegen, and weight manifest generation into one decode bundle:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  build-program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --out-dir /tmp/llama31_ttnn_program
+```
+
+Generated files:
+
+```text
+model.py
+config.json
+semantic_graph.json
+execution_plan.json
+weights_manifest.json
+run_decode.py
+README.md
+```
+
+`run_decode.py --dry-run` prints the expanded per-layer decode op sequence and
+final ops. Full TTNN decode execution remains intentionally disabled at this
+phase, but missing attention op wrappers now report the exact template boundary
+that needs implementation.
