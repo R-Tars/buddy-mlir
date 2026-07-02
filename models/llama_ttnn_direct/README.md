@@ -483,7 +483,8 @@ models/llama_ttnn_direct/buddy_ttnn_direct/custom_ops/README.md
 ## Phase 2 Kickoff: Direct Path Validation
 
 The first follow-up from the Phase 1 review is a unified `validate-direct`
-command. It runs the existing device-free checks in one place:
+command. It runs the existing device-free checks in one place and now also
+covers the follow-up no-device dry-run gates added during Phase 2 bring-up:
 
 ```text
 import-llama
@@ -493,7 +494,16 @@ emit-config
 prepare-artifacts
 build-program
 py_compile generated Python
+diff-official-config
+tensorize-parameters --dry-run
+smoke-decode-shell --dry-run
+smoke-attention-primitive --dry-run
+smoke-attention-layer --dry-run
+smoke-single-layer-decode --dry-run
+smoke-decode-step --dry-run --trace
+profile-decode-step --dry-run --trace
 search --dry-run
+autotune-decode-step --dry-run --trace
 package-program
 ```
 
@@ -509,9 +519,12 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The command writes `/tmp/validate_ttnn_direct/validation_report.json` plus the
 intermediate semantic graph, execution plan, plan diff, parameter config,
-offline manifests, generated program, search artifacts, and package directory.
-It does not import TTNN, open a Tenstorrent device, load full tensor payloads,
-or add new runtime behavior.
+offline manifests, generated program, official config diff, tensorization
+dry-run report, decode/attention smoke dry-run reports, search/autotune
+artifacts, and package directory. It does not import TTNN, open a Tenstorrent
+device, load full tensor payloads, or run `materialize-parameters`; real
+parameter materialization remains an explicit command because it needs local
+weight files.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
+    ATTENTION_PRIMITIVES,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
     VALIDATION_STEPS,
 )
@@ -56,17 +59,77 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertTrue((out_dir / "program" / "model.py").is_file())
             self.assertTrue((out_dir / "program" / "run_decode.py").is_file())
+            self.assertTrue((out_dir / "official_config_diff.json").is_file())
+            self.assertTrue((out_dir / "tensorize_report.json").is_file())
+            self.assertTrue((out_dir / "decode_shell_report.json").is_file())
+            for primitive in ATTENTION_PRIMITIVES:
+                self.assertTrue(
+                    (out_dir / "attention_primitives" / f"{primitive}.json").is_file()
+                )
+            self.assertTrue((out_dir / "attention_layer_report.json").is_file())
+            self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
+            self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
+            self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
             self.assertTrue((out_dir / "package" / "manifest.json").is_file())
             self.assertTrue((out_dir / "search_report.json").is_file())
+            self.assertTrue((out_dir / "decode_step_autotune_report.json").is_file())
 
             diff = json.loads((out_dir / "plan_diff.json").read_text())
             self.assertEqual(diff["missing_ops"], [])
             self.assertEqual(diff["extra_ops"], [])
             self.assertEqual(diff["order_mismatch"], [])
 
+            config_diff = json.loads((out_dir / "official_config_diff.json").read_text())
+            self.assertEqual(config_diff["status"], "diff_found")
+            self.assertGreater(config_diff["summary"]["issue_count"], 0)
+
+            tensorize_report = json.loads((out_dir / "tensorize_report.json").read_text())
+            self.assertTrue(tensorize_report["dry_run"])
+            self.assertEqual(tensorize_report["roles"], ["mlp", "lm_head"])
+
+            decode_shell_report = json.loads(
+                (out_dir / "decode_shell_report.json").read_text()
+            )
+            self.assertEqual(decode_shell_report["status"], "dry_run")
+            self.assertTrue(decode_shell_report["dry_run"])
+
+            attention_layer_report = json.loads(
+                (out_dir / "attention_layer_report.json").read_text()
+            )
+            self.assertEqual(attention_layer_report["status"], "dry_run")
+            self.assertEqual(
+                len(attention_layer_report["primitive_reports"]),
+                8,
+            )
+
+            single_layer_report = json.loads(
+                (out_dir / "single_layer_decode_report.json").read_text()
+            )
+            self.assertEqual(single_layer_report["status"], "dry_run")
+            self.assertEqual(single_layer_report["layers"], 1)
+
+            decode_step_report = json.loads(
+                (out_dir / "decode_step_smoke_report.json").read_text()
+            )
+            self.assertEqual(decode_step_report["status"], "dry_run")
+            self.assertEqual(decode_step_report["layers"], 2)
+            self.assertEqual(decode_step_report["trace"]["status"], "dry_run")
+
+            profile_report = json.loads(
+                (out_dir / "decode_step_profile_report.json").read_text()
+            )
+            self.assertEqual(profile_report["status"], "dry_run")
+            self.assertEqual(profile_report["layers"], 2)
+
             search_report = json.loads((out_dir / "search_report.json").read_text())
             self.assertTrue(search_report["dry_run"])
             self.assertEqual(search_report["candidate_count"], 10)
+
+            decode_step_autotune = json.loads(
+                (out_dir / "decode_step_autotune_report.json").read_text()
+            )
+            self.assertTrue(decode_step_autotune["dry_run"])
+            self.assertEqual(decode_step_autotune["candidate_count"], 32)
 
             self.assertEqual(
                 report["steps"]["py_compile"]["compiled"],
@@ -78,6 +141,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["package_program"]["package_dir"],
                 str(out_dir / "package"),
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
+                32,
             )
 
     def test_cli_validate_direct_writes_failure_report(self) -> None:

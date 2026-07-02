@@ -66,6 +66,7 @@ from .templates.diff import (
     load_official_template,
 )
 from .validation import (
+    default_decode_step_search_space_path,
     default_official_template_path,
     default_search_space_path,
     validate_direct,
@@ -1027,15 +1028,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Official-like reference decode template JSON.",
     )
     validate.add_argument(
+        "--official-config",
+        type=Path,
+        default=default_official_config_path(),
+        help="Official or official-like config parity JSON.",
+    )
+    validate.add_argument(
         "--search-space",
         type=Path,
         default=default_search_space_path(),
         help="Semantic autotune search space JSON.",
     )
     validate.add_argument(
+        "--decode-step-search-space",
+        type=Path,
+        default=default_decode_step_search_space_path(),
+        help="Decode-step autotune search space JSON.",
+    )
+    validate.add_argument(
         "--metric",
         default="latency_ms",
-        help="Search metric name. Phase 14 supports latency_ms only.",
+        help="Search metric name. Dry-run search gates support latency_ms.",
     )
     validate.set_defaults(func=_cmd_validate_direct)
     return parser
@@ -1511,7 +1524,9 @@ def _cmd_validate_direct(args: argparse.Namespace) -> int:
         config_path=args.config,
         out_dir=args.out_dir,
         official_template_path=args.official_template,
+        official_config_path=args.official_config,
         search_space_path=args.search_space,
+        decode_step_search_space_path=args.decode_step_search_space,
         metric=args.metric,
     )
     print(

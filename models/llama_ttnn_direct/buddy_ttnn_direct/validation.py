@@ -10,18 +10,36 @@ from .codegen.artifacts import (
     prepare_offline_artifacts,
     write_json,
 )
+from .codegen.config_diff import (
+    default_official_config_path as default_official_parity_config_path,
+    diff_official_config,
+    dump_config_diff,
+)
 from .codegen.config_emit import (
     dump_parameter_config,
     emit_parameter_config,
 )
 from .codegen.package import package_ttnn_direct_program
 from .codegen.program import write_decode_program_bundle
+from .codegen.ttnn_tensorizer import tensorize_parameters_from_program_dry_run
+from .search.decode_step_autotune import run_decode_step_autotune
 from .search.report import dump_search_report
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .semantic.dump import dump_graph_json
 from .semantic.graph import LlamaModelGraph
 from .semantic.importer_hf_llama import import_hf_llama
+from .smoke_attention_layer import run_smoke_attention_layer
+from .smoke_attention_primitive import (
+    ATTENTION_PRIMITIVES,
+    run_smoke_attention_primitive,
+)
+from .smoke_decode_shell import run_smoke_decode_shell
+from .smoke_single_layer_decode import (
+    profile_decode_step,
+    run_smoke_decode_step,
+    run_smoke_single_layer_decode,
+)
 from .templates.diff import (
     diff_plan_against_official,
     dump_plan_diff,
@@ -42,7 +60,16 @@ VALIDATION_STEPS = (
     "prepare_artifacts",
     "build_program",
     "py_compile",
+    "official_config_diff",
+    "tensorize_parameters_dry_run",
+    "decode_shell_dry_run",
+    "attention_primitives_dry_run",
+    "attention_layer_dry_run",
+    "single_layer_decode_dry_run",
+    "decode_step_smoke_dry_run",
+    "decode_step_profile_dry_run",
     "search_dry_run",
+    "decode_step_autotune_dry_run",
     "package_program",
 )
 
@@ -64,13 +91,24 @@ def default_search_space_path() -> Path:
     )
 
 
+def default_decode_step_search_space_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "search"
+        / "spaces"
+        / "decode_step_minimal.json"
+    )
+
+
 def validate_direct(
     *,
     model_path: str | Path,
     config_path: str | Path,
     out_dir: str | Path,
     official_template_path: str | Path | None = None,
+    official_config_path: str | Path | None = None,
     search_space_path: str | Path | None = None,
+    decode_step_search_space_path: str | Path | None = None,
     metric: str = "latency_ms",
 ) -> dict[str, Any]:
     """Run all device-free TTNN Direct scaffold checks and write a report."""
@@ -84,21 +122,43 @@ def validate_direct(
         if official_template_path is not None
         else default_official_template_path()
     )
+    official_config_path = (
+        Path(official_config_path)
+        if official_config_path is not None
+        else default_official_parity_config_path()
+    )
     search_space_path = (
         Path(search_space_path)
         if search_space_path is not None
         else default_search_space_path()
+    )
+    decode_step_search_space_path = (
+        Path(decode_step_search_space_path)
+        if decode_step_search_space_path is not None
+        else default_decode_step_search_space_path()
     )
 
     paths = {
         "semantic_json": root / "semantic_graph.json",
         "execution_plan": root / "execution_plan.json",
         "plan_diff": root / "plan_diff.json",
+        "official_config_diff": root / "official_config_diff.json",
         "parameter_config": root / "parameter_config.json",
         "artifacts_dir": root / "offline_artifacts",
         "program_dir": root / "program",
+        "tensorize_report": root / "tensorize_report.json",
+        "decode_shell_report": root / "decode_shell_report.json",
+        "attention_primitives_dir": root / "attention_primitives",
+        "attention_layer_report": root / "attention_layer_report.json",
+        "single_layer_decode_report": root / "single_layer_decode_report.json",
+        "decode_step_smoke_report": root / "decode_step_smoke_report.json",
+        "decode_step_profile_report": root / "decode_step_profile_report.json",
         "search_report": root / "search_report.json",
         "search_candidates_dir": root / "search_candidates",
+        "decode_step_autotune_report": root / "decode_step_autotune_report.json",
+        "decode_step_autotune_candidates_dir": (
+            root / "decode_step_autotune_candidates"
+        ),
         "package_dir": root / "package",
         "report": report_path,
     }
@@ -111,7 +171,9 @@ def validate_direct(
         "config": str(config_path),
         "out_dir": str(root),
         "official_template": str(official_template_path),
+        "official_config": str(official_config_path),
         "search_space": str(search_space_path),
+        "decode_step_search_space": str(decode_step_search_space_path),
         "metric": metric,
         "results": {step: "pending" for step in VALIDATION_STEPS},
         "steps": {},
@@ -151,6 +213,14 @@ def validate_direct(
         report["steps"][name] = {"status": "pass", **detail}
         persist()
         return True
+
+    def _validation_device() -> str:
+        return str(template_config.get("device", "p150a"))
+
+    def _validation_decode_layers(max_layers: int = 2) -> int:
+        _require(graph, "import_llama")
+        assert graph is not None
+        return max(1, min(max_layers, int(graph.num_layers)))
 
     def import_step() -> dict[str, Any]:
         nonlocal template_config, graph
@@ -260,6 +330,162 @@ def validate_direct(
             py_compile.compile(str(source), doraise=True)
         return {"compiled": [str(source) for source in compiled]}
 
+    def official_config_diff_step() -> dict[str, Any]:
+        diff = diff_official_config(
+            paths["program_dir"] / "config.json",
+            official_config_path,
+        )
+        dump_config_diff(diff, paths["official_config_diff"])
+        return {
+            "official_config_diff": str(paths["official_config_diff"]),
+            "diff_status": diff["status"],
+            "issue_count": diff["summary"]["issue_count"],
+            "missing_count": diff["summary"]["missing_count"],
+            "mismatch_count": diff["summary"]["mismatch_count"],
+            "extra_count": diff["summary"]["extra_count"],
+        }
+
+    def tensorize_parameters_dry_run_step() -> dict[str, Any]:
+        tensor_report = tensorize_parameters_from_program_dry_run(
+            program_dir=paths["program_dir"],
+            roles=["mlp", "lm_head"],
+            layers=[0],
+            device=_validation_device(),
+            out=paths["tensorize_report"],
+        )
+        return {
+            "tensorize_report": str(paths["tensorize_report"]),
+            "roles": list(tensor_report["roles"]),
+            "tensor_count": tensor_report["tensor_count"],
+            "dry_run": tensor_report["dry_run"],
+        }
+
+    def decode_shell_dry_run_step() -> dict[str, Any]:
+        shell_report = run_smoke_decode_shell(
+            out=paths["decode_shell_report"],
+            program_dir=paths["program_dir"],
+            layers=1,
+            disable_attention=True,
+            device=_validation_device(),
+            dry_run=True,
+        )
+        return {
+            "decode_shell_report": str(paths["decode_shell_report"]),
+            "layers": shell_report["layers_requested"],
+            "dry_run": shell_report["dry_run"],
+            "smoke_status": shell_report["status"],
+        }
+
+    def attention_primitives_dry_run_step() -> dict[str, Any]:
+        _require(graph, "import_llama")
+        assert graph is not None
+        reports = {}
+        for primitive in ATTENTION_PRIMITIVES:
+            report_path = paths["attention_primitives_dir"] / f"{primitive}.json"
+            primitive_report = run_smoke_attention_primitive(
+                out=report_path,
+                primitive=primitive,
+                device=_validation_device(),
+                batch_size=int(template_config["batch_size"]),
+                hidden_size=int(graph.hidden_size),
+                num_heads=int(graph.num_attention_heads),
+                num_kv_heads=int(graph.num_key_value_heads),
+                head_dim=int(graph.head_dim),
+                max_cache_len=int(template_config["max_cache_len"]),
+                dry_run=True,
+            )
+            reports[primitive] = {
+                "report": str(report_path),
+                "status": primitive_report["status"],
+                "dry_run": primitive_report["dry_run"],
+            }
+        return {
+            "attention_primitives_dir": str(paths["attention_primitives_dir"]),
+            "primitive_count": len(reports),
+            "reports": reports,
+        }
+
+    def attention_layer_dry_run_step() -> dict[str, Any]:
+        layer_report = run_smoke_attention_layer(
+            out=paths["attention_layer_report"],
+            program_dir=paths["program_dir"],
+            layer=0,
+            device=_validation_device(),
+            batch_size=int(template_config["batch_size"]),
+            cache_len=int(template_config["max_cache_len"]),
+            dry_run=True,
+        )
+        return {
+            "attention_layer_report": str(paths["attention_layer_report"]),
+            "layer": layer_report["layer"],
+            "primitive_count": len(layer_report["primitive_reports"]),
+            "dry_run": layer_report["dry_run"],
+            "smoke_status": layer_report["status"],
+        }
+
+    def single_layer_decode_dry_run_step() -> dict[str, Any]:
+        smoke_report = run_smoke_single_layer_decode(
+            out=paths["single_layer_decode_report"],
+            program_dir=paths["program_dir"],
+            device=_validation_device(),
+            batch_size=int(template_config["batch_size"]),
+            cache_len=int(template_config["max_cache_len"]),
+            dry_run=True,
+        )
+        return {
+            "single_layer_decode_report": str(
+                paths["single_layer_decode_report"]
+            ),
+            "layers": smoke_report["layers"],
+            "dry_run": smoke_report["dry_run"],
+            "smoke_status": smoke_report["status"],
+            "op_count": len(smoke_report["op_sequence"]),
+        }
+
+    def decode_step_smoke_dry_run_step() -> dict[str, Any]:
+        smoke_report = run_smoke_decode_step(
+            out=paths["decode_step_smoke_report"],
+            program_dir=paths["program_dir"],
+            layers=_validation_decode_layers(),
+            device=_validation_device(),
+            batch_size=int(template_config["batch_size"]),
+            cache_len=int(template_config["max_cache_len"]),
+            trace=True,
+            trace_iterations=1,
+            dry_run=True,
+        )
+        return {
+            "decode_step_smoke_report": str(paths["decode_step_smoke_report"]),
+            "layers": smoke_report["layers"],
+            "dry_run": smoke_report["dry_run"],
+            "trace_status": smoke_report["trace"]["status"],
+            "smoke_status": smoke_report["status"],
+            "op_count": len(smoke_report["op_sequence"]),
+        }
+
+    def decode_step_profile_dry_run_step() -> dict[str, Any]:
+        profile_report = profile_decode_step(
+            out=paths["decode_step_profile_report"],
+            program_dir=paths["program_dir"],
+            layers=_validation_decode_layers(),
+            device=_validation_device(),
+            batch_size=int(template_config["batch_size"]),
+            cache_len=int(template_config["max_cache_len"]),
+            trace=True,
+            trace_iterations=1,
+            dry_run=True,
+        )
+        return {
+            "decode_step_profile_report": str(
+                paths["decode_step_profile_report"]
+            ),
+            "layers": profile_report["layers"],
+            "dry_run": profile_report["dry_run"],
+            "trace_status": profile_report["trace"]["status"],
+            "profile_status": profile_report["status"],
+            "bottleneck": profile_report["bottleneck_summary"]["max_section"],
+        }
+
     def search_step() -> dict[str, Any]:
         _require(graph, "import_llama")
         search_report = run_lm_head_search(
@@ -277,6 +503,34 @@ def validate_direct(
             "candidates_dir": str(paths["search_candidates_dir"]),
             "candidate_count": search_report["candidate_count"],
             "dry_run": search_report["dry_run"],
+        }
+
+    def decode_step_autotune_dry_run_step() -> dict[str, Any]:
+        autotune_report = run_decode_step_autotune(
+            program_dir=paths["program_dir"],
+            space=load_search_space(decode_step_search_space_path),
+            out=paths["decode_step_autotune_report"],
+            layers=_validation_decode_layers(),
+            batch_size=int(template_config["batch_size"]),
+            cache_len=int(template_config["max_cache_len"]),
+            metric=metric,
+            candidates_dir=paths["decode_step_autotune_candidates_dir"],
+            dry_run=True,
+            device=_validation_device(),
+            trace=True,
+            trace_iterations=1,
+        )
+        dump_search_report(autotune_report, paths["decode_step_autotune_report"])
+        return {
+            "decode_step_autotune_report": str(
+                paths["decode_step_autotune_report"]
+            ),
+            "candidates_dir": str(
+                paths["decode_step_autotune_candidates_dir"]
+            ),
+            "candidate_count": autotune_report["candidate_count"],
+            "dry_run": autotune_report["dry_run"],
+            "trace_enabled": autotune_report["trace_enabled"],
         }
 
     def package_step() -> dict[str, Any]:
@@ -299,7 +553,18 @@ def validate_direct(
         "prepare_artifacts": prepare_artifacts_step,
         "build_program": build_program_step,
         "py_compile": py_compile_step,
+        "official_config_diff": official_config_diff_step,
+        "tensorize_parameters_dry_run": tensorize_parameters_dry_run_step,
+        "decode_shell_dry_run": decode_shell_dry_run_step,
+        "attention_primitives_dry_run": attention_primitives_dry_run_step,
+        "attention_layer_dry_run": attention_layer_dry_run_step,
+        "single_layer_decode_dry_run": single_layer_decode_dry_run_step,
+        "decode_step_smoke_dry_run": decode_step_smoke_dry_run_step,
+        "decode_step_profile_dry_run": decode_step_profile_dry_run_step,
         "search_dry_run": search_step,
+        "decode_step_autotune_dry_run": (
+            decode_step_autotune_dry_run_step
+        ),
         "package_program": package_step,
     }
 
