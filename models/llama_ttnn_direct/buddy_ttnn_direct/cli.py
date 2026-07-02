@@ -38,6 +38,10 @@ from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .smoke_decode_shell import run_smoke_decode_shell
+from .smoke_attention_primitive import (
+    ATTENTION_PRIMITIVES,
+    run_smoke_attention_primitive,
+)
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -339,6 +343,59 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output decode shell smoke report JSON path.",
     )
     smoke_decode_shell.set_defaults(func=_cmd_smoke_decode_shell)
+
+    smoke_attention_primitive = subparsers.add_parser(
+        "smoke-attention-primitive",
+        help=(
+            "Run or dry-run one official attention decode TTNN primitive "
+            "for API/shape validation."
+        ),
+    )
+    smoke_attention_primitive.add_argument(
+        "--primitive",
+        choices=ATTENTION_PRIMITIVES,
+        required=True,
+        help="Attention primitive to smoke test.",
+    )
+    smoke_attention_primitive.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the smoke report.",
+    )
+    smoke_attention_primitive.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    smoke_attention_primitive.add_argument("--batch-size", type=int, required=True)
+    smoke_attention_primitive.add_argument("--hidden-size", type=int, required=True)
+    smoke_attention_primitive.add_argument("--num-heads", type=int, required=True)
+    smoke_attention_primitive.add_argument("--num-kv-heads", type=int, required=True)
+    smoke_attention_primitive.add_argument("--head-dim", type=int, required=True)
+    smoke_attention_primitive.add_argument(
+        "--max-cache-len",
+        type=int,
+        default=1024,
+        help="Paged KV cache length used for cache primitive shapes.",
+    )
+    smoke_attention_primitive.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    smoke_attention_primitive.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the primitive report schema without opening a TTNN device.",
+    )
+    smoke_attention_primitive.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output attention primitive smoke report JSON path.",
+    )
+    smoke_attention_primitive.set_defaults(func=_cmd_smoke_attention_primitive)
 
     profile = subparsers.add_parser(
         "profile-template",
@@ -746,6 +803,28 @@ def _cmd_smoke_decode_shell(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote decode shell smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_smoke_attention_primitive(args: argparse.Namespace) -> int:
+    report = run_smoke_attention_primitive(
+        out=args.out,
+        primitive=args.primitive,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        hidden_size=args.hidden_size,
+        num_heads=args.num_heads,
+        num_kv_heads=args.num_kv_heads,
+        head_dim=args.head_dim,
+        max_cache_len=args.max_cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote attention primitive smoke report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

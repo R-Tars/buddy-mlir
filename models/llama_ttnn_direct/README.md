@@ -636,3 +636,43 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 This smoke command intentionally does not execute attention. Its purpose is to
 validate that generated embedding/RMSNorm/MLP/LM-head code can be loaded and
 composed before attention primitive bring-up.
+
+## Phase 2 PR-E: Attention Primitive Smoke
+
+`smoke-attention-primitive` validates one official decode attention primitive
+at a time. It is meant for API signature, shape/layout, and memory-config
+bring-up before attempting a full attention layer.
+
+Supported primitives:
+
+```text
+qkv_linear
+nlp_create_qkv_heads_decode
+rotary_embedding_decode
+paged_update_cache
+paged_scaled_dot_product_attention_decode
+nlp_concat_heads_decode
+o_proj_linear
+```
+
+Dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-attention-primitive \
+  --primitive paged_scaled_dot_product_attention_decode \
+  --device p150a \
+  --batch-size 32 \
+  --hidden-size 4096 \
+  --num-heads 32 \
+  --num-kv-heads 8 \
+  --head-dim 128 \
+  --dry-run \
+  --out /tmp/primitive_report.json
+```
+
+On a P150A system, drop `--dry-run` to execute the selected primitive with
+synthetic tensors. The report records input shapes, expected/output shapes,
+dtype seed, layout, memory-config placeholder, TTNN version when available,
+and explicit `api_mismatch` errors when a wrapper cannot find the expected
+TTNN API. This command deliberately does not compose a full attention layer.
