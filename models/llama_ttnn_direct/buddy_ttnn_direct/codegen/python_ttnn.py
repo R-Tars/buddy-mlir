@@ -146,6 +146,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
             from types import SimpleNamespace
 
             import ttnn
+            from models.llama_ttnn_direct.buddy_ttnn_direct.templates import ttnn_ops
 
 
             def _to_namespace(value):
@@ -248,14 +249,51 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     num_kv_heads,
                     memory_config=None,
                 ):
-                    kwargs = {{
-                        "num_heads": num_heads,
-                        "num_kv_heads": num_kv_heads,
-                    }}
-                    if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
-                    op = self._experimental_op("nlp_create_qkv_heads_decode")
-                    return op(qkv, **kwargs)
+                    return ttnn_ops.nlp_create_qkv_heads_decode(
+                        self.ttnn,
+                        qkv,
+                        num_heads=num_heads,
+                        num_kv_heads=num_kv_heads,
+                        memory_config=memory_config,
+                    )
+
+                def rotary_embedding_decode(
+                    self,
+                    q,
+                    k,
+                    *,
+                    cos_matrix,
+                    sin_matrix,
+                    transformation_matrix,
+                    is_decode_mode=True,
+                ):
+                    return ttnn_ops.rotary_embedding_decode(
+                        self.ttnn,
+                        q,
+                        k,
+                        cos_matrix=cos_matrix,
+                        sin_matrix=sin_matrix,
+                        transformation_matrix=transformation_matrix,
+                        is_decode_mode=is_decode_mode,
+                    )
+
+                def paged_update_cache(
+                    self,
+                    cache_tensor,
+                    update_tensor,
+                    *,
+                    update_idxs_tensor=None,
+                    update_idxs=None,
+                    page_table=None,
+                ):
+                    return ttnn_ops.paged_update_cache(
+                        self.ttnn,
+                        cache_tensor,
+                        update_tensor,
+                        update_idxs_tensor=update_idxs_tensor,
+                        update_idxs=update_idxs,
+                        page_table=page_table,
+                    )
 
                 def paged_sdpa_decode(
                     self,
@@ -270,33 +308,32 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     program_config=None,
                     compute_kernel_config=None,
                 ):
-                    kwargs = {{}}
-                    if scale is not None:
-                        kwargs["scale"] = scale
-                    if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
-                    if program_config is not None:
-                        kwargs["program_config"] = program_config
-                    if compute_kernel_config is not None:
-                        kwargs["compute_kernel_config"] = compute_kernel_config
-                    op = self._transformer_op(
-                        "paged_scaled_dot_product_attention_decode"
-                    )
-                    return op(
+                    return ttnn_ops.paged_sdpa_decode(
+                        self.ttnn,
                         query,
                         key_cache,
                         value_cache,
                         page_table,
                         cache_position,
-                        **kwargs,
+                        scale=scale,
+                        memory_config=memory_config,
+                        program_config=program_config,
+                        compute_kernel_config=compute_kernel_config,
                     )
 
-                def nlp_concat_heads_decode(self, attn, *, memory_config=None):
-                    kwargs = {{}}
-                    if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
-                    op = self._experimental_op("nlp_concat_heads_decode")
-                    return op(attn, **kwargs)
+                def nlp_concat_heads_decode(
+                    self,
+                    attn,
+                    *,
+                    num_heads,
+                    memory_config=None,
+                ):
+                    return ttnn_ops.nlp_concat_heads_decode(
+                        self.ttnn,
+                        attn,
+                        num_heads=num_heads,
+                        memory_config=memory_config,
+                    )
 
                 def concat(self, tensors, *, dim=-1, memory_config=None):
                     kwargs = {{"dim": dim}}
@@ -306,30 +343,6 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                 def argmax(self, tensor, *, dim=-1):
                     return self.ttnn.argmax(tensor, dim=dim)
-
-                def _experimental_op(self, name):
-                    experimental = getattr(self.ttnn, "experimental", None)
-                    op = getattr(experimental, name, None) if experimental else None
-                    if op is None:
-                        op = getattr(self.ttnn, name, None)
-                    if op is None:
-                        raise AttributeError(
-                            "Attention template official_paged_attention_decode "
-                            "requires TTNN op wrapper implementation: " + name
-                        )
-                    return op
-
-                def _transformer_op(self, name):
-                    transformer = getattr(self.ttnn, "transformer", None)
-                    op = getattr(transformer, name, None) if transformer else None
-                    if op is None:
-                        op = getattr(self.ttnn, name, None)
-                    if op is None:
-                        raise AttributeError(
-                            "Attention template official_paged_attention_decode "
-                            "requires TTNN op wrapper implementation: " + name
-                        )
-                    return op
 
 
             class {model_class}:
@@ -459,6 +472,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                     attn = self.ops.nlp_concat_heads_decode(
                         attn,
+                        num_heads=self.config.num_attention_heads,
                         memory_config=_optional_attr(
                             attention_config,
                             "concat_heads_output_memory_config",
@@ -483,9 +497,32 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     )
 
                 def rotary_embedding_decode(self, layer_id, q, k, cache_position):
-                    # Template boundary for Phase 7 attention decode codegen.
-                    raise NotImplementedError(
-                        "Rotary embedding decode is not implemented in Phase 7."
+                    rotary_params = _optional_attr(
+                        self.parameters, "rotary", None
+                    )
+                    if rotary_params is None:
+                        layer_attention = self.parameters.layers[
+                            layer_id
+                        ].attention
+                        rotary_params = _optional_attr(
+                            layer_attention, "rotary", None
+                        )
+                    rotary_config = _optional_attr(self.config, "rotary", None)
+                    return self.ops.rotary_embedding_decode(
+                        q,
+                        k,
+                        cos_matrix=_optional_attr(
+                            rotary_params, "cos_matrix", None
+                        ),
+                        sin_matrix=_optional_attr(
+                            rotary_params, "sin_matrix", None
+                        ),
+                        transformation_matrix=_optional_attr(
+                            rotary_params, "transformation_matrix", None
+                        ),
+                        is_decode_mode=_optional_attr(
+                            rotary_config, "is_decode_mode", True
+                        ),
                     )
 
                 def paged_update_kv_cache(
@@ -497,10 +534,20 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     cache_position,
                     kv_cache,
                 ):
-                    # Template boundary for Phase 7 attention decode codegen.
-                    raise NotImplementedError(
-                        "Paged KV cache update is not implemented in Phase 7."
+                    layer_cache = kv_cache[layer_id]
+                    self.ops.paged_update_cache(
+                        layer_cache.k,
+                        k,
+                        update_idxs_tensor=cache_position,
+                        page_table=page_table,
                     )
+                    self.ops.paged_update_cache(
+                        layer_cache.v,
+                        v,
+                        update_idxs_tensor=cache_position,
+                        page_table=page_table,
+                    )
+                    return kv_cache
 
                 def mlp_decode(self, layer_id, hidden):
                     # Template: {mlp_template}
@@ -639,8 +686,10 @@ def render_codegen_readme(plan: dict[str, Any]) -> str:
         The generated `model.py` defines the decode program structure and
         template method boundaries. Attention decode, MLP decode, and LM-head
         templates emit official-like TTNN calls through a small compatibility
-        wrapper; embedding, RMSNorm, rotary embedding, and paged KV cache update
-        bodies still intentionally raise `NotImplementedError`.
+        wrapper; embedding and RMSNorm bodies still intentionally raise
+        `NotImplementedError`. Attention primitive wrappers raise
+        `UnsupportedTTNNOp` when the installed TTNN module lacks a required
+        decode API.
 
         Model: `{config["model_name"]}`
         Layers: `{config["num_layers"]}`

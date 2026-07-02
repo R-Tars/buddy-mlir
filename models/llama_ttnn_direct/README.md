@@ -346,3 +346,23 @@ README.md
 final ops. Full TTNN decode execution remains intentionally disabled at this
 phase, but missing attention op wrappers now report the exact template boundary
 that needs implementation.
+
+## Phase 12: Attention TTNN Op Wrappers
+
+Phase 12 moves official decode attention primitives into
+`templates/ttnn_ops.py`. The wrappers are thin TTNN API adapters for:
+
+```text
+ttnn.experimental.nlp_create_qkv_heads_decode
+ttnn.experimental.rotary_embedding_llama
+ttnn.experimental.paged_update_cache
+ttnn.transformer.paged_scaled_dot_product_attention_decode
+ttnn.experimental.nlp_concat_heads_decode
+```
+
+The generated `TTNNCompatOps` delegates attention calls to those wrappers. The
+wrapper module does not import `ttnn` at module import time, so generated code
+can still be imported with a fake or unavailable TTNN module for offline tests.
+If the installed TTNN version lacks a required API, wrappers raise
+`UnsupportedTTNNOp` with the official decode template op name and searched API
+paths.

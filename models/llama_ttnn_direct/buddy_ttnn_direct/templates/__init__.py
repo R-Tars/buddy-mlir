@@ -1,5 +1,6 @@
 """Template registry helpers for Buddy-TTNN Direct."""
 
+from . import ttnn_ops
 from .registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -23,6 +24,14 @@ from .lm_head import (
     device_argmax_greedy_op_sequence,
     official_split_lm_head_op_sequence,
 )
+from .ttnn_ops import (
+    UnsupportedTTNNOp,
+    nlp_concat_heads_decode,
+    nlp_create_qkv_heads_decode,
+    paged_sdpa_decode,
+    paged_update_cache,
+    rotary_embedding_decode,
+)
 
 __all__ = [
     "build_execution_plan",
@@ -39,5 +48,12 @@ __all__ = [
     "official_gated_mlp_decode_op_sequence",
     "official_paged_attention_decode_op_sequence",
     "official_split_lm_head_op_sequence",
+    "UnsupportedTTNNOp",
+    "nlp_concat_heads_decode",
+    "nlp_create_qkv_heads_decode",
+    "paged_sdpa_decode",
+    "paged_update_cache",
+    "rotary_embedding_decode",
+    "ttnn_ops",
     "validate_template_config",
 ]

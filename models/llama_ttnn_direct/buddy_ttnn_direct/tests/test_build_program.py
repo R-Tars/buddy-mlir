@@ -70,15 +70,15 @@ class BuildProgramTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn(
-                "Attention template official_paged_attention_decode",
+                "templates import ttnn_ops",
                 source,
             )
             self.assertIn(
-                "requires TTNN op wrapper implementation",
+                "ttnn_ops.paged_sdpa_decode",
                 source,
             )
             self.assertIn(
-                "paged_scaled_dot_product_attention_decode",
+                "ttnn_ops.paged_update_cache",
                 source,
             )
 

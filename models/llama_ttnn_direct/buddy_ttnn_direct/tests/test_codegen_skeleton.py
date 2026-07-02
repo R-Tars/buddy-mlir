@@ -97,6 +97,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn("import ttnn", source)
+            self.assertIn("templates import ttnn_ops", source)
             self.assertIn("class BuddyLlama31TTNN", source)
             self.assertIn("def decode_step", source)
             self.assertIn("def decode_layer", source)
@@ -319,15 +320,18 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 compute_kernel_config="sdpa_ck",
             )
             out = ops.nlp_concat_heads_decode(
-                attn, memory_config="concat_heads_mem"
+                attn,
+                num_heads=4,
+                memory_config="concat_heads_mem",
             )
 
-            self.assertEqual(out.name, "concat_heads:sdpa:q")
+            self.assertEqual(out.name, "concat_heads:mem:sdpa:q")
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls],
                 [
                     "nlp_create_qkv_heads_decode",
                     "paged_scaled_dot_product_attention_decode",
+                    "to_memory_config",
                     "nlp_concat_heads_decode",
                 ],
             )
@@ -343,6 +347,8 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(
                 fake_ttnn.calls[1]["kwargs"],
                 {
+                    "cur_pos_tensor": "cache_pos",
+                    "page_table_tensor": "page_table",
                     "scale": 0.5,
                     "memory_config": "sdpa_mem",
                     "program_config": "sdpa_pc",
@@ -352,6 +358,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(
                 fake_ttnn.calls[2]["kwargs"],
                 {"memory_config": "concat_heads_mem"},
+            )
+            self.assertEqual(
+                fake_ttnn.calls[3]["kwargs"],
+                {"num_heads": 4},
             )
 
     def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
@@ -536,6 +546,20 @@ def _make_fake_ttnn_module():
             kwargs.get("memory_config"),
         )
 
+    def to_memory_config(tensor, **kwargs):
+        tensor_name = getattr(tensor, "name", tensor)
+        module.calls.append(
+            {
+                "op": "to_memory_config",
+                "tensor": tensor_name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(
+            f"mem:{tensor_name}",
+            kwargs.get("memory_config"),
+        )
+
     def argmax(tensor, **kwargs):
         module.calls.append(
             {
@@ -564,8 +588,6 @@ def _make_fake_ttnn_module():
         query,
         key_cache,
         value_cache,
-        page_table,
-        cache_position,
         **kwargs,
     ):
         module.calls.append(
@@ -574,8 +596,8 @@ def _make_fake_ttnn_module():
                 "query": getattr(query, "name", query),
                 "key_cache": getattr(key_cache, "name", key_cache),
                 "value_cache": getattr(value_cache, "name", value_cache),
-                "page_table": page_table,
-                "cache_position": cache_position,
+                "page_table": kwargs.get("page_table_tensor"),
+                "cache_position": kwargs.get("cur_pos_tensor"),
                 "kwargs": dict(kwargs),
             }
         )
@@ -597,6 +619,7 @@ def _make_fake_ttnn_module():
     module.mul = mul
     module.add = add
     module.concat = concat
+    module.to_memory_config = to_memory_config
     module.argmax = argmax
     module.experimental = _ns(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
