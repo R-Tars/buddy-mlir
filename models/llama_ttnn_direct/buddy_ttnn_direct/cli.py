@@ -39,6 +39,7 @@ from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
 from .search.report import dump_search_report
+from .search.decode_step_autotune import run_decode_step_autotune
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
@@ -921,6 +922,79 @@ def build_parser() -> argparse.ArgumentParser:
     )
     search.set_defaults(func=_cmd_search)
 
+    autotune_decode_step = subparsers.add_parser(
+        "autotune-decode-step",
+        help=(
+            "Evaluate a minimal generated decode-step autotune space using "
+            "profile-decode-step."
+        ),
+    )
+    autotune_decode_step.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    autotune_decode_step.add_argument(
+        "--space",
+        type=Path,
+        required=True,
+        help="Decode-step autotune search space JSON.",
+    )
+    autotune_decode_step.add_argument(
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of generated decoder layers to profile per candidate.",
+    )
+    autotune_decode_step.add_argument("--batch-size", type=int, default=None)
+    autotune_decode_step.add_argument("--cache-len", type=int, default=None)
+    autotune_decode_step.add_argument(
+        "--metric",
+        default="latency_ms",
+        help="Metric name to minimize. Supports latency_ms.",
+    )
+    autotune_decode_step.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in reports.",
+    )
+    autotune_decode_step.add_argument("--device-id", type=int, default=0)
+    autotune_decode_step.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    autotune_decode_step.add_argument(
+        "--trace",
+        action="store_true",
+        help="Also capture/execute generated decode_step trace per candidate.",
+    )
+    autotune_decode_step.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=1,
+        help="Number of execute_trace iterations after candidate capture.",
+    )
+    autotune_decode_step.add_argument(
+        "--candidates-dir",
+        type=Path,
+        default=None,
+        help="Optional output directory for candidate configs and reports.",
+    )
+    autotune_decode_step.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Generate candidate configs without running TTNN profiles.",
+    )
+    autotune_decode_step.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output decode-step autotune report JSON path.",
+    )
+    autotune_decode_step.set_defaults(func=_cmd_autotune_decode_step)
+
     validate = subparsers.add_parser(
         "validate-direct",
         help=(
@@ -1392,6 +1466,30 @@ def _cmd_search(args: argparse.Namespace) -> int:
     print(f"wrote TTNN Direct search report: {args.out}")
     print(f"  candidates: {report['candidates_dir']}")
     return 0
+
+
+def _cmd_autotune_decode_step(args: argparse.Namespace) -> int:
+    space = load_search_space(args.space)
+    report = run_decode_step_autotune(
+        program_dir=args.program_dir,
+        space=space,
+        out=args.out,
+        layers=args.layers,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        metric=args.metric,
+        candidates_dir=args.candidates_dir,
+        dry_run=args.dry_run,
+        device=args.device,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+        trace=args.trace,
+        trace_iterations=args.trace_iterations,
+    )
+    dump_search_report(report, args.out)
+    print(f"wrote TTNN Direct decode-step autotune report: {args.out}")
+    print(f"  candidates: {report['candidates_dir']}")
+    return 0 if report.get("dry_run") or report.get("best") is not None else 1
 
 
 def _open_ttnn_device(ttnn: object, device_id: int) -> object:

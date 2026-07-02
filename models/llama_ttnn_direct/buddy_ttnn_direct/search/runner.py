@@ -59,6 +59,15 @@ def run_lm_head_search(
                 "id": candidate["id"],
                 "lm_head_split_count": candidate["lm_head_split_count"],
                 "generation_template": candidate["generation_template"],
+                "mlp_intermediate_dtype": candidate.get(
+                    "mlp_intermediate_dtype"
+                ),
+                "attention_sdpa_output_memory_config": candidate.get(
+                    "attention_sdpa_output_memory_config"
+                ),
+                "attention_concat_heads_output_memory_config": candidate.get(
+                    "attention_concat_heads_output_memory_config"
+                ),
                 "config": _relative_or_absolute(config_path, out_path.parent),
                 "execution_plan": _relative_or_absolute(
                     plan_path, out_path.parent

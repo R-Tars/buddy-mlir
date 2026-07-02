@@ -6,6 +6,9 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
+    run_decode_step_autotune,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.space import (
     candidate_id,
     enumerate_candidate_configs,
@@ -16,6 +19,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+    _fake_torch,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
+    _make_fake_ttnn,
 )
 
 
@@ -52,6 +61,38 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(candidates[0]["config"]["lm_head_split_count"], 1)
         self.assertEqual(
             candidates[0]["config"]["generation_template"], "full_logits"
+        )
+
+    def test_decode_step_search_space_adds_optional_knob_suffixes(self) -> None:
+        candidates = enumerate_candidate_configs(
+            _seed_config(),
+            {
+                "lm_head_split_count": [2],
+                "generation_template": ["device_argmax_greedy"],
+                "mlp_intermediate_dtype": [None, "bfloat8_b"],
+                "attention_sdpa_output_memory_config": [None, "l1"],
+                "attention_concat_heads_output_memory_config": [None],
+            },
+        )
+
+        self.assertEqual(
+            [candidate["id"] for candidate in candidates],
+            [
+                "lm_split_2_argmax",
+                "lm_split_2_argmax_sdpa_l1",
+                "lm_split_2_argmax_mlp_bfloat8_b",
+                "lm_split_2_argmax_mlp_bfloat8_b_sdpa_l1",
+            ],
+        )
+        self.assertEqual(
+            candidate_id(
+                4,
+                "full_logits",
+                mlp_intermediate_dtype="bfloat8_b",
+                attention_sdpa_output_memory_config="l1",
+                attention_concat_heads_output_memory_config="l1",
+            ),
+            "lm_split_4_full_logits_mlp_bfloat8_b_sdpa_l1_concat_l1",
         )
 
     def test_cli_search_dry_run_generates_configs_plans_and_codegen(
@@ -151,6 +192,135 @@ class SearchTest(unittest.TestCase):
             len(enumerate_candidate_configs(_seed_config(), space)), 10
         )
 
+    def test_cli_autotune_decode_step_dry_run_generates_candidate_configs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            space_json = root / "decode_step_space.json"
+            report_json = root / "decode_step_autotune.json"
+            _write_fake_model_config(model_dir)
+            config_json.write_text(json.dumps(_seed_config()))
+            space_json.write_text(
+                json.dumps(
+                    {
+                        "lm_head_split_count": [2],
+                        "generation_template": ["device_argmax_greedy"],
+                        "mlp_intermediate_dtype": [None, "bfloat8_b"],
+                        "attention_sdpa_output_memory_config": [None],
+                        "attention_concat_heads_output_memory_config": [None],
+                    }
+                )
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "autotune-decode-step",
+                    "--program-dir",
+                    str(program_dir),
+                    "--space",
+                    str(space_json),
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertTrue(report["dry_run"])
+            self.assertEqual(report["search"], "decode_step_minimal")
+            self.assertEqual(report["candidate_count"], 2)
+            self.assertIsNone(report["best"])
+            candidate_root = root / report["candidates_dir"]
+            tuned_config = json.loads(
+                (
+                    candidate_root
+                    / "lm_split_2_argmax_mlp_bfloat8_b"
+                    / "config.json"
+                ).read_text()
+            )
+            self.assertEqual(tuned_config["lm_head"]["split_count"], 2)
+            self.assertEqual(
+                tuned_config["mlp"]["intermediate_dtype"],
+                "bfloat8_b",
+            )
+            self.assertFalse(tuned_config["lm_head"]["retain_logits"])
+
+    def test_decode_step_autotune_profiles_fake_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_autotune.json"
+            _write_fake_model_config(model_dir)
+            config_json.write_text(json.dumps(_seed_config()))
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = run_decode_step_autotune(
+                program_dir=program_dir,
+                space={
+                    "lm_head_split_count": [2],
+                    "generation_template": ["device_argmax_greedy"],
+                    "mlp_intermediate_dtype": [None],
+                    "attention_sdpa_output_memory_config": [None],
+                    "attention_concat_heads_output_memory_config": [None],
+                },
+                out=report_json,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                ttnn_module=_make_fake_ttnn(),
+                torch_module=_fake_torch(),
+            )
+
+            self.assertFalse(report["dry_run"])
+            self.assertEqual(report["candidate_count"], 1)
+            self.assertIsNotNone(report["best"])
+            self.assertEqual(report["best"]["status"], "profiled")
+            self.assertIsInstance(report["best"]["metric"], float)
+            self.assertEqual(
+                report["candidates"][0]["knobs"]["lm_head_split_count"],
+                2,
+            )
+
 
 def _fake_graph():
     return import_hf_llama(
@@ -192,6 +362,27 @@ def _seed_config() -> dict[str, object]:
         "lm_head_split_count": 8,
         "dtype_recipe": "official_like_performance_seed",
     }
+
+
+def _write_fake_model_config(model_dir: Path) -> None:
+    model_dir.mkdir(parents=True)
+    (model_dir / "config.json").write_text(
+        json.dumps(
+            {
+                "_name_or_path": "fake-search",
+                "model_type": "llama",
+                "num_hidden_layers": 2,
+                "hidden_size": 16,
+                "intermediate_size": 32,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "vocab_size": 128,
+                "rms_norm_eps": 1e-5,
+                "rope_theta": 500000.0,
+                "tie_word_embeddings": False,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

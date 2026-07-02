@@ -880,3 +880,29 @@ argmax time, host-copy time, trace execute time, and a `bottleneck_summary`
 that identifies the largest measured section. LM-head profiling mirrors the
 generated split LM-head code but separates device argmax into its own timed
 section.
+
+## Performance Step 6: Minimal Decode-Step Autotune
+
+`autotune-decode-step` evaluates a small generated decode-step search space
+using `profile-decode-step` as the measurement backend:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  autotune-decode-step \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --space models/llama_ttnn_direct/buddy_ttnn_direct/search/spaces/decode_step_minimal.json \
+  --layers 2 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --trace \
+  --trace-iterations 10 \
+  --out /tmp/decode_step_autotune_report.json
+```
+
+The bundled minimal space covers LM-head split count, device argmax versus full
+logits, MLP intermediate dtype, attention SDPA output memory config, and concat
+heads output memory config. Use `--dry-run` to materialize candidate configs
+without running TTNN profiles. The report records every candidate's knobs,
+profile report path, metric, bottleneck summary, and the lowest-latency `best`
+candidate when measurements are available.

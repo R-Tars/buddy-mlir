@@ -1,0 +1,7 @@
+{
+  "lm_head_split_count": [4, 8],
+  "generation_template": ["device_argmax_greedy", "full_logits"],
+  "mlp_intermediate_dtype": [null, "bfloat8_b"],
+  "attention_sdpa_output_memory_config": [null, "l1"],
+  "attention_concat_heads_output_memory_config": [null, "l1"]
+}
