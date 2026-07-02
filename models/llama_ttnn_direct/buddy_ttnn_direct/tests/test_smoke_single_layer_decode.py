@@ -311,6 +311,10 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 fake_ttnn.calls[0]["kwargs"]["layout"],
                 "ttnn.ROW_MAJOR_LAYOUT",
             )
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"]["memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_cli_smoke_decode_step_dry_run_two_layers(self) -> None:
@@ -789,6 +793,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.float32 = "ttnn.float32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
+    module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     class UnaryOpType:
         SILU = "SILU"

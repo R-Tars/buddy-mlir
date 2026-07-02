@@ -84,6 +84,9 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(
             weights["model.embed_tokens.weight"]["layout"], "row_major"
         )
+        self.assertEqual(
+            weights["model.embed_tokens.weight"]["memory_config"], "dram"
+        )
 
         q_proj = weights["model.layers.0.self_attn.q_proj.weight"]
         self.assertEqual(q_proj["role"], "q_proj")
@@ -91,6 +94,7 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(q_proj["target_dtype"], "bfloat8_b")
         self.assertEqual(q_proj["packing"], "qkv_pack")
         self.assertEqual(q_proj["layout"], "tile")
+        self.assertEqual(q_proj["memory_config"], "dram")
 
         gate = weights["model.layers.1.mlp.gate_proj.weight"]
         self.assertEqual(gate["role"], "mlp_gate")
@@ -105,11 +109,13 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(norm["role"], "input_norm")
         self.assertEqual(norm["target_dtype"], "bfloat16")
         self.assertEqual(norm["layout"], "row_major")
+        self.assertEqual(norm["memory_config"], "dram")
 
         lm_head = weights["lm_head.weight"]
         self.assertEqual(lm_head["role"], "lm_head")
         self.assertEqual(lm_head["target_dtype"], "bfloat8_b")
         self.assertEqual(lm_head["packing"], "vocab_split")
+        self.assertEqual(lm_head["memory_config"], "dram")
         self.assertFalse(lm_head["tied_to_embedding"])
 
         self.assertEqual(config["activations"]["target_dtype"], "bfloat16")

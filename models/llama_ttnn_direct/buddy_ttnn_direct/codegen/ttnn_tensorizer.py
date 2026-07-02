@@ -110,7 +110,7 @@ def build_tensorization_plan(
                 "source_key": source_key,
                 "target_dtype": str(entry.get("target_dtype")),
                 "layout": str(entry.get("layout")),
-                "memory_config": None,
+                "memory_config": _entry_memory_config(entry),
             }
         )
 
@@ -135,7 +135,7 @@ def build_tensorization_plan(
                         "source_key": source_key,
                         "target_dtype": str(entry.get("target_dtype")),
                         "layout": str(entry.get("layout")),
-                        "memory_config": None,
+                        "memory_config": _entry_memory_config(entry),
                     }
                 )
         source_key, entry = _find_parameter_config_item(
@@ -152,7 +152,7 @@ def build_tensorization_plan(
                 "source_key": source_key,
                 "target_dtype": str(entry.get("target_dtype")),
                 "layout": str(entry.get("layout")),
-                "memory_config": None,
+                "memory_config": _entry_memory_config(entry),
             }
         )
 
@@ -188,7 +188,7 @@ def build_tensorization_plan(
                     "source_keys": [q_key, k_key, v_key],
                     "target_dtype": str(q_entry.get("target_dtype")),
                     "layout": str(q_entry.get("layout")),
-                    "memory_config": None,
+                    "memory_config": _entry_memory_config(q_entry),
                     "packing": "qkv_pack",
                 }
             )
@@ -206,7 +206,7 @@ def build_tensorization_plan(
                     "source_key": o_key,
                     "target_dtype": str(o_entry.get("target_dtype")),
                     "layout": str(o_entry.get("layout")),
-                    "memory_config": None,
+                    "memory_config": _entry_memory_config(o_entry),
                 }
             )
 
@@ -232,7 +232,7 @@ def build_tensorization_plan(
                     "source_key": str(source_key),
                     "target_dtype": str(entry.get("target_dtype")),
                     "layout": str(entry.get("layout")),
-                    "memory_config": None,
+                    "memory_config": _entry_memory_config(entry),
                 }
             )
 
@@ -264,7 +264,7 @@ def build_tensorization_plan(
                     "source_key": lm_source_key,
                     "target_dtype": str(lm_entry.get("target_dtype")),
                     "layout": str(lm_entry.get("layout")),
-                    "memory_config": None,
+                    "memory_config": _entry_memory_config(lm_entry),
                 }
             )
 
@@ -340,8 +340,13 @@ def to_ttnn_parameters(
             device=device,
             target_dtype=record["target_dtype"],
             layout=record["layout"],
+            memory_config=record.get("memory_config"),
         )
         _store_converted_tensor(output, record, converted)
+        ttnn_memory_config = _resolve_ttnn_memory_config(
+            ttnn,
+            record.get("memory_config"),
+        )
         records.append(
             {
                 **copy.deepcopy(record),
@@ -349,6 +354,11 @@ def to_ttnn_parameters(
                 "shape": _tensor_shape(torch_tensor),
                 "ttnn_dtype": str(_resolve_ttnn_dtype(ttnn, record["target_dtype"])),
                 "ttnn_layout": str(_resolve_ttnn_layout(ttnn, record["layout"])),
+                "ttnn_memory_config": (
+                    str(ttnn_memory_config)
+                    if ttnn_memory_config is not None
+                    else None
+                ),
             }
         )
 
@@ -401,12 +411,16 @@ def _from_torch(
     device: Any,
     target_dtype: str,
     layout: str,
+    memory_config: Any | None,
 ) -> Any:
     kwargs = {
         "device": device,
         "dtype": _resolve_ttnn_dtype(ttnn, target_dtype),
         "layout": _resolve_ttnn_layout(ttnn, layout),
     }
+    resolved_memory_config = _resolve_ttnn_memory_config(ttnn, memory_config)
+    if resolved_memory_config is not None:
+        kwargs["memory_config"] = resolved_memory_config
     return ttnn.from_torch(tensor, **kwargs)
 
 
@@ -577,6 +591,16 @@ def _find_parameter_config_item(
     return matches[0]
 
 
+def _entry_memory_config(entry: Mapping[str, Any]) -> str | None:
+    value = entry.get("memory_config")
+    if value is None:
+        return None
+    value = str(value)
+    if value in ("", "none", "None", "default"):
+        return None
+    return value
+
+
 def _resolve_ttnn_dtype(ttnn: Any, target_dtype: str) -> Any:
     return getattr(ttnn, target_dtype, target_dtype)
 
@@ -587,6 +611,25 @@ def _resolve_ttnn_layout(ttnn: Any, layout: str) -> Any:
     if layout == "row_major":
         return getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
     return getattr(ttnn, layout, layout)
+
+
+def _resolve_ttnn_memory_config(ttnn: Any, memory_config: Any | None) -> Any | None:
+    if memory_config is None:
+        return None
+    value = str(memory_config)
+    if value in ("", "none", "None", "default"):
+        return None
+    attrs = {
+        "dram": "DRAM_MEMORY_CONFIG",
+        "l1": "L1_MEMORY_CONFIG",
+        "l1_interleaved": "L1_MEMORY_CONFIG",
+        "l1_width_sharded": "L1_MEMORY_CONFIG",
+        "l1_height_sharded": "L1_MEMORY_CONFIG",
+    }
+    attr = attrs.get(value)
+    if attr is not None:
+        return getattr(ttnn, attr, None)
+    return getattr(ttnn, value, None)
 
 
 def _tensor_shape(tensor: Any) -> list[int] | None:

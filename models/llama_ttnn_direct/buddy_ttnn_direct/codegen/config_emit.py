@@ -221,6 +221,7 @@ def _add_weight(
         "target_dtype": target_dtype,
         "packing": packing,
         "layout": layout,
+        "memory_config": "dram",
     }
     if extra:
         entry.update(extra)
@@ -237,5 +238,6 @@ def _add_weight(
     existing.setdefault("target_dtype", target_dtype)
     existing.setdefault("packing", packing)
     existing.setdefault("layout", layout)
+    existing.setdefault("memory_config", "dram")
     if extra:
         existing.update(extra)

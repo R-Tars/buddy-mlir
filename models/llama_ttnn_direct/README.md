@@ -682,7 +682,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 Device mode first materializes torch parameters, then calls `ttnn.from_torch`
-with role-based dtype/layout from the emitted parameter config:
+with role-based dtype/layout and conservative DRAM weight placement from the
+emitted parameter config:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -696,7 +697,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 The report records each planned or converted tensor path, target dtype, layout,
-memory config placeholder, and shape when host tensors are available.
+memory config, resolved TTNN dtype/layout/memory config in device mode, and
+shape when host tensors are available.
 
 ## Phase 2 PR-D: Decode Shell Without Attention
 

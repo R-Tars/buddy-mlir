@@ -189,12 +189,20 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "bfloat4_b",
             )
             self.assertEqual(
+                records["layers.0.mlp.gate_proj.weight"]["memory_config"],
+                "dram",
+            )
+            self.assertEqual(
                 records["layers.0.mlp.down_proj.weight"]["target_dtype"],
                 "bfloat8_b",
             )
             self.assertEqual(
                 records["lm_head.splits.0.weight"]["layout"],
                 "tile",
+            )
+            self.assertEqual(
+                records["lm_head.splits.0.weight"]["memory_config"],
+                "dram",
             )
 
     def test_cli_tensorize_parameters_dry_run_reports_full_decode_roles(self) -> None:
@@ -251,6 +259,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 records["embedding.weight"]["target_dtype"],
                 "bfloat16",
             )
+            self.assertEqual(records["embedding.weight"]["memory_config"], "dram")
             self.assertEqual(
                 records["layers.0.input_norm.weight"]["layout"],
                 "row_major",
@@ -325,12 +334,28 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "ttnn.bfloat4_b",
             )
             self.assertEqual(
+                result.parameters.layers[0].mlp.gate_proj.weight.memory_config,
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
                 result.parameters.layers[0].mlp.down_proj.weight.dtype,
                 "ttnn.bfloat8_b",
             )
             self.assertEqual(
                 result.parameters.lm_head.splits[0].weight.layout,
                 "ttnn.TILE_LAYOUT",
+            )
+            self.assertEqual(
+                result.report["tensors"][0]["memory_config"],
+                "dram",
+            )
+            self.assertEqual(
+                result.report["tensors"][0]["ttnn_memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
+                fake_ttnn.calls[0]["memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
             )
 
     def test_to_ttnn_parameters_covers_generated_decode_roles(self) -> None:
@@ -389,6 +414,10 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "ttnn.ROW_MAJOR_LAYOUT",
             )
             self.assertEqual(
+                result.parameters.embedding.weight.memory_config,
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
                 result.parameters.layers[0].input_norm.weight.layout,
                 "ttnn.ROW_MAJOR_LAYOUT",
             )
@@ -428,12 +457,20 @@ class FakeTensor:
 
 
 class FakeTTNNTensor:
-    def __init__(self, source: FakeTensor, dtype: str, layout: str, device: str):
+    def __init__(
+        self,
+        source: FakeTensor,
+        dtype: str,
+        layout: str,
+        device: str,
+        memory_config: str | None,
+    ):
         self.source = source
         self.shape = list(source.shape)
         self.dtype = dtype
         self.layout = layout
         self.device = device
+        self.memory_config = memory_config
 
 
 class FakeTTNN:
@@ -442,6 +479,7 @@ class FakeTTNN:
     bfloat16 = "ttnn.bfloat16"
     TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
+    DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
@@ -453,6 +491,7 @@ class FakeTTNN:
         device: str,
         dtype: str,
         layout: str,
+        memory_config: str | None = None,
     ) -> FakeTTNNTensor:
         self.calls.append(
             {
@@ -460,9 +499,10 @@ class FakeTTNN:
                 "device": device,
                 "dtype": dtype,
                 "layout": layout,
+                "memory_config": memory_config,
             }
         )
-        return FakeTTNNTensor(tensor, dtype, layout, device)
+        return FakeTTNNTensor(tensor, dtype, layout, device, memory_config)
 
 
 class FakeSafeOpen:
