@@ -85,7 +85,11 @@ class ValidateDirectTest(unittest.TestCase):
 
             tensorize_report = json.loads((out_dir / "tensorize_report.json").read_text())
             self.assertTrue(tensorize_report["dry_run"])
-            self.assertEqual(tensorize_report["roles"], ["mlp", "lm_head"])
+            self.assertEqual(
+                tensorize_report["roles"],
+                ["embedding", "norm", "attention", "mlp", "lm_head"],
+            )
+            self.assertEqual(tensorize_report["tensor_count"], 17)
 
             decode_shell_report = json.loads(
                 (out_dir / "decode_shell_report.json").read_text()

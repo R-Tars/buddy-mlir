@@ -568,9 +568,12 @@ tensor's source key and shape.
 ## Phase 2 PR-C: TTNN Tensorization Seed
 
 `tensorize-parameters` converts materialized host-side parameters into TTNN
-tensors for selected role groups. The first version is intentionally limited to
-MLP and LM-head weights; attention and KV-cache tensors are left for later
-primitive smoke work.
+tensors for selected role groups. The default remains the conservative
+`mlp,lm_head` seed used for early bring-up, and the command now also supports
+`embedding`, `norm`, and `attention` role groups so the generated decode model
+can receive TTNN tensors for embedding, RMSNorm/final norm, packed QKV,
+attention output projection, MLP, and LM-head split weights. KV-cache tensors
+are still created by the smoke paths rather than materialized from weights.
 
 Dry-run, no device or TTNN import:
 
@@ -583,6 +586,19 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --device p150a \
   --dry-run \
   --out /tmp/tensorize_report.json
+```
+
+Full generated-decode role dry-run:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  tensorize-parameters \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --roles embedding,norm,attention,mlp,lm_head \
+  --layers 0 \
+  --device p150a \
+  --dry-run \
+  --out /tmp/tensorize_decode_roles_report.json
 ```
 
 Device mode first materializes torch parameters, then calls `ttnn.from_torch`

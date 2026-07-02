@@ -14,11 +14,26 @@ from .config_emit import emit_parameter_config
 from ..semantic.dump import load_graph_json
 
 
-SUPPORTED_ROLE_GROUPS = {"mlp", "lm_head"}
+DEFAULT_ROLE_GROUPS = ("mlp", "lm_head")
+SUPPORTED_ROLE_GROUPS = {
+    "embedding",
+    "norm",
+    "attention",
+    "mlp",
+    "lm_head",
+}
+NORM_ROLE_PATHS = {
+    "input_norm": "input_norm",
+    "post_attention_norm": "post_attention_norm",
+}
 MLP_ROLE_PATHS = {
     "mlp_gate": "gate_proj",
     "mlp_up": "up_proj",
     "mlp_down": "down_proj",
+}
+ATTENTION_ROLE_PATHS = {
+    "wqkv_packed": "wqkv_packed",
+    "o_proj": "o_proj",
 }
 
 
@@ -34,7 +49,7 @@ class TensorizationResult:
 
 def parse_role_groups(value: str | None) -> list[str]:
     if value is None or value.strip() == "":
-        return ["mlp", "lm_head"]
+        return list(DEFAULT_ROLE_GROUPS)
     roles = [item.strip() for item in value.split(",") if item.strip()]
     unsupported = sorted(set(roles).difference(SUPPORTED_ROLE_GROUPS))
     if unsupported:
@@ -80,6 +95,121 @@ def build_tensorization_plan(
     if not isinstance(weights, Mapping):
         raise TTNNTensorizationError("parameter_config.weights must be an object")
 
+    if "embedding" in role_groups:
+        source_key, entry = _find_parameter_config_item(
+            weights,
+            "embedding",
+            None,
+        )
+        records.append(
+            {
+                "path": "embedding.weight",
+                "role_group": "embedding",
+                "role": "embedding",
+                "layer_id": None,
+                "source_key": source_key,
+                "target_dtype": str(entry.get("target_dtype")),
+                "layout": str(entry.get("layout")),
+                "memory_config": None,
+            }
+        )
+
+    if "norm" in role_groups:
+        for layer_id in _layer_ids_for_roles(
+            weights,
+            NORM_ROLE_PATHS,
+            selected_layers,
+        ):
+            for role, attr in NORM_ROLE_PATHS.items():
+                source_key, entry = _find_parameter_config_item(
+                    weights,
+                    role,
+                    layer_id,
+                )
+                records.append(
+                    {
+                        "path": f"layers.{layer_id}.{attr}.weight",
+                        "role_group": "norm",
+                        "role": role,
+                        "layer_id": layer_id,
+                        "source_key": source_key,
+                        "target_dtype": str(entry.get("target_dtype")),
+                        "layout": str(entry.get("layout")),
+                        "memory_config": None,
+                    }
+                )
+        source_key, entry = _find_parameter_config_item(
+            weights,
+            "final_norm",
+            None,
+        )
+        records.append(
+            {
+                "path": "final_norm.weight",
+                "role_group": "norm",
+                "role": "final_norm",
+                "layer_id": None,
+                "source_key": source_key,
+                "target_dtype": str(entry.get("target_dtype")),
+                "layout": str(entry.get("layout")),
+                "memory_config": None,
+            }
+        )
+
+    if "attention" in role_groups:
+        for layer_id in _layer_ids_for_roles(
+            weights,
+            {"q_proj": "q_proj"},
+            selected_layers,
+        ):
+            q_key, q_entry = _find_parameter_config_item(
+                weights,
+                "q_proj",
+                layer_id,
+            )
+            k_key, k_entry = _find_parameter_config_item(
+                weights,
+                "k_proj",
+                layer_id,
+            )
+            v_key, v_entry = _find_parameter_config_item(
+                weights,
+                "v_proj",
+                layer_id,
+            )
+            _check_packed_qkv_config(layer_id, q_entry, k_entry, v_entry)
+            records.append(
+                {
+                    "path": f"layers.{layer_id}.attention.wqkv_packed.weight",
+                    "role_group": "attention",
+                    "role": "wqkv_packed",
+                    "layer_id": layer_id,
+                    "source_key": ",".join([q_key, k_key, v_key]),
+                    "source_keys": [q_key, k_key, v_key],
+                    "target_dtype": str(q_entry.get("target_dtype")),
+                    "layout": str(q_entry.get("layout")),
+                    "memory_config": None,
+                    "packing": "qkv_pack",
+                }
+            )
+            o_key, o_entry = _find_parameter_config_item(
+                weights,
+                "o_proj",
+                layer_id,
+            )
+            records.append(
+                {
+                    "path": f"layers.{layer_id}.attention.o_proj.weight",
+                    "role_group": "attention",
+                    "role": "o_proj",
+                    "layer_id": layer_id,
+                    "source_key": o_key,
+                    "target_dtype": str(o_entry.get("target_dtype")),
+                    "layout": str(o_entry.get("layout")),
+                    "memory_config": None,
+                }
+            )
+
     if "mlp" in role_groups:
         for source_key, entry in sorted(weights.items()):
             if not isinstance(entry, Mapping):
@@ -107,7 +237,11 @@ def build_tensorization_plan(
             )
 
     if "lm_head" in role_groups:
-        lm_entry = _find_parameter_config_entry(weights, "lm_head", None)
+        lm_source_key, lm_entry = _find_parameter_config_item(
+            weights,
+            "lm_head",
+            None,
+        )
         lm_head = parameter_config.get("lm_head", {})
         if not isinstance(lm_head, Mapping):
             raise TTNNTensorizationError("parameter_config.lm_head must be an object")
@@ -127,7 +261,7 @@ def build_tensorization_plan(
                     "shard_id": shard_id,
                     "vocab_start": int(split["vocab_start"]),
                     "vocab_end": int(split["vocab_end"]),
-                    "source_key": str(lm_head.get("weight")),
+                    "source_key": lm_source_key,
                     "target_dtype": str(lm_entry.get("target_dtype")),
                     "layout": str(lm_entry.get("layout")),
                     "memory_config": None,
@@ -280,19 +414,28 @@ def _empty_ttnn_parameters(torch_params: SimpleNamespace) -> SimpleNamespace:
     layer_count = len(getattr(torch_params, "layers", []))
     lm_splits = getattr(getattr(torch_params, "lm_head", None), "splits", [])
     return SimpleNamespace(
+        embedding=None,
         layers=[None] * layer_count,
+        final_norm=None,
         lm_head=SimpleNamespace(splits=[None] * len(lm_splits)),
         metadata={},
     )
 
 
 def _get_torch_tensor(torch_params: SimpleNamespace, record: Mapping[str, Any]) -> Any:
+    if record["role_group"] == "embedding":
+        return torch_params.embedding.weight
+    if record["role_group"] == "norm":
+        if record["role"] == "final_norm":
+            return torch_params.final_norm.weight
+        layer = _materialized_layer(torch_params, int(record["layer_id"]))
+        return getattr(layer, str(record["role"])).weight
+    if record["role_group"] == "attention":
+        layer = _materialized_layer(torch_params, int(record["layer_id"]))
+        attr = ATTENTION_ROLE_PATHS[str(record["role"])]
+        return getattr(layer.attention, attr).weight
     if record["role_group"] == "mlp":
-        layer = torch_params.layers[int(record["layer_id"])]
-        if layer is None:
-            raise TTNNTensorizationError(
-                f"layer {record['layer_id']} was not materialized"
-            )
+        layer = _materialized_layer(torch_params, int(record["layer_id"]))
         attr = MLP_ROLE_PATHS[str(record["role"])]
         return getattr(layer.mlp, attr).weight
     if record["role_group"] == "lm_head":
@@ -307,14 +450,35 @@ def _store_converted_tensor(
     record: Mapping[str, Any],
     tensor: Any,
 ) -> None:
+    if record["role_group"] == "embedding":
+        output.embedding = SimpleNamespace(weight=tensor)
+        return
+    if record["role_group"] == "norm":
+        if record["role"] == "final_norm":
+            output.final_norm = SimpleNamespace(weight=tensor)
+            return
+        layer = _ensure_layer(output, int(record["layer_id"]))
+        setattr(
+            layer,
+            str(record["role"]),
+            SimpleNamespace(weight=tensor),
+        )
+        return
+    if record["role_group"] == "attention":
+        layer = _ensure_layer(output, int(record["layer_id"]))
+        attention = _ensure_child_namespace(layer, "attention")
+        setattr(
+            attention,
+            ATTENTION_ROLE_PATHS[str(record["role"])],
+            SimpleNamespace(weight=tensor),
+        )
+        return
     if record["role_group"] == "mlp":
         layer_id = int(record["layer_id"])
-        layer = output.layers[layer_id]
-        if layer is None:
-            layer = SimpleNamespace(mlp=SimpleNamespace())
-            output.layers[layer_id] = layer
+        layer = _ensure_layer(output, layer_id)
+        mlp = _ensure_child_namespace(layer, "mlp")
         setattr(
-            layer.mlp,
+            mlp,
             MLP_ROLE_PATHS[str(record["role"])],
             SimpleNamespace(weight=tensor),
         )
@@ -333,14 +497,74 @@ def _store_converted_tensor(
     )
 
 
-def _find_parameter_config_entry(
+def _materialized_layer(torch_params: SimpleNamespace, layer_id: int) -> Any:
+    layer = torch_params.layers[layer_id]
+    if layer is None:
+        raise TTNNTensorizationError(f"layer {layer_id} was not materialized")
+    return layer
+
+
+def _ensure_layer(output: SimpleNamespace, layer_id: int) -> SimpleNamespace:
+    layer = output.layers[layer_id]
+    if layer is None:
+        layer = SimpleNamespace()
+        output.layers[layer_id] = layer
+    return layer
+
+
+def _ensure_child_namespace(parent: SimpleNamespace, name: str) -> SimpleNamespace:
+    child = getattr(parent, name, None)
+    if child is None:
+        child = SimpleNamespace()
+        setattr(parent, name, child)
+    return child
+
+
+def _layer_ids_for_roles(
+    weights: Mapping[str, Any],
+    roles: Mapping[str, str],
+    selected_layers: set[int] | None,
+) -> list[int]:
+    layer_ids = {
+        int(entry["layer_id"])
+        for entry in weights.values()
+        if isinstance(entry, Mapping)
+        and entry.get("role") in roles
+        and entry.get("layer_id") is not None
+    }
+    if selected_layers is not None:
+        layer_ids = layer_ids.intersection(selected_layers)
+    return sorted(layer_ids)
+
+
+def _check_packed_qkv_config(
+    layer_id: int,
+    q_entry: Mapping[str, Any],
+    k_entry: Mapping[str, Any],
+    v_entry: Mapping[str, Any],
+) -> None:
+    fields = ("target_dtype", "layout")
+    for field in fields:
+        values = {
+            q_entry.get(field),
+            k_entry.get(field),
+            v_entry.get(field),
+        }
+        if len(values) != 1:
+            raise TTNNTensorizationError(
+                f"layer {layer_id} packed QKV {field} entries must match; "
+                f"got {sorted(str(value) for value in values)}"
+            )
+
+
+def _find_parameter_config_item(
     weights: Mapping[str, Any],
     role: str,
     layer_id: int | None,
-) -> Mapping[str, Any]:
+) -> tuple[str, Mapping[str, Any]]:
     matches = [
-        entry
-        for entry in weights.values()
+        (str(source_key), entry)
+        for source_key, entry in weights.items()
         if isinstance(entry, Mapping)
         and entry.get("role") == role
         and entry.get("layer_id") == layer_id

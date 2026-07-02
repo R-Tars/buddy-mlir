@@ -17,6 +17,7 @@ from .codegen.parameters import (
 from .codegen.ttnn_tensorizer import (
     TTNNTensorizationError,
     load_parameter_config_from_program,
+    to_ttnn_parameters,
 )
 from .smoke_mlp import (
     NO_TTNN_DEVICE_MESSAGE,
@@ -248,91 +249,16 @@ def _tensorize_shell_parameters(
     device: Any,
     layer_count: int,
 ) -> SimpleNamespace:
-    weights = parameter_config["weights"]
-
-    def convert(tensor: Any, role: str, layer_id: int | None) -> Any:
-        entry = _find_config_entry(weights, role, layer_id)
-        return ttnn.from_torch(
-            tensor,
-            device=device,
-            dtype=_resolve_ttnn_dtype(ttnn, str(entry["target_dtype"])),
-            layout=_resolve_ttnn_layout(ttnn, str(entry["layout"])),
-        )
-
-    layers = [None] * len(host_params.layers)
-    for layer_id in range(layer_count):
-        layer = host_params.layers[layer_id]
-        layers[layer_id] = SimpleNamespace(
-            input_norm=SimpleNamespace(
-                weight=convert(layer.input_norm.weight, "input_norm", layer_id)
-            ),
-            post_attention_norm=SimpleNamespace(
-                weight=convert(
-                    layer.post_attention_norm.weight,
-                    "post_attention_norm",
-                    layer_id,
-                )
-            ),
-            mlp=SimpleNamespace(
-                gate_proj=SimpleNamespace(
-                    weight=convert(layer.mlp.gate_proj.weight, "mlp_gate", layer_id)
-                ),
-                up_proj=SimpleNamespace(
-                    weight=convert(layer.mlp.up_proj.weight, "mlp_up", layer_id)
-                ),
-                down_proj=SimpleNamespace(
-                    weight=convert(layer.mlp.down_proj.weight, "mlp_down", layer_id)
-                ),
-            ),
-        )
-
-    lm_entry = _find_config_entry(weights, "lm_head", None)
-    lm_splits = []
-    for split in host_params.lm_head.splits:
-        lm_splits.append(
-            SimpleNamespace(
-                shard_id=split.shard_id,
-                vocab_start=split.vocab_start,
-                vocab_end=split.vocab_end,
-                weight=ttnn.from_torch(
-                    split.weight,
-                    device=device,
-                    dtype=_resolve_ttnn_dtype(ttnn, str(lm_entry["target_dtype"])),
-                    layout=_resolve_ttnn_layout(ttnn, str(lm_entry["layout"])),
-                ),
-            )
-        )
-
-    return SimpleNamespace(
-        embedding=SimpleNamespace(
-            weight=convert(host_params.embedding.weight, "embedding", None)
-        ),
-        layers=layers,
-        final_norm=SimpleNamespace(
-            weight=convert(host_params.final_norm.weight, "final_norm", None)
-        ),
-        lm_head=SimpleNamespace(splits=lm_splits),
+    result = to_ttnn_parameters(
+        host_params,
+        device,
+        parameter_config,
+        roles=["embedding", "norm", "mlp", "lm_head"],
+        layers=range(layer_count),
+        ttnn_module=ttnn,
     )
-
-
-def _find_config_entry(
-    weights: dict[str, Any],
-    role: str,
-    layer_id: int | None,
-) -> dict[str, Any]:
-    matches = [
-        entry
-        for entry in weights.values()
-        if isinstance(entry, dict)
-        and entry.get("role") == role
-        and entry.get("layer_id") == layer_id
-    ]
-    if len(matches) != 1:
-        raise TTNNTensorizationError(
-            f"expected one config entry for role={role}, layer_id={layer_id}; "
-            f"found {len(matches)}"
-        )
-    return matches[0]
+    assert result.parameters is not None
+    return result.parameters
 
 
 @contextmanager
@@ -364,18 +290,6 @@ def _load_generated_model(path: Path, ttnn: Any):
             sys.modules.pop("ttnn", None)
         else:
             sys.modules["ttnn"] = old_ttnn
-
-
-def _resolve_ttnn_dtype(ttnn: Any, target_dtype: str) -> Any:
-    return getattr(ttnn, target_dtype, target_dtype)
-
-
-def _resolve_ttnn_layout(ttnn: Any, layout: str) -> Any:
-    if layout == "tile":
-        return getattr(ttnn, "TILE_LAYOUT", layout)
-    if layout == "row_major":
-        return getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
-    return getattr(ttnn, layout, layout)
 
 
 def _to_namespace(value: Any) -> Any:

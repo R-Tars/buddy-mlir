@@ -822,7 +822,7 @@ def build_parser() -> argparse.ArgumentParser:
         "tensorize-parameters",
         help=(
             "Convert materialized host-side parameters into TTNN tensors. "
-            "PR-C covers MLP and LM-head roles only."
+            "Supports staged role groups for TTNN Direct bring-up."
         ),
     )
     tensorize_parameters.add_argument(
@@ -840,7 +840,10 @@ def build_parser() -> argparse.ArgumentParser:
     tensorize_parameters.add_argument(
         "--roles",
         default="mlp,lm_head",
-        help="Comma-separated role groups to tensorize: mlp,lm_head.",
+        help=(
+            "Comma-separated role groups to tensorize: "
+            "embedding,norm,attention,mlp,lm_head. Defaults to mlp,lm_head."
+        ),
     )
     tensorize_parameters.add_argument(
         "--layers",

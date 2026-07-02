@@ -197,6 +197,83 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "tile",
             )
 
+    def test_cli_tensorize_parameters_dry_run_reports_full_decode_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            report_json = root / "tensorize_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "tensorize-parameters",
+                    "--program-dir",
+                    str(program_dir),
+                    "--roles",
+                    "embedding,norm,attention,mlp,lm_head",
+                    "--layers",
+                    "0",
+                    "--device",
+                    "p150a",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertEqual(
+                report["roles"],
+                ["embedding", "norm", "attention", "mlp", "lm_head"],
+            )
+            self.assertEqual(report["tensor_count"], 17)
+            records = {record["path"]: record for record in report["tensors"]}
+            self.assertEqual(
+                records["embedding.weight"]["target_dtype"],
+                "bfloat16",
+            )
+            self.assertEqual(
+                records["layers.0.input_norm.weight"]["layout"],
+                "row_major",
+            )
+            self.assertEqual(
+                records["layers.0.attention.wqkv_packed.weight"][
+                    "source_keys"
+                ],
+                [
+                    "model.layers.0.self_attn.q_proj.weight",
+                    "model.layers.0.self_attn.k_proj.weight",
+                    "model.layers.0.self_attn.v_proj.weight",
+                ],
+            )
+            self.assertEqual(
+                records["layers.0.attention.o_proj.weight"]["target_dtype"],
+                "bfloat8_b",
+            )
+            self.assertEqual(
+                records["final_norm.weight"]["layout"],
+                "row_major",
+            )
+
     def test_to_ttnn_parameters_uses_role_dtype_and_layout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -254,6 +331,78 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 result.parameters.lm_head.splits[0].weight.layout,
                 "ttnn.TILE_LAYOUT",
+            )
+
+    def test_to_ttnn_parameters_covers_generated_decode_roles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                torch_params = load_llama_parameters_from_manifests(
+                    model_path=model_dir,
+                    weights_manifest=program_dir / "weights_manifest.json",
+                    config=program_dir / "config.json",
+                    tensor_backend="torch",
+                    layers=[0],
+                )
+
+            fake_ttnn = FakeTTNN()
+            result = to_ttnn_parameters(
+                torch_params,
+                device="device0",
+                parameter_config=load_parameter_config_from_program(program_dir),
+                roles=["embedding", "norm", "attention", "mlp", "lm_head"],
+                layers=[0],
+                ttnn_module=fake_ttnn,
+            )
+
+            self.assertEqual(result.report["status"], "pass")
+            self.assertEqual(result.report["tensor_count"], 17)
+            self.assertEqual(len(fake_ttnn.calls), 17)
+            self.assertIsNone(result.parameters.layers[1])
+            self.assertEqual(
+                result.parameters.embedding.weight.dtype,
+                "ttnn.bfloat16",
+            )
+            self.assertEqual(
+                result.parameters.embedding.weight.layout,
+                "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(
+                result.parameters.layers[0].input_norm.weight.layout,
+                "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(
+                result.parameters.layers[0].attention.wqkv_packed.weight.dtype,
+                "ttnn.bfloat8_b",
+            )
+            self.assertEqual(
+                result.parameters.layers[0].attention.o_proj.weight.layout,
+                "ttnn.TILE_LAYOUT",
+            )
+            self.assertEqual(
+                result.parameters.final_norm.weight.dtype,
+                "ttnn.bfloat16",
             )
 
 

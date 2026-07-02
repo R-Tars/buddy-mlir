@@ -348,7 +348,7 @@ def validate_direct(
     def tensorize_parameters_dry_run_step() -> dict[str, Any]:
         tensor_report = tensorize_parameters_from_program_dry_run(
             program_dir=paths["program_dir"],
-            roles=["mlp", "lm_head"],
+            roles=["embedding", "norm", "attention", "mlp", "lm_head"],
             layers=[0],
             device=_validation_device(),
             out=paths["tensorize_report"],
