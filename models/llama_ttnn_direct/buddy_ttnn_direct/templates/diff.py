@@ -5,19 +5,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
+from .attention_decode import official_paged_attention_decode_op_sequence
 from .mlp_decode import official_gated_mlp_decode_op_sequence
 
 
-ATTENTION_DECODE_OPS = [
-    "linear.qkv_packed",
-    "nlp_create_qkv_heads_decode",
-    "rotary_embedding_decode",
-    "paged_update_cache",
-    "paged_scaled_dot_product_attention_decode",
-    "nlp_concat_heads_decode",
-    "linear.o_proj",
-]
-
+ATTENTION_DECODE_OPS = official_paged_attention_decode_op_sequence()
 GATED_MLP_DECODE_OPS = official_gated_mlp_decode_op_sequence()
 
 TEMPLATE_TO_OPS = {

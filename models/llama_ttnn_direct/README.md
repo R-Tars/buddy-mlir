@@ -72,8 +72,9 @@ device_argmax_greedy
 ## Phase 3: Python TTNN Skeleton
 
 Phase 3 turns an execution plan into a readable Python TTNN skeleton. The
-generated program imports `ttnn` and exposes the decode dataflow, but template
-bodies remain TODO stubs with `NotImplementedError`.
+generated program imports `ttnn` and exposes the decode dataflow. In Phase 3
+the template bodies are intentionally emitted as TODO stubs; later phases fill
+selected templates with official-like TTNN calls.
 
 Example:
 
@@ -217,3 +218,23 @@ the generated model constant.
 
 This phase still materializes full logits before argmax. It does not add a
 custom fused local/global argmax region.
+
+## Phase 7: AttentionDecode Skeleton + Official Op Names
+
+Phase 7 replaces the generated `attention_decode()` stub with an official-like
+TTNN decode sequence:
+
+```text
+linear.qkv_packed
+nlp_create_qkv_heads_decode
+rotary_embedding_decode
+paged_update_cache
+paged_scaled_dot_product_attention_decode
+nlp_concat_heads_decode
+linear.o_proj
+```
+
+Experimental and transformer TTNN calls go through `TTNNCompatOps` wrappers so
+API-name differences stay localized. Rotary embedding and paged KV-cache update
+remain explicit template boundaries in this phase; attention is not expected to
+run end-to-end on hardware yet.

@@ -13,6 +13,10 @@ from .diff import (
     expand_plan_ops,
     load_official_template,
 )
+from .attention_decode import (
+    dump_attention_decode_op_sequence,
+    official_paged_attention_decode_op_sequence,
+)
 from .mlp_decode import official_gated_mlp_decode_op_sequence
 from .lm_head import (
     build_lm_head_split_ranges,
@@ -23,6 +27,7 @@ from .lm_head import (
 __all__ = [
     "build_execution_plan",
     "diff_plan_against_official",
+    "dump_attention_decode_op_sequence",
     "dump_execution_plan",
     "dump_plan_diff",
     "expand_plan_ops",
@@ -32,6 +37,7 @@ __all__ = [
     "build_lm_head_split_ranges",
     "device_argmax_greedy_op_sequence",
     "official_gated_mlp_decode_op_sequence",
+    "official_paged_attention_decode_op_sequence",
     "official_split_lm_head_op_sequence",
     "validate_template_config",
 ]

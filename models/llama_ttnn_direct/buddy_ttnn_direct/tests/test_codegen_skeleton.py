@@ -17,6 +17,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.python_ttnn import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.templates.attention_decode import (
+    official_paged_attention_decode_op_sequence,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -103,15 +106,14 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("self.ops.mul_silu", source)
             self.assertIn("self.ops.concat", source)
             self.assertIn("self.ops.argmax", source)
+            self.assertIn("layer_params.wqkv_packed.weight", source)
+            self.assertIn("self.ops.nlp_create_qkv_heads_decode", source)
+            self.assertIn("self.rotary_embedding_decode", source)
+            self.assertIn("self.paged_update_kv_cache", source)
+            self.assertIn("self.ops.paged_sdpa_decode", source)
+            self.assertIn("self.ops.nlp_concat_heads_decode", source)
+            self.assertIn("layer_params.o_proj.weight", source)
             self.assertIn("GENERATED_LM_HEAD_SPLIT_COUNT = 8", source)
-            self.assertIn(
-                "TODO: ttnn.experimental.nlp_create_qkv_heads_decode",
-                source,
-            )
-            self.assertIn(
-                "TODO: paged_scaled_dot_product_attention_decode",
-                source,
-            )
             self.assertIn("raise NotImplementedError", source)
 
             py_compile.compile(
@@ -121,8 +123,17 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             config = json.loads((out_dir / "config.json").read_text())
             self.assertEqual(config["num_layers"], 2)
+            self.assertEqual(config["hidden_size"], 16)
+            self.assertEqual(config["num_attention_heads"], 4)
+            self.assertEqual(config["num_key_value_heads"], 2)
+            self.assertEqual(config["head_dim"], 4)
             self.assertEqual(config["vocab_size"], 128)
             self.assertEqual(config["template_config"]["device"], "p150a")
+            self.assertEqual(
+                config["attention"]["op_sequence"],
+                official_paged_attention_decode_op_sequence(),
+            )
+            self.assertEqual(config["attention"]["scale"], 0.5)
             self.assertEqual(config["lm_head"]["split_count"], 8)
             self.assertEqual(len(config["lm_head"]["splits"]), 8)
             self.assertEqual(
@@ -260,6 +271,86 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                     "compute_kernel_config": "compute_cfg",
                     "dtype": "bf8",
                 },
+            )
+
+    def test_generated_attention_wrappers_call_official_ops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            ops = generated.TTNNCompatOps(fake_ttnn)
+            q, k, v = ops.nlp_create_qkv_heads_decode(
+                _FakeTensor("qkv"),
+                num_heads=4,
+                num_kv_heads=2,
+                memory_config="heads_mem",
+            )
+            attn = ops.paged_sdpa_decode(
+                q,
+                "k_cache",
+                "v_cache",
+                "page_table",
+                "cache_pos",
+                scale=0.5,
+                memory_config="sdpa_mem",
+                program_config="sdpa_pc",
+                compute_kernel_config="sdpa_ck",
+            )
+            out = ops.nlp_concat_heads_decode(
+                attn, memory_config="concat_heads_mem"
+            )
+
+            self.assertEqual(out.name, "concat_heads:sdpa:q")
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls],
+                [
+                    "nlp_create_qkv_heads_decode",
+                    "paged_scaled_dot_product_attention_decode",
+                    "nlp_concat_heads_decode",
+                ],
+            )
+            self.assertEqual(
+                fake_ttnn.calls[0]["kwargs"],
+                {
+                    "num_heads": 4,
+                    "num_kv_heads": 2,
+                    "memory_config": "heads_mem",
+                },
+            )
+            self.assertEqual(fake_ttnn.calls[1]["query"], "q")
+            self.assertEqual(
+                fake_ttnn.calls[1]["kwargs"],
+                {
+                    "scale": 0.5,
+                    "memory_config": "sdpa_mem",
+                    "program_config": "sdpa_pc",
+                    "compute_kernel_config": "sdpa_ck",
+                },
+            )
+            self.assertEqual(
+                fake_ttnn.calls[2]["kwargs"],
+                {"memory_config": "concat_heads_mem"},
             )
 
     def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
@@ -454,6 +545,51 @@ def _make_fake_ttnn_module():
         )
         return _FakeTensor(f"argmax:{getattr(tensor, 'name', tensor)}")
 
+    def nlp_create_qkv_heads_decode(qkv, **kwargs):
+        module.calls.append(
+            {
+                "op": "nlp_create_qkv_heads_decode",
+                "qkv": getattr(qkv, "name", qkv),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return (
+            _FakeTensor("q"),
+            _FakeTensor("k"),
+            _FakeTensor("v"),
+        )
+
+    def paged_scaled_dot_product_attention_decode(
+        query,
+        key_cache,
+        value_cache,
+        page_table,
+        cache_position,
+        **kwargs,
+    ):
+        module.calls.append(
+            {
+                "op": "paged_scaled_dot_product_attention_decode",
+                "query": getattr(query, "name", query),
+                "key_cache": getattr(key_cache, "name", key_cache),
+                "value_cache": getattr(value_cache, "name", value_cache),
+                "page_table": page_table,
+                "cache_position": cache_position,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(f"sdpa:{getattr(query, 'name', query)}")
+
+    def nlp_concat_heads_decode(attn, **kwargs):
+        module.calls.append(
+            {
+                "op": "nlp_concat_heads_decode",
+                "attn": getattr(attn, "name", attn),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(f"concat_heads:{getattr(attn, 'name', attn)}")
+
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
     module.linear = linear
@@ -461,6 +597,15 @@ def _make_fake_ttnn_module():
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.experimental = _ns(
+        nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
+        nlp_concat_heads_decode=nlp_concat_heads_decode,
+    )
+    module.transformer = _ns(
+        paged_scaled_dot_product_attention_decode=(
+            paged_scaled_dot_product_attention_decode
+        )
+    )
     return module
 
 

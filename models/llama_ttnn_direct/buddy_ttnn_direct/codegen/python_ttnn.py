@@ -12,6 +12,9 @@ from .artifacts import (
     write_json,
     write_text,
 )
+from ..templates.attention_decode import (
+    official_paged_attention_decode_op_sequence,
+)
 from ..templates.lm_head import build_lm_head_split_ranges
 
 
@@ -50,6 +53,10 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
     template_config = copy.deepcopy(plan["template_config"])
     lm_head_split_count = int(template_config["lm_head_split_count"])
     vocab_size = plan.get("vocab_size")
+    head_dim = plan.get("head_dim")
+    attention_scale = None
+    if head_dim:
+        attention_scale = float(head_dim) ** -0.5
     generation_template = (
         "device_argmax_greedy"
         if "device_argmax_greedy" in plan["final"]
@@ -64,10 +71,32 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         "batch_size": plan["batch_size"],
         "seq_len": plan["seq_len"],
         "max_cache_len": plan["max_cache_len"],
+        "hidden_size": plan.get("hidden_size"),
+        "num_attention_heads": plan.get("num_attention_heads"),
+        "num_key_value_heads": plan.get("num_key_value_heads"),
+        "head_dim": head_dim,
         "vocab_size": vocab_size,
         "template_config": template_config,
         "layers": copy.deepcopy(plan["layers"]),
         "final": copy.deepcopy(plan["final"]),
+        "attention": {
+            "template": "official_paged_attention_decode",
+            "op_sequence": official_paged_attention_decode_op_sequence(),
+            "scale": attention_scale,
+            "qkv_output_memory_config": None,
+            "qkv_program_config": None,
+            "qkv_compute_kernel_config": None,
+            "qkv_output_dtype": None,
+            "qkv_heads_memory_config": None,
+            "sdpa_output_memory_config": None,
+            "sdpa_program_config": None,
+            "sdpa_compute_kernel_config": None,
+            "concat_heads_output_memory_config": None,
+            "o_proj_output_memory_config": None,
+            "o_proj_program_config": None,
+            "o_proj_compute_kernel_config": None,
+            "o_proj_output_dtype": None,
+        },
         "lm_head": {
             "template": "official_split_lm_head",
             "split_count": lm_head_split_count,
@@ -210,6 +239,64 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         return None
                     return unary_with_param(silu)
 
+                def nlp_create_qkv_heads_decode(
+                    self,
+                    qkv,
+                    *,
+                    num_heads,
+                    num_kv_heads,
+                    memory_config=None,
+                ):
+                    kwargs = {{
+                        "num_heads": num_heads,
+                        "num_kv_heads": num_kv_heads,
+                    }}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    op = self._experimental_op("nlp_create_qkv_heads_decode")
+                    return op(qkv, **kwargs)
+
+                def paged_sdpa_decode(
+                    self,
+                    query,
+                    key_cache,
+                    value_cache,
+                    page_table,
+                    cache_position,
+                    *,
+                    scale=None,
+                    memory_config=None,
+                    program_config=None,
+                    compute_kernel_config=None,
+                ):
+                    kwargs = {{}}
+                    if scale is not None:
+                        kwargs["scale"] = scale
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    if program_config is not None:
+                        kwargs["program_config"] = program_config
+                    if compute_kernel_config is not None:
+                        kwargs["compute_kernel_config"] = compute_kernel_config
+                    op = self._transformer_op(
+                        "paged_scaled_dot_product_attention_decode"
+                    )
+                    return op(
+                        query,
+                        key_cache,
+                        value_cache,
+                        page_table,
+                        cache_position,
+                        **kwargs,
+                    )
+
+                def nlp_concat_heads_decode(self, attn, *, memory_config=None):
+                    kwargs = {{}}
+                    if memory_config is not None:
+                        kwargs["memory_config"] = memory_config
+                    op = self._experimental_op("nlp_concat_heads_decode")
+                    return op(attn, **kwargs)
+
                 def concat(self, tensors, *, dim=-1, memory_config=None):
                     kwargs = {{"dim": dim}}
                     if memory_config is not None:
@@ -218,6 +305,28 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                 def argmax(self, tensor, *, dim=-1):
                     return self.ttnn.argmax(tensor, dim=dim)
+
+                def _experimental_op(self, name):
+                    experimental = getattr(self.ttnn, "experimental", None)
+                    op = getattr(experimental, name, None) if experimental else None
+                    if op is None:
+                        op = getattr(self.ttnn, name, None)
+                    if op is None:
+                        raise AttributeError(
+                            "ttnn experimental op is unavailable: " + name
+                        )
+                    return op
+
+                def _transformer_op(self, name):
+                    transformer = getattr(self.ttnn, "transformer", None)
+                    op = getattr(transformer, name, None) if transformer else None
+                    if op is None:
+                        op = getattr(self.ttnn, name, None)
+                    if op is None:
+                        raise AttributeError(
+                            "ttnn transformer op is unavailable: " + name
+                        )
+                    return op
 
 
             class {model_class}:
@@ -285,15 +394,109 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     kv_cache,
                 ):
                     # Template: {attention_template}
-                    # TODO: ttnn.linear packed QKV
-                    # TODO: ttnn.experimental.nlp_create_qkv_heads_decode
-                    # TODO: rotary embedding
-                    # TODO: paged_update_cache
-                    # TODO: paged_scaled_dot_product_attention_decode
-                    # TODO: nlp_concat_heads_decode
-                    # TODO: output projection
+                    layer_params = self.parameters.layers[layer_id].attention
+                    attention_config = self.config.attention
+
+                    qkv = self.ops.linear(
+                        hidden,
+                        layer_params.wqkv_packed.weight,
+                        memory_config=_optional_attr(
+                            attention_config, "qkv_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            attention_config, "qkv_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            attention_config, "qkv_compute_kernel_config"
+                        ),
+                        dtype=_optional_attr(
+                            attention_config, "qkv_output_dtype"
+                        ),
+                    )
+
+                    q, k, v = self.ops.nlp_create_qkv_heads_decode(
+                        qkv,
+                        num_heads=self.config.num_attention_heads,
+                        num_kv_heads=self.config.num_key_value_heads,
+                        memory_config=_optional_attr(
+                            attention_config, "qkv_heads_memory_config"
+                        ),
+                    )
+
+                    q, k = self.rotary_embedding_decode(
+                        layer_id, q, k, cache_position
+                    )
+                    kv_cache = self.paged_update_kv_cache(
+                        layer_id,
+                        k,
+                        v,
+                        page_table,
+                        cache_position,
+                        kv_cache,
+                    )
+                    layer_cache = kv_cache[layer_id]
+
+                    attn = self.ops.paged_sdpa_decode(
+                        q,
+                        layer_cache.k,
+                        layer_cache.v,
+                        page_table,
+                        cache_position,
+                        scale=_optional_attr(attention_config, "scale"),
+                        memory_config=_optional_attr(
+                            attention_config, "sdpa_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            attention_config, "sdpa_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            attention_config, "sdpa_compute_kernel_config"
+                        ),
+                    )
+
+                    attn = self.ops.nlp_concat_heads_decode(
+                        attn,
+                        memory_config=_optional_attr(
+                            attention_config,
+                            "concat_heads_output_memory_config",
+                        ),
+                    )
+
+                    return self.ops.linear(
+                        attn,
+                        layer_params.o_proj.weight,
+                        memory_config=_optional_attr(
+                            attention_config, "o_proj_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            attention_config, "o_proj_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            attention_config, "o_proj_compute_kernel_config"
+                        ),
+                        dtype=_optional_attr(
+                            attention_config, "o_proj_output_dtype"
+                        ),
+                    )
+
+                def rotary_embedding_decode(self, layer_id, q, k, cache_position):
+                    # Template boundary for Phase 7 attention decode codegen.
                     raise NotImplementedError(
-                        "Attention template {attention_template} is a Phase 3 skeleton."
+                        "Rotary embedding decode is not implemented in Phase 7."
+                    )
+
+                def paged_update_kv_cache(
+                    self,
+                    layer_id,
+                    k,
+                    v,
+                    page_table,
+                    cache_position,
+                    kv_cache,
+                ):
+                    # Template boundary for Phase 7 attention decode codegen.
+                    raise NotImplementedError(
+                        "Paged KV cache update is not implemented in Phase 7."
                     )
 
                 def mlp_decode(self, layer_id, hidden):
@@ -431,10 +634,10 @@ def render_codegen_readme(plan: dict[str, Any]) -> str:
 
         This directory was generated from a Buddy-TTNN Direct execution plan.
         The generated `model.py` defines the decode program structure and
-        template method boundaries. The MLP decode and LM-head templates emit
-        real TTNN calls through a small compatibility wrapper; attention,
-        embedding, and RMSNorm template bodies still intentionally raise
-        `NotImplementedError`.
+        template method boundaries. Attention decode, MLP decode, and LM-head
+        templates emit official-like TTNN calls through a small compatibility
+        wrapper; embedding, RMSNorm, rotary embedding, and paged KV cache update
+        bodies still intentionally raise `NotImplementedError`.
 
         Model: `{config["model_name"]}`
         Layers: `{config["num_layers"]}`
