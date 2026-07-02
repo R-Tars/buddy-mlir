@@ -14,6 +14,7 @@ from .codegen.config_emit import (
 from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
+from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -213,6 +214,49 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output directory for offline manifest artifacts.",
     )
     prepare_artifacts.set_defaults(func=_cmd_prepare_artifacts)
+
+    smoke_mlp = subparsers.add_parser(
+        "smoke-mlp",
+        help="Run or dry-run a small TTNN MLP template smoke test.",
+    )
+    smoke_mlp.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the smoke report.",
+    )
+    smoke_mlp.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    smoke_mlp.add_argument("--batch-size", type=int, required=True)
+    smoke_mlp.add_argument("--hidden-size", type=int, required=True)
+    smoke_mlp.add_argument("--intermediate-size", type=int, required=True)
+    smoke_mlp.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    smoke_mlp.add_argument(
+        "--pcc-threshold",
+        type=float,
+        default=0.99,
+        help="Minimum PCC required for a hardware smoke pass.",
+    )
+    smoke_mlp.add_argument("--seed", type=int, default=0)
+    smoke_mlp.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the smoke report schema without opening a TTNN device.",
+    )
+    smoke_mlp.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output smoke report JSON path.",
+    )
+    smoke_mlp.set_defaults(func=_cmd_smoke_mlp)
     return parser
 
 
@@ -302,6 +346,26 @@ def _cmd_prepare_artifacts(args: argparse.Namespace) -> int:
     for name in sorted(paths):
         print(f"  {name}: {paths[name]}")
     return 0
+
+
+def _cmd_smoke_mlp(args: argparse.Namespace) -> int:
+    report = run_smoke_mlp(
+        out=args.out,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        hidden_size=args.hidden_size,
+        intermediate_size=args.intermediate_size,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+        pcc_threshold=args.pcc_threshold,
+        seed=args.seed,
+    )
+    print(f"wrote MLP smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
 
 
 def main(argv: list[str] | None = None) -> int:

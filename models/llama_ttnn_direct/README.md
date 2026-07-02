@@ -268,3 +268,29 @@ The first implementation parses safetensors headers directly and records lazy
 manifest entries for packed QKV, MLP weights, LM-head vocab splits, and paged
 KV-cache metadata. Tensor conversion and materialized TTNN files remain future
 work.
+
+## Phase 9: MLP Smoke Test
+
+Phase 9 adds `smoke-mlp`, a focused TTNN smoke path for the generated gated MLP
+template. It does not run full Llama.
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-mlp \
+  --device p150a \
+  --batch-size 32 \
+  --hidden-size 1024 \
+  --intermediate-size 4096 \
+  --dtype-seed bf16 \
+  --dry-run \
+  --out /tmp/mlp_smoke_report.json
+```
+
+Dry-run writes the report schema without opening a TTNN device. Without
+`--dry-run`, the command attempts a small `linear, linear, mul_silu, linear`
+TTNN run and compares against a torch reference by PCC. If no device is
+available, it writes a failed report with:
+
+```text
+No TTNN device detected. Use --dry-run or run on P150A.
+```
