@@ -620,8 +620,9 @@ decode-step structural references, generated observed op sequence coverage for
 the shell/smoke/profile paths, trace capture/execute status plus requested
 execute iteration/sample-count evidence, measured profile latency, complete
 profile attribution sections, per-layer attention/MLP timing records,
-bottleneck summary, and positive profile throughput before marking the
-validation as accepted.
+bottleneck summary, positive profile throughput, and, unless
+`--skip-autotune` is used, a real-weight decode-step autotune best candidate
+with a passed structural reference before marking the validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

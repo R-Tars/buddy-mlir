@@ -654,6 +654,38 @@ class ValidateDirectTest(unittest.TestCase):
                 ),
                 acceptance_check_names,
             )
+            self.assertIn(
+                "decode_step_autotune.status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.candidate_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.passed_candidate_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best_reference_status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best_parameter_source",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best_metric",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best_trace_status",
+                acceptance_check_names,
+            )
             self.assertEqual(
                 report["steps"]["profile_decode_step"]["ttnn_environment"][
                     "version"
@@ -694,6 +726,17 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["best_reference_status"],
                 "passed",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["best_trace_status"],
+                "captured_and_executed",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["best_parameter_source"],
+                "hf_model",
+            )
+            self.assertIsNotNone(
+                report["steps"]["decode_step_autotune"]["best_metric"],
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["reference_status_counts"],
@@ -982,6 +1025,118 @@ class ValidateDirectTest(unittest.TestCase):
                     "best_reference_status"
                 ],
                 "passed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_trace_status"
+                ],
+                "captured_and_executed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_parameter_source"
+                ],
+                "hf_model",
+            )
+
+    def test_validate_real_decode_fails_on_autotune_best_reference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            space_json = root / "decode_step_space.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            space_json.write_text(
+                json.dumps(
+                    {
+                        "lm_head_split_count": [2],
+                        "generation_template": ["device_argmax_greedy"],
+                        "mlp_intermediate_dtype": [None],
+                        "attention_sdpa_output_memory_config": [None],
+                        "attention_concat_heads_output_memory_config": [None],
+                    }
+                )
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_autotune = validation_module.run_decode_step_autotune
+
+            def autotune_with_bad_best_reference(*args, **kwargs):
+                autotune = original_autotune(*args, **kwargs)
+                autotune["best"]["reference_status"] = "failed"
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
+                return autotune
+
+            with patch.object(
+                validation_module,
+                "run_decode_step_autotune",
+                side_effect=autotune_with_bad_best_reference,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        decode_step_search_space_path=space_json,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["results"]["decode_step_autotune"], "pass")
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "best_reference_status"
+                ],
+                "failed",
+            )
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_step_autotune.best_reference_status"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["decode_step_autotune.best_reference_status"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_reference_status"
+                ],
+                "failed",
             )
 
     def test_validate_real_decode_writes_evidence_on_runtime_step_failure(

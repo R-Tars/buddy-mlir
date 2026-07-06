@@ -1061,6 +1061,21 @@ def validate_real_decode(
                 if autotune_report.get("best") is not None
                 else None
             ),
+            "best_trace_status": (
+                autotune_report.get("best", {}).get("trace_status")
+                if autotune_report.get("best") is not None
+                else None
+            ),
+            "best_parameter_source": (
+                autotune_report.get("best", {}).get("parameter_source")
+                if autotune_report.get("best") is not None
+                else None
+            ),
+            "best_metric": (
+                autotune_report.get("best", {}).get("metric")
+                if autotune_report.get("best") is not None
+                else None
+            ),
             "reference_status_counts": autotune_report.get(
                 "reference_status_counts",
                 _candidate_reference_status_counts(autotune_report),
@@ -1440,6 +1455,11 @@ def _real_decode_evidence_manifest(
                 "best_reference_status": autotune.get(
                     "best_reference_status"
                 ),
+                "best_trace_status": autotune.get("best_trace_status"),
+                "best_parameter_source": autotune.get(
+                    "best_parameter_source"
+                ),
+                "best_metric": autotune.get("best_metric"),
                 "status_counts": autotune.get("status_counts", {}),
                 "reference_status_counts": autotune.get(
                     "reference_status_counts",
@@ -1550,6 +1570,7 @@ def _real_decode_acceptance(
     decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    autotune = steps.get("decode_step_autotune", {})
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
     smoke_environment = _step_ttnn_environment(smoke)
@@ -1565,6 +1586,7 @@ def _real_decode_acceptance(
     profile_section_latency = profile.get("section_latency_ms")
     profile_layer_profiles = profile.get("layer_profiles")
     profile_bottleneck = profile.get("bottleneck_summary")
+    skip_autotune = bool(report.get("skip_autotune"))
     checks = [
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -1990,6 +2012,64 @@ def _real_decode_acceptance(
                 minimum=min_tokens_per_second_per_user,
             )
         )
+
+    if not skip_autotune:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "decode_step_autotune.status",
+                    autotune.get("status") == "pass",
+                    observed=autotune.get("status"),
+                    expected="pass",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.candidate_count",
+                    _positive_number(autotune.get("candidate_count")),
+                    observed=autotune.get("candidate_count"),
+                    minimum=1,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.passed_candidate_count",
+                    _positive_number(autotune.get("passed_candidate_count")),
+                    observed=autotune.get("passed_candidate_count"),
+                    minimum=1,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best",
+                    _non_empty_string(autotune.get("best")),
+                    observed=autotune.get("best"),
+                    required=True,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_reference_status",
+                    autotune.get("best_reference_status") == "passed",
+                    observed=autotune.get("best_reference_status"),
+                    expected="passed",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_parameter_source",
+                    autotune.get("best_parameter_source") == "hf_model",
+                    observed=autotune.get("best_parameter_source"),
+                    expected="hf_model",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_metric",
+                    _nonnegative_number(autotune.get("best_metric")),
+                    observed=autotune.get("best_metric"),
+                    minimum=0,
+                ),
+            ]
+        )
+        if require_trace:
+            checks.append(
+                _acceptance_check(
+                    "decode_step_autotune.best_trace_status",
+                    autotune.get("best_trace_status")
+                    == "captured_and_executed",
+                    observed=autotune.get("best_trace_status"),
+                    expected="captured_and_executed",
+                )
+            )
 
     passed = all(check["passed"] for check in checks)
     return {
