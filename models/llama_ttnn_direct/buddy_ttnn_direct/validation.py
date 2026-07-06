@@ -155,6 +155,10 @@ def default_decode_step_search_space_path() -> Path:
     )
 
 
+def _same_path(lhs: Path, rhs: Path) -> bool:
+    return lhs.resolve() == rhs.resolve()
+
+
 def validate_direct(
     *,
     model_path: str | Path,
@@ -191,6 +195,10 @@ def validate_direct(
         Path(decode_step_search_space_path)
         if decode_step_search_space_path is not None
         else default_decode_step_search_space_path()
+    )
+    decode_step_search_space_is_default = _same_path(
+        decode_step_search_space_path,
+        default_decode_step_search_space_path(),
     )
 
     paths = {
@@ -229,6 +237,9 @@ def validate_direct(
         "official_config": str(official_config_path),
         "search_space": str(search_space_path),
         "decode_step_search_space": str(decode_step_search_space_path),
+        "decode_step_search_space_is_default": (
+            decode_step_search_space_is_default
+        ),
         "metric": metric,
         "results": {step: "pending" for step in VALIDATION_STEPS},
         "steps": {},
@@ -599,6 +610,13 @@ def validate_direct(
                 {},
             ),
             "knob_coverage": autotune_report.get("knob_coverage"),
+            "default_search_space": decode_step_search_space_is_default,
+            "all_knobs_varied": (
+                autotune_report.get("knob_coverage") or {}
+            ).get("all_knobs_varied"),
+            "missing_varied_knobs": (
+                autotune_report.get("knob_coverage") or {}
+            ).get("missing_varied_knobs", []),
             "search_space": autotune_report.get("search_space"),
             "dry_run": autotune_report["dry_run"],
             "trace_enabled": autotune_report["trace_enabled"],
@@ -758,6 +776,10 @@ def validate_real_decode(
         if decode_step_search_space_path is not None
         else default_decode_step_search_space_path()
     )
+    decode_step_search_space_is_default = _same_path(
+        decode_step_search_space_path,
+        default_decode_step_search_space_path(),
+    )
     official_config_path = (
         Path(official_config_path)
         if official_config_path is not None
@@ -800,6 +822,9 @@ def validate_real_decode(
         "out_dir": str(root),
         "official_config": str(official_config_path),
         "decode_step_search_space": str(decode_step_search_space_path),
+        "decode_step_search_space_is_default": (
+            decode_step_search_space_is_default
+        ),
         "program_num_layers": program_num_layers,
         "program_batch_size": program_batch_size,
         "program_cache_len": program_cache_len,
@@ -1439,6 +1464,13 @@ def validate_real_decode(
                 {},
             ),
             "knob_coverage": autotune_report.get("knob_coverage"),
+            "default_search_space": decode_step_search_space_is_default,
+            "all_knobs_varied": (
+                autotune_report.get("knob_coverage") or {}
+            ).get("all_knobs_varied"),
+            "missing_varied_knobs": (
+                autotune_report.get("knob_coverage") or {}
+            ).get("missing_varied_knobs", []),
             "search_space": autotune_report.get("search_space"),
             "best_output_kind": (
                 autotune_report.get("best", {}).get("output_kind")
@@ -1809,6 +1841,12 @@ def _real_decode_evidence_manifest(
             "program_dir": report.get("program_dir"),
             "model_path": report.get("model_path"),
             "official_config": report.get("official_config"),
+            "decode_step_search_space": report.get(
+                "decode_step_search_space"
+            ),
+            "decode_step_search_space_is_default": report.get(
+                "decode_step_search_space_is_default"
+            ),
             "program_num_layers": report.get("program_num_layers"),
             "program_batch_size": report.get("program_batch_size"),
             "program_cache_len": report.get("program_cache_len"),
@@ -2196,6 +2234,14 @@ def _real_decode_evidence_manifest(
                     {},
                 ),
                 "knob_coverage": autotune.get("knob_coverage"),
+                "default_search_space": autotune.get(
+                    "default_search_space"
+                ),
+                "all_knobs_varied": autotune.get("all_knobs_varied"),
+                "missing_varied_knobs": autotune.get(
+                    "missing_varied_knobs",
+                    [],
+                ),
                 "search_space": autotune.get("search_space"),
             },
         },
@@ -3941,6 +3987,19 @@ def _real_decode_acceptance(
                 ),
             ]
         )
+        if report.get("decode_step_search_space_is_default"):
+            checks.append(
+                _acceptance_check(
+                    "decode_step_autotune.default_knob_variation",
+                    _autotune_default_knobs_varied(
+                        autotune.get("knob_coverage")
+                    ),
+                    observed=_autotune_knob_variation_observed(
+                        autotune.get("knob_coverage")
+                    ),
+                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
+                )
+            )
         if require_trace:
             checks.append(
                 _acceptance_check(
@@ -4582,7 +4641,39 @@ def _autotune_knob_coverage_observed(coverage: Any) -> dict[str, Any]:
         "candidate_count": coverage.get("candidate_count"),
         "values": coverage.get("values"),
         "varied_knobs": coverage.get("varied_knobs"),
+        "missing_varied_knobs": _autotune_missing_varied_knobs(coverage),
+        "all_knobs_varied": _autotune_default_knobs_varied(coverage),
     }
+
+
+def _autotune_default_knobs_varied(coverage: Any) -> bool:
+    return _autotune_missing_varied_knobs(coverage) == []
+
+
+def _autotune_knob_variation_observed(coverage: Any) -> dict[str, Any]:
+    if not isinstance(coverage, dict):
+        return {}
+    return {
+        "varied_knobs": coverage.get("varied_knobs"),
+        "missing_varied_knobs": _autotune_missing_varied_knobs(coverage),
+        "all_knobs_varied": _autotune_default_knobs_varied(coverage),
+    }
+
+
+def _autotune_missing_varied_knobs(coverage: Any) -> list[str]:
+    if not isinstance(coverage, dict):
+        return list(DECODE_STEP_AUTOTUNE_KNOBS)
+    missing = coverage.get("missing_varied_knobs")
+    if isinstance(missing, list):
+        return [str(knob) for knob in missing]
+    varied = coverage.get("varied_knobs")
+    if not isinstance(varied, list):
+        return list(DECODE_STEP_AUTOTUNE_KNOBS)
+    return [
+        knob
+        for knob in DECODE_STEP_AUTOTUNE_KNOBS
+        if knob not in varied
+    ]
 
 
 def _autotune_output_kind_counts_complete(

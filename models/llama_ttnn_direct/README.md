@@ -1273,8 +1273,11 @@ minimized; `tokens_per_second_per_user` and `aggregate_tokens_per_second` are
 maximized. Top-level `status_counts`, `reference_status_counts`,
 `trace_status_counts`, and `output_kind_counts` make failed, skipped, token,
 or full-logits candidate classes visible without opening every nested profile
-report. Candidates whose profile report does not pass the structural reference
-gate are not considered for `best`.
+report. `knob_coverage` also records `varied_knobs`,
+`missing_varied_knobs`, and `all_knobs_varied`; the bundled default
+`decode_step_minimal.json` validation gate requires all five review knobs to
+vary at least once. Candidates whose profile report does not pass the
+structural reference gate are not considered for `best`.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate

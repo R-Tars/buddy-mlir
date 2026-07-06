@@ -198,6 +198,37 @@ class SearchTest(unittest.TestCase):
             len(enumerate_candidate_configs(_seed_config(), space)), 10
         )
 
+    def test_default_decode_step_space_covers_review_knobs(self) -> None:
+        repo_root = Path(__file__).parents[4]
+        space = load_search_space(
+            repo_root
+            / "models"
+            / "llama_ttnn_direct"
+            / "buddy_ttnn_direct"
+            / "search"
+            / "spaces"
+            / "decode_step_minimal.json"
+        )
+
+        self.assertEqual(space["lm_head_split_count"], [4, 8])
+        self.assertEqual(
+            space["generation_template"],
+            ["device_argmax_greedy", "full_logits"],
+        )
+        self.assertEqual(space["mlp_intermediate_dtype"], [None, "bfloat8_b"])
+        self.assertEqual(
+            space["attention_sdpa_output_memory_config"],
+            [None, "l1"],
+        )
+        self.assertEqual(
+            space["attention_concat_heads_output_memory_config"],
+            [None, "l1"],
+        )
+        self.assertEqual(
+            len(enumerate_candidate_configs(_seed_config(), space)),
+            32,
+        )
+
     def test_cli_autotune_decode_step_dry_run_generates_candidate_configs(
         self,
     ) -> None:
@@ -284,6 +315,16 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 report["knob_coverage"]["varied_knobs"],
                 ["mlp_intermediate_dtype"],
+            )
+            self.assertFalse(report["knob_coverage"]["all_knobs_varied"])
+            self.assertEqual(
+                report["knob_coverage"]["missing_varied_knobs"],
+                [
+                    "lm_head_split_count",
+                    "generation_template",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
             )
             self.assertEqual(
                 report["search_space"],

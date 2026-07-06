@@ -307,16 +307,23 @@ def _knob_coverage(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         knob: _knob_value_counts(candidates, knob)
         for knob in DECODE_STEP_AUTOTUNE_KNOBS
     }
+    varied_knobs = [
+        knob
+        for knob, knob_values in values.items()
+        if len(knob_values) > 1
+    ]
+    missing_varied_knobs = [
+        knob for knob in DECODE_STEP_AUTOTUNE_KNOBS if knob not in varied_knobs
+    ]
     return {
         "knobs": list(DECODE_STEP_AUTOTUNE_KNOBS),
         "candidate_count": len(candidates),
         "values": values,
         "value_counts": value_counts,
-        "varied_knobs": [
-            knob
-            for knob, knob_values in values.items()
-            if len(knob_values) > 1
-        ],
+        "varied_knobs": varied_knobs,
+        "required_varied_knobs": list(DECODE_STEP_AUTOTUNE_KNOBS),
+        "missing_varied_knobs": missing_varied_knobs,
+        "all_knobs_varied": not missing_varied_knobs,
     }
 
 

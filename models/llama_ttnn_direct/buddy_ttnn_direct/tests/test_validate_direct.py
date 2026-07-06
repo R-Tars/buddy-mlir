@@ -67,6 +67,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["schema_version"], 1)
             self.assertEqual(report["command"], "validate-direct")
             self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["decode_step_search_space_is_default"])
             self.assertEqual(
                 report["results"],
                 {step: "pass" for step in VALIDATION_STEPS},
@@ -175,6 +176,25 @@ class ValidateDirectTest(unittest.TestCase):
                 [None, "l1"],
             )
             self.assertEqual(
+                decode_step_autotune["knob_coverage"]["values"][
+                    "attention_concat_heads_output_memory_config"
+                ],
+                [None, "l1"],
+            )
+            self.assertEqual(
+                decode_step_autotune["knob_coverage"]["varied_knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(
+                decode_step_autotune["knob_coverage"][
+                    "missing_varied_knobs"
+                ],
+                [],
+            )
+            self.assertTrue(
+                decode_step_autotune["knob_coverage"]["all_knobs_varied"]
+            )
+            self.assertEqual(
                 decode_step_autotune["status_counts"],
                 {"dry_run_planned": 32},
             )
@@ -199,6 +219,22 @@ class ValidateDirectTest(unittest.TestCase):
                     "knob_coverage"
                 ]["knobs"],
                 list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertTrue(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "default_search_space"
+                ]
+            )
+            self.assertTrue(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "all_knobs_varied"
+                ]
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "missing_varied_knobs"
+                ],
+                [],
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"][
@@ -590,6 +626,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["cache_len"], 16)
             self.assertEqual(report["program_generation"]["mode"], "greedy")
             self.assertEqual(report["program_kv_cache"]["policy"], "paged")
+            self.assertFalse(report["decode_step_search_space_is_default"])
             self.assertEqual(
                 report["program_kv_cache"]["template"],
                 "paged_kv_cache",
@@ -1447,6 +1484,27 @@ class ValidateDirectTest(unittest.TestCase):
                 ]["generation_template"],
                 ["device_argmax_greedy", "full_logits"],
             )
+            self.assertFalse(
+                report["steps"]["decode_step_autotune"][
+                    "default_search_space"
+                ]
+            )
+            self.assertFalse(
+                report["steps"]["decode_step_autotune"][
+                    "all_knobs_varied"
+                ]
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "missing_varied_knobs"
+                ],
+                [
+                    "lm_head_split_count",
+                    "mlp_intermediate_dtype",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
+            )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["output_kind_counts"],
                 {"token": 1, "logits": 1},
@@ -1864,6 +1922,9 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["program_kv_cache"]["policy"],
                 "paged",
+            )
+            self.assertFalse(
+                evidence["validation"]["decode_step_search_space_is_default"]
             )
             self.assertFalse(
                 evidence["requirements"]["require_batch32_decode_step"]
@@ -2406,6 +2467,22 @@ class ValidateDirectTest(unittest.TestCase):
                 ]["values"]["lm_head_split_count"],
                 [2],
             )
+            self.assertFalse(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "default_search_space"
+                ]
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "missing_varied_knobs"
+                ],
+                [
+                    "lm_head_split_count",
+                    "mlp_intermediate_dtype",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
+            )
             self.assertEqual(
                 evidence["runtime_evidence"]["decode_step_autotune"][
                     "output_kind_counts"
@@ -2889,6 +2966,115 @@ class ValidateDirectTest(unittest.TestCase):
                     "knob_coverage"
                 ]["knobs"],
                 ["lm_head_split_count"],
+            )
+
+    def test_validate_real_decode_requires_default_autotune_variation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_autotune = validation_module.run_decode_step_autotune
+
+            def autotune_without_default_variation(*args, **kwargs):
+                kwargs = dict(kwargs)
+                kwargs["space"] = {
+                    "lm_head_split_count": [2],
+                    "generation_template": [
+                        "device_argmax_greedy",
+                        "full_logits",
+                    ],
+                    "mlp_intermediate_dtype": [None],
+                    "attention_sdpa_output_memory_config": [None],
+                    "attention_concat_heads_output_memory_config": [None],
+                }
+                autotune = original_autotune(*args, **kwargs)
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
+                return autotune
+
+            with patch.object(
+                validation_module,
+                "run_decode_step_autotune",
+                side_effect=autotune_without_default_variation,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertTrue(report["decode_step_search_space_is_default"])
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_step_autotune.default_knob_variation"],
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "missing_varied_knobs"
+                ],
+                [
+                    "lm_head_split_count",
+                    "mlp_intermediate_dtype",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["decode_step_autotune.default_knob_variation"],
+            )
+            self.assertTrue(
+                evidence["validation"]["decode_step_search_space_is_default"]
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "missing_varied_knobs"
+                ],
+                [
+                    "lm_head_split_count",
+                    "mlp_intermediate_dtype",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
             )
 
     def test_validate_real_decode_fails_on_attention_layer_primitive_reports(
