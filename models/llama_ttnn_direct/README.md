@@ -679,7 +679,7 @@ weight shapes against the generated config, resolved
 synthetic runtime input source/count evidence for token ids, page tables,
 cache position, paged KV cache, and per-layer synthetic rotary tensors,
 runtime input shape evidence for token/page/cache-position/KV tensors,
-official config diff evidence,
+official config diff evidence including required parity-field coverage,
 layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/attention-primitive/attention-layer/single-layer/smoke/profile runtime
@@ -1035,6 +1035,10 @@ extra fields, matching fields, per-section summaries, and a `gap_summary`
 with the affected sections plus top missing/mismatched/extra paths. Its purpose
 is to make parity gaps explicit before tuning dtype, compute fidelity, program
 config, memory config, core grid, LM-head strategy, or paged attention config.
+The report also records `required_field_coverage` for both the generated config
+and the official reference. `validate-direct` and `validate-real-decode` require
+the official/reference side to cover every required parity field, so an
+incomplete seed cannot be used as strong parity evidence.
 
 ## Performance Step 2: Generated Single-Layer Decode Smoke
 

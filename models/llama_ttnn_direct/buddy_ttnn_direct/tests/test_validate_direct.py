@@ -12,6 +12,8 @@ from models.llama_ttnn_direct.buddy_ttnn_direct import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     PARITY_SECTIONS,
+    REQUIRED_PARITY_PATHS,
+    default_official_config_path,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
@@ -103,6 +105,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIn("plan_diff.clean", acceptance_check_names)
             self.assertIn("py_compile.artifacts", acceptance_check_names)
             self.assertIn(
+                "official_config_diff.official_required_fields",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "tensorize_parameters_dry_run.status",
                 acceptance_check_names,
             )
@@ -159,6 +165,28 @@ class ValidateDirectTest(unittest.TestCase):
             config_diff = json.loads((out_dir / "official_config_diff.json").read_text())
             self.assertEqual(config_diff["status"], "diff_found")
             self.assertGreater(config_diff["summary"]["issue_count"], 0)
+            self.assertEqual(
+                config_diff["required_field_coverage"]["official"]["status"],
+                "complete",
+            )
+            self.assertEqual(
+                config_diff["required_field_coverage"]["official"][
+                    "missing_required_paths"
+                ],
+                [],
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["status"],
+                "complete",
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"][
+                    "required_parity_fields"
+                ],
+                list(REQUIRED_PARITY_PATHS),
+            )
 
             tensorize_report = json.loads((out_dir / "tensorize_report.json").read_text())
             self.assertTrue(tensorize_report["dry_run"])
@@ -516,6 +544,24 @@ class ValidateDirectTest(unittest.TestCase):
                     "status"
                 ],
                 "diff_found",
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["status"],
+                "complete",
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["missing_required_paths"],
+                [],
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"][
+                    "required_parity_fields"
+                ],
+                list(REQUIRED_PARITY_PATHS),
             )
             self.assertIn(
                 "memory_config",
@@ -1145,6 +1191,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "official_config_diff.gap_summary",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "official_config_diff.official_required_fields",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -2207,6 +2257,24 @@ class ValidateDirectTest(unittest.TestCase):
                 ]["status"],
                 "diff_found",
             )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["status"],
+                "complete",
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["missing_required_paths"],
+                [],
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "required_parity_fields"
+                ],
+                list(REQUIRED_PARITY_PATHS),
+            )
             self.assertIn(
                 "memory_config",
                 evidence["config_evidence"]["official_config_diff"][
@@ -2853,6 +2921,84 @@ class ValidateDirectTest(unittest.TestCase):
                     "diff_status"
                 ],
                 "diff_found",
+            )
+
+    def test_validate_real_decode_fails_on_incomplete_official_config(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            official_json = root / "incomplete_official_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            official = json.loads(default_official_config_path().read_text())
+            official["parity_config"]["compute_fidelity"].pop("mlp")
+            official_json.write_text(json.dumps(official))
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    official_config_path=official_json,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["official_config_diff.official_required_fields"],
+            )
+            self.assertEqual(
+                failed_checks[0]["observed"]["status"],
+                "incomplete",
+            )
+            self.assertIn(
+                "compute_fidelity.mlp",
+                failed_checks[0]["observed"]["missing_required_paths"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["official_config_diff.official_required_fields"],
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "official_required_field_coverage"
+                ]["status"],
+                "incomplete",
             )
 
     def test_validate_real_decode_can_require_full_depth(self) -> None:

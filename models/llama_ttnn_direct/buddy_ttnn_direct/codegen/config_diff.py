@@ -17,6 +17,79 @@ PARITY_SECTIONS = (
     "paged_attention",
 )
 
+REQUIRED_PARITY_FIELDS_BY_SECTION = {
+    "dtype_recipe": (
+        "recipe",
+        "embedding",
+        "rms_norm",
+        "attention_qkv",
+        "attention_o_proj",
+        "mlp_intermediate",
+        "mlp_output",
+        "lm_head",
+        "kv_cache",
+    ),
+    "compute_fidelity": (
+        "attention_qkv",
+        "attention_sdpa",
+        "attention_o_proj",
+        "mlp",
+        "lm_head",
+    ),
+    "program_config": (
+        "attention_qkv",
+        "attention_sdpa",
+        "attention_o_proj",
+        "mlp_gate",
+        "mlp_up",
+        "mlp_down",
+        "lm_head_shards",
+    ),
+    "memory_config": (
+        "embedding",
+        "rms_norm",
+        "attention_qkv",
+        "attention_heads",
+        "attention_sdpa",
+        "attention_concat_heads",
+        "attention_o_proj",
+        "mlp_gate",
+        "mlp_up",
+        "mlp_down",
+        "lm_head_output",
+        "lm_head_concat",
+        "kv_cache",
+    ),
+    "core_grid": (
+        "attention",
+        "mlp",
+        "lm_head",
+    ),
+    "lm_head": (
+        "template",
+        "split_count",
+        "split_axis",
+        "retain_logits",
+        "shard_count",
+        "argmax_strategy",
+    ),
+    "paged_attention": (
+        "enabled",
+        "scale",
+        "max_cache_len",
+        "page_block_size",
+        "qkv_heads_memory_config",
+        "sdpa_program_config",
+        "sdpa_memory_config",
+    ),
+}
+
+REQUIRED_PARITY_PATHS = tuple(
+    f"{section}.{field}"
+    for section in PARITY_SECTIONS
+    for field in REQUIRED_PARITY_FIELDS_BY_SECTION[section]
+)
+
 
 def default_official_config_path() -> Path:
     return (
@@ -37,6 +110,13 @@ def diff_official_config(
 
     ours_flat = _flatten(ours_view["parity_config"])
     official_flat = _flatten(official_view["parity_config"])
+    coverage = {
+        "required_fields": list(REQUIRED_PARITY_PATHS),
+        "ours": _required_field_coverage(ours_view["parity_config"]),
+        "official": _required_field_coverage(
+            official_view["parity_config"]
+        ),
+    }
     all_paths = sorted(set(ours_flat).union(official_flat))
 
     missing_fields = []
@@ -111,6 +191,7 @@ def diff_official_config(
             "section_count": len(PARITY_SECTIONS),
             "sections_with_issues": gap_summary["sections_with_issues"],
         },
+        "required_field_coverage": coverage,
         "gap_summary": gap_summary,
         "ours": {
             "source_format": ours_view["source_format"],
@@ -364,6 +445,32 @@ def _gap_summary(
         "sections_with_issues": sections_with_issues,
         "issue_counts_by_section": issue_counts_by_section,
         "top_issue_paths": top_issues,
+    }
+
+
+def _required_field_coverage(
+    parity_config: dict[str, Any],
+) -> dict[str, Any]:
+    flat = _flatten(parity_config)
+    missing_paths = [
+        path
+        for path in REQUIRED_PARITY_PATHS
+        if _is_missing(flat.get(path))
+    ]
+    sections_missing_fields = [
+        section
+        for section in PARITY_SECTIONS
+        if any(path.startswith(section + ".") for path in missing_paths)
+    ]
+    return {
+        "status": "complete" if not missing_paths else "incomplete",
+        "required_field_count": len(REQUIRED_PARITY_PATHS),
+        "present_required_count": (
+            len(REQUIRED_PARITY_PATHS) - len(missing_paths)
+        ),
+        "missing_required_count": len(missing_paths),
+        "missing_required_paths": missing_paths,
+        "sections_missing_required_fields": sections_missing_fields,
     }
 
 

@@ -464,6 +464,7 @@ def validate_direct(
             official_config_path,
         )
         dump_config_diff(diff, paths["official_config_diff"])
+        coverage = diff.get("required_field_coverage") or {}
         return {
             "official_config_diff": str(paths["official_config_diff"]),
             "diff_status": diff["status"],
@@ -471,6 +472,8 @@ def validate_direct(
             "missing_count": diff["summary"]["missing_count"],
             "mismatch_count": diff["summary"]["mismatch_count"],
             "extra_count": diff["summary"]["extra_count"],
+            "official_required_field_coverage": coverage.get("official"),
+            "required_parity_fields": coverage.get("required_fields", []),
         }
 
     def tensorize_parameters_dry_run_step() -> dict[str, Any]:
@@ -1034,6 +1037,7 @@ def validate_real_decode(
             official_config_path,
         )
         dump_config_diff(diff, paths["official_config_diff"])
+        coverage = diff.get("required_field_coverage") or {}
         section_statuses = {
             section: summary.get("status")
             for section, summary in sorted(diff["sections"].items())
@@ -1050,6 +1054,8 @@ def validate_real_decode(
             "extra_count": diff["summary"]["extra_count"],
             "matching_count": diff["summary"]["matching_count"],
             "gap_summary": diff.get("gap_summary"),
+            "official_required_field_coverage": coverage.get("official"),
+            "required_parity_fields": coverage.get("required_fields", []),
             "sections": sorted(diff["sections"]),
             "section_statuses": section_statuses,
         }
@@ -2264,6 +2270,15 @@ def _real_decode_evidence_manifest(
                 "extra_count": official_config_diff.get("extra_count"),
                 "matching_count": official_config_diff.get("matching_count"),
                 "gap_summary": official_config_diff.get("gap_summary"),
+                "official_required_field_coverage": (
+                    official_config_diff.get(
+                        "official_required_field_coverage"
+                    )
+                ),
+                "required_parity_fields": official_config_diff.get(
+                    "required_parity_fields",
+                    [],
+                ),
                 "sections": official_config_diff.get("sections", []),
                 "section_statuses": official_config_diff.get(
                     "section_statuses",
@@ -2816,6 +2831,20 @@ def _validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
             expected=["match", "diff_found"],
         ),
         _acceptance_check(
+            "official_config_diff.official_required_fields",
+            _official_required_field_coverage_complete(
+                steps.get("official_config_diff", {}).get(
+                    "official_required_field_coverage"
+                )
+            ),
+            observed=_official_required_field_coverage_observed(
+                steps.get("official_config_diff", {}).get(
+                    "official_required_field_coverage"
+                )
+            ),
+            expected="complete",
+        ),
+        _acceptance_check(
             "tensorize_parameters_dry_run.status",
             tensorize.get("dry_run") is True
             and _positive_number(tensorize.get("tensor_count"))
@@ -3154,6 +3183,16 @@ def _real_decode_acceptance(
                 official_config_diff.get("gap_summary")
             ),
             expected=list(PARITY_SECTIONS),
+        ),
+        _acceptance_check(
+            "official_config_diff.official_required_fields",
+            _official_required_field_coverage_complete(
+                official_config_diff.get("official_required_field_coverage")
+            ),
+            observed=_official_required_field_coverage_observed(
+                official_config_diff.get("official_required_field_coverage")
+            ),
+            expected="complete",
         ),
         _acceptance_check(
             "materialize_parameters.tensor_count",
@@ -5113,6 +5152,45 @@ def _config_gap_summary_complete(summary: Any) -> bool:
     return status == "diff_found" and bool(top_issue_paths) and all(
         _config_gap_issue_complete(issue) for issue in top_issue_paths
     )
+
+
+def _official_required_field_coverage_complete(coverage: Any) -> bool:
+    if not isinstance(coverage, dict):
+        return False
+    try:
+        required = int(coverage.get("required_field_count"))
+        present = int(coverage.get("present_required_count"))
+        missing = int(coverage.get("missing_required_count"))
+    except (TypeError, ValueError):
+        return False
+    missing_paths = coverage.get("missing_required_paths")
+    missing_sections = coverage.get("sections_missing_required_fields")
+    return (
+        coverage.get("status") == "complete"
+        and required > 0
+        and present == required
+        and missing == 0
+        and missing_paths == []
+        and missing_sections == []
+    )
+
+
+def _official_required_field_coverage_observed(
+    coverage: Any,
+) -> dict[str, Any]:
+    if not isinstance(coverage, dict):
+        return {}
+    return {
+        "status": coverage.get("status"),
+        "required_field_count": coverage.get("required_field_count"),
+        "present_required_count": coverage.get("present_required_count"),
+        "missing_required_count": coverage.get("missing_required_count"),
+        "missing_required_paths": coverage.get("missing_required_paths", []),
+        "sections_missing_required_fields": coverage.get(
+            "sections_missing_required_fields",
+            [],
+        ),
+    }
 
 
 def _config_gap_issue_complete(issue: Any) -> bool:

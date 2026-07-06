@@ -8,6 +8,7 @@ from pathlib import Path
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     PARITY_SECTIONS,
+    REQUIRED_PARITY_PATHS,
     build_config_parity_view,
     default_official_config_path,
     diff_official_config,
@@ -38,6 +39,18 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertEqual(diff["gap_summary"]["issue_count"], 0)
         self.assertEqual(diff["gap_summary"]["sections_with_issues"], [])
         self.assertEqual(diff["gap_summary"]["top_issue_paths"], [])
+        coverage = diff["required_field_coverage"]
+        self.assertEqual(coverage["required_fields"], list(REQUIRED_PARITY_PATHS))
+        self.assertEqual(coverage["official"]["status"], "complete")
+        self.assertEqual(coverage["official"]["missing_required_paths"], [])
+        self.assertEqual(
+            coverage["official"]["required_field_count"],
+            len(REQUIRED_PARITY_PATHS),
+        )
+        self.assertEqual(
+            coverage["official"]["present_required_count"],
+            len(REQUIRED_PARITY_PATHS),
+        )
         self.assertEqual(set(diff["sections"]), set(PARITY_SECTIONS))
         self.assertTrue(
             all(
@@ -82,6 +95,46 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertEqual(
             diff["ours"]["parity_config"]["lm_head"]["split_count"],
             8,
+        )
+        self.assertEqual(
+            diff["required_field_coverage"]["official"]["status"],
+            "complete",
+        )
+        self.assertEqual(
+            diff["required_field_coverage"]["ours"]["status"],
+            "incomplete",
+        )
+        self.assertIn(
+            "memory_config.attention_qkv",
+            diff["required_field_coverage"]["ours"]["missing_required_paths"],
+        )
+
+    def test_official_required_field_coverage_reports_missing_seed_field(
+        self,
+    ) -> None:
+        ours = _fake_generated_config()
+        official = json.loads(default_official_config_path().read_text())
+        official["parity_config"]["program_config"].pop(
+            "attention_sdpa",
+        )
+        official["parity_config"]["memory_config"]["attention_sdpa"] = None
+
+        diff = diff_official_config(ours, official)
+
+        coverage = diff["required_field_coverage"]["official"]
+        self.assertEqual(coverage["status"], "incomplete")
+        self.assertEqual(coverage["missing_required_count"], 2)
+        self.assertIn(
+            "program_config.attention_sdpa",
+            coverage["missing_required_paths"],
+        )
+        self.assertIn(
+            "memory_config.attention_sdpa",
+            coverage["missing_required_paths"],
+        )
+        self.assertEqual(
+            coverage["sections_missing_required_fields"],
+            ["program_config", "memory_config"],
         )
 
     def test_cli_diff_official_config_writes_report(self) -> None:
