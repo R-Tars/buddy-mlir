@@ -2804,6 +2804,22 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "single_layer_decode.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(1),
+            },
+        ),
+        _acceptance_check(
             "single_layer_decode.linear_weight_transforms",
             _linear_weight_transform_complete(
                 single_layer_tensorization,
@@ -2977,6 +2993,24 @@ def _real_decode_acceptance(
             ),
             observed=smoke_tensorization.get("ttnn_memory_config_counts"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(
+                    expected_layers
+                ),
+            },
         ),
         _acceptance_check(
             "smoke_decode_step.linear_weight_transforms",
@@ -3158,6 +3192,24 @@ def _real_decode_acceptance(
             ),
             observed=profile_tensorization.get("ttnn_memory_config_counts"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(
+                    expected_layers
+                ),
+            },
         ),
         _acceptance_check(
             "profile_decode_step.linear_weight_transforms",
@@ -3796,6 +3848,99 @@ def _lm_head_transform_complete(
     if not isinstance(split0, dict):
         return False
     return split0.get("transform") == "transpose_2d"
+
+
+def _embedding_norm_weight_transform_complete(
+    tensorization: Any,
+    *,
+    layer_count: Any,
+) -> bool:
+    if not isinstance(tensorization, dict):
+        return False
+    paths = _embedding_norm_weight_transform_paths(layer_count)
+    embedding_paths = set(paths["embedding"])
+    norm_paths = set(paths["norm"])
+    if not embedding_paths or not norm_paths:
+        return False
+    embedding_transformed = _transformed_tensor_paths(
+        tensorization,
+        "reshape_embedding_weight_4d",
+    )
+    norm_transformed = _transformed_tensor_paths(
+        tensorization,
+        "reshape_norm_weight_4d",
+    )
+    if not embedding_paths.issubset(embedding_transformed):
+        return False
+    if not norm_paths.issubset(norm_transformed):
+        return False
+    key_tensors = tensorization.get("key_tensors")
+    if not isinstance(key_tensors, dict):
+        return False
+    for key_path in (
+        "embedding.weight",
+        "layers.0.input_norm.weight",
+        "layers.0.post_attention_norm.weight",
+        "final_norm.weight",
+    ):
+        tensor = key_tensors.get(key_path)
+        if isinstance(tensor, dict):
+            shape = tensor.get("shape")
+            if not isinstance(shape, list) or len(shape) != 4:
+                return False
+    return True
+
+
+def _embedding_norm_weight_transform_paths(layer_count: Any) -> dict[str, list[str]]:
+    norm_paths = ["final_norm.weight"]
+    for layer_id in _expected_layer_ids(layer_count):
+        norm_paths.extend(
+            [
+                f"layers.{layer_id}.input_norm.weight",
+                f"layers.{layer_id}.post_attention_norm.weight",
+            ]
+        )
+    return {
+        "embedding": ["embedding.weight"],
+        "norm": norm_paths,
+    }
+
+
+def _embedding_norm_weight_transform_observed(
+    tensorization: Any,
+    *,
+    layer_count: Any,
+) -> dict[str, Any]:
+    if not isinstance(tensorization, dict):
+        return {}
+    expected_paths = _embedding_norm_weight_transform_paths(layer_count)
+    key_tensors = tensorization.get("key_tensors")
+    key_observed = {}
+    if isinstance(key_tensors, dict):
+        for path in expected_paths["embedding"] + expected_paths["norm"]:
+            tensor = key_tensors.get(path)
+            if isinstance(tensor, dict):
+                key_observed[path] = {
+                    "transform": tensor.get("transform"),
+                    "source_shape": tensor.get("source_shape"),
+                    "shape": tensor.get("shape"),
+                }
+    return {
+        "expected_paths": expected_paths,
+        "embedding_transformed_paths": sorted(
+            _transformed_tensor_paths(
+                tensorization,
+                "reshape_embedding_weight_4d",
+            )
+        ),
+        "norm_transformed_paths": sorted(
+            _transformed_tensor_paths(
+                tensorization,
+                "reshape_norm_weight_4d",
+            )
+        ),
+        "key_tensors": key_observed,
+    }
 
 
 def _linear_weight_transform_complete(

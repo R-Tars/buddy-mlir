@@ -334,8 +334,16 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(records["embedding.weight"]["memory_config"], "dram")
             self.assertEqual(
+                records["embedding.weight"]["transform"],
+                "reshape_embedding_weight_4d",
+            )
+            self.assertEqual(
                 records["layers.0.input_norm.weight"]["layout"],
                 "row_major",
+            )
+            self.assertEqual(
+                records["layers.0.input_norm.weight"]["transform"],
+                "reshape_norm_weight_4d",
             )
             self.assertEqual(
                 records["layers.0.attention.wqkv_packed.weight"][
@@ -364,6 +372,10 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 records["final_norm.weight"]["layout"],
                 "row_major",
+            )
+            self.assertEqual(
+                records["final_norm.weight"]["transform"],
+                "reshape_norm_weight_4d",
             )
 
     def test_to_ttnn_parameters_uses_role_dtype_and_layout(self) -> None:
@@ -555,8 +567,16 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "ttnn.DRAM_MEMORY_CONFIG",
             )
             self.assertEqual(
+                result.parameters.embedding.weight.shape,
+                [1, 1, 128, 16],
+            )
+            self.assertEqual(
                 result.parameters.layers[0].input_norm.weight.layout,
                 "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(
+                result.parameters.layers[0].input_norm.weight.shape,
+                [1, 1, 1, 16],
             )
             self.assertEqual(
                 result.parameters.layers[0].attention.wqkv_packed.weight.dtype,
@@ -573,6 +593,22 @@ class ParameterMaterializerTest(unittest.TestCase):
             records = {
                 record["path"]: record for record in result.report["tensors"]
             }
+            self.assertEqual(
+                records["embedding.weight"]["source_shape"],
+                [128, 16],
+            )
+            self.assertEqual(
+                records["embedding.weight"]["shape"],
+                [1, 1, 128, 16],
+            )
+            self.assertEqual(
+                records["layers.0.input_norm.weight"]["source_shape"],
+                [16],
+            )
+            self.assertEqual(
+                records["layers.0.input_norm.weight"]["shape"],
+                [1, 1, 1, 16],
+            )
             self.assertEqual(
                 records["layers.0.attention.wqkv_packed.weight"][
                     "source_shape"
@@ -594,6 +630,10 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 result.parameters.final_norm.weight.dtype,
                 "ttnn.bfloat16",
+            )
+            self.assertEqual(
+                result.parameters.final_norm.weight.shape,
+                [1, 1, 1, 16],
             )
 
 
@@ -623,6 +663,13 @@ class FakeTensor:
         return FakeTensor(
             f"{self.name}.transpose({dim0},{dim1})",
             shape,
+            self.dtype,
+        )
+
+    def reshape(self, *shape: int) -> "FakeTensor":
+        return FakeTensor(
+            f"{self.name}.reshape({','.join(str(dim) for dim in shape)})",
+            [int(dim) for dim in shape],
             self.dtype,
         )
 

@@ -381,7 +381,23 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 report["parameter_setup"]["tensorization"][
                     "transform_counts"
                 ],
-                {"transpose_2d": 13},
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d": 13,
+                },
+            )
+            self.assertIn(
+                "embedding.weight",
+                report["parameter_setup"]["tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_embedding_weight_4d"],
+            )
+            self.assertIn(
+                "layers.0.input_norm.weight",
+                report["parameter_setup"]["tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_norm_weight_4d"],
             )
             self.assertIn(
                 "layers.0.attention.wqkv_packed.weight",
@@ -394,6 +410,18 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "layers.0.attention.wqkv_packed.weight"
                 ]["shape"],
                 [16, 32],
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "embedding.weight"
+                ]["shape"],
+                [1, 1, 128, 16],
+            )
+            self.assertEqual(
+                report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "layers.0.input_norm.weight"
+                ]["shape"],
+                [1, 1, 1, 16],
             )
             self.assertEqual(
                 report["parameter_setup"]["tensorization"]["key_tensors"][

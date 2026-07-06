@@ -111,6 +111,7 @@ def build_tensorization_plan(
                 "target_dtype": str(entry.get("target_dtype")),
                 "layout": str(entry.get("layout")),
                 "memory_config": _entry_memory_config(entry),
+                "transform": "reshape_embedding_weight_4d",
             }
         )
 
@@ -136,6 +137,7 @@ def build_tensorization_plan(
                         "target_dtype": str(entry.get("target_dtype")),
                         "layout": str(entry.get("layout")),
                         "memory_config": _entry_memory_config(entry),
+                        "transform": "reshape_norm_weight_4d",
                     }
                 )
         source_key, entry = _find_parameter_config_item(
@@ -153,6 +155,7 @@ def build_tensorization_plan(
                 "target_dtype": str(entry.get("target_dtype")),
                 "layout": str(entry.get("layout")),
                 "memory_config": _entry_memory_config(entry),
+                "transform": "reshape_norm_weight_4d",
             }
         )
 
@@ -471,6 +474,10 @@ def _apply_tensor_transform(tensor: Any, record: Mapping[str, Any]) -> Any:
         return tensor
     if transform == "transpose_2d":
         shape = _tensor_shape(tensor)
+        if shape is None:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires shape metadata for transpose_2d"
+            )
         if len(shape) != 2:
             raise TTNNTensorizationError(
                 f"{record['path']} requires a 2D tensor for transpose_2d; "
@@ -479,8 +486,57 @@ def _apply_tensor_transform(tensor: Any, record: Mapping[str, Any]) -> Any:
         transposed = tensor.transpose(0, 1)
         contiguous = getattr(transposed, "contiguous", None)
         return contiguous() if callable(contiguous) else transposed
+    if transform == "reshape_embedding_weight_4d":
+        shape = _tensor_shape(tensor)
+        if shape is None:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires shape metadata for "
+                "reshape_embedding_weight_4d"
+            )
+        if len(shape) != 2:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires a 2D tensor for "
+                f"reshape_embedding_weight_4d; got shape {shape}"
+            )
+        return _reshape_tensor(tensor, [1, 1, shape[0], shape[1]], record)
+    if transform == "reshape_norm_weight_4d":
+        shape = _tensor_shape(tensor)
+        if shape is None:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires shape metadata for "
+                "reshape_norm_weight_4d"
+            )
+        if len(shape) != 1:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires a 1D tensor for "
+                f"reshape_norm_weight_4d; got shape {shape}"
+            )
+        hidden_size = int(shape[0])
+        if hidden_size <= 0:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires a positive hidden size"
+            )
+        target_shape = (
+            [1, 1, hidden_size // 32, 32]
+            if hidden_size % 32 == 0
+            else [1, 1, 1, hidden_size]
+        )
+        return _reshape_tensor(tensor, target_shape, record)
     raise TTNNTensorizationError(
         f"unsupported tensor transform {transform!r} for {record['path']}"
+    )
+
+
+def _reshape_tensor(
+    tensor: Any,
+    shape: list[int],
+    record: Mapping[str, Any],
+) -> Any:
+    reshape = getattr(tensor, "reshape", None)
+    if callable(reshape):
+        return reshape(*shape)
+    raise TTNNTensorizationError(
+        f"{record['path']} requires tensor.reshape for {record['transform']}"
     )
 
 

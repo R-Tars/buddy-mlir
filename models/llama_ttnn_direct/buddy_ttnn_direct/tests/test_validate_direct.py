@@ -1155,6 +1155,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "single_layer_decode.embedding_norm_weight_transforms",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "single_layer_decode.linear_weight_transforms",
                 acceptance_check_names,
             )
@@ -1163,11 +1167,19 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "smoke_decode_step.embedding_norm_weight_transforms",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "smoke_decode_step.linear_weight_transforms",
                 acceptance_check_names,
             )
             self.assertIn(
                 "profile_decode_step.lm_head_transform",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.embedding_norm_weight_transforms",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1463,7 +1475,23 @@ class ValidateDirectTest(unittest.TestCase):
                 smoke_report["parameter_setup"]["tensorization"][
                     "transform_counts"
                 ],
-                {"transpose_2d": 13},
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d": 13,
+                },
+            )
+            self.assertIn(
+                "embedding.weight",
+                smoke_report["parameter_setup"]["tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_embedding_weight_4d"],
+            )
+            self.assertIn(
+                "layers.0.input_norm.weight",
+                smoke_report["parameter_setup"]["tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_norm_weight_4d"],
             )
             self.assertIn(
                 "layers.0.mlp.gate_proj.weight",
@@ -1488,6 +1516,18 @@ class ValidateDirectTest(unittest.TestCase):
                     "key_tensors"
                 ]["lm_head.splits.0.weight"]["shape"],
                 [16, 16],
+            )
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "embedding.weight"
+                ]["shape"],
+                [1, 1, 128, 16],
+            )
+            self.assertEqual(
+                smoke_report["parameter_setup"]["tensorization"]["key_tensors"][
+                    "layers.0.input_norm.weight"
+                ]["shape"],
+                [1, 1, 1, 16],
             )
             self.assertEqual(
                 smoke_report["parameter_setup"]["tensorization"]["key_tensors"][
@@ -1567,7 +1607,17 @@ class ValidateDirectTest(unittest.TestCase):
                 profile_report["parameter_setup"]["tensorization"][
                     "transform_counts"
                 ],
-                {"transpose_2d": 13},
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d": 13,
+                },
+            )
+            self.assertIn(
+                "final_norm.weight",
+                profile_report["parameter_setup"]["tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_norm_weight_4d"],
             )
             self.assertIn(
                 "layers.0.attention.wqkv_packed.weight",
@@ -1762,7 +1812,17 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "transform_counts"
                 ],
-                {"transpose_2d": 13},
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d": 13,
+                },
+            )
+            self.assertIn(
+                "embedding.weight",
+                evidence["weight_evidence"]["smoke_tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_embedding_weight_4d"],
             )
             self.assertIn(
                 "layers.0.mlp.down_proj.weight",
@@ -3763,6 +3823,97 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "transform_paths_by_kind"
                 ]["transpose_2d"],
+            )
+
+    def test_validate_real_decode_fails_without_embedding_norm_transform_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_smoke = validation_module.run_smoke_decode_step
+            missing_path = "embedding.weight"
+
+            def smoke_without_embedding_transform(*args, **kwargs):
+                report = original_smoke(*args, **kwargs)
+                tensorization = report["parameter_setup"]["tensorization"]
+                paths = tensorization["transform_paths_by_kind"][
+                    "reshape_embedding_weight_4d"
+                ]
+                tensorization["transform_paths_by_kind"][
+                    "reshape_embedding_weight_4d"
+                ] = [path for path in paths if path != missing_path]
+                tensorization["key_tensors"][missing_path].pop(
+                    "transform",
+                    None,
+                )
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_step",
+                side_effect=smoke_without_embedding_transform,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["smoke_decode_step.embedding_norm_weight_transforms"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["smoke_decode_step.embedding_norm_weight_transforms"],
+            )
+            self.assertNotIn(
+                missing_path,
+                evidence["weight_evidence"]["smoke_tensorization"][
+                    "transform_paths_by_kind"
+                ]["reshape_embedding_weight_4d"],
             )
 
     def test_validate_real_decode_fails_when_shell_observed_op_missing(

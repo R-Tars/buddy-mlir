@@ -1550,6 +1550,8 @@ def _materialization_summary(params: Any) -> dict[str, Any]:
         path
         for path in (
             "embedding.weight",
+            "layers.0.input_norm.weight",
+            "layers.0.post_attention_norm.weight",
             "layers.0.attention.wqkv_packed.weight",
             "layers.0.attention.o_proj.weight",
             "layers.0.mlp.gate_proj.weight",
@@ -1585,6 +1587,8 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
         if record.get("path")
         in {
             "embedding.weight",
+            "layers.0.input_norm.weight",
+            "layers.0.post_attention_norm.weight",
             "layers.0.attention.wqkv_packed.weight",
             "layers.0.attention.o_proj.weight",
             "layers.0.mlp.gate_proj.weight",
