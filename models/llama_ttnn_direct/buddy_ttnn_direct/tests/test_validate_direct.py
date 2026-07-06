@@ -10,6 +10,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct import (
     validation as validation_module,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
+    PARITY_SECTIONS,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
 )
@@ -265,12 +268,29 @@ class ValidateDirectTest(unittest.TestCase):
                 list(REAL_DECODE_VALIDATION_STEPS),
             )
             self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
+            self.assertEqual(report["results"]["official_config_diff"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
+            self.assertIn("official_config", report)
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["diff_status"],
+                "diff_found",
+            )
+            self.assertGreaterEqual(
+                report["steps"]["official_config_diff"]["issue_count"],
+                0,
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["sections"],
+                sorted(PARITY_SECTIONS),
+            )
             self.assertEqual(report["acceptance"]["status"], "dry_run")
             self.assertTrue(report["acceptance"]["passed"])
+            self.assertFalse(
+                report["acceptance"]["require_official_config_match"]
+            )
             self.assertTrue(report["acceptance"]["require_trace"])
             self.assertTrue(
                 report["acceptance"][
@@ -313,11 +333,21 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(evidence["validation"]["batch_size"], 2)
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["requirements"]["require_trace"])
+            self.assertFalse(
+                evidence["requirements"]["require_official_config_match"]
+            )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "diff_status"
+                ],
+                "diff_found",
+            )
             artifact_names = {
                 artifact["name"]: artifact for artifact in evidence["artifacts"]
             }
             self.assertTrue(artifact_names["report"]["exists"])
+            self.assertTrue(artifact_names["official_config_diff"]["exists"])
             self.assertTrue(artifact_names["smoke_report"]["exists"])
             self.assertFalse(artifact_names["autotune_report"]["exists"])
             self.assertEqual(
@@ -483,6 +513,22 @@ class ValidateDirectTest(unittest.TestCase):
             acceptance_check_names = [
                 check["name"] for check in report["acceptance"]["checks"]
             ]
+            self.assertIn(
+                "official_config_diff.status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "official_config_diff.diff_status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "official_config_diff.issue_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "official_config_diff.sections",
+                acceptance_check_names,
+            )
             self.assertIn(
                 "materialize_parameters.tensor_count",
                 acceptance_check_names,
@@ -746,6 +792,14 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["decode_step_autotune"]["trace_status_counts"],
                 {"captured_and_executed": 1},
             )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["diff_status"],
+                "diff_found",
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["sections"],
+                sorted(PARITY_SECTIONS),
+            )
             smoke_report = json.loads(
                 (out_dir / "decode_step_smoke_report.json").read_text()
             )
@@ -879,6 +933,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["acceptance"]["passed"])
             self.assertEqual(evidence["acceptance"]["failed_checks"], [])
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "diff_status"
+                ],
+                "diff_found",
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "sections"
+                ],
+                sorted(PARITY_SECTIONS),
+            )
             self.assertEqual(
                 evidence["weight_evidence"]["materialization"]["tensor_count"],
                 21,
@@ -1037,6 +1103,80 @@ class ValidateDirectTest(unittest.TestCase):
                     "best_parameter_source"
                 ],
                 "hf_model",
+            )
+
+    def test_validate_real_decode_can_require_official_config_match(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    require_official_config_match=True,
+                    min_tokens_per_second_per_user=0.0,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["diff_status"],
+                "diff_found",
+            )
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["official_config_diff.match"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertTrue(
+                evidence["requirements"]["require_official_config_match"]
+            )
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["official_config_diff.match"],
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "diff_status"
+                ],
+                "diff_found",
             )
 
     def test_validate_real_decode_fails_on_autotune_best_reference(

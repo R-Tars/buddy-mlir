@@ -12,6 +12,7 @@ from .codegen.artifacts import (
     write_json,
 )
 from .codegen.config_diff import (
+    PARITY_SECTIONS,
     default_official_config_path as default_official_parity_config_path,
     diff_official_config,
     dump_config_diff,
@@ -77,6 +78,7 @@ VALIDATION_STEPS = (
 )
 
 REAL_DECODE_VALIDATION_STEPS = (
+    "official_config_diff",
     "materialize_parameters",
     "decode_shell",
     "smoke_decode_step",
@@ -638,6 +640,7 @@ def validate_real_decode(
     program_dir: str | Path,
     model_path: str | Path,
     out_dir: str | Path,
+    official_config_path: str | Path | None = None,
     decode_step_search_space_path: str | Path | None = None,
     layers: int = 1,
     batch_size: int | None = None,
@@ -651,6 +654,7 @@ def validate_real_decode(
     dry_run: bool = False,
     skip_autotune: bool = False,
     require_trace: bool = False,
+    require_official_config_match: bool = False,
     min_tokens_per_second_per_user: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
@@ -695,9 +699,15 @@ def validate_real_decode(
         if decode_step_search_space_path is not None
         else default_decode_step_search_space_path()
     )
+    official_config_path = (
+        Path(official_config_path)
+        if official_config_path is not None
+        else default_official_parity_config_path()
+    )
     layers_to_materialize = list(range(layer_count))
 
     paths = {
+        "official_config_diff": root / "official_config_diff.json",
         "materialize_report": root / "parameter_materialization_report.json",
         "decode_shell_report": root / "decode_shell_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
@@ -714,6 +724,7 @@ def validate_real_decode(
         "program_dir": str(program_dir),
         "model_path": str(model_path),
         "out_dir": str(root),
+        "official_config": str(official_config_path),
         "decode_step_search_space": str(decode_step_search_space_path),
         "program_num_layers": program_num_layers,
         "layers": layer_count,
@@ -730,6 +741,7 @@ def validate_real_decode(
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
         "require_trace": require_trace,
+        "require_official_config_match": require_official_config_match,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
         "require_decode_shell_numeric_reference": (
@@ -799,6 +811,31 @@ def validate_real_decode(
         report["status"] = status
         persist()
         return False
+
+    def official_config_diff_step() -> dict[str, Any]:
+        diff = diff_official_config(
+            program_dir / "config.json",
+            official_config_path,
+        )
+        dump_config_diff(diff, paths["official_config_diff"])
+        section_statuses = {
+            section: summary.get("status")
+            for section, summary in sorted(diff["sections"].items())
+            if isinstance(summary, dict)
+        }
+        return {
+            "status": "pass",
+            "official_config_diff": str(paths["official_config_diff"]),
+            "official_config": str(official_config_path),
+            "diff_status": diff["status"],
+            "issue_count": diff["summary"]["issue_count"],
+            "missing_count": diff["summary"]["missing_count"],
+            "mismatch_count": diff["summary"]["mismatch_count"],
+            "extra_count": diff["summary"]["extra_count"],
+            "matching_count": diff["summary"]["matching_count"],
+            "sections": sorted(diff["sections"]),
+            "section_statuses": section_statuses,
+        }
 
     def materialize_step() -> dict[str, Any]:
         if dry_run:
@@ -1088,6 +1125,7 @@ def validate_real_decode(
         }
 
     step_actions = {
+        "official_config_diff": official_config_diff_step,
         "materialize_parameters": materialize_step,
         "decode_shell": decode_shell_step,
         "smoke_decode_step": smoke_step,
@@ -1103,6 +1141,7 @@ def validate_real_decode(
     acceptance = _real_decode_acceptance(
         report,
         require_trace=require_trace,
+        require_official_config_match=require_official_config_match,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
         require_decode_shell_numeric_reference=(
             require_decode_shell_numeric_reference
@@ -1268,6 +1307,7 @@ def _real_decode_evidence_manifest(
     paths: dict[str, Path],
 ) -> dict[str, Any]:
     steps = report.get("steps", {})
+    official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
@@ -1296,6 +1336,7 @@ def _real_decode_evidence_manifest(
             "dry_run": report.get("dry_run"),
             "program_dir": report.get("program_dir"),
             "model_path": report.get("model_path"),
+            "official_config": report.get("official_config"),
             "program_num_layers": report.get("program_num_layers"),
             "layers": report.get("layers"),
             "requested_batch_size": report.get("requested_batch_size"),
@@ -1309,6 +1350,9 @@ def _real_decode_evidence_manifest(
             "trace_iterations": report.get("trace_iterations"),
             "metric": report.get("metric"),
             "skip_autotune": report.get("skip_autotune"),
+            "require_official_config_match": report.get(
+                "require_official_config_match"
+            ),
             "results": dict(results),
             "failed_steps": _step_names_with_status(
                 results,
@@ -1320,6 +1364,9 @@ def _real_decode_evidence_manifest(
             ),
         },
         "requirements": {
+            "require_official_config_match": report.get(
+                "require_official_config_match"
+            ),
             "require_trace": report.get("require_trace"),
             "min_tokens_per_second_per_user": report.get(
                 "min_tokens_per_second_per_user"
@@ -1339,6 +1386,26 @@ def _real_decode_evidence_manifest(
         "device_evidence": {
             "smoke_ttnn_environment": smoke.get("ttnn_environment"),
             "profile_ttnn_environment": profile.get("ttnn_environment"),
+        },
+        "config_evidence": {
+            "official_config_diff": {
+                "status": official_config_diff.get("status"),
+                "report": official_config_diff.get("official_config_diff"),
+                "official_config": official_config_diff.get(
+                    "official_config"
+                ),
+                "diff_status": official_config_diff.get("diff_status"),
+                "issue_count": official_config_diff.get("issue_count"),
+                "missing_count": official_config_diff.get("missing_count"),
+                "mismatch_count": official_config_diff.get("mismatch_count"),
+                "extra_count": official_config_diff.get("extra_count"),
+                "matching_count": official_config_diff.get("matching_count"),
+                "sections": official_config_diff.get("sections", []),
+                "section_statuses": official_config_diff.get(
+                    "section_statuses",
+                    {},
+                ),
+            },
         },
         "weight_evidence": {
             "materialization": {
@@ -1547,6 +1614,7 @@ def _real_decode_acceptance(
     report: dict[str, Any],
     *,
     require_trace: bool,
+    require_official_config_match: bool,
     min_tokens_per_second_per_user: float | None,
     require_decode_shell_numeric_reference: bool,
 ) -> dict[str, Any]:
@@ -1554,6 +1622,7 @@ def _real_decode_acceptance(
         return {
             "status": "dry_run",
             "passed": True,
+            "require_official_config_match": require_official_config_match,
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
@@ -1566,6 +1635,7 @@ def _real_decode_acceptance(
         }
 
     steps = report.get("steps", {})
+    official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
     smoke = steps.get("smoke_decode_step", {})
@@ -1588,6 +1658,34 @@ def _real_decode_acceptance(
     profile_bottleneck = profile.get("bottleneck_summary")
     skip_autotune = bool(report.get("skip_autotune"))
     checks = [
+        _acceptance_check(
+            "official_config_diff.status",
+            official_config_diff.get("status") == "pass",
+            observed=official_config_diff.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "official_config_diff.diff_status",
+            official_config_diff.get("diff_status")
+            in {"match", "diff_found"},
+            observed=official_config_diff.get("diff_status"),
+            expected=["match", "diff_found"],
+        ),
+        _acceptance_check(
+            "official_config_diff.issue_count",
+            _nonnegative_number(official_config_diff.get("issue_count")),
+            observed=official_config_diff.get("issue_count"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "official_config_diff.sections",
+            _contains_all(
+                official_config_diff.get("sections"),
+                list(PARITY_SECTIONS),
+            ),
+            observed=official_config_diff.get("sections"),
+            expected=list(PARITY_SECTIONS),
+        ),
         _acceptance_check(
             "materialize_parameters.tensor_count",
             _positive_number(materialize.get("tensor_count")),
@@ -1933,6 +2031,16 @@ def _real_decode_acceptance(
                 expected="passed",
             )
         )
+    if require_official_config_match:
+        checks.append(
+            _acceptance_check(
+                "official_config_diff.match",
+                official_config_diff.get("diff_status") == "match",
+                observed=official_config_diff.get("diff_status"),
+                expected="match",
+                issue_count=official_config_diff.get("issue_count"),
+            )
+        )
     if require_trace:
         checks.extend(
             [
@@ -2075,6 +2183,7 @@ def _real_decode_acceptance(
     return {
         "status": "passed" if passed else "failed",
         "passed": passed,
+        "require_official_config_match": require_official_config_match,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "require_decode_shell_numeric_reference": (

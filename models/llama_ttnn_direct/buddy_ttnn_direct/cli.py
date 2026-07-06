@@ -1135,6 +1135,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=default_decode_step_search_space_path(),
         help="Decode-step autotune search space JSON.",
     )
+    validate_real.add_argument(
+        "--official-config",
+        type=Path,
+        default=None,
+        help=(
+            "Official or seed TTNN config parity JSON used by the real decode "
+            "validation diff gate."
+        ),
+    )
     validate_real.add_argument("--layers", type=int, default=1)
     validate_real.add_argument("--batch-size", type=int, default=None)
     validate_real.add_argument("--cache-len", type=int, default=None)
@@ -1179,6 +1188,14 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Require smoke/profile decode-step reports to capture and "
             "execute a TTNN trace before accepting the validation report."
+        ),
+    )
+    validate_real.add_argument(
+        "--require-official-config-match",
+        action="store_true",
+        help=(
+            "Require the generated program config to exactly match the "
+            "official parity config before accepting validation."
         ),
     )
     validate_real.add_argument(
@@ -1712,6 +1729,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         program_dir=args.program_dir,
         model_path=args.model_path,
         out_dir=args.out_dir,
+        official_config_path=args.official_config,
         decode_step_search_space_path=args.decode_step_search_space,
         layers=args.layers,
         batch_size=args.batch_size,
@@ -1725,6 +1743,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_trace=args.require_trace,
+        require_official_config_match=args.require_official_config_match,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(
