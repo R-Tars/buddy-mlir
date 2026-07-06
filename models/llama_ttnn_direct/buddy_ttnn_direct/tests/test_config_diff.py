@@ -32,7 +32,19 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertEqual(diff["status"], "match")
         self.assertEqual(diff["summary"]["issue_count"], 0)
         self.assertGreater(diff["summary"]["matching_count"], 0)
+        self.assertEqual(diff["summary"]["section_count"], len(PARITY_SECTIONS))
+        self.assertEqual(diff["summary"]["sections_with_issues"], [])
+        self.assertEqual(diff["gap_summary"]["status"], "match")
+        self.assertEqual(diff["gap_summary"]["issue_count"], 0)
+        self.assertEqual(diff["gap_summary"]["sections_with_issues"], [])
+        self.assertEqual(diff["gap_summary"]["top_issue_paths"], [])
         self.assertEqual(set(diff["sections"]), set(PARITY_SECTIONS))
+        self.assertTrue(
+            all(
+                section["status"] == "match"
+                for section in diff["sections"].values()
+            )
+        )
 
     def test_generated_config_reports_known_official_gaps(self) -> None:
         ours = _fake_generated_config()
@@ -49,6 +61,24 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertIn("core_grid.attention", missing_paths)
         self.assertIn("lm_head.argmax_strategy", mismatch_paths)
         self.assertIn("paged_attention.scale", mismatch_paths)
+        self.assertEqual(diff["gap_summary"]["status"], "diff_found")
+        self.assertIn(
+            "memory_config",
+            diff["gap_summary"]["sections_with_issues"],
+        )
+        self.assertGreater(
+            diff["gap_summary"]["issue_counts_by_section"]["memory_config"],
+            0,
+        )
+        self.assertTrue(diff["gap_summary"]["top_issue_paths"])
+        self.assertEqual(
+            diff["sections"]["memory_config"]["status"],
+            "diff_found",
+        )
+        self.assertIn(
+            "memory_config.attention_qkv",
+            diff["sections"]["memory_config"]["missing_paths"],
+        )
         self.assertEqual(
             diff["ours"]["parity_config"]["lm_head"]["split_count"],
             8,
@@ -78,6 +108,11 @@ class ConfigDiffTest(unittest.TestCase):
             self.assertEqual(report["schema_version"], 1)
             self.assertEqual(report["status"], "diff_found")
             self.assertGreater(report["summary"]["issue_count"], 0)
+            self.assertEqual(report["gap_summary"]["status"], "diff_found")
+            self.assertIn(
+                "program_config",
+                report["gap_summary"]["sections_with_issues"],
+            )
 
     def test_build_config_parity_view_accepts_generated_config(self) -> None:
         view = build_config_parity_view(_fake_generated_config())

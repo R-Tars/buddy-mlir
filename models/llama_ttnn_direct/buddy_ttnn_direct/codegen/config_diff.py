@@ -92,6 +92,13 @@ def diff_official_config(
     issue_count = (
         len(missing_fields) + len(mismatched_fields) + len(extra_fields)
     )
+    gap_summary = _gap_summary(
+        section_summaries,
+        missing_fields,
+        mismatched_fields,
+        extra_fields,
+        issue_count=issue_count,
+    )
     return {
         "schema_version": 1,
         "status": "match" if issue_count == 0 else "diff_found",
@@ -101,7 +108,10 @@ def diff_official_config(
             "extra_count": len(extra_fields),
             "matching_count": len(matching_fields),
             "issue_count": issue_count,
+            "section_count": len(PARITY_SECTIONS),
+            "sections_with_issues": gap_summary["sections_with_issues"],
         },
+        "gap_summary": gap_summary,
         "ours": {
             "source_format": ours_view["source_format"],
             "model_name": ours_view.get("model_name"),
@@ -288,22 +298,84 @@ def _section_summary(
     mismatched_fields: list[dict[str, Any]],
     extra_fields: list[dict[str, Any]],
     matching_fields: list[str],
-) -> dict[str, int]:
+) -> dict[str, Any]:
     prefix = section + "."
+    missing_paths = [
+        field["path"]
+        for field in missing_fields
+        if field["section"] == section
+    ]
+    mismatched_paths = [
+        field["path"]
+        for field in mismatched_fields
+        if field["section"] == section
+    ]
+    extra_paths = [
+        field["path"]
+        for field in extra_fields
+        if field["section"] == section
+    ]
+    matching_count = sum(
+        1 for path in matching_fields if path == section or path.startswith(prefix)
+    )
+    issue_count = len(missing_paths) + len(mismatched_paths) + len(extra_paths)
     return {
-        "missing_count": sum(
-            1 for field in missing_fields if field["section"] == section
-        ),
-        "mismatch_count": sum(
-            1 for field in mismatched_fields if field["section"] == section
-        ),
-        "extra_count": sum(
-            1 for field in extra_fields if field["section"] == section
-        ),
-        "matching_count": sum(
-            1 for path in matching_fields if path == section or path.startswith(prefix)
-        ),
+        "status": "match" if issue_count == 0 else "diff_found",
+        "issue_count": issue_count,
+        "missing_count": len(missing_paths),
+        "mismatch_count": len(mismatched_paths),
+        "extra_count": len(extra_paths),
+        "matching_count": matching_count,
+        "missing_paths": missing_paths,
+        "mismatched_paths": mismatched_paths,
+        "extra_paths": extra_paths,
+        "top_issue_paths": (
+            missing_paths + mismatched_paths + extra_paths
+        )[:5],
     }
+
+
+def _gap_summary(
+    section_summaries: dict[str, dict[str, Any]],
+    missing_fields: list[dict[str, Any]],
+    mismatched_fields: list[dict[str, Any]],
+    extra_fields: list[dict[str, Any]],
+    *,
+    issue_count: int,
+) -> dict[str, Any]:
+    sections_with_issues = [
+        section
+        for section in PARITY_SECTIONS
+        if section_summaries[section]["issue_count"] > 0
+    ]
+    issue_counts_by_section = {
+        section: section_summaries[section]["issue_count"]
+        for section in PARITY_SECTIONS
+    }
+    top_issues = (
+        _issue_paths("missing", missing_fields)
+        + _issue_paths("mismatch", mismatched_fields)
+        + _issue_paths("extra", extra_fields)
+    )[:12]
+    return {
+        "status": "match" if issue_count == 0 else "diff_found",
+        "issue_count": issue_count,
+        "section_count": len(PARITY_SECTIONS),
+        "sections_with_issues": sections_with_issues,
+        "issue_counts_by_section": issue_counts_by_section,
+        "top_issue_paths": top_issues,
+    }
+
+
+def _issue_paths(kind: str, fields: list[dict[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "kind": kind,
+            "section": str(field.get("section")),
+            "path": str(field.get("path")),
+        }
+        for field in fields
+    ]
 
 
 def _flatten(value: Any, prefix: str = "") -> dict[str, Any]:

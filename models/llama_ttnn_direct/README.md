@@ -935,8 +935,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The bundled official config is a hand-written seed reference, not a measured
 TT-Transformers export. Replace `--official` with an imported or hand-curated
 official JSON when available. The report records missing fields, mismatches,
-extra fields, matching fields, and per-section summaries. Its purpose is to
-make parity gaps explicit before tuning dtype, compute fidelity, program
+extra fields, matching fields, per-section summaries, and a `gap_summary`
+with the affected sections plus top missing/mismatched/extra paths. Its purpose
+is to make parity gaps explicit before tuning dtype, compute fidelity, program
 config, memory config, core grid, LM-head strategy, or paged attention config.
 
 ## Performance Step 2: Generated Single-Layer Decode Smoke

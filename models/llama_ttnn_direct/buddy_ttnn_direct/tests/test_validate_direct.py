@@ -316,6 +316,18 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["official_config_diff"]["sections"],
                 sorted(PARITY_SECTIONS),
             )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["gap_summary"][
+                    "status"
+                ],
+                "diff_found",
+            )
+            self.assertIn(
+                "memory_config",
+                report["steps"]["official_config_diff"]["gap_summary"][
+                    "sections_with_issues"
+                ],
+            )
             self.assertEqual(report["acceptance"]["status"], "dry_run")
             self.assertTrue(report["acceptance"]["passed"])
             self.assertFalse(
@@ -393,6 +405,12 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["config_evidence"]["official_config_diff"][
                     "diff_status"
                 ],
+                "diff_found",
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "gap_summary"
+                ]["status"],
                 "diff_found",
             )
             self.assertIsNone(
@@ -732,6 +750,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "official_config_diff.sections",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "official_config_diff.gap_summary",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1145,6 +1167,18 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["official_config_diff"]["sections"],
                 sorted(PARITY_SECTIONS),
             )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["gap_summary"][
+                    "status"
+                ],
+                "diff_found",
+            )
+            self.assertIn(
+                "paged_attention",
+                report["steps"]["official_config_diff"]["gap_summary"][
+                    "sections_with_issues"
+                ],
+            )
             attention_report = json.loads(
                 (out_dir / "attention_layer_report.json").read_text()
             )
@@ -1409,6 +1443,18 @@ class ValidateDirectTest(unittest.TestCase):
                     "sections"
                 ],
                 sorted(PARITY_SECTIONS),
+            )
+            self.assertEqual(
+                evidence["config_evidence"]["official_config_diff"][
+                    "gap_summary"
+                ]["status"],
+                "diff_found",
+            )
+            self.assertIn(
+                "memory_config",
+                evidence["config_evidence"]["official_config_diff"][
+                    "gap_summary"
+                ]["sections_with_issues"],
             )
             self.assertEqual(
                 evidence["weight_evidence"]["materialization"]["tensor_count"],
