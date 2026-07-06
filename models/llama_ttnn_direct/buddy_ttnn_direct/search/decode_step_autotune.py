@@ -17,6 +17,13 @@ DECODE_STEP_METRIC_DIRECTIONS = {
     "aggregate_tokens_per_second": "maximize",
 }
 SUPPORTED_DECODE_STEP_METRICS = set(DECODE_STEP_METRIC_DIRECTIONS)
+DECODE_STEP_AUTOTUNE_KNOBS = (
+    "lm_head_split_count",
+    "generation_template",
+    "mlp_intermediate_dtype",
+    "attention_sdpa_output_memory_config",
+    "attention_concat_heads_output_memory_config",
+)
 
 
 def run_decode_step_autotune(
@@ -151,6 +158,7 @@ def run_decode_step_autotune(
         "reference_status",
     )
     trace_status_counts = _candidate_field_counts(candidates, "trace_status")
+    knob_coverage = _knob_coverage(candidates)
     return {
         "schema_version": 1,
         "search": "decode_step_minimal",
@@ -172,6 +180,8 @@ def run_decode_step_autotune(
         "failed_candidate_count": sum(
             1 for candidate in candidates if candidate.get("passed") is False
         ),
+        "knob_coverage": knob_coverage,
+        "search_space": knob_coverage["values"],
         "reference_status_counts": reference_status_counts,
         "trace_status_counts": trace_status_counts,
         "candidates_dir": _relative_or_absolute(candidate_root, out_path.parent),
@@ -274,6 +284,70 @@ def _candidate_field_counts(
             continue
         counts[str(value)] = counts.get(str(value), 0) + 1
     return counts
+
+
+def _knob_coverage(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    values = {
+        knob: _unique_knob_values(candidates, knob)
+        for knob in DECODE_STEP_AUTOTUNE_KNOBS
+    }
+    value_counts = {
+        knob: _knob_value_counts(candidates, knob)
+        for knob in DECODE_STEP_AUTOTUNE_KNOBS
+    }
+    return {
+        "knobs": list(DECODE_STEP_AUTOTUNE_KNOBS),
+        "candidate_count": len(candidates),
+        "values": values,
+        "value_counts": value_counts,
+        "varied_knobs": [
+            knob
+            for knob, knob_values in values.items()
+            if len(knob_values) > 1
+        ],
+    }
+
+
+def _unique_knob_values(
+    candidates: list[dict[str, Any]],
+    knob: str,
+) -> list[Any]:
+    values = []
+    for candidate in candidates:
+        value = _record_knob_value(candidate, knob)
+        if value not in values:
+            values.append(value)
+    return sorted(values, key=_knob_sort_key)
+
+
+def _knob_value_counts(
+    candidates: list[dict[str, Any]],
+    knob: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for candidate in candidates:
+        label = _knob_value_label(_record_knob_value(candidate, knob))
+        counts[label] = counts.get(label, 0) + 1
+    return counts
+
+
+def _record_knob_value(candidate: dict[str, Any], knob: str) -> Any:
+    knobs = candidate.get("knobs")
+    if isinstance(knobs, dict) and knob in knobs:
+        return knobs.get(knob)
+    return candidate.get(knob)
+
+
+def _knob_sort_key(value: Any) -> tuple[int, float, str]:
+    if value is None:
+        return (0, 0.0, "")
+    if isinstance(value, (int, float)):
+        return (1, float(value), str(value))
+    return (2, 0.0, str(value))
+
+
+def _knob_value_label(value: Any) -> str:
+    return "null" if value is None else str(value)
 
 
 def _candidate_knobs(candidate: dict[str, Any]) -> dict[str, Any]:

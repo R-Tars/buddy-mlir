@@ -651,8 +651,9 @@ samples and derived trace throughput, measured profile latency, complete
 profile attribution sections, LM-head split/argmax profile evidence, per-layer
 attention/MLP timing records, bottleneck summary, positive profile throughput,
 and, unless
-`--skip-autotune` is used, a real-weight decode-step autotune best candidate
-with a passed structural reference. When a throughput baseline is supplied, the
+`--skip-autotune` is used, real-weight decode-step autotune knob coverage and
+a best candidate with a passed structural reference. When a throughput baseline
+is supplied, the
 evidence also records the observed/baseline ratio and gates it against the
 requested floor before marking the validation as accepted.
 

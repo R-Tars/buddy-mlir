@@ -13,6 +13,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     PARITY_SECTIONS,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
+    DECODE_STEP_AUTOTUNE_KNOBS,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
 )
@@ -155,6 +158,20 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(decode_step_autotune["dry_run"])
             self.assertEqual(decode_step_autotune["candidate_count"], 32)
             self.assertEqual(
+                decode_step_autotune["knob_coverage"]["knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(
+                decode_step_autotune["knob_coverage"]["candidate_count"],
+                32,
+            )
+            self.assertEqual(
+                decode_step_autotune["knob_coverage"]["values"][
+                    "attention_sdpa_output_memory_config"
+                ],
+                [None, "l1"],
+            )
+            self.assertEqual(
                 decode_step_autotune["status_counts"],
                 {"dry_run_planned": 32},
             )
@@ -173,6 +190,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
                 32,
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune_dry_run"][
+                    "knob_coverage"
+                ]["knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune_dry_run"][
@@ -915,6 +938,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_step_autotune.knob_coverage",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "decode_step_autotune.passed_candidate_count",
                 acceptance_check_names,
             )
@@ -961,6 +988,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["status_counts"],
                 {"profiled": 1},
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["knob_coverage"][
+                    "knobs"
+                ],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["knob_coverage"][
+                    "values"
+                ]["generation_template"],
+                ["device_argmax_greedy"],
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"][
@@ -1529,6 +1568,18 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 "hf_model",
             )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "knob_coverage"
+                ]["knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "knob_coverage"
+                ]["values"]["lm_head_split_count"],
+                [2],
+            )
 
     def test_validate_real_decode_can_require_official_config_match(
         self,
@@ -1839,6 +1890,106 @@ class ValidateDirectTest(unittest.TestCase):
                     "best_reference_status"
                 ],
                 "failed",
+            )
+
+    def test_validate_real_decode_fails_on_autotune_knob_coverage(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            space_json = root / "decode_step_space.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            space_json.write_text(
+                json.dumps(
+                    {
+                        "lm_head_split_count": [2],
+                        "generation_template": ["device_argmax_greedy"],
+                        "mlp_intermediate_dtype": [None],
+                        "attention_sdpa_output_memory_config": [None],
+                        "attention_concat_heads_output_memory_config": [None],
+                    }
+                )
+            )
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_autotune = validation_module.run_decode_step_autotune
+
+            def autotune_with_incomplete_knob_coverage(*args, **kwargs):
+                autotune = original_autotune(*args, **kwargs)
+                autotune["knob_coverage"] = {
+                    "knobs": ["lm_head_split_count"],
+                    "candidate_count": autotune["candidate_count"],
+                    "values": {"lm_head_split_count": [2]},
+                    "value_counts": {"lm_head_split_count": {"2": 1}},
+                    "varied_knobs": [],
+                }
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
+                return autotune
+
+            with patch.object(
+                validation_module,
+                "run_decode_step_autotune",
+                side_effect=autotune_with_incomplete_knob_coverage,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        decode_step_search_space_path=space_json,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["results"]["decode_step_autotune"], "pass")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_step_autotune.knob_coverage"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["decode_step_autotune.knob_coverage"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "knob_coverage"
+                ]["knobs"],
+                ["lm_head_split_count"],
             )
 
     def test_validate_real_decode_writes_evidence_on_runtime_step_failure(

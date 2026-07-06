@@ -25,7 +25,10 @@ from .codegen.package import package_ttnn_direct_program
 from .codegen.parameters import materialize_parameters_from_program
 from .codegen.program import write_decode_program_bundle
 from .codegen.ttnn_tensorizer import tensorize_parameters_from_program_dry_run
-from .search.decode_step_autotune import run_decode_step_autotune
+from .search.decode_step_autotune import (
+    DECODE_STEP_AUTOTUNE_KNOBS,
+    run_decode_step_autotune,
+)
 from .search.report import dump_search_report
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
@@ -588,6 +591,8 @@ def validate_direct(
                 "trace_status_counts",
                 {},
             ),
+            "knob_coverage": autotune_report.get("knob_coverage"),
+            "search_space": autotune_report.get("search_space"),
             "dry_run": autotune_report["dry_run"],
             "trace_enabled": autotune_report["trace_enabled"],
         }
@@ -1214,6 +1219,8 @@ def validate_real_decode(
                 "trace_status_counts",
                 {},
             ),
+            "knob_coverage": autotune_report.get("knob_coverage"),
+            "search_space": autotune_report.get("search_space"),
             "dry_run": autotune_report["dry_run"],
         }
 
@@ -1715,6 +1722,8 @@ def _real_decode_evidence_manifest(
                     "trace_status_counts",
                     {},
                 ),
+                "knob_coverage": autotune.get("knob_coverage"),
+                "search_space": autotune.get("search_space"),
             },
         },
         "acceptance": {
@@ -2718,6 +2727,17 @@ def _real_decode_acceptance(
                     minimum=1,
                 ),
                 _acceptance_check(
+                    "decode_step_autotune.knob_coverage",
+                    _autotune_knob_coverage_complete(
+                        autotune.get("knob_coverage"),
+                        candidate_count=autotune.get("candidate_count"),
+                    ),
+                    observed=_autotune_knob_coverage_observed(
+                        autotune.get("knob_coverage")
+                    ),
+                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
+                ),
+                _acceptance_check(
                     "decode_step_autotune.passed_candidate_count",
                     _positive_number(autotune.get("passed_candidate_count")),
                     observed=autotune.get("passed_candidate_count"),
@@ -2908,6 +2928,57 @@ def _trace_profile_observed(
             "trace_execute_aggregate_tokens_per_second"
         ),
         "trace_iterations": throughput_dict.get("trace_iterations"),
+    }
+
+
+def _autotune_knob_coverage_complete(
+    coverage: Any,
+    *,
+    candidate_count: Any,
+) -> bool:
+    if not isinstance(coverage, dict):
+        return False
+    coverage_count = coverage.get("candidate_count")
+    if not _positive_number(coverage_count):
+        return False
+    if candidate_count is not None and not _int_equal(
+        coverage_count,
+        candidate_count,
+    ):
+        return False
+    if not _contains_all(
+        coverage.get("knobs"),
+        DECODE_STEP_AUTOTUNE_KNOBS,
+    ):
+        return False
+    values = coverage.get("values")
+    value_counts = coverage.get("value_counts")
+    if not isinstance(values, dict) or not isinstance(value_counts, dict):
+        return False
+    for knob in DECODE_STEP_AUTOTUNE_KNOBS:
+        knob_values = values.get(knob)
+        if not isinstance(knob_values, list) or not knob_values:
+            return False
+        counts = value_counts.get(knob)
+        if not isinstance(counts, dict) or not counts:
+            return False
+        try:
+            count_total = sum(int(count) for count in counts.values())
+        except (TypeError, ValueError):
+            return False
+        if not _int_equal(count_total, coverage_count):
+            return False
+    return True
+
+
+def _autotune_knob_coverage_observed(coverage: Any) -> dict[str, Any]:
+    if not isinstance(coverage, dict):
+        return {}
+    return {
+        "knobs": coverage.get("knobs"),
+        "candidate_count": coverage.get("candidate_count"),
+        "values": coverage.get("values"),
+        "varied_knobs": coverage.get("varied_knobs"),
     }
 
 

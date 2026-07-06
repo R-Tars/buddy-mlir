@@ -7,6 +7,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
+    DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.space import (
@@ -263,6 +264,31 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["status_counts"], {"dry_run_planned": 2})
             self.assertEqual(report["passed_candidate_count"], 0)
             self.assertEqual(report["failed_candidate_count"], 0)
+            self.assertEqual(
+                report["knob_coverage"]["knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(report["knob_coverage"]["candidate_count"], 2)
+            self.assertEqual(
+                report["knob_coverage"]["values"][
+                    "mlp_intermediate_dtype"
+                ],
+                [None, "bfloat8_b"],
+            )
+            self.assertEqual(
+                report["knob_coverage"]["value_counts"][
+                    "mlp_intermediate_dtype"
+                ],
+                {"null": 1, "bfloat8_b": 1},
+            )
+            self.assertEqual(
+                report["knob_coverage"]["varied_knobs"],
+                ["mlp_intermediate_dtype"],
+            )
+            self.assertEqual(
+                report["search_space"],
+                report["knob_coverage"]["values"],
+            )
             self.assertEqual(report["reference_status_counts"], {})
             self.assertEqual(report["trace_status_counts"], {})
             self.assertIsNone(report["best"])
@@ -344,6 +370,21 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["status_counts"], {"profiled": 1})
             self.assertEqual(report["passed_candidate_count"], 1)
             self.assertEqual(report["failed_candidate_count"], 0)
+            self.assertEqual(
+                report["knob_coverage"]["knobs"],
+                list(DECODE_STEP_AUTOTUNE_KNOBS),
+            )
+            self.assertEqual(report["knob_coverage"]["candidate_count"], 1)
+            self.assertEqual(
+                report["knob_coverage"]["values"],
+                {
+                    "lm_head_split_count": [2],
+                    "generation_template": ["device_argmax_greedy"],
+                    "mlp_intermediate_dtype": [None],
+                    "attention_sdpa_output_memory_config": [None],
+                    "attention_concat_heads_output_memory_config": [None],
+                },
+            )
             self.assertEqual(report["reference_status_counts"], {"passed": 1})
             self.assertEqual(report["trace_status_counts"], {"disabled": 1})
             self.assertIsNotNone(report["best"])
