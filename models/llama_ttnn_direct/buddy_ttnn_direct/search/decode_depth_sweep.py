@@ -232,6 +232,18 @@ def _profile_record(
         "cache_len": profile.get("cache_len"),
         "parameter_source": profile.get("parameter_source"),
         "input_source": profile.get("input_source"),
+        "synthetic_runtime_input_tensor_count": (
+            (profile.get("parameter_setup") or {}).get(
+                "synthetic_runtime_input_tensor_count"
+            )
+        ),
+        "synthetic_rotary_tensor_count": (
+            (profile.get("parameter_setup") or {}).get(
+                "synthetic_rotary_tensor_count"
+            )
+        ),
+        "input_shapes": profile.get("input_shapes"),
+        "kv_cache": profile.get("kv_cache"),
         "latency_ms": profile.get("latency_ms"),
         "tensor_conversion_count": profile.get("tensor_conversion_count"),
         "tensor_conversion_ms": profile.get("tensor_conversion_ms"),

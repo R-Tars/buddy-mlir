@@ -1322,9 +1322,14 @@ def validate_real_decode(
             "synthetic_runtime_input_tensor_count": (
                 _step_synthetic_runtime_input_count(single_layer_report)
             ),
+            "synthetic_rotary_tensor_count": (
+                _step_synthetic_rotary_tensor_count(single_layer_report)
+            ),
             "tensor_conversion_count": single_layer_report.get(
                 "tensor_conversion_count"
             ),
+            "input_shapes": single_layer_report.get("input_shapes"),
+            "kv_cache": single_layer_report.get("kv_cache"),
             "output_shapes": single_layer_report.get("output_shapes"),
             "trace_status": single_layer_report.get("trace", {}).get("status"),
             "trace": _trace_summary(single_layer_report.get("trace")),
@@ -1366,9 +1371,14 @@ def validate_real_decode(
             "synthetic_runtime_input_tensor_count": (
                 _step_synthetic_runtime_input_count(smoke_report)
             ),
+            "synthetic_rotary_tensor_count": (
+                _step_synthetic_rotary_tensor_count(smoke_report)
+            ),
             "tensor_conversion_count": smoke_report.get(
                 "tensor_conversion_count"
             ),
+            "input_shapes": smoke_report.get("input_shapes"),
+            "kv_cache": smoke_report.get("kv_cache"),
             "output_shapes": smoke_report.get("output_shapes"),
             "trace_status": smoke_report.get("trace", {}).get("status"),
             "trace": _trace_summary(smoke_report.get("trace")),
@@ -1408,6 +1418,9 @@ def validate_real_decode(
             "synthetic_runtime_input_tensor_count": (
                 _step_synthetic_runtime_input_count(profile_report)
             ),
+            "synthetic_rotary_tensor_count": (
+                _step_synthetic_rotary_tensor_count(profile_report)
+            ),
             "tensor_conversion_count": profile_report.get(
                 "tensor_conversion_count"
             ),
@@ -1416,6 +1429,8 @@ def validate_real_decode(
             "section_latency_ms": profile_report.get("section_latency_ms"),
             "layer_profiles": profile_report.get("layer_profiles", []),
             "lm_head_profile": profile_report.get("lm_head_profile"),
+            "input_shapes": profile_report.get("input_shapes"),
+            "kv_cache": profile_report.get("kv_cache"),
             "output_shapes": profile_report.get("output_shapes"),
             "throughput_summary": profile_report.get("throughput_summary"),
             "bottleneck_summary": bottleneck,
@@ -2207,9 +2222,14 @@ def _real_decode_evidence_manifest(
                 "synthetic_runtime_input_tensor_count": single_layer.get(
                     "synthetic_runtime_input_tensor_count"
                 ),
+                "synthetic_rotary_tensor_count": single_layer.get(
+                    "synthetic_rotary_tensor_count"
+                ),
                 "tensor_conversion_count": single_layer.get(
                     "tensor_conversion_count"
                 ),
+                "input_shapes": single_layer.get("input_shapes"),
+                "kv_cache": single_layer.get("kv_cache"),
                 "output_shapes": single_layer.get("output_shapes"),
                 "trace_status": single_layer.get("trace_status"),
                 "trace": single_layer.get("trace"),
@@ -2237,9 +2257,14 @@ def _real_decode_evidence_manifest(
                 "synthetic_runtime_input_tensor_count": smoke.get(
                     "synthetic_runtime_input_tensor_count"
                 ),
+                "synthetic_rotary_tensor_count": smoke.get(
+                    "synthetic_rotary_tensor_count"
+                ),
                 "tensor_conversion_count": smoke.get(
                     "tensor_conversion_count"
                 ),
+                "input_shapes": smoke.get("input_shapes"),
+                "kv_cache": smoke.get("kv_cache"),
                 "output_shapes": smoke.get("output_shapes"),
                 "trace_status": smoke.get("trace_status"),
                 "trace": smoke.get("trace"),
@@ -2263,6 +2288,9 @@ def _real_decode_evidence_manifest(
                 "synthetic_runtime_input_tensor_count": profile.get(
                     "synthetic_runtime_input_tensor_count"
                 ),
+                "synthetic_rotary_tensor_count": profile.get(
+                    "synthetic_rotary_tensor_count"
+                ),
                 "tensor_conversion_count": profile.get(
                     "tensor_conversion_count"
                 ),
@@ -2271,6 +2299,8 @@ def _real_decode_evidence_manifest(
                 "section_latency_ms": profile.get("section_latency_ms"),
                 "layer_profiles": profile.get("layer_profiles", []),
                 "lm_head_profile": profile.get("lm_head_profile"),
+                "input_shapes": profile.get("input_shapes"),
+                "kv_cache": profile.get("kv_cache"),
                 "output_shapes": profile.get("output_shapes"),
                 "trace_status": profile.get("trace_status"),
                 "trace": profile.get("trace"),
@@ -3382,6 +3412,29 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "single_layer_decode.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                single_layer,
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(single_layer),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
             "single_layer_decode.layers",
             _int_equal(single_layer.get("layers"), 1),
             observed=single_layer.get("layers"),
@@ -3584,6 +3637,29 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "smoke_decode_step.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                smoke,
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(smoke),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
             "smoke_decode_step.layers",
             _int_equal(smoke.get("layers"), expected_layers),
             observed=smoke.get("layers"),
@@ -3777,6 +3853,29 @@ def _real_decode_acceptance(
             ),
             observed=profile.get("synthetic_runtime_input_tensor_count"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                profile,
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(profile),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
         ),
         _acceptance_check(
             "profile_decode_step.layers",
@@ -5623,6 +5722,171 @@ def _step_synthetic_runtime_input_count(step: dict[str, Any]) -> Any:
     return setup.get("synthetic_runtime_input_tensor_count")
 
 
+def _step_synthetic_rotary_tensor_count(step: dict[str, Any]) -> Any:
+    setup = step.get("parameter_setup") or {}
+    if not isinstance(setup, dict):
+        return None
+    return setup.get("synthetic_rotary_tensor_count")
+
+
+def _decode_runtime_inputs_complete(
+    step: Any,
+    *,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    page_block_size: Any,
+) -> bool:
+    if not isinstance(step, dict):
+        return False
+    expected = _expected_decode_runtime_input_summary(
+        layer_count=layer_count,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        cache_len=cache_len,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        page_block_size=page_block_size,
+    )
+    input_shapes = step.get("input_shapes")
+    kv_cache = step.get("kv_cache")
+    if not isinstance(input_shapes, dict) or not isinstance(kv_cache, dict):
+        return False
+    return (
+        _int_list(input_shapes.get("token_ids"))
+        == expected["token_ids"]
+        and _int_list(input_shapes.get("page_table"))
+        == expected["page_table"]
+        and _int_list(input_shapes.get("cache_position"))
+        == expected["cache_position"]
+        and _int_list(input_shapes.get("key_cache"))
+        == expected["kv_cache_shape"]
+        and _int_list(input_shapes.get("value_cache"))
+        == expected["kv_cache_shape"]
+        and _int_list(kv_cache.get("physical_shape"))
+        == expected["kv_cache_shape"]
+        and _int_list(kv_cache.get("logical_shape"))
+        == expected["kv_cache_logical_shape"]
+        and _int_equal(kv_cache.get("page_block_size"), page_block_size)
+        and _int_equal(kv_cache.get("page_count"), expected["page_count"])
+        and _int_equal(
+            kv_cache.get("max_num_blocks"),
+            expected["max_num_blocks"],
+        )
+        and step.get("input_source") == "synthetic"
+        and _int_equal(
+            step.get("synthetic_runtime_input_tensor_count"),
+            expected["synthetic_runtime_input_tensor_count"],
+        )
+        and _int_equal(
+            step.get("synthetic_rotary_tensor_count"),
+            expected["synthetic_rotary_tensor_count"],
+        )
+    )
+
+
+def _expected_decode_runtime_input_summary(
+    *,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    page_block_size: Any,
+) -> dict[str, Any]:
+    batch = _safe_int(batch_size)
+    seq = _safe_int(seq_len)
+    cache = _safe_int(cache_len)
+    layers = _safe_int(layer_count)
+    block = _safe_int(page_block_size) or 32
+    page_count = None
+    max_num_blocks = None
+    if batch is not None and cache is not None and block > 0:
+        page_count = max(1, (cache + block - 1) // block)
+        max_num_blocks = batch * page_count
+    kv_shape = _paged_kv_cache_shape(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        page_block_size=page_block_size,
+    )
+    logical_shape = (
+        [batch, cache, _safe_int(num_kv_heads), _safe_int(head_dim)]
+        if None
+        not in (
+            batch,
+            cache,
+            _safe_int(num_kv_heads),
+            _safe_int(head_dim),
+        )
+        else []
+    )
+    return {
+        "token_ids": [batch, seq]
+        if None not in (batch, seq)
+        else [],
+        "page_table": [batch, page_count]
+        if None not in (batch, page_count)
+        else [],
+        "cache_position": [batch] if batch is not None else [],
+        "kv_cache_shape": kv_shape,
+        "kv_cache_logical_shape": logical_shape,
+        "page_count": page_count,
+        "max_num_blocks": max_num_blocks,
+        "synthetic_runtime_input_tensor_count": (
+            3 + 2 * layers if layers is not None else None
+        ),
+        "synthetic_rotary_tensor_count": (
+            3 * layers if layers is not None else None
+        ),
+    }
+
+
+def _decode_runtime_input_observed(step: Any) -> dict[str, Any]:
+    if not isinstance(step, dict):
+        return {}
+    input_shapes = step.get("input_shapes")
+    kv_cache = step.get("kv_cache")
+    return {
+        "input_source": step.get("input_source"),
+        "synthetic_runtime_input_tensor_count": step.get(
+            "synthetic_runtime_input_tensor_count"
+        ),
+        "synthetic_rotary_tensor_count": step.get(
+            "synthetic_rotary_tensor_count"
+        ),
+        "input_shapes": {
+            "token_ids": _int_list((input_shapes or {}).get("token_ids")),
+            "page_table": _int_list((input_shapes or {}).get("page_table")),
+            "cache_position": _int_list(
+                (input_shapes or {}).get("cache_position")
+            ),
+            "key_cache": _int_list((input_shapes or {}).get("key_cache")),
+            "value_cache": _int_list(
+                (input_shapes or {}).get("value_cache")
+            ),
+        }
+        if isinstance(input_shapes, dict)
+        else {},
+        "kv_cache": {
+            "page_block_size": (kv_cache or {}).get("page_block_size"),
+            "page_count": (kv_cache or {}).get("page_count"),
+            "max_num_blocks": (kv_cache or {}).get("max_num_blocks"),
+            "physical_shape": _int_list(
+                (kv_cache or {}).get("physical_shape")
+            ),
+            "logical_shape": _int_list((kv_cache or {}).get("logical_shape")),
+        }
+        if isinstance(kv_cache, dict)
+        else {},
+    }
+
+
 def _decode_output_shapes_complete(
     output_shapes: Any,
     *,
@@ -6132,6 +6396,16 @@ def _decode_depth_sweep_record_complete(
         and _positive_number(record.get("aggregate_tokens_per_second"))
         and _positive_number(throughput.get("tokens_per_second_per_user"))
         and _positive_number(throughput.get("aggregate_tokens_per_second"))
+        and _decode_runtime_inputs_complete(
+            record,
+            layer_count=depth,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            cache_len=cache_len,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_block_size=page_block_size,
+        )
         and _bottleneck_summary_complete(record.get("bottleneck_summary"))
         and _decode_output_shapes_complete(
             record.get("output_shapes"),
@@ -6200,6 +6474,7 @@ def _decode_depth_sweep_records_observed(
                 "output_shapes": _decode_output_shape_observed(
                     record.get("output_shapes")
                 ),
+                "runtime_inputs": _decode_runtime_input_observed(record),
                 "bottleneck": _bottleneck_summary_observed(bottleneck),
             }
         )

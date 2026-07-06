@@ -672,7 +672,9 @@ and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, resolved
 synthetic runtime input source/count evidence for token ids, page tables,
-cache position, and paged KV cache, official config diff evidence,
+cache position, paged KV cache, and per-layer synthetic rotary tensors,
+runtime input shape evidence for token/page/cache-position/KV tensors,
+official config diff evidence,
 layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/attention-primitive/attention-layer/single-layer/smoke/profile runtime
@@ -1164,10 +1166,14 @@ is scoped to the requested validation depth so small bring-up runs stay
 lightweight. The real-decode acceptance gate also validates every depth record,
 not just the sweep summary: each profiled depth must match the requested
 batch/cache shape, use HF parameters and synthetic runtime inputs, expose
-layer-profile ids for `[0..depth)`, pass the reference checks, report measured
-throughput, include decode output/KV-cache shapes, and include bottleneck
-timing evidence. When `--require-trace` is used, each depth record must also
-show `captured_and_executed` trace status with the requested iteration count.
+token ids `[B, 1]`, page table `[B, page_count]`, cache position `[B]`, and
+paged K/V cache `[max_num_blocks, num_kv_heads, page_block_size, head_dim]`
+input shapes, account for `3 + 2 * depth` synthetic runtime-input tensors and
+`3 * depth` synthetic rotary tensors, expose layer-profile ids for
+`[0..depth)`, pass the reference checks, report measured throughput, include
+decode output/KV-cache shapes, and include bottleneck timing evidence. When
+`--require-trace` is used, each depth record must also show
+`captured_and_executed` trace status with the requested iteration count.
 
 ## Performance Step 3: Batch32 Decode-Step Contract Gate
 
@@ -1199,9 +1205,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 The acceptance report always checks decode `seq_len = 1`, paged KV-cache
-status, page-table/cache-position/KV-cache shapes, and token-or-logits output
-kind and shape. `--require-batch32-decode-step` adds an explicit batch-size-32
-gate while still allowing small-batch smoke tests when the flag is omitted.
+status, page-table/cache-position/KV-cache shapes, token ids `[B, 1]`,
+the exact synthetic runtime input count, the exact synthetic rotary tensor
+count, and token-or-logits output kind and shape.
+`--require-batch32-decode-step` adds an explicit batch-size-32 gate while still
+allowing small-batch smoke tests when the flag is omitted.
 
 ## Performance Step 4: Decode-Step Trace Smoke
 

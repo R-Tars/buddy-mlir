@@ -1278,6 +1278,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "single_layer_decode.runtime_inputs",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "single_layer_decode.runtime_status",
                 acceptance_check_names,
             )
@@ -1303,6 +1307,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "smoke_decode_step.synthetic_runtime_inputs",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.runtime_inputs",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1363,6 +1371,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.synthetic_runtime_inputs",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.runtime_inputs",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -2415,6 +2427,30 @@ class ValidateDirectTest(unittest.TestCase):
                 5,
             )
             self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "synthetic_rotary_tensor_count"
+                ],
+                3,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "input_shapes"
+                ]["token_ids"],
+                [2, 1],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "input_shapes"
+                ]["page_table"],
+                [2, 1],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "kv_cache"
+                ]["physical_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["smoke_decode_step"][
                     "input_source"
                 ],
@@ -2427,6 +2463,12 @@ class ValidateDirectTest(unittest.TestCase):
                 5,
             )
             self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"][
+                    "synthetic_rotary_tensor_count"
+                ],
+                3,
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
                     "input_source"
                 ],
@@ -2437,6 +2479,18 @@ class ValidateDirectTest(unittest.TestCase):
                     "synthetic_runtime_input_tensor_count"
                 ],
                 5,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "synthetic_rotary_tensor_count"
+                ],
+                3,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "input_shapes"
+                ]["key_cache"],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["single_layer_decode"][
@@ -3940,6 +3994,7 @@ class ValidateDirectTest(unittest.TestCase):
                 [
                     "profile_decode_step.input_source",
                     "profile_decode_step.synthetic_runtime_inputs",
+                    "profile_decode_step.runtime_inputs",
                 ],
             )
             evidence = json.loads(
@@ -3951,6 +4006,7 @@ class ValidateDirectTest(unittest.TestCase):
                 [
                     "profile_decode_step.input_source",
                     "profile_decode_step.synthetic_runtime_inputs",
+                    "profile_decode_step.runtime_inputs",
                 ],
             )
             self.assertIsNone(
@@ -3963,6 +4019,97 @@ class ValidateDirectTest(unittest.TestCase):
                     "synthetic_runtime_input_tensor_count"
                 ],
                 0,
+            )
+
+    def test_validate_real_decode_fails_on_profile_runtime_input_shapes(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_profile = validation_module.profile_decode_step
+
+            def profile_with_bad_runtime_shape(*args, **kwargs):
+                profile = original_profile(*args, **kwargs)
+                input_shapes = dict(profile.get("input_shapes") or {})
+                input_shapes["page_table"] = [1, 1]
+                profile["input_shapes"] = input_shapes
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(profile, indent=2) + "\n")
+                return profile
+
+            with patch.object(
+                validation_module,
+                "profile_decode_step",
+                side_effect=profile_with_bad_runtime_shape,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["profile_decode_step.runtime_inputs"],
+            )
+            observed = failed_checks[0]["observed"]
+            self.assertEqual(
+                observed["input_shapes"]["page_table"],
+                [1, 1],
+            )
+            self.assertEqual(
+                failed_checks[0]["expected"]["page_table"],
+                [2, 1],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_decode_step.runtime_inputs"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "input_shapes"
+                ]["page_table"],
+                [1, 1],
             )
 
     def test_validate_real_decode_fails_on_profile_output_shapes(
