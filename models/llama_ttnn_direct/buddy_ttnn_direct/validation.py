@@ -3697,6 +3697,36 @@ def _real_decode_acceptance(
             observed=depth_sweep.get("passed_depth_count"),
             expected=depth_sweep.get("depth_count"),
         ),
+        _acceptance_check(
+            "decode_depth_sweep.records",
+            _decode_depth_sweep_records_complete(
+                depth_sweep.get("records"),
+                expected_depths=depth_sweep.get("depths"),
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                seq_len=program_seq_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+                require_trace=require_trace,
+                trace_iterations=expected_trace_iterations,
+            ),
+            observed=_decode_depth_sweep_records_observed(
+                depth_sweep.get("records")
+            ),
+            expected={
+                "depths": depth_sweep.get("depths"),
+                "batch_size": expected_batch_size,
+                "cache_len": expected_cache_len,
+                "reference_status": "passed",
+                "throughput_status": "measured",
+                "trace_status": (
+                    "captured_and_executed" if require_trace else None
+                ),
+            },
+        ),
     ]
     if require_decode_shell_numeric_reference:
         checks.append(
@@ -5258,6 +5288,162 @@ def _decode_output_shape_observed(output_shapes: Any) -> dict[str, Any]:
         if isinstance(layers, list)
         else [],
     }
+
+
+def _decode_depth_sweep_records_complete(
+    records: Any,
+    *,
+    expected_depths: Any,
+    batch_size: Any,
+    cache_len: Any,
+    seq_len: Any,
+    vocab_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    output_kind: Any,
+    page_block_size: Any,
+    require_trace: bool,
+    trace_iterations: Any,
+) -> bool:
+    if not isinstance(records, list) or not records:
+        return False
+    depths = _int_list(expected_depths)
+    if len(records) != len(depths):
+        return False
+    for index, record in enumerate(records):
+        if not isinstance(record, dict):
+            return False
+        depth = depths[index]
+        if not _decode_depth_sweep_record_complete(
+            record,
+            depth=depth,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            seq_len=seq_len,
+            vocab_size=vocab_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            output_kind=output_kind,
+            page_block_size=page_block_size,
+            require_trace=require_trace,
+            trace_iterations=trace_iterations,
+        ):
+            return False
+    return True
+
+
+def _decode_depth_sweep_record_complete(
+    record: dict[str, Any],
+    *,
+    depth: int,
+    batch_size: Any,
+    cache_len: Any,
+    seq_len: Any,
+    vocab_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    output_kind: Any,
+    page_block_size: Any,
+    require_trace: bool,
+    trace_iterations: Any,
+) -> bool:
+    throughput = record.get("throughput_summary")
+    if not isinstance(throughput, dict):
+        return False
+    if not (
+        _int_equal(record.get("depth"), depth)
+        and record.get("status") == "profiled"
+        and record.get("passed") is True
+        and _non_empty_string(record.get("profile_report"))
+        and _int_equal(record.get("layers"), depth)
+        and _int_equal(record.get("batch_size"), batch_size)
+        and _int_equal(record.get("cache_len"), cache_len)
+        and record.get("parameter_source") == "hf_model"
+        and record.get("input_source") == "synthetic"
+        and _positive_number(record.get("latency_ms"))
+        and _positive_number(record.get("tensor_conversion_count"))
+        and _nonnegative_number(record.get("tensor_conversion_ms"))
+        and _int_equal(record.get("layer_profile_count"), depth)
+        and record.get("layer_profile_ids") == list(range(depth))
+        and record.get("reference_status") == "passed"
+        and record.get("reference_failed_checks") == []
+        and throughput.get("status") == "measured"
+        and _positive_number(record.get("tokens_per_second_per_user"))
+        and _positive_number(record.get("aggregate_tokens_per_second"))
+        and _positive_number(throughput.get("tokens_per_second_per_user"))
+        and _positive_number(throughput.get("aggregate_tokens_per_second"))
+        and _bottleneck_summary_complete(record.get("bottleneck_summary"))
+        and _decode_output_shapes_complete(
+            record.get("output_shapes"),
+            layer_count=depth,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            cache_len=cache_len,
+            vocab_size=vocab_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            output_kind=output_kind,
+            page_block_size=page_block_size,
+        )
+    ):
+        return False
+    if require_trace:
+        return (
+            record.get("trace_status") == "captured_and_executed"
+            and _int_equal(record.get("trace_iterations"), trace_iterations)
+        )
+    return True
+
+
+def _decode_depth_sweep_records_observed(
+    records: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(records, list):
+        return []
+    observed = []
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        throughput = record.get("throughput_summary")
+        bottleneck = record.get("bottleneck_summary")
+        observed.append(
+            {
+                "depth": record.get("depth"),
+                "status": record.get("status"),
+                "passed": record.get("passed"),
+                "layers": record.get("layers"),
+                "batch_size": record.get("batch_size"),
+                "cache_len": record.get("cache_len"),
+                "parameter_source": record.get("parameter_source"),
+                "input_source": record.get("input_source"),
+                "latency_ms": record.get("latency_ms"),
+                "tensor_conversion_count": record.get(
+                    "tensor_conversion_count"
+                ),
+                "layer_profile_count": record.get("layer_profile_count"),
+                "layer_profile_ids": record.get("layer_profile_ids"),
+                "reference_status": record.get("reference_status"),
+                "reference_failed_checks": record.get(
+                    "reference_failed_checks"
+                ),
+                "throughput_status": throughput.get("status")
+                if isinstance(throughput, dict)
+                else None,
+                "tokens_per_second_per_user": record.get(
+                    "tokens_per_second_per_user"
+                ),
+                "aggregate_tokens_per_second": record.get(
+                    "aggregate_tokens_per_second"
+                ),
+                "trace_status": record.get("trace_status"),
+                "trace_iterations": record.get("trace_iterations"),
+                "output_shapes": _decode_output_shape_observed(
+                    record.get("output_shapes")
+                ),
+                "bottleneck": _bottleneck_summary_observed(bottleneck),
+            }
+        )
+    return observed
 
 
 def _int_list(value: Any) -> list[int]:

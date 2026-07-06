@@ -1147,7 +1147,13 @@ opening a TTNN device.
 When invoked through `validate-real-decode`, full-depth coverage is required
 only when that command is run with `--require-full-depth`; otherwise the sweep
 is scoped to the requested validation depth so small bring-up runs stay
-lightweight.
+lightweight. The real-decode acceptance gate also validates every depth record,
+not just the sweep summary: each profiled depth must match the requested
+batch/cache shape, use HF parameters and synthetic runtime inputs, expose
+layer-profile ids for `[0..depth)`, pass the reference checks, report measured
+throughput, include decode output/KV-cache shapes, and include bottleneck
+timing evidence. When `--require-trace` is used, each depth record must also
+show `captured_and_executed` trace status with the requested iteration count.
 
 ## Performance Step 3: Batch32 Decode-Step Contract Gate
 

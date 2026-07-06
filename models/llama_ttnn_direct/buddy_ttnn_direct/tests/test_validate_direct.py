@@ -1409,6 +1409,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_depth_sweep.records",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "decode_step_autotune.status",
                 acceptance_check_names,
             )
@@ -2766,6 +2770,97 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 ["decode_step_contract.batch32"],
+            )
+
+    def test_validate_real_decode_fails_on_depth_sweep_record_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_sweep = validation_module.run_decode_depth_sweep
+
+            def sweep_with_bad_record_reference(*args, **kwargs):
+                sweep = original_sweep(*args, **kwargs)
+                sweep["records"][0]["reference_status"] = "failed"
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(sweep, indent=2) + "\n")
+                return sweep
+
+            with patch.object(
+                validation_module,
+                "run_decode_depth_sweep",
+                side_effect=sweep_with_bad_record_reference,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["results"]["decode_depth_sweep"], "pass")
+            self.assertTrue(
+                report["steps"]["decode_depth_sweep"]["acceptance"][
+                    "passed"
+                ]
+            )
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_depth_sweep.records"],
+            )
+            self.assertEqual(
+                failed_checks[0]["observed"][0]["reference_status"],
+                "failed",
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["decode_depth_sweep.records"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"][
+                    "records"
+                ][0]["reference_status"],
+                "failed",
             )
 
     def test_validate_real_decode_fails_on_autotune_best_reference(
