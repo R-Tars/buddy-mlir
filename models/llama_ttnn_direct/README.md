@@ -588,6 +588,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --trace-iterations 10 \
   --require-trace \
   --min-tokens-per-second-per-user 1.0 \
+  --baseline-tokens-per-second-per-user 33.1 \
+  --min-baseline-ratio 0.1 \
   --decode-shell-pcc-threshold 0.99 \
   --require-decode-shell-numeric-reference \
   --out-dir /tmp/validate_ttnn_direct_real
@@ -620,6 +622,10 @@ config mismatch.
 Use `--require-full-depth` and `--require-program-runtime-shape` for final
 acceptance runs that must prove the generated program's full layer count and
 configured batch/cache dimensions, instead of a smaller bring-up shape.
+Use `--baseline-tokens-per-second-per-user` to record the observed throughput
+ratio against a reference, such as the TT-Metal official Llama 3.1 8B batch-32
+baseline from the review table, and `--min-baseline-ratio` to fail acceptance
+when the observed/baseline ratio falls below the current phase's floor.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
@@ -641,7 +647,9 @@ requested execute iteration/sample-count evidence, measured profile latency,
 complete profile attribution sections, per-layer attention/MLP timing records,
 bottleneck summary, positive profile throughput, and, unless
 `--skip-autotune` is used, a real-weight decode-step autotune best candidate
-with a passed structural reference before marking the validation as accepted.
+with a passed structural reference. When a throughput baseline is supplied, the
+evidence also records the observed/baseline ratio and gates it against the
+requested floor before marking the validation as accepted.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

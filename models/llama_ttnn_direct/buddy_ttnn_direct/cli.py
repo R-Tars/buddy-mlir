@@ -1224,6 +1224,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--baseline-tokens-per-second-per-user",
+        type=float,
+        default=None,
+        help=(
+            "Reference decode throughput used to record a performance ratio "
+            "in validate-real-decode evidence."
+        ),
+    )
+    validate_real.add_argument(
+        "--min-baseline-ratio",
+        type=float,
+        default=None,
+        help=(
+            "Minimum observed/baseline tokens-per-second-per-user ratio "
+            "required for validate-real-decode acceptance."
+        ),
+    )
+    validate_real.add_argument(
         "--decode-shell-pcc-threshold",
         type=float,
         default=0.99,
@@ -1763,6 +1781,10 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         require_full_depth=args.require_full_depth,
         require_program_runtime_shape=args.require_program_runtime_shape,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            args.baseline_tokens_per_second_per_user
+        ),
+        min_baseline_ratio=args.min_baseline_ratio,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(
             args.require_decode_shell_numeric_reference

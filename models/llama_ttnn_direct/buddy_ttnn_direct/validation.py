@@ -659,6 +659,8 @@ def validate_real_decode(
     require_full_depth: bool = False,
     require_program_runtime_shape: bool = False,
     min_tokens_per_second_per_user: float | None = None,
+    baseline_tokens_per_second_per_user: float | None = None,
+    min_baseline_ratio: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
     ttnn_module: Any | None = None,
@@ -674,6 +676,19 @@ def validate_real_decode(
         raise ValueError("layers must be positive")
     if trace_iterations <= 0:
         raise ValueError("trace_iterations must be positive")
+    if (
+        baseline_tokens_per_second_per_user is not None
+        and baseline_tokens_per_second_per_user <= 0.0
+    ):
+        raise ValueError("baseline_tokens_per_second_per_user must be positive")
+    if min_baseline_ratio is not None:
+        if min_baseline_ratio < 0.0:
+            raise ValueError("min_baseline_ratio must be nonnegative")
+        if baseline_tokens_per_second_per_user is None:
+            raise ValueError(
+                "baseline_tokens_per_second_per_user is required when "
+                "min_baseline_ratio is set"
+            )
 
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -753,6 +768,10 @@ def validate_real_decode(
         "require_full_depth": require_full_depth,
         "require_program_runtime_shape": require_program_runtime_shape,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "baseline_tokens_per_second_per_user": (
+            baseline_tokens_per_second_per_user
+        ),
+        "min_baseline_ratio": min_baseline_ratio,
         "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
         "require_decode_shell_numeric_reference": (
             require_decode_shell_numeric_reference
@@ -1203,6 +1222,10 @@ def validate_real_decode(
         require_full_depth=require_full_depth,
         require_program_runtime_shape=require_program_runtime_shape,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            baseline_tokens_per_second_per_user
+        ),
+        min_baseline_ratio=min_baseline_ratio,
         require_decode_shell_numeric_reference=(
             require_decode_shell_numeric_reference
         ),
@@ -1413,6 +1436,10 @@ def _real_decode_evidence_manifest(
             "trace_iterations": report.get("trace_iterations"),
             "metric": report.get("metric"),
             "skip_autotune": report.get("skip_autotune"),
+            "baseline_tokens_per_second_per_user": report.get(
+                "baseline_tokens_per_second_per_user"
+            ),
+            "min_baseline_ratio": report.get("min_baseline_ratio"),
             "require_official_config_match": report.get(
                 "require_official_config_match"
             ),
@@ -1442,6 +1469,10 @@ def _real_decode_evidence_manifest(
             "min_tokens_per_second_per_user": report.get(
                 "min_tokens_per_second_per_user"
             ),
+            "baseline_tokens_per_second_per_user": report.get(
+                "baseline_tokens_per_second_per_user"
+            ),
+            "min_baseline_ratio": report.get("min_baseline_ratio"),
             "decode_shell_pcc_threshold": report.get(
                 "decode_shell_pcc_threshold"
             ),
@@ -1460,6 +1491,12 @@ def _real_decode_evidence_manifest(
             ),
             "smoke_ttnn_environment": smoke.get("ttnn_environment"),
             "profile_ttnn_environment": profile.get("ttnn_environment"),
+        },
+        "performance_evidence": {
+            "throughput_baseline": _throughput_baseline_summary(
+                report,
+                profile,
+            ),
         },
         "config_evidence": {
             "official_config_diff": {
@@ -1714,6 +1751,29 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _throughput_baseline_summary(
+    report: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    throughput = profile.get("throughput_summary") or {}
+    observed = throughput.get("tokens_per_second_per_user")
+    baseline = report.get("baseline_tokens_per_second_per_user")
+    min_ratio = report.get("min_baseline_ratio")
+    ratio = None
+    if _positive_number(observed) and _positive_number(baseline):
+        ratio = float(observed) / float(baseline)
+    summary = {
+        "metric": "tokens_per_second_per_user",
+        "observed": observed,
+        "baseline": baseline,
+        "ratio": ratio,
+        "min_ratio": min_ratio,
+    }
+    if min_ratio is not None:
+        summary["passed"] = _number_at_least(ratio, min_ratio)
+    return summary
+
+
 def _real_decode_acceptance(
     report: dict[str, Any],
     *,
@@ -1722,6 +1782,8 @@ def _real_decode_acceptance(
     require_full_depth: bool,
     require_program_runtime_shape: bool,
     min_tokens_per_second_per_user: float | None,
+    baseline_tokens_per_second_per_user: float | None,
+    min_baseline_ratio: float | None,
     require_decode_shell_numeric_reference: bool,
 ) -> dict[str, Any]:
     if report.get("dry_run"):
@@ -1735,6 +1797,10 @@ def _real_decode_acceptance(
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
             ),
+            "baseline_tokens_per_second_per_user": (
+                baseline_tokens_per_second_per_user
+            ),
+            "min_baseline_ratio": min_baseline_ratio,
             "require_decode_shell_numeric_reference": (
                 require_decode_shell_numeric_reference
             ),
@@ -1768,6 +1834,7 @@ def _real_decode_acceptance(
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
     throughput = profile.get("throughput_summary") or {}
+    throughput_baseline = _throughput_baseline_summary(report, profile)
     profile_section_latency = profile.get("section_latency_ms")
     profile_layer_profiles = profile.get("layer_profiles")
     profile_bottleneck = profile.get("bottleneck_summary")
@@ -2403,6 +2470,32 @@ def _real_decode_acceptance(
             )
         )
 
+    if baseline_tokens_per_second_per_user is not None:
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.baseline_tokens_per_second_per_user",
+                _positive_number(baseline_tokens_per_second_per_user),
+                observed=baseline_tokens_per_second_per_user,
+                minimum=0,
+            )
+        )
+    if min_baseline_ratio is not None:
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.min_baseline_ratio",
+                _number_at_least(
+                    throughput_baseline.get("ratio"),
+                    min_baseline_ratio,
+                ),
+                observed=throughput_baseline.get("ratio"),
+                minimum=min_baseline_ratio,
+                baseline=baseline_tokens_per_second_per_user,
+                tokens_per_second_per_user=throughput.get(
+                    "tokens_per_second_per_user"
+                ),
+            )
+        )
+
     if not skip_autotune:
         checks.extend(
             [
@@ -2470,6 +2563,11 @@ def _real_decode_acceptance(
         "require_program_runtime_shape": require_program_runtime_shape,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "baseline_tokens_per_second_per_user": (
+            baseline_tokens_per_second_per_user
+        ),
+        "min_baseline_ratio": min_baseline_ratio,
+        "throughput_baseline": throughput_baseline,
         "require_decode_shell_numeric_reference": (
             require_decode_shell_numeric_reference
         ),

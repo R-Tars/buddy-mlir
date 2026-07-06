@@ -308,6 +308,10 @@ class ValidateDirectTest(unittest.TestCase):
                 report["acceptance"]["min_tokens_per_second_per_user"],
                 1.0,
             )
+            self.assertIsNone(
+                report["acceptance"]["baseline_tokens_per_second_per_user"]
+            )
+            self.assertIsNone(report["acceptance"]["min_baseline_ratio"])
             self.assertEqual(
                 report["steps"]["smoke_decode_step"]["reference_status"],
                 "dry_run",
@@ -343,6 +347,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(evidence["validation"]["batch_size"], 2)
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["requirements"]["require_trace"])
+            self.assertIsNone(
+                evidence["requirements"][
+                    "baseline_tokens_per_second_per_user"
+                ]
+            )
+            self.assertIsNone(evidence["requirements"]["min_baseline_ratio"])
             self.assertFalse(
                 evidence["requirements"]["require_official_config_match"]
             )
@@ -356,6 +366,11 @@ class ValidateDirectTest(unittest.TestCase):
                     "diff_status"
                 ],
                 "diff_found",
+            )
+            self.assertIsNone(
+                evidence["performance_evidence"]["throughput_baseline"][
+                    "baseline"
+                ]
             )
             artifact_names = {
                 artifact["name"]: artifact for artifact in evidence["artifacts"]
@@ -421,6 +436,8 @@ class ValidateDirectTest(unittest.TestCase):
                     trace_iterations=2,
                     require_trace=True,
                     min_tokens_per_second_per_user=0.0,
+                    baseline_tokens_per_second_per_user=1.0,
+                    min_baseline_ratio=0.0,
                     ttnn_module=_make_fake_ttnn(),
                     torch_module=_fake_torch(),
                 )
@@ -763,6 +780,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.min_tokens_per_second_per_user",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.baseline_tokens_per_second_per_user",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.min_baseline_ratio",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1132,6 +1157,11 @@ class ValidateDirectTest(unittest.TestCase):
                 ]["tokens_per_second_per_user"],
                 0.0,
             )
+            baseline = evidence["performance_evidence"]["throughput_baseline"]
+            self.assertEqual(baseline["baseline"], 1.0)
+            self.assertEqual(baseline["min_ratio"], 0.0)
+            self.assertGreater(baseline["ratio"], 0.0)
+            self.assertTrue(baseline["passed"])
             self.assertEqual(
                 evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
                     "iterations"
@@ -1675,6 +1705,72 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["acceptance"]["failed_checks"],
                 ["profile_decode_step.min_tokens_per_second_per_user"],
             )
+
+    def test_validate_real_decode_fails_baseline_ratio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    baseline_tokens_per_second_per_user=1.0e12,
+                    min_baseline_ratio=1.0,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
+            self.assertEqual(report["acceptance"]["status"], "failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["profile_decode_step.min_baseline_ratio"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_decode_step.min_baseline_ratio"],
+            )
+            baseline = evidence["performance_evidence"]["throughput_baseline"]
+            self.assertEqual(baseline["baseline"], 1.0e12)
+            self.assertEqual(baseline["min_ratio"], 1.0)
+            self.assertLess(baseline["ratio"], 1.0)
+            self.assertFalse(baseline["passed"])
 
     def test_validate_real_decode_fails_on_profile_runtime_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
