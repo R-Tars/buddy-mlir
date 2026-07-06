@@ -40,6 +40,7 @@ from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
 from .search.report import dump_search_report
 from .search.decode_step_autotune import run_decode_step_autotune
+from .search.decode_depth_sweep import run_decode_depth_sweep
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
@@ -719,6 +720,84 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output generated decode-step profile report JSON path.",
     )
     profile_decode_step_parser.set_defaults(func=_cmd_profile_decode_step)
+
+    decode_depth_sweep = subparsers.add_parser(
+        "decode-depth-sweep",
+        help=(
+            "Run profile-decode-step across an increasing set of decoder "
+            "depths for functional depth bring-up."
+        ),
+    )
+    decode_depth_sweep.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    decode_depth_sweep.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help=(
+            "Optional local HF model directory. When provided in device mode, "
+            "each depth profile materializes and tensorizes real weights."
+        ),
+    )
+    decode_depth_sweep.add_argument(
+        "--depths",
+        default=None,
+        help=(
+            "Comma-separated depth list such as 1,2,4,full. Defaults to "
+            "1,2,4,full clipped to the generated layer count."
+        ),
+    )
+    decode_depth_sweep.add_argument(
+        "--profiles-dir",
+        type=Path,
+        default=None,
+        help="Directory for per-depth profile-decode-step reports.",
+    )
+    decode_depth_sweep.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the sweep report.",
+    )
+    decode_depth_sweep.add_argument(
+        "--device-id",
+        type=int,
+        default=0,
+        help="TTNN device id to open when hardware is available.",
+    )
+    decode_depth_sweep.add_argument("--batch-size", type=int, default=None)
+    decode_depth_sweep.add_argument("--cache-len", type=int, default=None)
+    decode_depth_sweep.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    decode_depth_sweep.add_argument(
+        "--trace",
+        action="store_true",
+        help="Also capture/execute a generated decode_step trace per depth.",
+    )
+    decode_depth_sweep.add_argument(
+        "--trace-iterations",
+        type=int,
+        default=1,
+        help="Number of execute_trace iterations after capture.",
+    )
+    decode_depth_sweep.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write per-depth profile schemas without opening a device.",
+    )
+    decode_depth_sweep.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output decode depth sweep report JSON path.",
+    )
+    decode_depth_sweep.set_defaults(func=_cmd_decode_depth_sweep)
 
     profile = subparsers.add_parser(
         "profile-template",
@@ -1504,6 +1583,29 @@ def _cmd_profile_decode_step(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step profile report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
+    report = run_decode_depth_sweep(
+        out=args.out,
+        program_dir=args.program_dir,
+        depths=args.depths,
+        model_path=args.model_path,
+        profiles_dir=args.profiles_dir,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        trace=args.trace,
+        trace_iterations=args.trace_iterations,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote decode depth sweep report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

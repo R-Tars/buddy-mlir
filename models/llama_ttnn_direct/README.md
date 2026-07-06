@@ -1056,6 +1056,29 @@ sequences when the injected test TTNN module exposes them. This remains a
 functional-path smoke; loading real weights does not yet claim numeric
 correctness or official performance parity.
 
+`decode-depth-sweep` automates the same bring-up ladder and writes a single
+summary report while preserving each depth's `profile-decode-step` report:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  decode-depth-sweep \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --depths 1,2,4,full \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/decode_depth_sweep_report.json
+```
+
+When `--depths` is omitted, the default is `1,2,4,full`, clipped to the
+generated program's layer count. The report records per-depth status, profile
+report paths, latency, throughput, layer profile ids, output shapes, trace
+status, reference status, and acceptance checks for increasing unique depths,
+full-depth coverage, per-depth pass status, layer profile counts, and
+throughput availability. Use `--dry-run` to generate the same schema without
+opening a TTNN device.
+
 ## Performance Step 4: Decode-Step Trace Smoke
 
 `smoke-decode-step` can also exercise TTNN trace capture and execution for the
