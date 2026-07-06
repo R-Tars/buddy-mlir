@@ -579,7 +579,8 @@ generated program, materializes selected HF safetensors, then runs the
 attention-disabled decode shell, an independent attention primitive sweep, an
 independent single-layer attention decode smoke, a real-weight single-layer
 generated decode smoke, real-weight
-`smoke-decode-step`, `profile-decode-step`, and optionally
+`smoke-decode-step`, `profile-decode-step`, an integrated decode-depth sweep,
+and optionally
 `autotune-decode-step` against the existing generated program:
 
 ```bash
@@ -608,7 +609,8 @@ The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
 official config diff, materialization, attention-disabled decode shell,
 standalone attention primitive sweep, standalone attention layer, single-layer
-generated decode, full decode-step smoke/profile, and autotune subreports. The
+generated decode, full decode-step smoke/profile, decode-depth sweep, and
+autotune subreports. The
 decode shell gate runs before full attention, then the primitive sweep records
 one report per official attention decode wrapper with status, error,
 input/output shapes, expected output shapes, dtype/layout/memory config,
@@ -620,6 +622,11 @@ generated
 before the validation scales to the requested layer count. When a torch
 reference can run, `--decode-shell-pcc-threshold` gates the shell final-hidden
 PCC.
+The integrated decode-depth sweep reuses `profile-decode-step` for the
+review ladder. By default it covers `1`, `2`, and `4` where those depths are
+not greater than the requested `--layers`, and always includes the requested
+depth. Passing `--require-full-depth` also adds the generated program's full
+layer count and gates full-depth coverage.
 The validation also writes
 `/tmp/validate_ttnn_direct_real/real_decode_evidence_manifest.json`, a compact
 evidence bundle index that records artifact existence, TTNN environment,
@@ -1137,6 +1144,10 @@ status, reference status, and acceptance checks for increasing unique depths,
 full-depth coverage, per-depth pass status, layer profile counts, and
 throughput availability. Use `--dry-run` to generate the same schema without
 opening a TTNN device.
+When invoked through `validate-real-decode`, full-depth coverage is required
+only when that command is run with `--require-full-depth`; otherwise the sweep
+is scoped to the requested validation depth so small bring-up runs stay
+lightweight.
 
 ## Performance Step 3: Batch32 Decode-Step Contract Gate
 

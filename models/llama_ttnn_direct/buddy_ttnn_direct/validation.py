@@ -32,6 +32,7 @@ from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
 )
+from .search.decode_depth_sweep import run_decode_depth_sweep
 from .search.report import dump_search_report
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
@@ -92,6 +93,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "single_layer_decode",
     "smoke_decode_step",
     "profile_decode_step",
+    "decode_depth_sweep",
     "decode_step_autotune",
 )
 
@@ -782,6 +784,8 @@ def validate_real_decode(
         "single_layer_decode_report": root / "single_layer_decode_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
+        "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
+        "decode_depth_profiles_dir": root / "decode_depth_profiles",
         "autotune_report": root / "decode_step_autotune_report.json",
         "autotune_candidates_dir": root / "decode_step_autotune_candidates",
         "evidence_manifest": root / "real_decode_evidence_manifest.json",
@@ -1302,6 +1306,56 @@ def validate_real_decode(
             **_reference_summary(profile_report),
         }
 
+    def decode_depth_sweep_step() -> dict[str, Any]:
+        sweep_depths = _validation_depth_sweep_targets(
+            layer_count=layer_count,
+            program_num_layers=program_num_layers,
+            require_full_depth=require_full_depth,
+        )
+        sweep_report = run_decode_depth_sweep(
+            program_dir=program_dir,
+            out=paths["decode_depth_sweep_report"],
+            depths=sweep_depths,
+            model_path=None if dry_run else model_path,
+            profiles_dir=paths["decode_depth_profiles_dir"],
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            device=device,
+            device_id=device_id,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            dry_run=dry_run,
+            require_full_depth=require_full_depth,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+        )
+        return {
+            "status": _decode_depth_sweep_step_status(
+                sweep_report,
+                dry_run=dry_run,
+            ),
+            "decode_depth_sweep_report": str(
+                paths["decode_depth_sweep_report"]
+            ),
+            "profiles_dir": str(paths["decode_depth_profiles_dir"]),
+            "depths": sweep_report.get("depths"),
+            "depth_count": sweep_report.get("depth_count"),
+            "max_depth": sweep_report.get("max_depth"),
+            "covered_full_depth": sweep_report.get("covered_full_depth"),
+            "require_full_depth": sweep_report.get("require_full_depth"),
+            "status_counts": sweep_report.get("status_counts", {}),
+            "reference_status_counts": sweep_report.get(
+                "reference_status_counts",
+                {},
+            ),
+            "trace_status_counts": sweep_report.get("trace_status_counts", {}),
+            "passed_depth_count": sweep_report.get("passed_depth_count"),
+            "failed_depths": sweep_report.get("failed_depths", []),
+            "records": sweep_report.get("records", []),
+            "acceptance": sweep_report.get("acceptance"),
+        }
+
     def autotune_step() -> dict[str, Any]:
         if skip_autotune:
             return {
@@ -1403,6 +1457,7 @@ def validate_real_decode(
         "single_layer_decode": single_layer_decode_step,
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
+        "decode_depth_sweep": decode_depth_sweep_step,
         "decode_step_autotune": autotune_step,
     }
 
@@ -1449,6 +1504,41 @@ def _runtime_step_status(
     if runtime_report.get("passed"):
         return "pass"
     return str(runtime_report.get("status", "fail"))
+
+
+def _decode_depth_sweep_step_status(
+    sweep_report: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> str:
+    if dry_run:
+        return "dry_run"
+    if sweep_report.get("passed"):
+        return "pass"
+    return str(sweep_report.get("status", "fail"))
+
+
+def _validation_depth_sweep_targets(
+    *,
+    layer_count: int,
+    program_num_layers: int,
+    require_full_depth: bool,
+) -> list[int]:
+    targets = [1]
+    for depth in (2, 4):
+        if depth <= layer_count:
+            targets.append(depth)
+    targets.append(layer_count)
+    if require_full_depth:
+        targets.append(program_num_layers)
+    resolved: list[int] = []
+    for depth in targets:
+        depth = int(depth)
+        if depth <= 0 or depth > program_num_layers:
+            continue
+        if depth not in resolved:
+            resolved.append(depth)
+    return resolved
 
 
 def _attention_primitives_step_status(
@@ -1692,6 +1782,7 @@ def _real_decode_evidence_manifest(
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
     decode_step_contract = report.get("decode_step_contract") or {}
@@ -2049,6 +2140,29 @@ def _real_decode_evidence_manifest(
                 "bottleneck_summary": profile.get("bottleneck_summary"),
                 "max_section": profile.get("max_section"),
             },
+            "decode_depth_sweep": {
+                "status": depth_sweep.get("status"),
+                "depths": depth_sweep.get("depths"),
+                "depth_count": depth_sweep.get("depth_count"),
+                "max_depth": depth_sweep.get("max_depth"),
+                "covered_full_depth": depth_sweep.get("covered_full_depth"),
+                "require_full_depth": depth_sweep.get(
+                    "require_full_depth"
+                ),
+                "status_counts": depth_sweep.get("status_counts", {}),
+                "reference_status_counts": depth_sweep.get(
+                    "reference_status_counts",
+                    {},
+                ),
+                "trace_status_counts": depth_sweep.get(
+                    "trace_status_counts",
+                    {},
+                ),
+                "passed_depth_count": depth_sweep.get("passed_depth_count"),
+                "failed_depths": depth_sweep.get("failed_depths", []),
+                "acceptance": depth_sweep.get("acceptance"),
+                "records": depth_sweep.get("records", []),
+            },
             "decode_step_autotune": {
                 "status": autotune.get("status"),
                 "candidate_count": autotune.get("candidate_count"),
@@ -2308,6 +2422,7 @@ def _real_decode_acceptance(
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
     single_layer_tensorization = _step_tensorization_summary(single_layer)
@@ -3509,6 +3624,33 @@ def _real_decode_acceptance(
             observed=throughput.get("aggregate_tokens_per_second"),
             minimum=0,
         ),
+        _acceptance_check(
+            "decode_depth_sweep.status",
+            depth_sweep.get("status") == "pass",
+            observed=depth_sweep.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "decode_depth_sweep.acceptance",
+            (depth_sweep.get("acceptance") or {}).get("passed") is True,
+            observed=depth_sweep.get("acceptance"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "decode_depth_sweep.requested_depth",
+            _int_list_contains(depth_sweep.get("depths"), expected_layers),
+            observed=depth_sweep.get("depths"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "decode_depth_sweep.passed_depth_count",
+            _int_equal(
+                depth_sweep.get("passed_depth_count"),
+                depth_sweep.get("depth_count"),
+            ),
+            observed=depth_sweep.get("passed_depth_count"),
+            expected=depth_sweep.get("depth_count"),
+        ),
     ]
     if require_decode_shell_numeric_reference:
         checks.append(
@@ -3530,13 +3672,21 @@ def _real_decode_acceptance(
             )
         )
     if require_full_depth:
-        checks.append(
-            _acceptance_check(
-                "validation.full_depth_layers",
-                _int_equal(expected_layers, program_num_layers),
-                observed=expected_layers,
-                expected=program_num_layers,
-            )
+        checks.extend(
+            [
+                _acceptance_check(
+                    "validation.full_depth_layers",
+                    _int_equal(expected_layers, program_num_layers),
+                    observed=expected_layers,
+                    expected=program_num_layers,
+                ),
+                _acceptance_check(
+                    "decode_depth_sweep.full_depth",
+                    depth_sweep.get("covered_full_depth") is True,
+                    observed=depth_sweep.get("max_depth"),
+                    expected=program_num_layers,
+                ),
+            ]
         )
     if require_program_runtime_shape:
         checks.extend(
@@ -5029,6 +5179,13 @@ def _int_list(value: Any) -> list[int]:
             return []
         result.append(converted)
     return result
+
+
+def _int_list_contains(values: Any, expected: Any) -> bool:
+    expected_int = _safe_int(expected)
+    if expected_int is None:
+        return False
+    return expected_int in _int_list(values)
 
 
 def _safe_int(value: Any) -> int | None:

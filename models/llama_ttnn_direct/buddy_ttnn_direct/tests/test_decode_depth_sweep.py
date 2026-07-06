@@ -184,6 +184,56 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(depth_two["trace_iterations"], 2)
             self.assertEqual(report["acceptance"]["failed_checks"], [])
 
+    def test_run_decode_depth_sweep_accepts_partial_depth_when_allowed(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "depth_sweep.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = run_decode_depth_sweep(
+                out=report_json,
+                program_dir=program_dir,
+                depths=[1],
+                batch_size=2,
+                cache_len=16,
+                dry_run=True,
+                require_full_depth=False,
+            )
+
+            self.assertEqual(report["status"], "dry_run")
+            self.assertTrue(report["passed"])
+            self.assertFalse(report["covered_full_depth"])
+            self.assertFalse(report["require_full_depth"])
+            self.assertEqual(report["depths"], [1])
+            self.assertEqual(report["acceptance"]["failed_checks"], [])
+            self.assertNotIn(
+                "decode_depth_sweep.full_depth",
+                [
+                    check["name"]
+                    for check in report["acceptance"]["checks"]
+                ],
+            )
+
     def test_decode_depth_sweep_reports_profile_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

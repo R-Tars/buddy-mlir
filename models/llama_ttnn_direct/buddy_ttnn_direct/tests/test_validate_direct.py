@@ -335,6 +335,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["single_layer_decode"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
+            self.assertEqual(report["results"]["decode_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertIn("official_config", report)
             self.assertEqual(
@@ -405,6 +406,17 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["profile_decode_step"]["reference_status"],
                 "dry_run",
             )
+            self.assertEqual(
+                report["steps"]["decode_depth_sweep"]["depths"],
+                [1],
+            )
+            self.assertEqual(
+                report["steps"]["decode_depth_sweep"]["status_counts"],
+                {"dry_run": 1},
+            )
+            self.assertTrue(
+                report["steps"]["decode_depth_sweep"]["acceptance"]["passed"]
+            )
             self.assertTrue(
                 (out_dir / "parameter_materialization_report.json").is_file()
             )
@@ -413,6 +425,8 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
+            self.assertTrue((out_dir / "decode_depth_sweep_report.json").is_file())
+            self.assertTrue((out_dir / "decode_depth_profiles").is_dir())
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
@@ -457,6 +471,16 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
             self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"]["depths"],
+                [1],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"][
+                    "status_counts"
+                ],
+                {"dry_run": 1},
+            )
+            self.assertEqual(
                 evidence["config_evidence"]["official_config_diff"][
                     "diff_status"
                 ],
@@ -481,6 +505,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(artifact_names["attention_layer_report"]["exists"])
             self.assertTrue(artifact_names["single_layer_decode_report"]["exists"])
             self.assertTrue(artifact_names["smoke_report"]["exists"])
+            self.assertTrue(
+                artifact_names["decode_depth_sweep_report"]["exists"]
+            )
+            self.assertTrue(
+                artifact_names["decode_depth_profiles_dir"]["exists"]
+            )
             self.assertFalse(artifact_names["autotune_report"]["exists"])
             self.assertEqual(
                 report["evidence"]["manifest"],
@@ -894,6 +924,29 @@ class ValidateDirectTest(unittest.TestCase):
                     ]["execute_samples_ms"]
                 )
             )
+            depth_sweep = report["steps"]["decode_depth_sweep"]
+            self.assertEqual(depth_sweep["status"], "pass")
+            self.assertEqual(depth_sweep["depths"], [1])
+            self.assertEqual(depth_sweep["depth_count"], 1)
+            self.assertEqual(depth_sweep["max_depth"], 1)
+            self.assertFalse(depth_sweep["covered_full_depth"])
+            self.assertFalse(depth_sweep["require_full_depth"])
+            self.assertEqual(depth_sweep["status_counts"], {"profiled": 1})
+            self.assertEqual(
+                depth_sweep["reference_status_counts"],
+                {"passed": 1},
+            )
+            self.assertEqual(
+                depth_sweep["trace_status_counts"],
+                {"captured_and_executed": 1},
+            )
+            self.assertEqual(depth_sweep["passed_depth_count"], 1)
+            self.assertEqual(depth_sweep["failed_depths"], [])
+            self.assertTrue(depth_sweep["acceptance"]["passed"])
+            self.assertEqual(
+                depth_sweep["records"][0]["layer_profile_ids"],
+                [0],
+            )
             self.assertEqual(report["acceptance"]["status"], "passed")
             self.assertTrue(report["acceptance"]["passed"])
             self.assertTrue(report["acceptance"]["require_trace"])
@@ -1300,6 +1353,22 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step."
                     "trace_execute_tokens_per_second_per_user"
                 ),
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_depth_sweep.status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_depth_sweep.acceptance",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_depth_sweep.requested_depth",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_depth_sweep.passed_depth_count",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1731,6 +1800,25 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 0.0,
             )
+            depth_sweep_report = json.loads(
+                (out_dir / "decode_depth_sweep_report.json").read_text()
+            )
+            self.assertEqual(depth_sweep_report["status"], "pass")
+            self.assertEqual(depth_sweep_report["depths"], [1])
+            self.assertFalse(depth_sweep_report["covered_full_depth"])
+            self.assertFalse(depth_sweep_report["require_full_depth"])
+            self.assertEqual(
+                depth_sweep_report["status_counts"],
+                {"profiled": 1},
+            )
+            self.assertEqual(
+                depth_sweep_report["records"][0]["layer_profile_ids"],
+                [0],
+            )
+            self.assertTrue(
+                (out_dir / "decode_depth_profiles" / "profile_depth_1.json")
+                .is_file()
+            )
             autotune_report = json.loads(
                 (out_dir / "decode_step_autotune_report.json").read_text()
             )
@@ -1986,6 +2074,31 @@ class ValidateDirectTest(unittest.TestCase):
                     "lm_head_profile"
                 ]["argmax_status"],
                 "profiled",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"]["status"],
+                "pass",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"]["depths"],
+                [1],
+            )
+            self.assertFalse(
+                evidence["runtime_evidence"]["decode_depth_sweep"][
+                    "covered_full_depth"
+                ]
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"][
+                    "passed_depth_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_depth_sweep"][
+                    "records"
+                ][0]["layer_profile_ids"],
+                [0],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["decode_shell"]["input_source"],
@@ -2956,6 +3069,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode",
                     "smoke_decode_step",
                     "profile_decode_step",
+                    "decode_depth_sweep",
                     "decode_step_autotune",
                 ],
             )

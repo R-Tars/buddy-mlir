@@ -26,6 +26,7 @@ def run_decode_depth_sweep(
     trace: bool = False,
     trace_iterations: int = 1,
     dry_run: bool = False,
+    require_full_depth: bool = True,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -112,6 +113,7 @@ def run_decode_depth_sweep(
         depths=resolved_depths,
         program_num_layers=program_num_layers,
         dry_run=dry_run,
+        require_full_depth=require_full_depth,
     )
     if dry_run:
         status = "dry_run"
@@ -128,6 +130,7 @@ def run_decode_depth_sweep(
         "status": status,
         "passed": bool(acceptance["passed"]),
         "dry_run": bool(dry_run),
+        "require_full_depth": bool(require_full_depth),
         "program_dir": str(program_root),
         "model_path": str(model_path_for_profile) if model_path_for_profile else None,
         "profiles_dir": str(profile_root),
@@ -267,6 +270,7 @@ def _depth_sweep_acceptance(
     depths: list[int],
     program_num_layers: int,
     dry_run: bool,
+    require_full_depth: bool,
 ) -> dict[str, Any]:
     observed_depths = [record.get("depth") for record in records]
     checks = [
@@ -281,12 +285,6 @@ def _depth_sweep_acceptance(
             depths == sorted(depths) and len(depths) == len(set(depths)),
             observed=depths,
             expected="strictly increasing unique depths",
-        ),
-        _check(
-            "decode_depth_sweep.full_depth",
-            program_num_layers in depths,
-            observed=max(depths) if depths else None,
-            expected=program_num_layers,
         ),
         _check(
             "decode_depth_sweep.all_depths_passed",
@@ -335,6 +333,16 @@ def _depth_sweep_acceptance(
             expected="dry_run or measured throughput for each depth",
         ),
     ]
+    if require_full_depth:
+        checks.insert(
+            2,
+            _check(
+                "decode_depth_sweep.full_depth",
+                program_num_layers in depths,
+                observed=max(depths) if depths else None,
+                expected=program_num_layers,
+            ),
+        )
     passed = all(check["passed"] for check in checks)
     return {
         "status": "passed" if passed else "failed",
