@@ -930,7 +930,8 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    primitive["latency_ms"] >= 0.0
+                    primitive["error"] is None
+                    and primitive["latency_ms"] >= 0.0
                     for primitive in attention_step["primitive_reports"]
                 )
             )
@@ -3632,9 +3633,9 @@ class ValidateDirectTest(unittest.TestCase):
 
             original_attention = validation_module.run_smoke_attention_layer
 
-            def attention_with_bad_primitive_latency(*args, **kwargs):
+            def attention_with_bad_primitive_error(*args, **kwargs):
                 report = original_attention(*args, **kwargs)
-                report["primitive_reports"][0]["latency_ms"] = -1.0
+                report["primitive_reports"][0]["error"] = "api mismatch"
                 out = kwargs.get("out")
                 if out is not None:
                     Path(out).write_text(json.dumps(report, indent=2) + "\n")
@@ -3643,7 +3644,7 @@ class ValidateDirectTest(unittest.TestCase):
             with patch.object(
                 validation_module,
                 "run_smoke_attention_layer",
-                side_effect=attention_with_bad_primitive_latency,
+                side_effect=attention_with_bad_primitive_error,
             ):
                 with _fake_torch_and_safetensors():
                     report = validate_real_decode(
@@ -3681,8 +3682,8 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["runtime_evidence"]["attention_layer"][
                     "primitive_reports"
-                ][0]["latency_ms"],
-                -1.0,
+                ][0]["error"],
+                "api mismatch",
             )
 
     def test_validate_real_decode_writes_evidence_on_runtime_step_failure(

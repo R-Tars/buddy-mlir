@@ -977,7 +977,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 On a P150A system, drop `--dry-run` to execute the synthetic layer. The report
 records per-primitive latency, input/output shapes, expected output shapes,
-dtype, layout, memory config, host-to-device tensor conversion count,
+dtype, layout, memory config, explicit per-primitive `error` status,
+host-to-device tensor conversion count,
 memory-config conversion count, and TTNN environment metadata when available.
 This smoke path is still independent from full generated decode execution so
 individual attention issues stay easier to isolate. Successful non-dry-run reports include
@@ -988,7 +989,10 @@ checks include intermediate QKV, rotary, SDPA, concat-heads, and O-projection
 shapes. These shape checks use the official decode physical activation
 convention (`[1, 1, batch, hidden]` and `[1, batch, heads, head_dim]`) rather
 than the older logical `[batch, seq, hidden]` summary. This is still not a
-torch PCC check.
+torch PCC check. `validate-real-decode` requires every attention-layer
+primitive report to have `status=passed`, nonnegative latency, matching output
+shapes, and `error=null`; a stale or masked per-primitive API error fails
+acceptance even if the top-level layer status is later rewritten.
 
 ## Performance Step 1: Official Config Diff
 

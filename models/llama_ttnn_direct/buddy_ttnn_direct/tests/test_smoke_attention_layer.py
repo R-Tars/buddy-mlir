@@ -83,6 +83,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
                 [1, 1, 2, 32],
             )
             self.assertIsNone(first["output_shapes"])
+            self.assertIsNone(first["error"])
             self.assertEqual(first["dtype"], "bfloat16")
             self.assertEqual(first["layout"], "tile")
             self.assertEqual(first["memory_config"], "default_or_l1")
@@ -176,6 +177,9 @@ class SmokeAttentionLayerTest(unittest.TestCase):
                 check_names,
             )
             primitive_reports = report["primitive_reports"]
+            self.assertTrue(
+                all(primitive["error"] is None for primitive in primitive_reports)
+            )
             self.assertEqual(
                 primitive_reports[0]["expected_output_shapes"]["qkv"],
                 [1, 1, 2, 32],

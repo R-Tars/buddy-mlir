@@ -6242,6 +6242,8 @@ def _attention_layer_primitive_reports_complete(reports: Any) -> bool:
             return False
         if report.get("status") != "passed":
             return False
+        if report.get("error") is not None:
+            return False
         if not _nonnegative_number(report.get("latency_ms")):
             return False
         if not _non_empty_string(report.get("dtype")):
@@ -6283,6 +6285,7 @@ def _attention_layer_primitive_reports_observed(
                 "primitive": report.get("primitive"),
                 "status": report.get("status"),
                 "latency_ms": report.get("latency_ms"),
+                "error": report.get("error"),
                 "input_shape_keys": _field_keys(input_shapes),
                 "expected_output_shape_keys": _field_keys(expected_shapes),
                 "output_shape_keys": _field_keys(output_shapes),
