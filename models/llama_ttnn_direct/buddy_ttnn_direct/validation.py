@@ -801,6 +801,7 @@ def validate_real_decode(
     program_cache_len = int(program_config["max_cache_len"])
     program_seq_len = int(program_config.get("seq_len", 1))
     program_hidden_size = int(program_config["hidden_size"])
+    program_intermediate_size = int(program_config["intermediate_size"])
     program_vocab_size = int(program_config["vocab_size"])
     program_num_attention_heads = int(program_config["num_attention_heads"])
     program_num_kv_heads = int(program_config["num_key_value_heads"])
@@ -927,6 +928,7 @@ def validate_real_decode(
         "program_cache_len": program_cache_len,
         "program_seq_len": program_seq_len,
         "program_hidden_size": program_hidden_size,
+        "program_intermediate_size": program_intermediate_size,
         "program_vocab_size": program_vocab_size,
         "program_num_attention_heads": program_num_attention_heads,
         "program_num_key_value_heads": program_num_kv_heads,
@@ -1091,6 +1093,24 @@ def validate_real_decode(
             layer_count=layer_count,
             lm_head_split_count=lm_head_split_count,
         )
+        expected_tensor_shapes = _expected_materialized_tensor_shapes(
+            layer_count=layer_count,
+            hidden_size=program_hidden_size,
+            intermediate_size=program_intermediate_size,
+            vocab_size=program_vocab_size,
+            num_attention_heads=program_num_attention_heads,
+            num_kv_heads=program_num_kv_heads,
+            head_dim=program_head_dim,
+            lm_head_splits=(
+                (materialize_report.get("lm_head") or {}).get("splits")
+            ),
+        )
+        materialized_tensor_shape_mismatches = (
+            _materialized_tensor_shape_mismatches(
+                materialize_report.get("tensors") or {},
+                expected_tensor_shapes,
+            )
+        )
         return {
             "status": "pass",
             "materialize_report": str(paths["materialize_report"]),
@@ -1103,6 +1123,9 @@ def validate_real_decode(
             "required_tensor_paths": required_tensor_paths,
             "missing_required_tensor_paths": sorted(
                 set(required_tensor_paths) - set(materialized_tensor_paths)
+            ),
+            "materialized_tensor_shape_mismatches": (
+                materialized_tensor_shape_mismatches
             ),
             "key_tensors": _materialization_key_tensors(
                 materialize_report.get("tensors") or {},
@@ -1866,6 +1889,114 @@ def _required_decode_shell_tensorized_tensor_paths(
     return paths
 
 
+def _expected_materialized_tensor_shapes(
+    *,
+    layer_count: Any,
+    hidden_size: Any,
+    intermediate_size: Any,
+    vocab_size: Any,
+    num_attention_heads: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    lm_head_splits: Any,
+) -> dict[str, list[int]]:
+    hidden = _safe_int(hidden_size)
+    intermediate = _safe_int(intermediate_size)
+    vocab = _safe_int(vocab_size)
+    heads = _safe_int(num_attention_heads)
+    kv_heads = _safe_int(num_kv_heads)
+    dim = _safe_int(head_dim)
+    layers = _safe_int(layer_count)
+    if None in (hidden, intermediate, vocab, heads, kv_heads, dim, layers):
+        return {}
+
+    q_features = heads * dim
+    kv_features = kv_heads * dim
+    qkv_features = q_features + 2 * kv_features
+    shapes: dict[str, list[int]] = {
+        "embedding.weight": [vocab, hidden],
+        "final_norm.weight": [hidden],
+        "lm_head.weight": [vocab, hidden],
+    }
+    for layer_id in range(layers):
+        shapes.update(
+            {
+                f"layers.{layer_id}.attention.q_proj.weight": [
+                    q_features,
+                    hidden,
+                ],
+                f"layers.{layer_id}.attention.k_proj.weight": [
+                    kv_features,
+                    hidden,
+                ],
+                f"layers.{layer_id}.attention.v_proj.weight": [
+                    kv_features,
+                    hidden,
+                ],
+                f"layers.{layer_id}.attention.o_proj.weight": [
+                    hidden,
+                    q_features,
+                ],
+                f"layers.{layer_id}.attention.wqkv_packed.weight": [
+                    qkv_features,
+                    hidden,
+                ],
+                f"layers.{layer_id}.mlp.gate_proj.weight": [
+                    intermediate,
+                    hidden,
+                ],
+                f"layers.{layer_id}.mlp.up_proj.weight": [
+                    intermediate,
+                    hidden,
+                ],
+                f"layers.{layer_id}.mlp.down_proj.weight": [
+                    hidden,
+                    intermediate,
+                ],
+                f"layers.{layer_id}.input_norm.weight": [hidden],
+                f"layers.{layer_id}.post_attention_norm.weight": [hidden],
+            }
+        )
+
+    if isinstance(lm_head_splits, list):
+        for split in lm_head_splits:
+            if not isinstance(split, dict):
+                continue
+            shard_id = _safe_int(split.get("shard_id"))
+            vocab_start = _safe_int(split.get("vocab_start"))
+            vocab_end = _safe_int(split.get("vocab_end"))
+            if None in (shard_id, vocab_start, vocab_end):
+                continue
+            shapes[f"lm_head.splits.{shard_id}.weight"] = [
+                vocab_end - vocab_start,
+                hidden,
+            ]
+    return shapes
+
+
+def _materialized_tensor_shape_mismatches(
+    tensors: Any,
+    expected_shapes: dict[str, list[int]],
+) -> list[dict[str, Any]]:
+    if not isinstance(tensors, dict):
+        return []
+    mismatches = []
+    for path, expected in sorted(expected_shapes.items()):
+        record = tensors.get(path)
+        if not isinstance(record, dict):
+            continue
+        observed = _int_list(record.get("shape"))
+        if observed != expected:
+            mismatches.append(
+                {
+                    "path": path,
+                    "observed": observed or None,
+                    "expected": expected,
+                }
+            )
+    return mismatches
+
+
 def _materialization_key_tensors(
     tensors: dict[str, Any],
     required_tensor_paths: list[str],
@@ -2014,6 +2145,9 @@ def _real_decode_evidence_manifest(
             "program_cache_len": report.get("program_cache_len"),
             "program_seq_len": report.get("program_seq_len"),
             "program_hidden_size": report.get("program_hidden_size"),
+            "program_intermediate_size": report.get(
+                "program_intermediate_size"
+            ),
             "program_vocab_size": report.get("program_vocab_size"),
             "program_num_attention_heads": report.get(
                 "program_num_attention_heads"
@@ -2151,6 +2285,10 @@ def _real_decode_evidence_manifest(
                 ),
                 "missing_required_tensor_paths": materialize.get(
                     "missing_required_tensor_paths",
+                    [],
+                ),
+                "materialized_tensor_shape_mismatches": materialize.get(
+                    "materialized_tensor_shape_mismatches",
                     [],
                 ),
                 "key_tensors": materialize.get("key_tensors", {}),
@@ -3036,6 +3174,12 @@ def _real_decode_acceptance(
             "materialize_parameters.required_tensor_paths",
             materialize.get("missing_required_tensor_paths") == [],
             observed=materialize.get("missing_required_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "materialize_parameters.tensor_shapes",
+            materialize.get("materialized_tensor_shape_mismatches") == [],
+            observed=materialize.get("materialized_tensor_shape_mismatches"),
             expected=[],
         ),
         _acceptance_check(

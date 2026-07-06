@@ -674,7 +674,8 @@ bring-up, or `--dry-run` to write the schema without loading safetensors or
 opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
 and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
-`hf_model` parameter sources, required materialized tensor paths, resolved
+`hf_model` parameter sources, required materialized tensor paths, materialized
+weight shapes against the generated config, resolved
 synthetic runtime input source/count evidence for token ids, page tables,
 cache position, paged KV cache, and per-layer synthetic rotary tensors,
 runtime input shape evidence for token/page/cache-position/KV tensors,
@@ -749,6 +750,9 @@ each `params.lm_head.splits[j].weight` is read directly from its vocab range,
 avoiding a full LM-head tensor load during layer-limited bring-up. The output
 report records each tensor path's source key, shape, materialization mode, and
 whether LM-head splits came from sliced tensor reads.
+`validate-real-decode` consumes those shape records and fails acceptance when
+embedding, QKV/O projection, packed QKV, MLP, RMSNorm, final norm, or LM-head
+split shapes do not match the generated program config.
 
 ## Phase 2 PR-C: TTNN Tensorization Seed
 
