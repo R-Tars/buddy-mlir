@@ -35,7 +35,7 @@ from .search.space import load_search_space
 from .semantic.dump import dump_graph_json
 from .semantic.graph import LlamaModelGraph
 from .semantic.importer_hf_llama import import_hf_llama
-from .smoke_attention_layer import run_smoke_attention_layer
+from .smoke_attention_layer import ATTENTION_LAYER_OPS, run_smoke_attention_layer
 from .smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
     run_smoke_attention_primitive,
@@ -84,6 +84,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "official_config_diff",
     "materialize_parameters",
     "decode_shell",
+    "attention_layer",
     "single_layer_decode",
     "smoke_decode_step",
     "profile_decode_step",
@@ -705,6 +706,7 @@ def validate_real_decode(
     program_batch_size = int(program_config["batch_size"])
     program_cache_len = int(program_config["max_cache_len"])
     program_seq_len = int(program_config.get("seq_len", 1))
+    program_hidden_size = int(program_config["hidden_size"])
     program_num_kv_heads = int(program_config["num_key_value_heads"])
     program_head_dim = int(program_config["head_dim"])
     if layer_count > program_num_layers:
@@ -738,6 +740,7 @@ def validate_real_decode(
         "official_config_diff": root / "official_config_diff.json",
         "materialize_report": root / "parameter_materialization_report.json",
         "decode_shell_report": root / "decode_shell_report.json",
+        "attention_layer_report": root / "attention_layer_report.json",
         "single_layer_decode_report": root / "single_layer_decode_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
@@ -759,6 +762,7 @@ def validate_real_decode(
         "program_batch_size": program_batch_size,
         "program_cache_len": program_cache_len,
         "program_seq_len": program_seq_len,
+        "program_hidden_size": program_hidden_size,
         "program_num_key_value_heads": program_num_kv_heads,
         "program_head_dim": program_head_dim,
         "layers": layer_count,
@@ -1002,6 +1006,51 @@ def validate_real_decode(
             **_reference_summary(shell_report),
         }
 
+    def attention_layer_step() -> dict[str, Any]:
+        layer_report = run_smoke_attention_layer(
+            out=paths["attention_layer_report"],
+            program_dir=program_dir,
+            layer=0,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            dry_run=dry_run,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+        )
+        primitive_reports = layer_report.get("primitive_reports") or []
+        return {
+            "status": _runtime_step_status(layer_report, dry_run=dry_run),
+            "attention_layer_report": str(paths["attention_layer_report"]),
+            "runtime_status": layer_report["status"],
+            "layer": layer_report.get("layer"),
+            "batch_size": layer_report.get("batch_size"),
+            "cache_len": layer_report.get("cache_len"),
+            "hidden_size": layer_report.get("hidden_size"),
+            "num_heads": layer_report.get("num_heads"),
+            "num_kv_heads": layer_report.get("num_kv_heads"),
+            "head_dim": layer_report.get("head_dim"),
+            "latency_ms": layer_report.get("latency_ms"),
+            "primitive_count": len(primitive_reports),
+            "primitive_sequence": [
+                primitive.get("primitive")
+                for primitive in primitive_reports
+                if isinstance(primitive, dict)
+            ],
+            "primitive_reports": primitive_reports,
+            "output_shapes": layer_report.get("output_shapes"),
+            "tensor_conversion_count": layer_report.get(
+                "tensor_conversion_count"
+            ),
+            "memory_config_conversion_count": layer_report.get(
+                "memory_config_conversion_count"
+            ),
+            "ttnn_environment": layer_report.get("ttnn_environment"),
+            **_reference_summary(layer_report),
+        }
+
     def single_layer_decode_step() -> dict[str, Any]:
         single_layer_report = run_smoke_single_layer_decode(
             out=paths["single_layer_decode_report"],
@@ -1228,6 +1277,7 @@ def validate_real_decode(
         "official_config_diff": official_config_diff_step,
         "materialize_parameters": materialize_step,
         "decode_shell": decode_shell_step,
+        "attention_layer": attention_layer_step,
         "single_layer_decode": single_layer_decode_step,
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
@@ -1419,6 +1469,7 @@ def _real_decode_evidence_manifest(
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
+    attention_layer = steps.get("attention_layer", {})
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
@@ -1451,6 +1502,7 @@ def _real_decode_evidence_manifest(
             "program_batch_size": report.get("program_batch_size"),
             "program_cache_len": report.get("program_cache_len"),
             "program_seq_len": report.get("program_seq_len"),
+            "program_hidden_size": report.get("program_hidden_size"),
             "program_num_key_value_heads": report.get(
                 "program_num_key_value_heads"
             ),
@@ -1517,6 +1569,9 @@ def _real_decode_evidence_manifest(
             if name != "evidence_manifest"
         ],
         "device_evidence": {
+            "attention_layer_ttnn_environment": attention_layer.get(
+                "ttnn_environment"
+            ),
             "single_layer_ttnn_environment": single_layer.get(
                 "ttnn_environment"
             ),
@@ -1599,6 +1654,48 @@ def _real_decode_evidence_manifest(
                     "reference_observed_ops"
                 ),
                 "reference_failed_checks": decode_shell.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+            },
+            "attention_layer": {
+                "status": attention_layer.get("status"),
+                "runtime_status": attention_layer.get("runtime_status"),
+                "layer": attention_layer.get("layer"),
+                "batch_size": attention_layer.get("batch_size"),
+                "cache_len": attention_layer.get("cache_len"),
+                "hidden_size": attention_layer.get("hidden_size"),
+                "num_heads": attention_layer.get("num_heads"),
+                "num_kv_heads": attention_layer.get("num_kv_heads"),
+                "head_dim": attention_layer.get("head_dim"),
+                "latency_ms": attention_layer.get("latency_ms"),
+                "primitive_count": attention_layer.get("primitive_count"),
+                "primitive_sequence": attention_layer.get(
+                    "primitive_sequence"
+                ),
+                "primitive_reports": attention_layer.get(
+                    "primitive_reports",
+                    [],
+                ),
+                "output_shapes": attention_layer.get("output_shapes"),
+                "tensor_conversion_count": attention_layer.get(
+                    "tensor_conversion_count"
+                ),
+                "memory_config_conversion_count": attention_layer.get(
+                    "memory_config_conversion_count"
+                ),
+                "reference_status": attention_layer.get("reference_status"),
+                "reference_kind": attention_layer.get("reference_kind"),
+                "reference_planned_ops": attention_layer.get(
+                    "reference_planned_ops"
+                ),
+                "reference_planned_observed_ops": attention_layer.get(
+                    "reference_planned_observed_ops"
+                ),
+                "reference_observed_ops": attention_layer.get(
+                    "reference_observed_ops"
+                ),
+                "reference_failed_checks": attention_layer.get(
                     "reference_failed_checks",
                     [],
                 ),
@@ -1859,6 +1956,7 @@ def _real_decode_acceptance(
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
+    attention_layer = steps.get("attention_layer", {})
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
@@ -1866,6 +1964,7 @@ def _real_decode_acceptance(
     single_layer_tensorization = _step_tensorization_summary(single_layer)
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
+    attention_layer_environment = _step_ttnn_environment(attention_layer)
     single_layer_environment = _step_ttnn_environment(single_layer)
     smoke_environment = _step_ttnn_environment(smoke)
     profile_environment = _step_ttnn_environment(profile)
@@ -1878,6 +1977,7 @@ def _real_decode_acceptance(
     program_batch_size = report.get("program_batch_size")
     program_cache_len = report.get("program_cache_len")
     program_seq_len = report.get("program_seq_len")
+    program_hidden_size = report.get("program_hidden_size")
     program_num_kv_heads = report.get("program_num_key_value_heads")
     program_head_dim = report.get("program_head_dim")
     expected_batch_size = report.get("batch_size")
@@ -1989,6 +2089,149 @@ def _real_decode_acceptance(
             ),
             observed=decode_shell.get("reference_observed_ops"),
             expected=decode_shell.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "attention_layer.layer",
+            _int_equal(attention_layer.get("layer"), 0),
+            observed=attention_layer.get("layer"),
+            expected=0,
+        ),
+        _acceptance_check(
+            "attention_layer.batch_size",
+            _int_equal(attention_layer.get("batch_size"), expected_batch_size),
+            observed=attention_layer.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "attention_layer.cache_len",
+            _int_equal(attention_layer.get("cache_len"), expected_cache_len),
+            observed=attention_layer.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "attention_layer.hidden_size",
+            _int_equal(attention_layer.get("hidden_size"), program_hidden_size),
+            observed=attention_layer.get("hidden_size"),
+            expected=program_hidden_size,
+        ),
+        _acceptance_check(
+            "attention_layer.num_kv_heads",
+            _int_equal(
+                attention_layer.get("num_kv_heads"),
+                program_num_kv_heads,
+            ),
+            observed=attention_layer.get("num_kv_heads"),
+            expected=program_num_kv_heads,
+        ),
+        _acceptance_check(
+            "attention_layer.head_dim",
+            _int_equal(attention_layer.get("head_dim"), program_head_dim),
+            observed=attention_layer.get("head_dim"),
+            expected=program_head_dim,
+        ),
+        _acceptance_check(
+            "attention_layer.latency_ms",
+            _nonnegative_number(attention_layer.get("latency_ms")),
+            observed=attention_layer.get("latency_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "attention_layer.tensor_conversion_count",
+            _positive_number(attention_layer.get("tensor_conversion_count")),
+            observed=attention_layer.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "attention_layer.memory_config_conversion_count",
+            _positive_number(
+                attention_layer.get("memory_config_conversion_count")
+            ),
+            observed=attention_layer.get("memory_config_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "attention_layer.runtime_status",
+            attention_layer.get("runtime_status") == "passed",
+            observed=attention_layer.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "attention_layer.ttnn_module_available",
+            attention_layer_environment.get("module_available") is True,
+            observed=attention_layer_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "attention_layer.ttnn_version",
+            _non_empty_string(attention_layer_environment.get("version")),
+            observed=attention_layer_environment.get("version"),
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_layer.tt_metal_git_commit",
+            _non_empty_string(
+                attention_layer_environment.get("tt_metal_git_commit")
+            ),
+            observed=attention_layer_environment.get(
+                "tt_metal_git_commit"
+            ),
+            source=attention_layer_environment.get(
+                "tt_metal_git_commit_source"
+            ),
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_layer.reference_status",
+            attention_layer.get("reference_status") == "passed",
+            observed=attention_layer.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "attention_layer.primitive_sequence",
+            attention_layer.get("primitive_sequence")
+            == list(ATTENTION_LAYER_OPS),
+            observed=attention_layer.get("primitive_sequence"),
+            expected=list(ATTENTION_LAYER_OPS),
+        ),
+        _acceptance_check(
+            "attention_layer.primitive_reports",
+            _attention_layer_primitive_reports_complete(
+                attention_layer.get("primitive_reports")
+            ),
+            observed=_attention_layer_primitive_reports_observed(
+                attention_layer.get("primitive_reports")
+            ),
+            expected=list(ATTENTION_LAYER_OPS),
+        ),
+        _acceptance_check(
+            "attention_layer.output_shapes",
+            _attention_layer_output_shapes_complete(
+                attention_layer.get("output_shapes"),
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                hidden_size=program_hidden_size,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+            observed=_attention_layer_output_shape_observed(
+                attention_layer.get("output_shapes")
+            ),
+            expected=_expected_attention_layer_output_shape_summary(
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                hidden_size=program_hidden_size,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+        ),
+        _acceptance_check(
+            "attention_layer.observed_op_sequence",
+            _observed_ops_cover_planned(
+                attention_layer.get("reference_planned_observed_ops"),
+                attention_layer.get("reference_observed_ops"),
+            ),
+            observed=attention_layer.get("reference_observed_ops"),
+            expected=attention_layer.get("reference_planned_observed_ops"),
         ),
         _acceptance_check(
             "single_layer_decode.parameter_source",
@@ -3145,6 +3388,150 @@ def _decode_output_shapes_complete(
     return observed_layer_ids == expected["kv_cache_layer_ids"]
 
 
+def _attention_layer_output_shapes_complete(
+    output_shapes: Any,
+    *,
+    batch_size: Any,
+    cache_len: Any,
+    hidden_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+) -> bool:
+    expected = _expected_attention_layer_output_shape_summary(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        hidden_size=hidden_size,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+    )
+    if not isinstance(output_shapes, dict):
+        return False
+    return (
+        _int_list(output_shapes.get("attention_output"))
+        == expected["attention_output"]
+        and _int_list(output_shapes.get("key_cache"))
+        == expected["kv_cache_shape"]
+        and _int_list(output_shapes.get("value_cache"))
+        == expected["kv_cache_shape"]
+    )
+
+
+def _expected_attention_layer_output_shape_summary(
+    *,
+    batch_size: Any,
+    cache_len: Any,
+    hidden_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+) -> dict[str, Any]:
+    batch = _safe_int(batch_size)
+    cache = _safe_int(cache_len)
+    hidden = _safe_int(hidden_size)
+    kv_heads = _safe_int(num_kv_heads)
+    dim = _safe_int(head_dim)
+    attention_output = (
+        [batch, 1, hidden] if None not in (batch, hidden) else []
+    )
+    kv_shape = (
+        [batch, cache, kv_heads, dim]
+        if None not in (batch, cache, kv_heads, dim)
+        else []
+    )
+    return {
+        "attention_output": attention_output,
+        "kv_cache_shape": kv_shape,
+    }
+
+
+def _attention_layer_output_shape_observed(
+    output_shapes: Any,
+) -> dict[str, Any]:
+    if not isinstance(output_shapes, dict):
+        return {}
+    return {
+        "attention_output": _int_list(
+            output_shapes.get("attention_output")
+        ),
+        "key_cache": _int_list(output_shapes.get("key_cache")),
+        "value_cache": _int_list(output_shapes.get("value_cache")),
+    }
+
+
+def _attention_layer_primitive_reports_complete(reports: Any) -> bool:
+    if not isinstance(reports, list):
+        return False
+    observed_sequence = [
+        report.get("primitive")
+        for report in reports
+        if isinstance(report, dict)
+    ]
+    if observed_sequence != list(ATTENTION_LAYER_OPS):
+        return False
+    if len(reports) != len(ATTENTION_LAYER_OPS):
+        return False
+    for report in reports:
+        if not isinstance(report, dict):
+            return False
+        if report.get("status") != "passed":
+            return False
+        if not _nonnegative_number(report.get("latency_ms")):
+            return False
+        if not _non_empty_string(report.get("dtype")):
+            return False
+        if not _non_empty_string(report.get("layout")):
+            return False
+        if "memory_config" not in report:
+            return False
+        if not _shape_dict_has_int_lists(report.get("input_shapes")):
+            return False
+        expected_shapes = report.get("expected_output_shapes")
+        output_shapes = report.get("output_shapes")
+        if not _shape_dict_has_int_lists(expected_shapes):
+            return False
+        if not isinstance(output_shapes, dict):
+            return False
+        for name, expected_shape in expected_shapes.items():
+            if _int_list(output_shapes.get(name)) != _int_list(
+                expected_shape
+            ):
+                return False
+    return True
+
+
+def _attention_layer_primitive_reports_observed(
+    reports: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(reports, list):
+        return []
+    observed = []
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        input_shapes = report.get("input_shapes")
+        output_shapes = report.get("output_shapes")
+        expected_shapes = report.get("expected_output_shapes")
+        observed.append(
+            {
+                "primitive": report.get("primitive"),
+                "status": report.get("status"),
+                "latency_ms": report.get("latency_ms"),
+                "input_shape_keys": _field_keys(input_shapes),
+                "expected_output_shape_keys": _field_keys(expected_shapes),
+                "output_shape_keys": _field_keys(output_shapes),
+                "dtype": report.get("dtype"),
+                "layout": report.get("layout"),
+                "memory_config": report.get("memory_config"),
+            }
+        )
+    return observed
+
+
+def _shape_dict_has_int_lists(value: Any) -> bool:
+    if not isinstance(value, dict) or not value:
+        return False
+    return all(_int_list(shape) for shape in value.values())
+
+
 def _expected_decode_output_shape_summary(
     *,
     layer_count: Any,
@@ -3280,6 +3667,9 @@ def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
         "reference_status": reference.get("status"),
         "reference_kind": reference.get("kind"),
         "reference_planned_ops": reference.get("planned_ops"),
+        "reference_planned_observed_ops": reference.get(
+            "planned_observed_ops"
+        ),
         "reference_observed_ops": reference.get("observed_ops"),
         "reference_failed_checks": [
             check.get("name")

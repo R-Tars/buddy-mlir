@@ -828,6 +828,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.float32 = "ttnn.float32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
+    module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     class UnaryOpType:
@@ -934,6 +935,16 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
             }
         )
         return FakeTensor("attention", q.shape)
+
+    def to_memory_config(tensor, **kwargs):
+        module.calls.append(
+            {
+                "op": "to_memory_config",
+                "tensor": tensor.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor(f"mem:{tensor.name}", tensor.shape)
 
     def nlp_concat_heads_decode(attention, **kwargs):
         num_heads = int(kwargs["num_heads"])
@@ -1043,6 +1054,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.embedding = embedding
     module.rms_norm = rms_norm
     module.linear = linear
+    module.to_memory_config = to_memory_config
     module.mul = mul
     module.add = add
     module.concat = concat

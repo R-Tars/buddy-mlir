@@ -570,8 +570,9 @@ weight files.
 For the real-weight path, use `validate-real-decode` after `build-program`.
 This validation gate first writes an official-config parity diff for the
 generated program, materializes selected HF safetensors, then runs the
-attention-disabled decode shell, a real-weight single-layer generated decode
-smoke, real-weight `smoke-decode-step`, `profile-decode-step`, and optionally
+attention-disabled decode shell, an independent single-layer attention decode
+smoke, a real-weight single-layer generated decode smoke, real-weight
+`smoke-decode-step`, `profile-decode-step`, and optionally
 `autotune-decode-step` against the existing generated program:
 
 ```bash
@@ -598,9 +599,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
 official config diff, materialization, attention-disabled decode shell,
-single-layer generated decode, full decode-step smoke/profile, and autotune
-subreports. The decode shell gate runs before full attention, then the
-single-layer gate proves the generated
+standalone attention layer, single-layer generated decode, full decode-step
+smoke/profile, and autotune subreports. The decode shell gate runs before full
+attention, then the standalone attention gate records layer0 primitive latency,
+input/output shapes, expected output shapes, dtype/layout/memory config, and
+tensor/memory-config conversion counts before the single-layer gate proves the generated
 `embedding -> layer0 attention -> layer0 MLP -> final norm -> LM-head` path
 before the validation scales to the requested layer count. When a torch
 reference can run, `--decode-shell-pcc-threshold` gates the shell final-hidden

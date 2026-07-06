@@ -16,6 +16,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
+    ATTENTION_LAYER_OPS,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
 )
@@ -295,6 +298,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
             self.assertEqual(report["results"]["official_config_diff"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "dry_run")
+            self.assertEqual(report["results"]["attention_layer"], "dry_run")
             self.assertEqual(report["results"]["single_layer_decode"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
@@ -357,6 +361,7 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "parameter_materialization_report.json").is_file()
             )
             self.assertTrue((out_dir / "decode_shell_report.json").is_file())
+            self.assertTrue((out_dir / "attention_layer_report.json").is_file())
             self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
@@ -400,6 +405,7 @@ class ValidateDirectTest(unittest.TestCase):
             }
             self.assertTrue(artifact_names["report"]["exists"])
             self.assertTrue(artifact_names["official_config_diff"]["exists"])
+            self.assertTrue(artifact_names["attention_layer_report"]["exists"])
             self.assertTrue(artifact_names["single_layer_decode_report"]["exists"])
             self.assertTrue(artifact_names["smoke_report"]["exists"])
             self.assertFalse(artifact_names["autotune_report"]["exists"])
@@ -468,6 +474,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["program_num_layers"], 2)
             self.assertEqual(report["program_seq_len"], 1)
+            self.assertEqual(report["program_hidden_size"], 16)
             self.assertEqual(report["program_num_key_value_heads"], 2)
             self.assertEqual(report["program_head_dim"], 4)
             self.assertEqual(report["requested_batch_size"], 2)
@@ -527,6 +534,55 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_shell"]["numeric_reference_status"],
                 "not_run",
+            )
+            attention_step = report["steps"]["attention_layer"]
+            self.assertEqual(attention_step["runtime_status"], "passed")
+            self.assertEqual(attention_step["layer"], 0)
+            self.assertEqual(attention_step["batch_size"], 2)
+            self.assertEqual(attention_step["cache_len"], 16)
+            self.assertEqual(attention_step["hidden_size"], 16)
+            self.assertEqual(attention_step["num_kv_heads"], 2)
+            self.assertEqual(attention_step["head_dim"], 4)
+            self.assertEqual(attention_step["primitive_count"], 8)
+            self.assertEqual(
+                attention_step["primitive_sequence"],
+                list(ATTENTION_LAYER_OPS),
+            )
+            self.assertEqual(
+                len(attention_step["primitive_reports"]),
+                len(ATTENTION_LAYER_OPS),
+            )
+            self.assertTrue(
+                all(
+                    primitive["latency_ms"] >= 0.0
+                    for primitive in attention_step["primitive_reports"]
+                )
+            )
+            self.assertEqual(
+                attention_step["output_shapes"]["attention_output"],
+                [2, 1, 16],
+            )
+            self.assertEqual(
+                attention_step["output_shapes"]["key_cache"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                attention_step["output_shapes"]["value_cache"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(attention_step["tensor_conversion_count"], 10)
+            self.assertEqual(
+                attention_step["memory_config_conversion_count"],
+                1,
+            )
+            self.assertEqual(attention_step["reference_status"], "passed")
+            self.assertEqual(
+                attention_step["ttnn_environment"]["version"],
+                "fake-ttnn",
+            )
+            self.assertEqual(
+                attention_step["ttnn_environment"]["tt_metal_git_commit"],
+                "fake-tt-metal",
             )
             self.assertEqual(
                 report["steps"]["single_layer_decode"]["parameter_source"],
@@ -712,6 +768,50 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "decode_shell.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.runtime_status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.batch_size",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.cache_len",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.tensor_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.memory_config_conversion_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.ttnn_version",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.tt_metal_git_commit",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.primitive_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.primitive_reports",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.output_shapes",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_layer.observed_op_sequence",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1045,6 +1145,49 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["official_config_diff"]["sections"],
                 sorted(PARITY_SECTIONS),
             )
+            attention_report = json.loads(
+                (out_dir / "attention_layer_report.json").read_text()
+            )
+            self.assertEqual(attention_report["status"], "passed")
+            self.assertEqual(
+                attention_report["op_sequence"],
+                list(ATTENTION_LAYER_OPS),
+            )
+            self.assertEqual(
+                attention_report["output_shapes"]["attention_output"],
+                [2, 1, 16],
+            )
+            self.assertEqual(
+                attention_report["output_shapes"]["key_cache"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                attention_report["tensor_conversion_count"],
+                10,
+            )
+            self.assertEqual(
+                attention_report["memory_config_conversion_count"],
+                1,
+            )
+            self.assertEqual(
+                [
+                    primitive["primitive"]
+                    for primitive in attention_report["primitive_reports"]
+                ],
+                list(ATTENTION_LAYER_OPS),
+            )
+            self.assertEqual(
+                attention_report["primitive_reports"][0][
+                    "expected_output_shapes"
+                ]["qkv"],
+                [2, 1, 32],
+            )
+            self.assertEqual(
+                attention_report["primitive_reports"][-1]["output_shapes"][
+                    "attention_output"
+                ],
+                [2, 1, 16],
+            )
             smoke_report = json.loads(
                 (out_dir / "decode_step_smoke_report.json").read_text()
             )
@@ -1247,6 +1390,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(evidence["validation"]["batch_size"], 2)
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertEqual(evidence["validation"]["program_seq_len"], 1)
+            self.assertEqual(evidence["validation"]["program_hidden_size"], 16)
             self.assertEqual(
                 evidence["validation"]["program_num_key_value_heads"],
                 2,
@@ -1365,6 +1509,58 @@ class ValidateDirectTest(unittest.TestCase):
                     "runtime_input_tensor_count"
                 ],
                 1,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "runtime_status"
+                ],
+                "passed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"]["layer"],
+                0,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "primitive_sequence"
+                ],
+                list(ATTENTION_LAYER_OPS),
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "primitive_count"
+                ],
+                len(ATTENTION_LAYER_OPS),
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "output_shapes"
+                ]["attention_output"],
+                [2, 1, 16],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "output_shapes"
+                ]["key_cache"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "tensor_conversion_count"
+                ],
+                10,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "memory_config_conversion_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "primitive_reports"
+                ][0]["layout"],
+                "tile",
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["single_layer_decode"][
@@ -1542,6 +1738,12 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["device_evidence"]["profile_ttnn_environment"][
                     "version"
                 ],
+                "fake-ttnn",
+            )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "attention_layer_ttnn_environment"
+                ]["version"],
                 "fake-ttnn",
             )
             self.assertEqual(
@@ -1992,6 +2194,88 @@ class ValidateDirectTest(unittest.TestCase):
                 ["lm_head_split_count"],
             )
 
+    def test_validate_real_decode_fails_on_attention_layer_primitive_reports(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_attention = validation_module.run_smoke_attention_layer
+
+            def attention_with_bad_primitive_latency(*args, **kwargs):
+                report = original_attention(*args, **kwargs)
+                report["primitive_reports"][0]["latency_ms"] = -1.0
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "run_smoke_attention_layer",
+                side_effect=attention_with_bad_primitive_latency,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["results"]["attention_layer"], "pass")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["attention_layer.primitive_reports"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["attention_layer.primitive_reports"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_layer"][
+                    "primitive_reports"
+                ][0]["latency_ms"],
+                -1.0,
+            )
+
     def test_validate_real_decode_writes_evidence_on_runtime_step_failure(
         self,
     ) -> None:
@@ -2060,6 +2344,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["status"], "no_device")
             self.assertEqual(report["results"]["materialize_parameters"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "no_device")
+            self.assertEqual(report["results"]["attention_layer"], "skipped")
             self.assertEqual(report["results"]["smoke_decode_step"], "skipped")
             self.assertEqual(report["evidence"]["status"], "incomplete")
             self.assertTrue(
@@ -2081,6 +2366,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["skipped_steps"],
                 [
+                    "attention_layer",
                     "single_layer_decode",
                     "smoke_decode_step",
                     "profile_decode_step",
@@ -2096,6 +2382,7 @@ class ValidateDirectTest(unittest.TestCase):
             }
             self.assertTrue(artifact_names["report"]["exists"])
             self.assertTrue(artifact_names["decode_shell_report"]["exists"])
+            self.assertFalse(artifact_names["attention_layer_report"]["exists"])
             self.assertFalse(artifact_names["smoke_report"]["exists"])
 
     def test_validate_real_decode_fails_acceptance_threshold(self) -> None:
@@ -3416,6 +3703,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 [check["name"] for check in failed_checks],
                 [
+                    "attention_layer.tt_metal_git_commit",
                     "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",
                     "profile_decode_step.tt_metal_git_commit",
@@ -3428,6 +3716,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 [
+                    "attention_layer.tt_metal_git_commit",
                     "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",
                     "profile_decode_step.tt_metal_git_commit",
