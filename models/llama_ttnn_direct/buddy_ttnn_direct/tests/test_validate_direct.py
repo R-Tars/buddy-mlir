@@ -1513,7 +1513,7 @@ class ValidateDirectTest(unittest.TestCase):
                 {
                     "reshape_embedding_weight_4d": 1,
                     "reshape_norm_weight_4d": 3,
-                    "transpose_2d": 13,
+                    "transpose_2d_to_4d": 13,
                 },
             )
             self.assertIn(
@@ -1532,13 +1532,13 @@ class ValidateDirectTest(unittest.TestCase):
                 "layers.0.mlp.gate_proj.weight",
                 smoke_report["parameter_setup"]["tensorization"][
                     "transform_paths_by_kind"
-                ]["transpose_2d"],
+                ]["transpose_2d_to_4d"],
             )
             self.assertEqual(
                 smoke_report["parameter_setup"]["tensorization"][
                     "key_tensors"
                 ]["lm_head.splits.0.weight"]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 smoke_report["parameter_setup"]["tensorization"][
@@ -1550,7 +1550,7 @@ class ValidateDirectTest(unittest.TestCase):
                 smoke_report["parameter_setup"]["tensorization"][
                     "key_tensors"
                 ]["lm_head.splits.0.weight"]["shape"],
-                [16, 16],
+                [1, 1, 16, 16],
             )
             self.assertEqual(
                 smoke_report["parameter_setup"]["tensorization"]["key_tensors"][
@@ -1645,7 +1645,7 @@ class ValidateDirectTest(unittest.TestCase):
                 {
                     "reshape_embedding_weight_4d": 1,
                     "reshape_norm_weight_4d": 3,
-                    "transpose_2d": 13,
+                    "transpose_2d_to_4d": 13,
                 },
             )
             self.assertIn(
@@ -1658,7 +1658,7 @@ class ValidateDirectTest(unittest.TestCase):
                 "layers.0.attention.wqkv_packed.weight",
                 profile_report["parameter_setup"]["tensorization"][
                     "transform_paths_by_kind"
-                ]["transpose_2d"],
+                ]["transpose_2d_to_4d"],
             )
             self.assertIn(
                 "embedding_ms",
@@ -1862,7 +1862,7 @@ class ValidateDirectTest(unittest.TestCase):
                 {
                     "reshape_embedding_weight_4d": 1,
                     "reshape_norm_weight_4d": 3,
-                    "transpose_2d": 13,
+                    "transpose_2d_to_4d": 13,
                 },
             )
             self.assertIn(
@@ -1875,13 +1875,13 @@ class ValidateDirectTest(unittest.TestCase):
                 "layers.0.mlp.down_proj.weight",
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "transform_paths_by_kind"
-                ]["transpose_2d"],
+                ]["transpose_2d_to_4d"],
             )
             self.assertEqual(
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "key_tensors"
                 ]["lm_head.splits.0.weight"]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 evidence["weight_evidence"]["single_layer_tensorization"][
@@ -3815,10 +3815,10 @@ class ValidateDirectTest(unittest.TestCase):
                 report = original_smoke(*args, **kwargs)
                 tensorization = report["parameter_setup"]["tensorization"]
                 paths = tensorization["transform_paths_by_kind"][
-                    "transpose_2d"
+                    "transpose_2d_to_4d"
                 ]
                 tensorization["transform_paths_by_kind"][
-                    "transpose_2d"
+                    "transpose_2d_to_4d"
                 ] = [path for path in paths if path != missing_path]
                 tensorization["key_tensors"][missing_path].pop(
                     "transform",
@@ -3869,7 +3869,7 @@ class ValidateDirectTest(unittest.TestCase):
                 missing_path,
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "transform_paths_by_kind"
-                ]["transpose_2d"],
+                ]["transpose_2d_to_4d"],
             )
 
     def test_validate_real_decode_fails_without_embedding_norm_transform_evidence(

@@ -80,7 +80,10 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 report["expected_output_shapes"]["key_cache"],
                 [2, 2, 32, 4],
             )
-            self.assertEqual(report["parameter_shapes"]["attention_wqkv"], [16, 32])
+            self.assertEqual(
+                report["parameter_shapes"]["attention_wqkv"],
+                [1, 1, 16, 32],
+            )
             self.assertEqual(report["reference"]["status"], "dry_run")
             self.assertEqual(
                 report["reference"]["numeric_reference"]["status"],
@@ -384,7 +387,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 {
                     "reshape_embedding_weight_4d": 1,
                     "reshape_norm_weight_4d": 3,
-                    "transpose_2d": 13,
+                    "transpose_2d_to_4d": 13,
                 },
             )
             self.assertIn(
@@ -403,13 +406,13 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 "layers.0.attention.wqkv_packed.weight",
                 report["parameter_setup"]["tensorization"][
                     "transform_paths_by_kind"
-                ]["transpose_2d"],
+                ]["transpose_2d_to_4d"],
             )
             self.assertEqual(
                 report["parameter_setup"]["tensorization"]["key_tensors"][
                     "layers.0.attention.wqkv_packed.weight"
                 ]["shape"],
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertEqual(
                 report["parameter_setup"]["tensorization"]["key_tensors"][
@@ -872,16 +875,16 @@ class FakeTensor:
 def _fake_parameters(split_count: int):
     return types.SimpleNamespace(
         embedding=types.SimpleNamespace(
-            weight=FakeTensor("embed_weight", [128, 16])
+            weight=FakeTensor("embed_weight", [1, 1, 128, 16])
         ),
         layers=[
             types.SimpleNamespace(
                 attention=types.SimpleNamespace(
                     wqkv_packed=types.SimpleNamespace(
-                        weight=FakeTensor("wqkv_weight", [16, 32])
+                        weight=FakeTensor("wqkv_weight", [1, 1, 16, 32])
                     ),
                     o_proj=types.SimpleNamespace(
-                        weight=FakeTensor("o_proj_weight", [16, 16])
+                        weight=FakeTensor("o_proj_weight", [1, 1, 16, 16])
                     ),
                     rotary=types.SimpleNamespace(
                         cos_matrix=FakeTensor("cos_matrix", [1, 1, 4, 4]),
@@ -893,32 +896,35 @@ def _fake_parameters(split_count: int):
                     ),
                 ),
                 input_norm=types.SimpleNamespace(
-                    weight=FakeTensor("input_norm_weight", [16])
+                    weight=FakeTensor("input_norm_weight", [1, 1, 1, 16])
                 ),
                 post_attention_norm=types.SimpleNamespace(
-                    weight=FakeTensor("post_attention_norm_weight", [16])
+                    weight=FakeTensor(
+                        "post_attention_norm_weight",
+                        [1, 1, 1, 16],
+                    )
                 ),
                 mlp=types.SimpleNamespace(
                     gate_proj=types.SimpleNamespace(
-                        weight=FakeTensor("gate_weight", [16, 32])
+                        weight=FakeTensor("gate_weight", [1, 1, 16, 32])
                     ),
                     up_proj=types.SimpleNamespace(
-                        weight=FakeTensor("up_weight", [16, 32])
+                        weight=FakeTensor("up_weight", [1, 1, 16, 32])
                     ),
                     down_proj=types.SimpleNamespace(
-                        weight=FakeTensor("down_weight", [32, 16])
+                        weight=FakeTensor("down_weight", [1, 1, 32, 16])
                     ),
                 ),
             )
         ],
         final_norm=types.SimpleNamespace(
-            weight=FakeTensor("final_norm_weight", [16])
+            weight=FakeTensor("final_norm_weight", [1, 1, 1, 16])
         ),
         lm_head=types.SimpleNamespace(
             splits=[
                 types.SimpleNamespace(
                     shard_id=index,
-                    weight=FakeTensor(f"lm_head_{index}", [16, 16]),
+                    weight=FakeTensor(f"lm_head_{index}", [1, 1, 16, 16]),
                 )
                 for index in range(split_count)
             ]

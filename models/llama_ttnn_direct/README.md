@@ -778,16 +778,17 @@ The report records each planned or converted tensor path, target dtype, layout,
 memory config, resolved TTNN dtype/layout/memory config in device mode,
 source shape, converted shape, and tensor transform when host tensors are
 available. Generated linear weights are transposed from Hugging Face
-`[out_features, in_features]` convention before TTNN conversion so generated
-`linear(hidden, weight)` calls consume `[in_features, out_features]` weights.
-This applies to packed QKV, attention output projection, MLP gate/up/down, and
-LM-head split tensors. Embedding weights are reshaped from
+`[out_features, in_features]` convention and reshaped to the official
+TT-Transformers physical tensor shape `[1, 1, in_features, out_features]`
+before TTNN conversion. This applies to packed QKV, attention output
+projection, MLP gate/up/down, and LM-head split tensors. Embedding weights are
+reshaped from
 `[vocab, hidden]` to `[1, 1, vocab, hidden]`, and RMSNorm/final-norm weights
 are reshaped from `[hidden]` to the 4D tile-aligned TT-Transformers convention
 `[1, 1, hidden // 32, 32]` when possible, with a 4D fallback for synthetic
 non-tile test shapes. Real decode validation records `transform_counts` plus
 `transform_paths_by_kind`, requires all generated linear weight paths to
-report `transpose_2d`, requires embedding/RMSNorm paths to report their 4D
+report `transpose_2d_to_4d`, requires embedding/RMSNorm paths to report their 4D
 reshape transforms, and separately requires each LM-head split to report the
 same tensorization evidence.
 

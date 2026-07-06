@@ -77,7 +77,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             first = report["primitive_reports"][0]
             self.assertEqual(first["primitive"], "qkv_linear")
             self.assertEqual(first["input_shapes"]["hidden"], [1, 1, 2, 16])
-            self.assertEqual(first["input_shapes"]["qkv_weight"], [16, 32])
+            self.assertEqual(first["input_shapes"]["qkv_weight"], [1, 1, 16, 32])
             self.assertEqual(
                 first["expected_output_shapes"]["qkv"],
                 [1, 1, 2, 32],

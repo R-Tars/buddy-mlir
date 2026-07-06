@@ -20,6 +20,7 @@ from .runtime_environment import collect_ttnn_environment
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
+    _linear_weight_shape,
     _maybe_managed_device,
     _randn,
     _ttnn_dtype,
@@ -1823,21 +1824,24 @@ def _decode_step_plan(
         "value_cache": kv_cache_shape,
     }
     layer_parameter_shapes = {
-        "input_norm": [hidden_size],
-        "post_attention_norm": [hidden_size],
-        "attention_wqkv": [hidden_size, qkv_size],
-        "attention_o_proj": [num_heads * head_dim, hidden_size],
+        "input_norm": _norm_weight_shape(hidden_size),
+        "post_attention_norm": _norm_weight_shape(hidden_size),
+        "attention_wqkv": _linear_weight_shape(hidden_size, qkv_size),
+        "attention_o_proj": _linear_weight_shape(
+            num_heads * head_dim,
+            hidden_size,
+        ),
         "rotary_cos_matrix": [1, 1, head_dim, head_dim],
         "rotary_sin_matrix": [1, 1, head_dim, head_dim],
         "rotary_transformation_matrix": [1, 1, head_dim, head_dim],
-        "mlp_gate": [hidden_size, intermediate_size],
-        "mlp_up": [hidden_size, intermediate_size],
-        "mlp_down": [intermediate_size, hidden_size],
+        "mlp_gate": _linear_weight_shape(hidden_size, intermediate_size),
+        "mlp_up": _linear_weight_shape(hidden_size, intermediate_size),
+        "mlp_down": _linear_weight_shape(intermediate_size, hidden_size),
     }
     parameter_shapes = {
-        "embedding": [vocab_size, hidden_size],
+        "embedding": _embedding_weight_shape(vocab_size, hidden_size),
         **layer_parameter_shapes,
-        "final_norm": [hidden_size],
+        "final_norm": _norm_weight_shape(hidden_size),
         "lm_head_splits": lm_head_splits,
     }
     return {
@@ -1913,7 +1917,7 @@ def _lm_head_split_shapes(
         for split in split_configs:
             vocab_start = int(split["vocab_start"])
             vocab_end = int(split["vocab_end"])
-            shapes.append([hidden_size, vocab_end - vocab_start])
+            shapes.append(_linear_weight_shape(hidden_size, vocab_end - vocab_start))
         return shapes
 
     base = vocab_size // split_count
@@ -1921,8 +1925,18 @@ def _lm_head_split_shapes(
     shapes = []
     for shard_id in range(split_count):
         width = base + (1 if shard_id < remainder else 0)
-        shapes.append([hidden_size, width])
+        shapes.append(_linear_weight_shape(hidden_size, width))
     return shapes
+
+
+def _embedding_weight_shape(vocab_size: int, hidden_size: int) -> list[int]:
+    return [1, 1, vocab_size, hidden_size]
+
+
+def _norm_weight_shape(hidden_size: int) -> list[int]:
+    if hidden_size % 32 == 0:
+        return [1, 1, hidden_size // 32, 32]
+    return [1, 1, 1, hidden_size]
 
 
 def _base_report(

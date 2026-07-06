@@ -15,6 +15,7 @@ from ..semantic.dump import load_graph_json
 
 
 DEFAULT_ROLE_GROUPS = ("mlp", "lm_head")
+LINEAR_WEIGHT_TRANSFORM = "transpose_2d_to_4d"
 SUPPORTED_ROLE_GROUPS = {
     "embedding",
     "norm",
@@ -193,7 +194,7 @@ def build_tensorization_plan(
                     "layout": str(q_entry.get("layout")),
                     "memory_config": _entry_memory_config(q_entry),
                     "packing": "qkv_pack",
-                    "transform": "transpose_2d",
+                    "transform": LINEAR_WEIGHT_TRANSFORM,
                 }
             )
             o_key, o_entry = _find_parameter_config_item(
@@ -211,7 +212,7 @@ def build_tensorization_plan(
                     "target_dtype": str(o_entry.get("target_dtype")),
                     "layout": str(o_entry.get("layout")),
                     "memory_config": _entry_memory_config(o_entry),
-                    "transform": "transpose_2d",
+                    "transform": LINEAR_WEIGHT_TRANSFORM,
                 }
             )
 
@@ -238,7 +239,7 @@ def build_tensorization_plan(
                     "target_dtype": str(entry.get("target_dtype")),
                     "layout": str(entry.get("layout")),
                     "memory_config": _entry_memory_config(entry),
-                    "transform": "transpose_2d",
+                    "transform": LINEAR_WEIGHT_TRANSFORM,
                 }
             )
 
@@ -271,7 +272,7 @@ def build_tensorization_plan(
                     "target_dtype": str(lm_entry.get("target_dtype")),
                     "layout": str(lm_entry.get("layout")),
                     "memory_config": _entry_memory_config(lm_entry),
-                    "transform": "transpose_2d",
+                    "transform": LINEAR_WEIGHT_TRANSFORM,
                 }
             )
 
@@ -472,20 +473,27 @@ def _apply_tensor_transform(tensor: Any, record: Mapping[str, Any]) -> Any:
     transform = record.get("transform")
     if transform in (None, "none"):
         return tensor
-    if transform == "transpose_2d":
+    if transform in ("transpose_2d", LINEAR_WEIGHT_TRANSFORM):
         shape = _tensor_shape(tensor)
         if shape is None:
             raise TTNNTensorizationError(
-                f"{record['path']} requires shape metadata for transpose_2d"
+                f"{record['path']} requires shape metadata for {transform}"
             )
         if len(shape) != 2:
             raise TTNNTensorizationError(
-                f"{record['path']} requires a 2D tensor for transpose_2d; "
+                f"{record['path']} requires a 2D tensor for {transform}; "
                 f"got shape {shape}"
             )
         transposed = tensor.transpose(0, 1)
         contiguous = getattr(transposed, "contiguous", None)
-        return contiguous() if callable(contiguous) else transposed
+        transposed = contiguous() if callable(contiguous) else transposed
+        if transform == LINEAR_WEIGHT_TRANSFORM:
+            return _reshape_tensor(
+                transposed,
+                [1, 1, int(shape[1]), int(shape[0])],
+                record,
+            )
+        return transposed
     if transform == "reshape_embedding_weight_4d":
         shape = _tensor_shape(tensor)
         if shape is None:

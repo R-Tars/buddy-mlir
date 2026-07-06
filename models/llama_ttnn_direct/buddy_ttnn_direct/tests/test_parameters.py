@@ -259,7 +259,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 records["layers.0.mlp.gate_proj.weight"]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 records["layers.0.mlp.down_proj.weight"]["target_dtype"],
@@ -271,7 +271,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 records["lm_head.splits.0.weight"]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 records["lm_head.splits.0.weight"]["memory_config"],
@@ -359,7 +359,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 records["layers.0.attention.wqkv_packed.weight"][
                     "transform"
                 ],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 records["layers.0.attention.o_proj.weight"]["target_dtype"],
@@ -367,7 +367,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 records["layers.0.attention.o_proj.weight"]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 records["final_norm.weight"]["layout"],
@@ -455,7 +455,11 @@ class ParameterMaterializerTest(unittest.TestCase):
             }
             self.assertEqual(
                 [record["transform"] for record in mlp_records],
-                ["transpose_2d", "transpose_2d", "transpose_2d"],
+                [
+                    "transpose_2d_to_4d",
+                    "transpose_2d_to_4d",
+                    "transpose_2d_to_4d",
+                ],
             )
             self.assertEqual(
                 records["layers.0.mlp.gate_proj.weight"]["source_shape"],
@@ -463,7 +467,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 records["layers.0.mlp.gate_proj.weight"]["shape"],
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertIn(
                 ".transpose(0,1)",
@@ -471,16 +475,16 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 result.parameters.layers[0].mlp.gate_proj.weight.shape,
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertEqual(
                 result.parameters.layers[0].mlp.down_proj.weight.shape,
-                [32, 16],
+                [1, 1, 32, 16],
             )
             self.assertEqual(len(lm_head_records), 8)
             self.assertEqual(
                 lm_head_records[0]["transform"],
-                "transpose_2d",
+                "transpose_2d_to_4d",
             )
             self.assertEqual(
                 lm_head_records[0]["source_shape"],
@@ -488,7 +492,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 lm_head_records[0]["shape"],
-                [16, 16],
+                [1, 1, 16, 16],
             )
             self.assertIn(
                 ".transpose(0,1)",
@@ -584,7 +588,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 result.parameters.layers[0].attention.wqkv_packed.weight.shape,
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertEqual(
                 result.parameters.layers[0].attention.o_proj.weight.layout,
@@ -617,15 +621,15 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
             self.assertEqual(
                 records["layers.0.attention.wqkv_packed.weight"]["shape"],
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertEqual(
                 records["layers.0.mlp.gate_proj.weight"]["shape"],
-                [16, 32],
+                [1, 1, 16, 32],
             )
             self.assertEqual(
                 records["layers.0.mlp.down_proj.weight"]["shape"],
-                [32, 16],
+                [1, 1, 32, 16],
             )
             self.assertEqual(
                 result.parameters.final_norm.weight.dtype,

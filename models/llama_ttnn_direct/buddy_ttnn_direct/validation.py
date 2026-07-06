@@ -24,7 +24,10 @@ from .codegen.config_emit import (
 from .codegen.package import package_ttnn_direct_program
 from .codegen.parameters import materialize_parameters_from_program
 from .codegen.program import write_decode_program_bundle
-from .codegen.ttnn_tensorizer import tensorize_parameters_from_program_dry_run
+from .codegen.ttnn_tensorizer import (
+    LINEAR_WEIGHT_TRANSFORM,
+    tensorize_parameters_from_program_dry_run,
+)
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -2878,7 +2881,7 @@ def _real_decode_acceptance(
                 layer_count=1,
             ),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "paths": _linear_weight_transform_paths(1),
             },
         ),
@@ -2890,7 +2893,7 @@ def _real_decode_acceptance(
             ),
             observed=_lm_head_transform_observed(single_layer_tensorization),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "count": lm_head_split_count,
             },
         ),
@@ -3073,7 +3076,7 @@ def _real_decode_acceptance(
                 layer_count=expected_layers,
             ),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "paths": _linear_weight_transform_paths(expected_layers),
             },
         ),
@@ -3085,7 +3088,7 @@ def _real_decode_acceptance(
             ),
             observed=_lm_head_transform_observed(smoke_tensorization),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "count": lm_head_split_count,
             },
         ),
@@ -3274,7 +3277,7 @@ def _real_decode_acceptance(
                 layer_count=expected_layers,
             ),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "paths": _linear_weight_transform_paths(expected_layers),
             },
         ),
@@ -3286,7 +3289,7 @@ def _real_decode_acceptance(
             ),
             observed=_lm_head_transform_observed(profile_tensorization),
             expected={
-                "transform": "transpose_2d",
+                "transform": LINEAR_WEIGHT_TRANSFORM,
                 "count": lm_head_split_count,
             },
         ),
@@ -3882,7 +3885,7 @@ def _lm_head_transform_complete(
     counts = tensorization.get("transform_counts")
     if not isinstance(counts, dict):
         return False
-    observed_count = _safe_int(counts.get("transpose_2d"))
+    observed_count = _safe_int(counts.get(LINEAR_WEIGHT_TRANSFORM))
     if observed_count is None or observed_count < expected_count:
         return False
     expected_paths = {
@@ -3891,7 +3894,7 @@ def _lm_head_transform_complete(
     }
     transformed_paths = _transformed_tensor_paths(
         tensorization,
-        "transpose_2d",
+        LINEAR_WEIGHT_TRANSFORM,
     )
     if transformed_paths and not expected_paths.issubset(transformed_paths):
         return False
@@ -3901,7 +3904,12 @@ def _lm_head_transform_complete(
     split0 = key_tensors.get("lm_head.splits.0.weight")
     if not isinstance(split0, dict):
         return False
-    return split0.get("transform") == "transpose_2d"
+    shape = split0.get("shape")
+    return (
+        split0.get("transform") == LINEAR_WEIGHT_TRANSFORM
+        and isinstance(shape, list)
+        and len(shape) == 4
+    )
 
 
 def _embedding_norm_weight_transform_complete(
@@ -4009,7 +4017,7 @@ def _linear_weight_transform_complete(
         return False
     transformed_paths = _transformed_tensor_paths(
         tensorization,
-        "transpose_2d",
+        LINEAR_WEIGHT_TRANSFORM,
     )
     if not expected_paths.issubset(transformed_paths):
         return False
@@ -4023,8 +4031,12 @@ def _linear_weight_transform_complete(
         "layers.0.mlp.down_proj.weight",
     ):
         tensor = key_tensors.get(key_path)
-        if isinstance(tensor, dict) and tensor.get("transform") != "transpose_2d":
-            return False
+        if isinstance(tensor, dict):
+            if tensor.get("transform") != LINEAR_WEIGHT_TRANSFORM:
+                return False
+            shape = tensor.get("shape")
+            if not isinstance(shape, list) or len(shape) != 4:
+                return False
     return True
 
 
@@ -4071,7 +4083,7 @@ def _linear_weight_transform_observed(
         return {}
     expected_paths = _linear_weight_transform_paths(layer_count)
     transformed_paths = sorted(
-        _transformed_tensor_paths(tensorization, "transpose_2d")
+        _transformed_tensor_paths(tensorization, LINEAR_WEIGHT_TRANSFORM)
     )
     key_tensors = tensorization.get("key_tensors")
     key_observed = {}

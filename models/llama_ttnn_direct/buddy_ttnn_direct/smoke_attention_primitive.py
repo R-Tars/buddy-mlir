@@ -400,7 +400,7 @@ def _primitive_plan(
         "qkv_linear": {
             "input_shapes": {
                 "hidden": _decode_hidden_shape(batch_size, hidden_size),
-                "qkv_weight": [hidden_size, qkv_size],
+                "qkv_weight": _linear_weight_shape(hidden_size, qkv_size),
             },
             "expected_output_shapes": {
                 "qkv": _decode_hidden_shape(batch_size, qkv_size)
@@ -469,7 +469,10 @@ def _primitive_plan(
                     batch_size,
                     num_heads * head_dim,
                 ),
-                "o_proj_weight": [num_heads * head_dim, hidden_size],
+                "o_proj_weight": _linear_weight_shape(
+                    num_heads * head_dim,
+                    hidden_size,
+                ),
             },
             "expected_output_shapes": {
                 "hidden": _decode_hidden_shape(batch_size, hidden_size),
@@ -491,6 +494,10 @@ def _decode_head_shape(
     head_dim: int,
 ) -> list[int]:
     return [1, batch_size, num_heads, head_dim]
+
+
+def _linear_weight_shape(in_features: int, out_features: int) -> list[int]:
+    return [1, 1, in_features, out_features]
 
 
 def _base_report(

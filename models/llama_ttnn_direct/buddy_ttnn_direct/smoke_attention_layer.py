@@ -9,6 +9,7 @@ from typing import Any, Callable
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
+    _linear_weight_shape,
     _memory_config,
     _maybe_managed_device,
     _randn,
@@ -570,7 +571,7 @@ def _attention_layer_plan(
     ]
     input_shapes = {
         "hidden": _decode_hidden_shape(batch_size, hidden_size),
-        "qkv_weight": [hidden_size, qkv_size],
+        "qkv_weight": _linear_weight_shape(hidden_size, qkv_size),
         "cos_matrix": [1, 1, head_dim, head_dim],
         "sin_matrix": [1, 1, head_dim, head_dim],
         "transformation_matrix": [1, 1, head_dim, head_dim],
@@ -578,7 +579,10 @@ def _attention_layer_plan(
         "value_cache": kv_cache_shape,
         "page_table": [batch_size, page_count],
         "cache_position": [batch_size],
-        "o_proj_weight": [num_heads * head_dim, hidden_size],
+        "o_proj_weight": _linear_weight_shape(
+            num_heads * head_dim,
+            hidden_size,
+        ),
     }
     return {
         "input_shapes": input_shapes,
