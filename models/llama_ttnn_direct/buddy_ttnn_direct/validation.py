@@ -1189,11 +1189,17 @@ def validate_real_decode(
             ),
             "numeric_reference_status": numeric_reference.get("status"),
             "numeric_reference_kind": numeric_reference.get("kind"),
+            "numeric_reference_passed": numeric_reference.get("passed"),
             "pcc": numeric_reference.get("pcc"),
             "pcc_threshold": numeric_reference.get(
                 "pcc_threshold",
                 decode_shell_pcc_threshold,
             ),
+            "numeric_reference_failed_checks": [
+                check.get("name")
+                for check in numeric_reference.get("checks", [])
+                if isinstance(check, dict) and not check.get("passed")
+            ],
             "parameter_setup": shell_report.get("parameter_setup"),
             **decode_shell_tensorization_path_detail(shell_report),
             **_reference_summary(shell_report),
@@ -1916,6 +1922,42 @@ def _lm_head_source_reference_observed(materialize: Any) -> dict[str, Any]:
     return observed
 
 
+def _decode_shell_numeric_reference_complete(
+    decode_shell: Any,
+    *,
+    expected_pcc_threshold: Any,
+) -> bool:
+    if not isinstance(decode_shell, dict):
+        return False
+    threshold = decode_shell.get("pcc_threshold")
+    return (
+        decode_shell.get("numeric_reference_status") == "passed"
+        and decode_shell.get("numeric_reference_kind") == "torch_decode_shell"
+        and decode_shell.get("numeric_reference_passed") is True
+        and _number_at_least(decode_shell.get("pcc"), threshold)
+        and _numbers_equal(threshold, expected_pcc_threshold)
+        and decode_shell.get("numeric_reference_failed_checks") == []
+    )
+
+
+def _decode_shell_numeric_reference_observed(
+    decode_shell: Any,
+) -> dict[str, Any]:
+    if not isinstance(decode_shell, dict):
+        return {}
+    return {
+        "status": decode_shell.get("numeric_reference_status"),
+        "kind": decode_shell.get("numeric_reference_kind"),
+        "passed": decode_shell.get("numeric_reference_passed"),
+        "pcc": decode_shell.get("pcc"),
+        "pcc_threshold": decode_shell.get("pcc_threshold"),
+        "failed_checks": decode_shell.get(
+            "numeric_reference_failed_checks",
+            [],
+        ),
+    }
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -2139,8 +2181,15 @@ def _real_decode_evidence_manifest(
                 "numeric_reference_kind": decode_shell.get(
                     "numeric_reference_kind"
                 ),
+                "numeric_reference_passed": decode_shell.get(
+                    "numeric_reference_passed"
+                ),
                 "pcc": decode_shell.get("pcc"),
                 "pcc_threshold": decode_shell.get("pcc_threshold"),
+                "numeric_reference_failed_checks": decode_shell.get(
+                    "numeric_reference_failed_checks",
+                    [],
+                ),
                 "reference_planned_ops": decode_shell.get(
                     "reference_planned_ops"
                 ),
@@ -4195,10 +4244,26 @@ def _real_decode_acceptance(
     if require_decode_shell_numeric_reference:
         checks.append(
             _acceptance_check(
-                "decode_shell.numeric_reference_status",
-                decode_shell.get("numeric_reference_status") == "passed",
-                observed=decode_shell.get("numeric_reference_status"),
-                expected="passed",
+                "decode_shell.numeric_reference",
+                _decode_shell_numeric_reference_complete(
+                    decode_shell,
+                    expected_pcc_threshold=report.get(
+                        "decode_shell_pcc_threshold"
+                    ),
+                ),
+                observed=_decode_shell_numeric_reference_observed(
+                    decode_shell
+                ),
+                expected={
+                    "status": "passed",
+                    "kind": "torch_decode_shell",
+                    "passed": True,
+                    "pcc": f">= {decode_shell.get('pcc_threshold')}",
+                    "pcc_threshold": report.get(
+                        "decode_shell_pcc_threshold"
+                    ),
+                    "failed_checks": [],
+                },
             )
         )
     if require_official_config_match:

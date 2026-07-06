@@ -665,6 +665,10 @@ remains available for ad hoc baselines, but final evidence should prefer a
 reference id so the source/model/batch are auditable.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
+When enabled, acceptance requires `numeric_reference.kind=torch_decode_shell`,
+`status=passed`, `passed=true`, a final-hidden PCC greater than or equal to the
+recorded `--decode-shell-pcc-threshold`, a matching threshold value, and no
+numeric-reference failed checks.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
 bring-up, or `--dry-run` to write the schema without loading safetensors or
 opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
@@ -871,7 +875,8 @@ Successful non-dry-run reports now include a `reference` block with
 attention status, per-layer hidden shape/dtype, and final token shape/dtype.
 When host torch parameters are available, the same block also includes
 `numeric_reference.kind=torch_decode_shell`, a final-hidden PCC check against a
-torch reference, and an optional token match after LM-head argmax. The torch
+torch reference, the PCC threshold used by the check, and an optional token
+match after LM-head argmax. The torch
 reference accepts either Hugging Face source weights or tensorized physical
 TT-Transformers weights such as `[1, 1, in_features, out_features]`, so the
 shell can validate the generated path after TTNN tensorization. If host
