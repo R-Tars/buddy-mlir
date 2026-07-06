@@ -155,6 +155,68 @@ def default_decode_step_search_space_path() -> Path:
     )
 
 
+def default_performance_baselines_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "reference"
+        / "performance_baselines.json"
+    )
+
+
+def load_performance_baselines(
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    baseline_path = (
+        Path(path)
+        if path is not None
+        else default_performance_baselines_path()
+    )
+    payload = json.loads(baseline_path.read_text())
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError(
+            f"performance baseline file has no entries: {baseline_path}"
+        )
+    ids: set[str] = set()
+    for entry in entries:
+        if not _performance_baseline_entry_complete(entry):
+            raise ValueError(
+                f"invalid performance baseline entry in {baseline_path}: "
+                f"{entry!r}"
+            )
+        entry_id = str(entry["id"])
+        if entry_id in ids:
+            raise ValueError(
+                f"duplicate performance baseline id in {baseline_path}: "
+                f"{entry_id}"
+            )
+        ids.add(entry_id)
+    payload["path"] = str(baseline_path)
+    return payload
+
+
+def resolve_performance_baseline(
+    baseline_reference: str,
+    *,
+    path: str | Path | None = None,
+) -> dict[str, Any]:
+    payload = load_performance_baselines(path)
+    for entry in payload["entries"]:
+        if entry["id"] == baseline_reference:
+            resolved = dict(entry)
+            resolved["baseline_file"] = payload["path"]
+            resolved["metric"] = payload.get(
+                "metric",
+                "decode_tokens_per_second_per_user",
+            )
+            return resolved
+    raise ValueError(
+        f"unknown performance baseline reference {baseline_reference!r}; "
+        f"available references: "
+        f"{', '.join(str(entry['id']) for entry in payload['entries'])}"
+    )
+
+
 def _same_path(lhs: Path, rhs: Path) -> bool:
     return lhs.resolve() == rhs.resolve()
 
@@ -693,6 +755,8 @@ def validate_real_decode(
     require_batch32_decode_step: bool = False,
     min_tokens_per_second_per_user: float | None = None,
     baseline_tokens_per_second_per_user: float | None = None,
+    performance_baselines_path: str | Path | None = None,
+    baseline_reference: str | None = None,
     min_baseline_ratio: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
@@ -717,10 +781,13 @@ def validate_real_decode(
     if min_baseline_ratio is not None:
         if min_baseline_ratio < 0.0:
             raise ValueError("min_baseline_ratio must be nonnegative")
-        if baseline_tokens_per_second_per_user is None:
+        if (
+            baseline_tokens_per_second_per_user is None
+            and baseline_reference is None
+        ):
             raise ValueError(
-                "baseline_tokens_per_second_per_user is required when "
-                "min_baseline_ratio is set"
+                "baseline_tokens_per_second_per_user or baseline_reference "
+                "is required when min_baseline_ratio is set"
             )
 
     root = Path(out_dir)
@@ -787,6 +854,31 @@ def validate_real_decode(
         if official_config_path is not None
         else default_official_parity_config_path()
     )
+    performance_baselines_path = (
+        Path(performance_baselines_path)
+        if performance_baselines_path is not None
+        else default_performance_baselines_path()
+    )
+    baseline_reference_entry = None
+    if baseline_reference is not None:
+        baseline_reference_entry = resolve_performance_baseline(
+            baseline_reference,
+            path=performance_baselines_path,
+        )
+        baseline_from_reference = baseline_reference_entry[
+            "decode_tokens_per_second_per_user"
+        ]
+        if baseline_tokens_per_second_per_user is not None and not (
+            _numbers_equal(
+                baseline_tokens_per_second_per_user,
+                baseline_from_reference,
+            )
+        ):
+            raise ValueError(
+                "baseline_tokens_per_second_per_user must match the selected "
+                f"baseline_reference {baseline_reference!r}"
+            )
+        baseline_tokens_per_second_per_user = float(baseline_from_reference)
     layers_to_materialize = list(range(layer_count))
     decode_step_contract = _decode_step_contract(
         layer_count=layer_count,
@@ -823,6 +915,9 @@ def validate_real_decode(
         "model_path": str(model_path),
         "out_dir": str(root),
         "official_config": str(official_config_path),
+        "performance_baselines": str(performance_baselines_path),
+        "baseline_reference": baseline_reference,
+        "baseline_reference_entry": baseline_reference_entry,
         "decode_step_search_space": str(decode_step_search_space_path),
         "decode_step_search_space_is_default": (
             decode_step_search_space_is_default
@@ -1846,6 +1941,11 @@ def _real_decode_evidence_manifest(
             "program_dir": report.get("program_dir"),
             "model_path": report.get("model_path"),
             "official_config": report.get("official_config"),
+            "performance_baselines": report.get("performance_baselines"),
+            "baseline_reference": report.get("baseline_reference"),
+            "baseline_reference_entry": _performance_baseline_entry_summary(
+                report.get("baseline_reference_entry")
+            ),
             "decode_step_search_space": report.get(
                 "decode_step_search_space"
             ),
@@ -1921,6 +2021,11 @@ def _real_decode_evidence_manifest(
             "baseline_tokens_per_second_per_user": report.get(
                 "baseline_tokens_per_second_per_user"
             ),
+            "baseline_reference": report.get("baseline_reference"),
+            "baseline_reference_entry": _performance_baseline_entry_summary(
+                report.get("baseline_reference_entry")
+            ),
+            "performance_baselines": report.get("performance_baselines"),
             "min_baseline_ratio": report.get("min_baseline_ratio"),
             "decode_shell_pcc_threshold": report.get(
                 "decode_shell_pcc_threshold"
@@ -2346,6 +2451,10 @@ def _throughput_baseline_summary(
         "metric": "tokens_per_second_per_user",
         "observed": observed,
         "baseline": baseline,
+        "baseline_reference": report.get("baseline_reference"),
+        "baseline_reference_entry": _performance_baseline_entry_summary(
+            report.get("baseline_reference_entry")
+        ),
         "ratio": ratio,
         "min_ratio": min_ratio,
     }
@@ -2700,6 +2809,12 @@ def _real_decode_acceptance(
             ),
             "baseline_tokens_per_second_per_user": (
                 baseline_tokens_per_second_per_user
+            ),
+            "baseline_reference": report.get("baseline_reference"),
+            "baseline_reference_entry": (
+                _performance_baseline_entry_summary(
+                    report.get("baseline_reference_entry")
+                )
             ),
             "min_baseline_ratio": min_baseline_ratio,
             "require_decode_shell_numeric_reference": (
@@ -4180,6 +4295,24 @@ def _real_decode_acceptance(
                 minimum=0,
             )
         )
+    if report.get("baseline_reference") is not None:
+        baseline_entry = report.get("baseline_reference_entry")
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.baseline_reference",
+                (
+                    _performance_baseline_entry_complete(baseline_entry)
+                    and _numbers_equal(
+                        baseline_tokens_per_second_per_user,
+                        (
+                            baseline_entry or {}
+                        ).get("decode_tokens_per_second_per_user"),
+                    )
+                ),
+                observed=_performance_baseline_entry_summary(baseline_entry),
+                expected=report.get("baseline_reference"),
+            )
+        )
     if min_baseline_ratio is not None:
         checks.append(
             _acceptance_check(
@@ -4338,6 +4471,10 @@ def _real_decode_acceptance(
         "baseline_tokens_per_second_per_user": (
             baseline_tokens_per_second_per_user
         ),
+        "baseline_reference": report.get("baseline_reference"),
+        "baseline_reference_entry": _performance_baseline_entry_summary(
+            report.get("baseline_reference_entry")
+        ),
         "min_baseline_ratio": min_baseline_ratio,
         "throughput_baseline": throughput_baseline,
         "require_decode_shell_numeric_reference": (
@@ -4487,6 +4624,53 @@ def _nonnegative_number(value: Any) -> bool:
         return float(value) >= 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _numbers_equal(lhs: Any, rhs: Any) -> bool:
+    try:
+        return abs(float(lhs) - float(rhs)) <= 1.0e-9
+    except (TypeError, ValueError):
+        return False
+
+
+def _performance_baseline_entry_complete(entry: Any) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    required_strings = (
+        "id",
+        "role",
+        "implementation",
+        "frontend",
+        "model",
+        "source",
+    )
+    return (
+        all(_non_empty_string(entry.get(key)) for key in required_strings)
+        and _positive_number(entry.get("batch_size"))
+        and _positive_number(
+            entry.get("decode_tokens_per_second_per_user")
+        )
+        and _positive_number(entry.get("aggregate_tokens_per_second"))
+    )
+
+
+def _performance_baseline_entry_summary(entry: Any) -> dict[str, Any] | None:
+    if not isinstance(entry, dict):
+        return None
+    fields = (
+        "id",
+        "role",
+        "implementation",
+        "frontend",
+        "model",
+        "batch_size",
+        "decode_tokens_per_second_per_user",
+        "aggregate_tokens_per_second",
+        "source",
+        "baseline_file",
+        "metric",
+    )
+    return {field: entry.get(field) for field in fields if field in entry}
 
 
 def _has_nonnegative_fields(value: Any, fields: tuple[str, ...]) -> bool:

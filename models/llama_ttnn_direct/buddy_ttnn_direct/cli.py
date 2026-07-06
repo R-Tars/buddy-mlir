@@ -69,6 +69,7 @@ from .templates.diff import (
 from .validation import (
     default_decode_step_search_space_path,
     default_official_template_path,
+    default_performance_baselines_path,
     default_search_space_path,
     validate_direct,
     validate_real_decode,
@@ -1320,6 +1321,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--performance-baselines",
+        type=Path,
+        default=default_performance_baselines_path(),
+        help=(
+            "Performance baseline reference JSON used when "
+            "--baseline-reference is set."
+        ),
+    )
+    validate_real.add_argument(
+        "--baseline-reference",
+        default=None,
+        help=(
+            "Baseline id from --performance-baselines. When set, "
+            "validate-real-decode uses that entry's decode t/s/u as the "
+            "baseline and records the entry in evidence."
+        ),
+    )
+    validate_real.add_argument(
         "--min-baseline-ratio",
         type=float,
         default=None,
@@ -1895,6 +1914,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         baseline_tokens_per_second_per_user=(
             args.baseline_tokens_per_second_per_user
         ),
+        performance_baselines_path=args.performance_baselines,
+        baseline_reference=args.baseline_reference,
         min_baseline_ratio=args.min_baseline_ratio,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(

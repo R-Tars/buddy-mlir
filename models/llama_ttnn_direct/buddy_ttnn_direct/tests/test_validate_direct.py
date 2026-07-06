@@ -41,6 +41,20 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_de
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_performance_baseline_reference_resolves(self) -> None:
+        baseline = validation_module.resolve_performance_baseline(
+            "tt_metal_official_llama31_8b_b32"
+        )
+        self.assertEqual(baseline["model"], "Llama 3.1 8B")
+        self.assertEqual(baseline["batch_size"], 32)
+        self.assertEqual(
+            baseline["decode_tokens_per_second_per_user"],
+            33.1,
+        )
+        self.assertTrue(baseline["baseline_file"].endswith(
+            "performance_baselines.json"
+        ))
+
     def test_cli_validate_direct_runs_all_device_free_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -715,7 +729,9 @@ class ValidateDirectTest(unittest.TestCase):
                     trace_iterations=2,
                     require_trace=True,
                     min_tokens_per_second_per_user=0.0,
-                    baseline_tokens_per_second_per_user=1.0,
+                    baseline_reference=(
+                        "tt_metal_official_llama31_8b_b32"
+                    ),
                     min_baseline_ratio=0.0,
                     ttnn_module=_make_fake_ttnn(),
                     torch_module=_fake_torch(),
@@ -1487,6 +1503,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.baseline_tokens_per_second_per_user",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.baseline_reference",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -2486,7 +2506,19 @@ class ValidateDirectTest(unittest.TestCase):
                 0.0,
             )
             baseline = evidence["performance_evidence"]["throughput_baseline"]
-            self.assertEqual(baseline["baseline"], 1.0)
+            self.assertEqual(baseline["baseline"], 33.1)
+            self.assertEqual(
+                baseline["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
+            self.assertEqual(
+                baseline["baseline_reference_entry"]["model"],
+                "Llama 3.1 8B",
+            )
+            self.assertEqual(
+                evidence["requirements"]["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
             self.assertEqual(baseline["min_ratio"], 0.0)
             self.assertGreater(baseline["ratio"], 0.0)
             self.assertTrue(baseline["passed"])

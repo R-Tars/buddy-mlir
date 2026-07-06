@@ -372,7 +372,7 @@ python /tmp/llama31_ttnn_program/run_decode.py \
   --require-program-runtime-shape \
   --require-batch32-decode-step \
   --min-tokens-per-second-per-user 1.0 \
-  --baseline-tokens-per-second-per-user 33.1 \
+  --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
   --decode-shell-pcc-threshold 0.99 \
   --require-decode-shell-numeric-reference \
@@ -607,7 +607,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --require-trace \
   --require-batch32-decode-step \
   --min-tokens-per-second-per-user 1.0 \
-  --baseline-tokens-per-second-per-user 33.1 \
+  --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
   --decode-shell-pcc-threshold 0.99 \
   --require-decode-shell-numeric-reference \
@@ -656,10 +656,13 @@ configured batch/cache dimensions, instead of a smaller bring-up shape.
 Use `--require-batch32-decode-step` for the review Step 3 batch-32 decode
 contract; this is also exposed by generated bundle `run_decode.py --mode
 validate-real`.
-Use `--baseline-tokens-per-second-per-user` to record the observed throughput
-ratio against a reference, such as the TT-Metal official Llama 3.1 8B batch-32
-baseline from the review table, and `--min-baseline-ratio` to fail acceptance
-when the observed/baseline ratio falls below the current phase's floor.
+Use `--baseline-reference tt_metal_official_llama31_8b_b32` to record the
+observed throughput ratio against the TT-Metal official Llama 3.1 8B batch-32
+baseline from `reference/performance_baselines.json`, and
+`--min-baseline-ratio` to fail acceptance when the observed/baseline ratio
+falls below the current phase's floor. `--baseline-tokens-per-second-per-user`
+remains available for ad hoc baselines, but final evidence should prefer a
+reference id so the source/model/batch are auditable.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
@@ -693,9 +696,10 @@ and, unless
 a complete `output_kind_counts` summary for the generation templates under
 test, every profiled autotune candidate's real-weight/profile/reference/shape
 evidence, plus a best candidate with a passed structural reference. When a
-throughput baseline is supplied, the
-evidence also records the observed/baseline ratio and gates it against the
-requested floor before marking the validation as accepted.
+throughput baseline is supplied, the evidence also records the
+observed/baseline ratio, the baseline reference id when provided, and the
+baseline's source/model/batch summary before gating it against the requested
+floor.
 
 ## Phase 2 PR-B: Torch-Side Parameter Materialization
 

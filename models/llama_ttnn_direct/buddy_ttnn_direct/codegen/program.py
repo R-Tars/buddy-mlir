@@ -137,6 +137,7 @@ def main(argv=None):
     parser.add_argument("--metric", default="latency_ms")
     parser.add_argument("--decode-step-search-space", type=Path, default=None)
     parser.add_argument("--official-config", type=Path, default=None)
+    parser.add_argument("--performance-baselines", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
     parser.add_argument("--require-trace", action="store_true")
     parser.add_argument("--require-official-config-match", action="store_true")
@@ -153,6 +154,7 @@ def main(argv=None):
         type=float,
         default=None,
     )
+    parser.add_argument("--baseline-reference", default=None)
     parser.add_argument(
         "--min-baseline-ratio",
         type=float,
@@ -268,6 +270,8 @@ def main(argv=None):
         baseline_tokens_per_second_per_user=(
             args.baseline_tokens_per_second_per_user
         ),
+        performance_baselines_path=args.performance_baselines,
+        baseline_reference=args.baseline_reference,
         min_baseline_ratio=args.min_baseline_ratio,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(
@@ -376,7 +380,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --require-program-runtime-shape \
           --require-batch32-decode-step \
           --min-tokens-per-second-per-user 1.0 \
-          --baseline-tokens-per-second-per-user 33.1 \
+          --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
           --decode-shell-pcc-threshold 0.99 \
           --require-decode-shell-numeric-reference \

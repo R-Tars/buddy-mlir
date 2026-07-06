@@ -252,8 +252,8 @@ class BuildProgramTest(unittest.TestCase):
                     "--require-batch32-decode-step",
                     "--min-tokens-per-second-per-user",
                     "1.0",
-                    "--baseline-tokens-per-second-per-user",
-                    "33.1",
+                    "--baseline-reference",
+                    "tt_metal_official_llama31_8b_b32",
                     "--min-baseline-ratio",
                     "0.1",
                     "--decode-shell-pcc-threshold",
@@ -298,6 +298,14 @@ class BuildProgramTest(unittest.TestCase):
                 validation_payload["baseline_tokens_per_second_per_user"],
                 33.1,
             )
+            self.assertEqual(
+                validation_payload["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
+            self.assertEqual(
+                validation_payload["baseline_reference_entry"]["model"],
+                "Llama 3.1 8B",
+            )
             self.assertEqual(validation_payload["min_baseline_ratio"], 0.1)
             self.assertEqual(
                 validation_payload["decode_shell_pcc_threshold"],
@@ -331,6 +339,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 evidence["requirements"]["baseline_tokens_per_second_per_user"],
                 33.1,
+            )
+            self.assertEqual(
+                evidence["requirements"]["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
             )
             self.assertEqual(evidence["requirements"]["min_baseline_ratio"], 0.1)
 
