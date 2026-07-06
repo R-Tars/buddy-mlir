@@ -1312,6 +1312,8 @@ def _trace_summary(trace: Any) -> dict[str, Any]:
         "execute_latency_ms": trace.get("execute_latency_ms"),
         "execute_sample_count": execute_sample_count,
     }
+    if isinstance(execute_samples, list):
+        summary["execute_samples_ms"] = execute_samples
     if trace.get("error") is not None:
         summary["error"] = trace.get("error")
     return summary
@@ -2620,6 +2622,32 @@ def _real_decode_acceptance(
                     expected=expected_trace_iterations,
                 ),
                 _acceptance_check(
+                    "profile_decode_step.trace_profile",
+                    _trace_profile_complete(
+                        profile_trace,
+                        throughput,
+                        expected_iterations=expected_trace_iterations,
+                    ),
+                    observed=_trace_profile_observed(
+                        profile_trace,
+                        throughput,
+                    ),
+                    expected={
+                        "status": "captured_and_executed",
+                        "iterations": expected_trace_iterations,
+                        "execute_samples_ms": "positive",
+                        "capture_latency_ms": "nonnegative",
+                        "execute_latency_ms": "positive",
+                        "trace_execute_mean_ms": "positive",
+                        "trace_execute_tokens_per_second_per_user": (
+                            "positive"
+                        ),
+                        "trace_execute_aggregate_tokens_per_second": (
+                            "positive"
+                        ),
+                    },
+                ),
+                _acceptance_check(
                     (
                         "profile_decode_step."
                         "trace_execute_tokens_per_second_per_user"
@@ -2814,6 +2842,72 @@ def _lm_head_profile_observed(profile: Any) -> dict[str, Any]:
         "lm_head_ms": profile.get("lm_head_ms"),
         "argmax_ms": profile.get("argmax_ms"),
         "argmax_status": profile.get("argmax_status"),
+    }
+
+
+def _trace_profile_complete(
+    trace: Any,
+    throughput: Any,
+    *,
+    expected_iterations: Any,
+) -> bool:
+    if not isinstance(trace, dict) or not isinstance(throughput, dict):
+        return False
+    samples = trace.get("execute_samples_ms")
+    return (
+        trace.get("status") == "captured_and_executed"
+        and _int_equal(trace.get("iterations"), expected_iterations)
+        and _trace_samples_complete(samples, expected_iterations)
+        and _nonnegative_number(trace.get("capture_latency_ms"))
+        and _positive_number(trace.get("execute_latency_ms"))
+        and _positive_number(throughput.get("trace_execute_mean_ms"))
+        and _positive_number(
+            throughput.get("trace_execute_tokens_per_second_per_user")
+        )
+        and _positive_number(
+            throughput.get("trace_execute_aggregate_tokens_per_second")
+        )
+        and _int_equal(throughput.get("trace_iterations"), expected_iterations)
+    )
+
+
+def _trace_samples_complete(samples: Any, expected_iterations: Any) -> bool:
+    if not isinstance(samples, list):
+        return False
+    try:
+        expected_count = int(expected_iterations)
+    except (TypeError, ValueError):
+        return False
+    return (
+        len(samples) == expected_count
+        and bool(samples)
+        and all(_positive_number(sample) for sample in samples)
+    )
+
+
+def _trace_profile_observed(
+    trace: Any,
+    throughput: Any,
+) -> dict[str, Any]:
+    trace_dict = trace if isinstance(trace, dict) else {}
+    throughput_dict = throughput if isinstance(throughput, dict) else {}
+    return {
+        "status": trace_dict.get("status"),
+        "iterations": trace_dict.get("iterations"),
+        "execute_sample_count": trace_dict.get("execute_sample_count"),
+        "capture_latency_ms": trace_dict.get("capture_latency_ms"),
+        "execute_latency_ms": trace_dict.get("execute_latency_ms"),
+        "execute_samples_ms": trace_dict.get("execute_samples_ms"),
+        "trace_execute_mean_ms": throughput_dict.get(
+            "trace_execute_mean_ms"
+        ),
+        "trace_execute_tokens_per_second_per_user": throughput_dict.get(
+            "trace_execute_tokens_per_second_per_user"
+        ),
+        "trace_execute_aggregate_tokens_per_second": throughput_dict.get(
+            "trace_execute_aggregate_tokens_per_second"
+        ),
+        "trace_iterations": throughput_dict.get("trace_iterations"),
     }
 
 

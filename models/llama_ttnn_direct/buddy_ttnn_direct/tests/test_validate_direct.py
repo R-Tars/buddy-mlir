@@ -614,6 +614,22 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 2,
             )
+            self.assertEqual(
+                len(
+                    report["steps"]["profile_decode_step"]["trace"][
+                        "execute_samples_ms"
+                    ]
+                ),
+                2,
+            )
+            self.assertTrue(
+                all(
+                    sample > 0.0
+                    for sample in report["steps"]["profile_decode_step"][
+                        "trace"
+                    ]["execute_samples_ms"]
+                )
+            )
             self.assertEqual(report["acceptance"]["status"], "passed")
             self.assertTrue(report["acceptance"]["passed"])
             self.assertTrue(report["acceptance"]["require_trace"])
@@ -849,6 +865,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.trace_execute_sample_count",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.trace_profile",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1144,6 +1164,18 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 0.0,
             )
+            self.assertGreater(
+                profile_report["throughput_summary"][
+                    "trace_execute_mean_ms"
+                ],
+                0.0,
+            )
+            self.assertGreater(
+                profile_report["throughput_summary"][
+                    "trace_execute_aggregate_tokens_per_second"
+                ],
+                0.0,
+            )
             autotune_report = json.loads(
                 (out_dir / "decode_step_autotune_report.json").read_text()
             )
@@ -1426,6 +1458,34 @@ class ValidateDirectTest(unittest.TestCase):
                     "execute_sample_count"
                 ],
                 2,
+            )
+            self.assertEqual(
+                len(
+                    evidence["runtime_evidence"]["profile_decode_step"][
+                        "trace"
+                    ]["execute_samples_ms"]
+                ),
+                2,
+            )
+            self.assertTrue(
+                all(
+                    sample > 0.0
+                    for sample in evidence["runtime_evidence"][
+                        "profile_decode_step"
+                    ]["trace"]["execute_samples_ms"]
+                )
+            )
+            self.assertGreater(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "throughput_summary"
+                ]["trace_execute_mean_ms"],
+                0.0,
+            )
+            self.assertGreater(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "throughput_summary"
+                ]["trace_execute_aggregate_tokens_per_second"],
+                0.0,
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -3059,6 +3119,99 @@ class ValidateDirectTest(unittest.TestCase):
                     "execute_sample_count"
                 ],
                 2,
+            )
+
+    def test_validate_real_decode_fails_on_profile_trace_profile(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_profile = validation_module.profile_decode_step
+
+            def profile_with_zero_trace_samples(*args, **kwargs):
+                profile = original_profile(*args, **kwargs)
+                trace = dict(profile.get("trace") or {})
+                trace["execute_samples_ms"] = [0.0, 0.0]
+                trace["execute_latency_ms"] = 0.0
+                profile["trace"] = trace
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(profile, indent=2) + "\n")
+                return profile
+
+            with patch.object(
+                validation_module,
+                "profile_decode_step",
+                side_effect=profile_with_zero_trace_samples,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        trace=True,
+                        trace_iterations=2,
+                        require_trace=True,
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["profile_decode_step.trace_profile"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_decode_step.trace_profile"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"]["trace"][
+                    "execute_samples_ms"
+                ],
+                [0.0, 0.0],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"]["trace"][
+                    "execute_latency_ms"
+                ],
+                0.0,
             )
 
     def test_validate_real_decode_fails_without_tt_metal_commit(self) -> None:
