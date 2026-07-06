@@ -714,10 +714,13 @@ def _torch_decode_shell_reference(
 
 
 def _parameter_weight(parameter: Any) -> Any:
-    return getattr(parameter, "weight", parameter)
+    weight = getattr(parameter, "weight", parameter)
+    torch_value = getattr(weight, "torch_value", None)
+    return torch_value if torch_value is not None else weight
 
 
 def _torch_embedding(torch: Any, token_ids: Any, weight: Any) -> Any:
+    weight = _torch_embedding_weight(weight)
     functional = getattr(getattr(torch, "nn", None), "functional", None)
     embedding = getattr(functional, "embedding", None)
     if callable(embedding):
@@ -726,10 +729,11 @@ def _torch_embedding(torch: Any, token_ids: Any, weight: Any) -> Any:
 
 
 def _torch_linear(torch: Any, activation: Any, weight: Any) -> Any:
-    return activation @ weight.transpose(-1, -2)
+    return activation @ _torch_linear_weight_for_matmul(weight)
 
 
 def _torch_rms_norm(torch: Any, hidden: Any, weight: Any, eps: float) -> Any:
+    weight = _torch_norm_weight(weight, hidden)
     variance = (hidden * hidden).mean(dim=-1, keepdim=True)
     return hidden * torch.rsqrt(variance + eps) * weight
 
@@ -748,6 +752,48 @@ def _torch_cat(torch: Any, tensors: list[Any], *, dim: int) -> Any:
 
 def _torch_argmax(torch: Any, tensor: Any, *, dim: int) -> Any:
     return torch.argmax(tensor, dim=dim)
+
+
+def _torch_embedding_weight(weight: Any) -> Any:
+    shape = _shape(weight)
+    if _is_physical_4d_weight(shape):
+        return _reshape_reference_tensor(weight, [shape[2], shape[3]])
+    return weight
+
+
+def _torch_linear_weight_for_matmul(weight: Any) -> Any:
+    shape = _shape(weight)
+    if _is_physical_4d_weight(shape):
+        return _reshape_reference_tensor(weight, [shape[2], shape[3]])
+    transpose = getattr(weight, "transpose", None)
+    if callable(transpose):
+        return transpose(-1, -2)
+    raise TypeError("linear reference weight must provide transpose")
+
+
+def _torch_norm_weight(weight: Any, hidden: Any) -> Any:
+    shape = _shape(weight)
+    if _is_physical_4d_weight(shape):
+        hidden_shape = _shape(hidden)
+        hidden_size = hidden_shape[-1] if hidden_shape else shape[2] * shape[3]
+        return _reshape_reference_tensor(weight, [hidden_size])
+    return weight
+
+
+def _is_physical_4d_weight(shape: list[int] | None) -> bool:
+    return (
+        isinstance(shape, list)
+        and len(shape) == 4
+        and shape[0] == 1
+        and shape[1] == 1
+    )
+
+
+def _reshape_reference_tensor(tensor: Any, shape: list[int]) -> Any:
+    reshape = getattr(tensor, "reshape", None)
+    if callable(reshape):
+        return reshape(*shape)
+    raise TypeError("reference tensor must provide reshape for physical 4D weights")
 
 
 def _to_torch_tensor(ttnn: Any, tensor: Any) -> Any | None:

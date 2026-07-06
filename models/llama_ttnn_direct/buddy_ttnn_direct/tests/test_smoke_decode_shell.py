@@ -12,6 +12,9 @@ import numpy as np
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_decode_shell import (
     DECODE_SHELL_OPS,
+    _torch_embedding,
+    _torch_linear,
+    _torch_rms_norm,
     run_smoke_decode_shell,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
@@ -213,6 +216,60 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertGreaterEqual(numeric["pcc"], 0.999999)
             self.assertTrue(all(check["passed"] for check in numeric["checks"]))
             self.assertIn("mlp_down", report["reference"]["observed_ops"])
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
+    def test_decode_shell_numeric_reference_accepts_physical_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_shell_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            parameters = _fake_physical_numeric_parameters(split_count=8)
+            report = run_smoke_decode_shell(
+                out=report_json,
+                program_dir=program_dir,
+                layers=1,
+                disable_attention=True,
+                device="p150a",
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_numeric_torch(),
+                parameters=parameters,
+                reference_parameters=parameters,
+                token_ids=MiniTensor([[0] for _ in range(32)], dtype="int64"),
+            )
+
+            self.assertTrue(report["passed"])
+            numeric = report["reference"]["numeric_reference"]
+            self.assertEqual(numeric["status"], "passed")
+            self.assertEqual(numeric["kind"], "torch_decode_shell")
+            self.assertGreaterEqual(numeric["pcc"], 0.999999)
+            self.assertEqual(
+                parameters.layers[0].mlp.gate_proj.weight.shape,
+                [1, 1, 16, 32],
+            )
+            self.assertEqual(
+                parameters.final_norm.weight.shape,
+                [1, 1, 1, 16],
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_run_smoke_decode_shell_synthesizes_token_ids(self) -> None:
@@ -431,6 +488,92 @@ def _fake_numeric_parameters(split_count: int):
     )
 
 
+def _fake_physical_numeric_parameters(split_count: int):
+    hidden_size = 16
+    intermediate_size = 32
+    vocab_size = 128
+    shard_size = vocab_size // split_count
+
+    def matrix(name: str, shape: tuple[int, int]) -> MiniTensor:
+        values = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+        values = (values + 1.0) / (1000.0 + len(name))
+        return MiniTensor(values)
+
+    def physical_linear(name: str, shape: tuple[int, int]) -> MiniTensor:
+        source = matrix(name, shape)
+        return source.transpose(0, 1).reshape(1, 1, shape[1], shape[0])
+
+    return types.SimpleNamespace(
+        embedding=types.SimpleNamespace(
+            weight=matrix("embedding", (vocab_size, hidden_size)).reshape(
+                1,
+                1,
+                vocab_size,
+                hidden_size,
+            ),
+        ),
+        layers=[
+            types.SimpleNamespace(
+                input_norm=types.SimpleNamespace(
+                    weight=MiniTensor(np.ones(hidden_size)).reshape(
+                        1,
+                        1,
+                        1,
+                        hidden_size,
+                    ),
+                ),
+                post_attention_norm=types.SimpleNamespace(
+                    weight=MiniTensor(np.ones(hidden_size) * 0.5).reshape(
+                        1,
+                        1,
+                        1,
+                        hidden_size,
+                    ),
+                ),
+                mlp=types.SimpleNamespace(
+                    gate_proj=types.SimpleNamespace(
+                        weight=physical_linear(
+                            "gate",
+                            (intermediate_size, hidden_size),
+                        ),
+                    ),
+                    up_proj=types.SimpleNamespace(
+                        weight=physical_linear(
+                            "up",
+                            (intermediate_size, hidden_size),
+                        ),
+                    ),
+                    down_proj=types.SimpleNamespace(
+                        weight=physical_linear(
+                            "down",
+                            (hidden_size, intermediate_size),
+                        ),
+                    ),
+                ),
+            )
+        ],
+        final_norm=types.SimpleNamespace(
+            weight=MiniTensor(np.ones(hidden_size) * 0.75).reshape(
+                1,
+                1,
+                1,
+                hidden_size,
+            ),
+        ),
+        lm_head=types.SimpleNamespace(
+            splits=[
+                types.SimpleNamespace(
+                    weight=physical_linear(
+                        f"lm_head_{index}",
+                        (shard_size, hidden_size),
+                    ),
+                )
+                for index in range(split_count)
+            ]
+        ),
+    )
+
+
 def _fake_numeric_torch():
     module = types.SimpleNamespace()
     module.float32 = "float32"
@@ -470,7 +613,8 @@ def _make_fake_ttnn():
     def embedding(token_ids, weight, **kwargs):
         torch_value = None
         if _has_numeric(token_ids) and _has_numeric(weight):
-            torch_value = _fake_numeric_torch().nn.functional.embedding(
+            torch_value = _torch_embedding(
+                _fake_numeric_torch(),
                 _to_mini(token_ids),
                 _to_mini(weight),
             )
@@ -506,18 +650,11 @@ def _make_fake_ttnn():
     def rms_norm(hidden, **kwargs):
         torch_value = None
         if _has_numeric(hidden) and _has_numeric(kwargs.get("weight")):
-            hidden_value = _to_mini(hidden)
-            weight_value = _to_mini(kwargs["weight"])
-            variance = (hidden_value * hidden_value).mean(
-                dim=-1,
-                keepdim=True,
-            )
-            torch_value = (
-                hidden_value
-                * _fake_numeric_torch().rsqrt(
-                    variance + float(kwargs.get("epsilon", 1e-5))
-                )
-                * weight_value
+            torch_value = _torch_rms_norm(
+                _fake_numeric_torch(),
+                _to_mini(hidden),
+                _to_mini(kwargs["weight"]),
+                float(kwargs.get("epsilon", 1e-5)),
             )
         module.calls.append(
             {
@@ -535,7 +672,11 @@ def _make_fake_ttnn():
     def linear(activation, weight, **kwargs):
         torch_value = None
         if _has_numeric(activation) and _has_numeric(weight):
-            torch_value = _to_mini(activation) @ _to_mini(weight).transpose(-1, -2)
+            torch_value = _torch_linear(
+                _fake_numeric_torch(),
+                _to_mini(activation),
+                _to_mini(weight),
+            )
         module.calls.append(
             {
                 "op": "linear",

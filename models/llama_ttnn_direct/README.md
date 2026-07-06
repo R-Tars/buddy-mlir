@@ -848,7 +848,10 @@ Successful non-dry-run reports now include a `reference` block with
 attention status, per-layer hidden shape/dtype, and final token shape/dtype.
 When host torch parameters are available, the same block also includes
 `numeric_reference.kind=torch_decode_shell`, a final-hidden PCC check against a
-torch reference, and an optional token match after LM-head argmax. If host
+torch reference, and an optional token match after LM-head argmax. The torch
+reference accepts either Hugging Face source weights or tensorized physical
+TT-Transformers weights such as `[1, 1, in_features, out_features]`, so the
+shell can validate the generated path after TTNN tensorization. If host
 parameters or `ttnn.to_torch` output conversion are unavailable,
 `numeric_reference.status` remains `not_run` with the reason recorded. Reports
 also record `input_source`, `input_shapes.token_ids`, and
