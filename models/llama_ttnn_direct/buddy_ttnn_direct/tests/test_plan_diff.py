@@ -44,7 +44,19 @@ REFERENCE = {
 }
 
 
-def _fake_plan() -> dict[str, object]:
+FULL_LOGITS_REFERENCE = {
+    **REFERENCE,
+    "final_ops": [
+        "rmsnorm.final",
+        "split_lm_head",
+    ],
+}
+
+
+def _fake_plan(
+    *,
+    generation_template: str = "device_argmax_greedy",
+) -> dict[str, object]:
     graph = import_hf_llama(
         "/tmp/fake-plan-diff",
         config={
@@ -79,7 +91,7 @@ def _fake_plan() -> dict[str, object]:
             "mlp_template": "official_gated_mlp_decode",
             "lm_head_template": "official_split_lm_head",
             "kv_cache_template": "paged_kv_cache",
-            "generation_template": "device_argmax_greedy",
+            "generation_template": generation_template,
             "lm_head_split_count": 8,
             "dtype_recipe": "official_like_performance_seed",
         },
@@ -95,6 +107,20 @@ class PlanDiffTest(unittest.TestCase):
         self.assertEqual(diff["order_mismatch"], [])
         self.assertEqual(diff["expanded"]["layer_ops"], REFERENCE["layer_ops"])
         self.assertEqual(diff["expanded"]["final_ops"], REFERENCE["final_ops"])
+
+    def test_full_logits_plan_matches_reference_without_argmax(self) -> None:
+        diff = diff_plan_against_official(
+            _fake_plan(generation_template="full_logits"),
+            FULL_LOGITS_REFERENCE,
+        )
+
+        self.assertEqual(diff["missing_ops"], [])
+        self.assertEqual(diff["extra_ops"], [])
+        self.assertEqual(diff["order_mismatch"], [])
+        self.assertEqual(
+            diff["expanded"]["final_ops"],
+            FULL_LOGITS_REFERENCE["final_ops"],
+        )
 
     def test_reports_missing_and_extra_ops(self) -> None:
         plan = _fake_plan()

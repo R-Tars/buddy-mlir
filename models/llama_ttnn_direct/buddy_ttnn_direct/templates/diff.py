@@ -20,7 +20,7 @@ TEMPLATE_TO_OPS = {
 FINAL_TEMPLATE_TO_OPS = {
     "official_split_lm_head": ["split_lm_head"],
     "device_argmax_greedy": ["argmax_or_sampling"],
-    "full_logits": ["argmax_or_sampling"],
+    "full_logits": [],
 }
 
 

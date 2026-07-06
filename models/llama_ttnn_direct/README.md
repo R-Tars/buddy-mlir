@@ -178,6 +178,9 @@ nlp_concat_heads_decode
 linear.o_proj
 ```
 
+Final templates preserve generation semantics: `device_argmax_greedy` expands
+to `argmax_or_sampling`, while `full_logits` stops after `split_lm_head`.
+
 The output records `missing_ops`, `extra_ops`, and `order_mismatch`.
 
 ## Phase 5: Gated MLP TTNN Template
