@@ -3170,6 +3170,12 @@ def _real_decode_acceptance(
             expected="passed",
         ),
         _acceptance_check(
+            "decode_shell.reference_failed_checks",
+            decode_shell.get("reference_failed_checks") == [],
+            observed=decode_shell.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
             "decode_shell.observed_op_sequence",
             _observed_ops_cover_planned(
                 decode_shell.get("reference_planned_ops"),
@@ -3388,6 +3394,12 @@ def _real_decode_acceptance(
             attention_layer.get("reference_status") == "passed",
             observed=attention_layer.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "attention_layer.reference_failed_checks",
+            attention_layer.get("reference_failed_checks") == [],
+            observed=attention_layer.get("reference_failed_checks"),
+            expected=[],
         ),
         _acceptance_check(
             "attention_layer.primitive_sequence",
@@ -3628,6 +3640,12 @@ def _real_decode_acceptance(
             expected="passed",
         ),
         _acceptance_check(
+            "single_layer_decode.reference_failed_checks",
+            single_layer.get("reference_failed_checks") == [],
+            observed=single_layer.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
             "single_layer_decode.output_shapes",
             _decode_output_shapes_complete(
                 single_layer.get("output_shapes"),
@@ -3844,6 +3862,12 @@ def _real_decode_acceptance(
             smoke.get("reference_status") == "passed",
             observed=smoke.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.reference_failed_checks",
+            smoke.get("reference_failed_checks") == [],
+            observed=smoke.get("reference_failed_checks"),
+            expected=[],
         ),
         _acceptance_check(
             "smoke_decode_step.output_shapes",
@@ -4068,6 +4092,12 @@ def _real_decode_acceptance(
             profile.get("reference_status") == "passed",
             observed=profile.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.reference_failed_checks",
+            profile.get("reference_failed_checks") == [],
+            observed=profile.get("reference_failed_checks"),
+            expected=[],
         ),
         _acceptance_check(
             "profile_decode_step.output_shapes",

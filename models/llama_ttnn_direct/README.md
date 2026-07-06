@@ -690,8 +690,8 @@ tensorization roles and memory config evidence, required tensorized decode
 weight paths for single-layer/smoke/profile, LM-head source metadata-reference
 and sliced-read evidence, generated linear weight transform evidence,
 embedding/RMSNorm weight shape-transform evidence, LM-head split tensor
-transform evidence, decode-step structural references, generated observed op
-sequence coverage for the
+transform evidence, decode-step structural references, empty structural
+reference failed-check lists, generated observed op sequence coverage for the
 shell/single-layer/smoke/profile paths, trace capture/execute status plus
 requested execute iteration/sample-count evidence, trace execute latency
 samples and derived trace throughput, measured profile latency, complete

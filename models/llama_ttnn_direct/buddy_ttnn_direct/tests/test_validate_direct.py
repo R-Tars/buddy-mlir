@@ -1223,6 +1223,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_shell.reference_failed_checks",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "attention_layer.runtime_status",
                 acceptance_check_names,
             )
@@ -1267,6 +1271,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "attention_layer.reference_failed_checks",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "single_layer_decode.parameter_source",
                 acceptance_check_names,
             )
@@ -1296,6 +1304,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "single_layer_decode.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.reference_failed_checks",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1352,6 +1364,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "smoke_decode_step.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "smoke_decode_step.reference_failed_checks",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1428,6 +1444,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_decode_step.reference_failed_checks",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -5083,6 +5103,98 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["smoke_decode_step"][
                     "reference_observed_ops"
                 ],
+            )
+
+    def test_validate_real_decode_fails_on_reference_failed_checks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_smoke = validation_module.run_smoke_decode_step
+            failed_check_name = "forced_reference_mismatch"
+
+            def smoke_with_failed_reference_check(*args, **kwargs):
+                report = original_smoke(*args, **kwargs)
+                report["reference"]["checks"].append(
+                    {
+                        "name": failed_check_name,
+                        "passed": False,
+                        "observed": "bad",
+                        "expected": "good",
+                    }
+                )
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_step",
+                side_effect=smoke_with_failed_reference_check,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["smoke_decode_step.reference_failed_checks"],
+            )
+            self.assertEqual(
+                failed_checks[0]["observed"],
+                [failed_check_name],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["smoke_decode_step.reference_failed_checks"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["smoke_decode_step"][
+                    "reference_failed_checks"
+                ],
+                [failed_check_name],
             )
 
     def test_validate_real_decode_fails_without_layer_profile_evidence(
