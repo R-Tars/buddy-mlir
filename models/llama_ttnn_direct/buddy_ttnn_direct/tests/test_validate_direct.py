@@ -76,6 +76,39 @@ class ValidateDirectTest(unittest.TestCase):
                 list(report["results"]),
                 list(VALIDATION_STEPS),
             )
+            self.assertEqual(report["acceptance"]["status"], "passed")
+            self.assertTrue(report["acceptance"]["passed"])
+            self.assertEqual(report["acceptance"]["failed_checks"], [])
+            acceptance_check_names = [
+                check["name"] for check in report["acceptance"]["checks"]
+            ]
+            self.assertIn("validate_direct.steps", acceptance_check_names)
+            self.assertIn("plan_diff.clean", acceptance_check_names)
+            self.assertIn("py_compile.artifacts", acceptance_check_names)
+            self.assertIn(
+                "tensorize_parameters_dry_run.status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "attention_primitives_dry_run.status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune_dry_run.knob_coverage",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune_dry_run.status_counts",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune_dry_run.default_knob_variation",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "validate_direct.artifacts",
+                acceptance_check_names,
+            )
 
             self.assertTrue((out_dir / "semantic_graph.json").is_file())
             self.assertTrue((out_dir / "execution_plan.json").is_file())
@@ -265,6 +298,81 @@ class ValidateDirectTest(unittest.TestCase):
                     "reference_status"
                 ],
                 "dry_run",
+            )
+
+    def test_validate_direct_fails_acceptance_on_default_autotune_variation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            out_dir = root / "validate"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+
+            original_autotune = validation_module.run_decode_step_autotune
+
+            def autotune_without_default_variation(*args, **kwargs):
+                kwargs = dict(kwargs)
+                kwargs["space"] = {
+                    "lm_head_split_count": [2],
+                    "generation_template": [
+                        "device_argmax_greedy",
+                        "full_logits",
+                    ],
+                    "mlp_intermediate_dtype": [None],
+                    "attention_sdpa_output_memory_config": [None],
+                    "attention_concat_heads_output_memory_config": [None],
+                }
+                autotune = original_autotune(*args, **kwargs)
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
+                return autotune
+
+            with patch.object(
+                validation_module,
+                "run_decode_step_autotune",
+                side_effect=autotune_without_default_variation,
+            ):
+                report = validation_module.validate_direct(
+                    model_path=model_dir,
+                    config_path=config_json,
+                    out_dir=out_dir,
+                )
+
+            self.assertTrue(report["decode_step_search_space_is_default"])
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(
+                report["results"],
+                {step: "pass" for step in VALIDATION_STEPS},
+            )
+            self.assertEqual(report["acceptance"]["status"], "failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_step_autotune_dry_run.default_knob_variation"],
+            )
+            self.assertEqual(
+                failed_checks[0]["observed"]["missing_varied_knobs"],
+                [
+                    "lm_head_split_count",
+                    "mlp_intermediate_dtype",
+                    "attention_sdpa_output_memory_config",
+                    "attention_concat_heads_output_memory_config",
+                ],
+            )
+            persisted = json.loads(
+                (out_dir / "validation_report.json").read_text()
+            )
+            self.assertEqual(persisted["status"], "acceptance_failed")
+            self.assertEqual(
+                persisted["acceptance"]["failed_checks"],
+                ["decode_step_autotune_dry_run.default_knob_variation"],
             )
 
     def test_cli_validate_real_decode_dry_run_writes_schema(self) -> None:

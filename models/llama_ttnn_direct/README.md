@@ -573,6 +573,15 @@ device, load full tensor payloads, or run `materialize-parameters`; real
 parameter materialization remains an explicit command because it needs local
 weight files.
 
+The final report includes a device-free `acceptance` block in addition to the
+per-step results. The acceptance checks require the dry-run chain to finish,
+the structural plan diff to stay clean, compiled generated Python files to
+exist, no-device tensorization and smoke reports to stay in `dry_run` status,
+search/autotune candidate counts to be positive, and the bundled default
+decode-step autotune search space to vary every review knob. If these evidence
+checks fail after the steps have run, `validate-direct` reports
+`acceptance_failed` instead of `pass`.
+
 For the real-weight path, use `validate-real-decode` after `build-program`.
 This validation gate first writes an official-config parity diff for the
 generated program, materializes selected HF safetensors, then runs the
