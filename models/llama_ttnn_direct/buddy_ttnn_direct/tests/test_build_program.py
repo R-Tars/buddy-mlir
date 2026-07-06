@@ -48,6 +48,15 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(generated_config["num_layers"], 2)
             self.assertEqual(generated_config["hidden_size"], 16)
             self.assertEqual(generated_config["intermediate_size"], 32)
+            self.assertEqual(
+                generated_config["kv_cache"]["template"],
+                "paged_kv_cache",
+            )
+            self.assertEqual(generated_config["kv_cache"]["policy"], "paged")
+            self.assertEqual(generated_config["kv_cache"]["page_block_size"], 32)
+            self.assertEqual(generated_config["kv_cache"]["max_cache_len"], 1024)
+            self.assertEqual(generated_config["kv_cache"]["num_kv_heads"], 2)
+            self.assertEqual(generated_config["kv_cache"]["head_dim"], 4)
 
             semantic = json.loads((out_dir / "semantic_graph.json").read_text())
             self.assertEqual(semantic["model_name"], "fake-build-program")

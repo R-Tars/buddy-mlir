@@ -292,6 +292,26 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["batch_size"], 2)
             self.assertEqual(report["cache_len"], 16)
             self.assertEqual(
+                report["decode_step_contract"]["token_input_shape"],
+                [2, 1],
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["kv_cache_policy"],
+                "paged",
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["page_table_shape"],
+                [2, 1],
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["kv_cache_shape"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["output_kind"],
+                "token",
+            )
+            self.assertEqual(
                 list(report["results"]),
                 list(REAL_DECODE_VALIDATION_STEPS),
             )
@@ -336,6 +356,9 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(report["acceptance"]["require_full_depth"])
             self.assertFalse(
                 report["acceptance"]["require_program_runtime_shape"]
+            )
+            self.assertFalse(
+                report["acceptance"]["require_batch32_decode_step"]
             )
             self.assertTrue(report["acceptance"]["require_trace"])
             self.assertTrue(
@@ -399,6 +422,17 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(evidence["requirements"]["require_full_depth"])
             self.assertFalse(
                 evidence["requirements"]["require_program_runtime_shape"]
+            )
+            self.assertFalse(
+                evidence["requirements"]["require_batch32_decode_step"]
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["token_input_shape"],
+                [2, 1],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_shape"],
+                [2, 16, 2, 4],
             )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
             self.assertEqual(
@@ -499,6 +533,37 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["requested_cache_len"], 16)
             self.assertEqual(report["batch_size"], 2)
             self.assertEqual(report["cache_len"], 16)
+            self.assertEqual(report["program_generation"]["mode"], "greedy")
+            self.assertEqual(report["program_kv_cache"]["policy"], "paged")
+            self.assertEqual(
+                report["program_kv_cache"]["template"],
+                "paged_kv_cache",
+            )
+            self.assertEqual(report["program_kv_cache"]["page_block_size"], 32)
+            self.assertEqual(
+                report["decode_step_contract"],
+                {
+                    "schema_version": 1,
+                    "source": "generated_program_config",
+                    "layers": 1,
+                    "batch_size": 2,
+                    "decode_seq_len": 1,
+                    "cache_len": 16,
+                    "token_input_shape": [2, 1],
+                    "kv_cache_policy": "paged",
+                    "kv_cache_template": "paged_kv_cache",
+                    "uses_paged_kv_cache": True,
+                    "kv_page_block_size": 32,
+                    "page_count": 1,
+                    "page_table_shape": [2, 1],
+                    "cache_position_shape": [2],
+                    "kv_cache_shape": [2, 16, 2, 4],
+                    "kv_cache_layer_ids": [0],
+                    "generation_template": "device_argmax_greedy",
+                    "output_kind": "token",
+                    "accepted_output_kinds": ["token", "logits"],
+                },
+            )
             self.assertEqual(report["evidence"]["status"], "accepted")
             self.assertEqual(
                 report["results"],
@@ -770,6 +835,38 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "materialize_parameters.required_tensor_paths",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.decode_seq_len",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.token_input_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.paged_kv_cache",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.kv_page_block_size",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.page_table_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.cache_position_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.kv_cache_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.output_kind",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1430,6 +1527,36 @@ class ValidateDirectTest(unittest.TestCase):
                 2,
             )
             self.assertEqual(evidence["validation"]["program_head_dim"], 4)
+            self.assertEqual(
+                evidence["validation"]["program_kv_cache"]["policy"],
+                "paged",
+            )
+            self.assertFalse(
+                evidence["requirements"]["require_batch32_decode_step"]
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["token_input_shape"],
+                [2, 1],
+            )
+            self.assertTrue(
+                evidence["decode_step_contract"]["uses_paged_kv_cache"]
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["page_table_shape"],
+                [2, 1],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["cache_position_shape"],
+                [2],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_shape"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["output_kind"],
+                "token",
+            )
             self.assertTrue(evidence["acceptance"]["passed"])
             self.assertEqual(evidence["acceptance"]["failed_checks"], [])
             self.assertEqual(
@@ -2038,6 +2165,73 @@ class ValidateDirectTest(unittest.TestCase):
                     "validation.program_batch_size",
                     "validation.program_cache_len",
                 ],
+            )
+
+    def test_validate_real_decode_batch32_gate_rejects_runtime_override(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    require_batch32_decode_step=True,
+                    min_tokens_per_second_per_user=0.0,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertTrue(report["acceptance"]["require_batch32_decode_step"])
+            self.assertEqual(report["decode_step_contract"]["batch_size"], 2)
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["decode_step_contract.batch32"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertTrue(
+                evidence["requirements"]["require_batch32_decode_step"]
+            )
+            self.assertEqual(evidence["decode_step_contract"]["batch_size"], 2)
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["decode_step_contract.batch32"],
             )
 
     def test_validate_real_decode_fails_on_autotune_best_reference(

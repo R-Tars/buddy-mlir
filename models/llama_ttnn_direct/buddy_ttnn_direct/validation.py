@@ -664,6 +664,7 @@ def validate_real_decode(
     require_official_config_match: bool = False,
     require_full_depth: bool = False,
     require_program_runtime_shape: bool = False,
+    require_batch32_decode_step: bool = False,
     min_tokens_per_second_per_user: float | None = None,
     baseline_tokens_per_second_per_user: float | None = None,
     min_baseline_ratio: float | None = None,
@@ -709,6 +710,26 @@ def validate_real_decode(
     program_hidden_size = int(program_config["hidden_size"])
     program_num_kv_heads = int(program_config["num_key_value_heads"])
     program_head_dim = int(program_config["head_dim"])
+    program_template_config = (
+        program_config.get("template_config")
+        if isinstance(program_config.get("template_config"), dict)
+        else {}
+    )
+    program_generation = (
+        program_config.get("generation")
+        if isinstance(program_config.get("generation"), dict)
+        else {}
+    )
+    program_kv_cache = (
+        program_config.get("kv_cache")
+        if isinstance(program_config.get("kv_cache"), dict)
+        else _kv_cache_contract_from_template_config(
+            program_template_config,
+            cache_len=program_cache_len,
+            num_kv_heads=program_num_kv_heads,
+            head_dim=program_head_dim,
+        )
+    )
     if layer_count > program_num_layers:
         raise ValueError(
             "layers must be <= generated config num_layers "
@@ -735,6 +756,16 @@ def validate_real_decode(
         else default_official_parity_config_path()
     )
     layers_to_materialize = list(range(layer_count))
+    decode_step_contract = _decode_step_contract(
+        layer_count=layer_count,
+        batch_size=resolved_batch_size,
+        seq_len=program_seq_len,
+        cache_len=resolved_cache_len,
+        num_kv_heads=program_num_kv_heads,
+        head_dim=program_head_dim,
+        kv_cache=program_kv_cache,
+        generation=program_generation,
+    )
 
     paths = {
         "official_config_diff": root / "official_config_diff.json",
@@ -765,6 +796,8 @@ def validate_real_decode(
         "program_hidden_size": program_hidden_size,
         "program_num_key_value_heads": program_num_kv_heads,
         "program_head_dim": program_head_dim,
+        "program_generation": program_generation,
+        "program_kv_cache": program_kv_cache,
         "layers": layer_count,
         "requested_batch_size": batch_size,
         "requested_cache_len": cache_len,
@@ -782,6 +815,7 @@ def validate_real_decode(
         "require_official_config_match": require_official_config_match,
         "require_full_depth": require_full_depth,
         "require_program_runtime_shape": require_program_runtime_shape,
+        "require_batch32_decode_step": require_batch32_decode_step,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (
             baseline_tokens_per_second_per_user
@@ -794,6 +828,7 @@ def validate_real_decode(
         "results": {
             step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
         },
+        "decode_step_contract": decode_step_contract,
         "steps": {},
         "artifacts": {name: str(path) for name, path in paths.items()},
     }
@@ -1296,6 +1331,7 @@ def validate_real_decode(
         require_official_config_match=require_official_config_match,
         require_full_depth=require_full_depth,
         require_program_runtime_shape=require_program_runtime_shape,
+        require_batch32_decode_step=require_batch32_decode_step,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
         baseline_tokens_per_second_per_user=(
             baseline_tokens_per_second_per_user
@@ -1476,6 +1512,7 @@ def _real_decode_evidence_manifest(
     profile = steps.get("profile_decode_step", {})
     autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
+    decode_step_contract = report.get("decode_step_contract") or {}
     failed_checks = [
         check
         for check in acceptance.get("checks", [])
@@ -1508,6 +1545,8 @@ def _real_decode_evidence_manifest(
                 "program_num_key_value_heads"
             ),
             "program_head_dim": report.get("program_head_dim"),
+            "program_generation": report.get("program_generation"),
+            "program_kv_cache": report.get("program_kv_cache"),
             "layers": report.get("layers"),
             "requested_batch_size": report.get("requested_batch_size"),
             "requested_cache_len": report.get("requested_cache_len"),
@@ -1531,6 +1570,9 @@ def _real_decode_evidence_manifest(
             "require_program_runtime_shape": report.get(
                 "require_program_runtime_shape"
             ),
+            "require_batch32_decode_step": report.get(
+                "require_batch32_decode_step"
+            ),
             "results": dict(results),
             "failed_steps": _step_names_with_status(
                 results,
@@ -1548,6 +1590,9 @@ def _real_decode_evidence_manifest(
             "require_full_depth": report.get("require_full_depth"),
             "require_program_runtime_shape": report.get(
                 "require_program_runtime_shape"
+            ),
+            "require_batch32_decode_step": report.get(
+                "require_batch32_decode_step"
             ),
             "require_trace": report.get("require_trace"),
             "min_tokens_per_second_per_user": report.get(
@@ -1585,6 +1630,7 @@ def _real_decode_evidence_manifest(
                 profile,
             ),
         },
+        "decode_step_contract": decode_step_contract,
         "config_evidence": {
             "official_config_diff": {
                 "status": official_config_diff.get("status"),
@@ -1920,6 +1966,73 @@ def _throughput_baseline_summary(
     return summary
 
 
+def _kv_cache_contract_from_template_config(
+    template_config: dict[str, Any],
+    *,
+    cache_len: int,
+    num_kv_heads: int,
+    head_dim: int,
+) -> dict[str, Any]:
+    template = template_config.get("kv_cache_template")
+    return {
+        "template": template,
+        "policy": "paged" if template == "paged_kv_cache" else None,
+        "page_block_size": 32,
+        "dtype": "bfloat8_b",
+        "max_cache_len": cache_len,
+        "num_kv_heads": num_kv_heads,
+        "head_dim": head_dim,
+    }
+
+
+def _decode_step_contract(
+    *,
+    layer_count: int,
+    batch_size: int,
+    seq_len: int,
+    cache_len: int,
+    num_kv_heads: int,
+    head_dim: int,
+    kv_cache: dict[str, Any],
+    generation: dict[str, Any],
+) -> dict[str, Any]:
+    page_block_size = _safe_int(kv_cache.get("page_block_size")) or 32
+    page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
+    kv_policy = kv_cache.get("policy")
+    kv_template = kv_cache.get("template")
+    generation_template = generation.get("template")
+    retain_logits = bool(generation.get("retain_logits", False))
+    output_kind = "logits" if retain_logits else "token"
+    return {
+        "schema_version": 1,
+        "source": "generated_program_config",
+        "layers": layer_count,
+        "batch_size": batch_size,
+        "decode_seq_len": seq_len,
+        "cache_len": cache_len,
+        "token_input_shape": [batch_size, seq_len],
+        "kv_cache_policy": kv_policy,
+        "kv_cache_template": kv_template,
+        "uses_paged_kv_cache": (
+            kv_policy == "paged" or kv_template == "paged_kv_cache"
+        ),
+        "kv_page_block_size": page_block_size,
+        "page_count": page_count,
+        "page_table_shape": [batch_size, page_count],
+        "cache_position_shape": [batch_size],
+        "kv_cache_shape": [
+            batch_size,
+            cache_len,
+            num_kv_heads,
+            head_dim,
+        ],
+        "kv_cache_layer_ids": list(range(layer_count)),
+        "generation_template": generation_template,
+        "output_kind": output_kind,
+        "accepted_output_kinds": ["token", "logits"],
+    }
+
+
 def _real_decode_acceptance(
     report: dict[str, Any],
     *,
@@ -1927,6 +2040,7 @@ def _real_decode_acceptance(
     require_official_config_match: bool,
     require_full_depth: bool,
     require_program_runtime_shape: bool,
+    require_batch32_decode_step: bool,
     min_tokens_per_second_per_user: float | None,
     baseline_tokens_per_second_per_user: float | None,
     min_baseline_ratio: float | None,
@@ -1939,6 +2053,7 @@ def _real_decode_acceptance(
             "require_official_config_match": require_official_config_match,
             "require_full_depth": require_full_depth,
             "require_program_runtime_shape": require_program_runtime_shape,
+            "require_batch32_decode_step": require_batch32_decode_step,
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
@@ -1963,6 +2078,7 @@ def _real_decode_acceptance(
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     autotune = steps.get("decode_step_autotune", {})
+    decode_contract = report.get("decode_step_contract") or {}
     single_layer_tensorization = _step_tensorization_summary(single_layer)
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
@@ -1985,6 +2101,18 @@ def _real_decode_acceptance(
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
+    expected_token_input_shape = [expected_batch_size, 1]
+    expected_page_table_shape = [
+        expected_batch_size,
+        decode_contract.get("page_count"),
+    ]
+    expected_cache_position_shape = [expected_batch_size]
+    expected_kv_cache_shape = [
+        expected_batch_size,
+        expected_cache_len,
+        program_num_kv_heads,
+        program_head_dim,
+    ]
     throughput = profile.get("throughput_summary") or {}
     throughput_baseline = _throughput_baseline_summary(report, profile)
     profile_section_latency = profile.get("section_latency_ms")
@@ -2054,6 +2182,66 @@ def _real_decode_acceptance(
             materialize.get("missing_required_tensor_paths") == [],
             observed=materialize.get("missing_required_tensor_paths"),
             expected=[],
+        ),
+        _acceptance_check(
+            "decode_step_contract.decode_seq_len",
+            _int_equal(decode_contract.get("decode_seq_len"), 1),
+            observed=decode_contract.get("decode_seq_len"),
+            expected=1,
+        ),
+        _acceptance_check(
+            "decode_step_contract.token_input_shape",
+            _int_list(decode_contract.get("token_input_shape"))
+            == expected_token_input_shape,
+            observed=decode_contract.get("token_input_shape"),
+            expected=expected_token_input_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.paged_kv_cache",
+            decode_contract.get("uses_paged_kv_cache") is True,
+            observed={
+                "uses_paged_kv_cache": decode_contract.get(
+                    "uses_paged_kv_cache"
+                ),
+                "kv_cache_policy": decode_contract.get("kv_cache_policy"),
+                "kv_cache_template": decode_contract.get(
+                    "kv_cache_template"
+                ),
+            },
+            expected=True,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_page_block_size",
+            _positive_number(decode_contract.get("kv_page_block_size")),
+            observed=decode_contract.get("kv_page_block_size"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "decode_step_contract.page_table_shape",
+            _int_list(decode_contract.get("page_table_shape"))
+            == expected_page_table_shape,
+            observed=decode_contract.get("page_table_shape"),
+            expected=expected_page_table_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.cache_position_shape",
+            _int_list(decode_contract.get("cache_position_shape"))
+            == expected_cache_position_shape,
+            observed=decode_contract.get("cache_position_shape"),
+            expected=expected_cache_position_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_shape",
+            _int_list(decode_contract.get("kv_cache_shape"))
+            == expected_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_shape"),
+            expected=expected_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.output_kind",
+            decode_contract.get("output_kind") in {"token", "logits"},
+            observed=decode_contract.get("output_kind"),
+            expected=["token", "logits"],
         ),
         _acceptance_check(
             "decode_shell.layers",
@@ -2809,6 +2997,15 @@ def _real_decode_acceptance(
                 ),
             ]
         )
+    if require_batch32_decode_step:
+        checks.append(
+            _acceptance_check(
+                "decode_step_contract.batch32",
+                _int_equal(decode_contract.get("batch_size"), 32),
+                observed=decode_contract.get("batch_size"),
+                expected=32,
+            )
+        )
     if require_trace:
         checks.extend(
             [
@@ -3042,6 +3239,7 @@ def _real_decode_acceptance(
         "require_official_config_match": require_official_config_match,
         "require_full_depth": require_full_depth,
         "require_program_runtime_shape": require_program_runtime_shape,
+        "require_batch32_decode_step": require_batch32_decode_step,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (

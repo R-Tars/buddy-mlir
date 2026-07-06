@@ -1756,7 +1756,11 @@ def _decode_step_plan(
     head_dim = int(config["head_dim"])
     vocab_size = int(config["vocab_size"])
     qkv_size = (num_heads + 2 * num_kv_heads) * head_dim
-    page_count = max(1, (cache_len + 31) // 32)
+    kv_cache_config = config.get("kv_cache") or {}
+    if not isinstance(kv_cache_config, dict):
+        kv_cache_config = {}
+    page_block_size = int(kv_cache_config.get("page_block_size", 32))
+    page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
     lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
     input_shapes = {
         "token_ids": [batch_size, 1],
@@ -1803,6 +1807,12 @@ def _decode_step_plan(
             "token": [batch_size, 1],
             "key_cache": input_shapes["key_cache"],
             "value_cache": input_shapes["value_cache"],
+        },
+        "kv_cache": {
+            "policy": kv_cache_config.get("policy", "paged"),
+            "template": kv_cache_config.get("template", "paged_kv_cache"),
+            "page_block_size": page_block_size,
+            "page_count": page_count,
         },
         "tensor_conversion_count": 5 + len(lm_head_splits) + 12 * layers,
         "op_sequence": _decode_op_sequence(layers),

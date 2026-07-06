@@ -1294,6 +1294,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--require-batch32-decode-step",
+        action="store_true",
+        help=(
+            "Require the generated decode-step validation contract to run "
+            "with batch size 32 before accepting validation."
+        ),
+    )
+    validate_real.add_argument(
         "--min-tokens-per-second-per-user",
         type=float,
         default=None,
@@ -1882,6 +1890,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,
         require_program_runtime_shape=args.require_program_runtime_shape,
+        require_batch32_decode_step=args.require_batch32_decode_step,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
         baseline_tokens_per_second_per_user=(
             args.baseline_tokens_per_second_per_user

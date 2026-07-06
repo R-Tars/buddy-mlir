@@ -1079,6 +1079,36 @@ full-depth coverage, per-depth pass status, layer profile counts, and
 throughput availability. Use `--dry-run` to generate the same schema without
 opening a TTNN device.
 
+## Performance Step 3: Batch32 Decode-Step Contract Gate
+
+`validate-real-decode` now records a `decode_step_contract` block for the
+generated decode path. The block makes the review Step 3 contract explicit:
+token input `[B, 1]`, decode `seq_len = 1`, paged KV-cache metadata, page
+table shape, cache-position shape, per-layer KV-cache shape, and whether the
+generated output is a token or retained logits.
+
+For the P150A Llama 3.1 8B batch32 target, run the real validation without a
+small-batch override and require the batch32 contract:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  validate-real-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --layers 1 \
+  --cache-len 1024 \
+  --device p150a \
+  --skip-autotune \
+  --require-program-runtime-shape \
+  --require-batch32-decode-step \
+  --out-dir /tmp/validate_real_decode_b32
+```
+
+The acceptance report always checks decode `seq_len = 1`, paged KV-cache
+status, page-table/cache-position/KV-cache shapes, and token-or-logits output
+kind. `--require-batch32-decode-step` adds an explicit batch-size-32 gate while
+still allowing small-batch smoke tests when the flag is omitted.
+
 ## Performance Step 4: Decode-Step Trace Smoke
 
 `smoke-decode-step` can also exercise TTNN trace capture and execution for the

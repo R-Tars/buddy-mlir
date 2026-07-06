@@ -157,6 +157,13 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 {"shard_id": 7, "vocab_start": 112, "vocab_end": 128},
             )
             self.assertEqual(config["generation"]["mode"], "greedy")
+            self.assertEqual(config["kv_cache"]["template"], "paged_kv_cache")
+            self.assertEqual(config["kv_cache"]["policy"], "paged")
+            self.assertEqual(config["kv_cache"]["page_block_size"], 32)
+            self.assertEqual(config["kv_cache"]["dtype"], "bfloat8_b")
+            self.assertEqual(config["kv_cache"]["max_cache_len"], 1024)
+            self.assertEqual(config["kv_cache"]["num_kv_heads"], 2)
+            self.assertEqual(config["kv_cache"]["head_dim"], 4)
             copied_plan = json.loads((out_dir / "plan.json").read_text())
             self.assertEqual(copied_plan["layers"], plan["layers"])
 

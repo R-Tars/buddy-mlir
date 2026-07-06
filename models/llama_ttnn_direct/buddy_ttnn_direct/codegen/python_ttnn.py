@@ -75,6 +75,8 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         else "full_logits"
     )
     retain_logits = generation_template != "device_argmax_greedy"
+    kv_cache_template = template_config.get("kv_cache_template")
+    kv_cache_policy = "paged" if kv_cache_template == "paged_kv_cache" else None
     return {
         "schema_version": 1,
         "model_name": plan["model_name"],
@@ -153,6 +155,15 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
                 else "full_logits"
             ),
             "retain_logits": retain_logits,
+        },
+        "kv_cache": {
+            "template": kv_cache_template,
+            "policy": kv_cache_policy,
+            "page_block_size": 32,
+            "dtype": "bfloat8_b",
+            "max_cache_len": plan["max_cache_len"],
+            "num_kv_heads": plan.get("num_key_value_heads"),
+            "head_dim": head_dim,
         },
     }
 
