@@ -318,6 +318,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
             self.assertEqual(report["results"]["official_config_diff"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "dry_run")
+            self.assertEqual(report["results"]["attention_primitives"], "dry_run")
             self.assertEqual(report["results"]["attention_layer"], "dry_run")
             self.assertEqual(report["results"]["single_layer_decode"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
@@ -527,6 +528,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["program_num_layers"], 2)
             self.assertEqual(report["program_seq_len"], 1)
             self.assertEqual(report["program_hidden_size"], 16)
+            self.assertEqual(report["program_num_attention_heads"], 4)
             self.assertEqual(report["program_num_key_value_heads"], 2)
             self.assertEqual(report["program_head_dim"], 4)
             self.assertEqual(report["requested_batch_size"], 2)
@@ -617,6 +619,41 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["steps"]["decode_shell"]["numeric_reference_status"],
                 "not_run",
+            )
+            primitive_step = report["steps"]["attention_primitives"]
+            self.assertEqual(primitive_step["status"], "pass")
+            self.assertEqual(
+                primitive_step["runtime_status_counts"],
+                {"passed": len(ATTENTION_PRIMITIVES)},
+            )
+            self.assertEqual(
+                primitive_step["primitive_sequence"],
+                list(ATTENTION_PRIMITIVES),
+            )
+            self.assertEqual(
+                len(primitive_step["primitive_reports"]),
+                len(ATTENTION_PRIMITIVES),
+            )
+            self.assertTrue(
+                all(
+                    primitive["status"] == "passed"
+                    and primitive["error"] is None
+                    and primitive["reference"]["status"] == "passed"
+                    and primitive["latency_ms"] >= 0.0
+                    for primitive in primitive_step["primitive_reports"]
+                )
+            )
+            self.assertEqual(
+                primitive_step["primitive_reports"][0]["output_shapes"]["qkv"],
+                [2, 1, 32],
+            )
+            self.assertEqual(
+                primitive_step["ttnn_environment"]["version"],
+                "fake-ttnn",
+            )
+            self.assertEqual(
+                primitive_step["ttnn_environment"]["tt_metal_git_commit"],
+                "fake-tt-metal",
             )
             attention_step = report["steps"]["attention_layer"]
             self.assertEqual(attention_step["runtime_status"], "passed")
@@ -1718,6 +1755,24 @@ class ValidateDirectTest(unittest.TestCase):
                 [2, 16, 2, 4],
             )
             self.assertEqual(
+                evidence["runtime_evidence"]["attention_primitives"][
+                    "runtime_status_counts"
+                ],
+                {"passed": len(ATTENTION_PRIMITIVES)},
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_primitives"][
+                    "primitive_sequence"
+                ],
+                list(ATTENTION_PRIMITIVES),
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["attention_primitives"][
+                    "primitive_reports"
+                ][0]["layout"],
+                "tile",
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["attention_layer"][
                     "tensor_conversion_count"
                 ],
@@ -1906,6 +1961,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "cache_len"
                 ],
                 16,
+            )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "attention_primitives_ttnn_environment"
+                ]["version"],
+                "fake-ttnn",
             )
             self.assertEqual(
                 evidence["device_evidence"]["profile_ttnn_environment"][
@@ -2584,6 +2645,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["status"], "no_device")
             self.assertEqual(report["results"]["materialize_parameters"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "no_device")
+            self.assertEqual(report["results"]["attention_primitives"], "skipped")
             self.assertEqual(report["results"]["attention_layer"], "skipped")
             self.assertEqual(report["results"]["smoke_decode_step"], "skipped")
             self.assertEqual(report["evidence"]["status"], "incomplete")
@@ -2606,6 +2668,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["skipped_steps"],
                 [
+                    "attention_primitives",
                     "attention_layer",
                     "single_layer_decode",
                     "smoke_decode_step",
@@ -3943,6 +4006,8 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 [check["name"] for check in failed_checks],
                 [
+                    "attention_primitives.tt_metal_git_commit",
+                    "attention_primitives.primitive_reports",
                     "attention_layer.tt_metal_git_commit",
                     "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",
@@ -3956,6 +4021,8 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 [
+                    "attention_primitives.tt_metal_git_commit",
+                    "attention_primitives.primitive_reports",
                     "attention_layer.tt_metal_git_commit",
                     "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",

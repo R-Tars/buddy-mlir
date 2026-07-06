@@ -573,8 +573,9 @@ weight files.
 For the real-weight path, use `validate-real-decode` after `build-program`.
 This validation gate first writes an official-config parity diff for the
 generated program, materializes selected HF safetensors, then runs the
-attention-disabled decode shell, an independent single-layer attention decode
-smoke, a real-weight single-layer generated decode smoke, real-weight
+attention-disabled decode shell, an independent attention primitive sweep, an
+independent single-layer attention decode smoke, a real-weight single-layer
+generated decode smoke, real-weight
 `smoke-decode-step`, `profile-decode-step`, and optionally
 `autotune-decode-step` against the existing generated program:
 
@@ -603,11 +604,15 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
 official config diff, materialization, attention-disabled decode shell,
-standalone attention layer, single-layer generated decode, full decode-step
-smoke/profile, and autotune subreports. The decode shell gate runs before full
-attention, then the standalone attention gate records layer0 primitive latency,
-input/output shapes, expected output shapes, dtype/layout/memory config, and
-tensor/memory-config conversion counts before the single-layer gate proves the generated
+standalone attention primitive sweep, standalone attention layer, single-layer
+generated decode, full decode-step smoke/profile, and autotune subreports. The
+decode shell gate runs before full attention, then the primitive sweep records
+one report per official attention decode wrapper with status, error,
+input/output shapes, expected output shapes, dtype/layout/memory config,
+structural call coverage, TTNN version, and tt-metal git commit. The
+standalone attention layer then records layer0 primitive latency and
+tensor/memory-config conversion counts before the single-layer gate proves the
+generated
 `embedding -> layer0 attention -> layer0 MLP -> final norm -> LM-head` path
 before the validation scales to the requested layer count. When a torch
 reference can run, `--decode-shell-pcc-threshold` gates the shell final-hidden
@@ -648,7 +653,8 @@ synthetic runtime input source/count evidence for token ids, page tables,
 cache position, and paged KV cache, official config diff evidence,
 layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
-shell/single-layer/smoke/profile runtime status, decode-step tensor conversion
+shell/attention-primitive/attention-layer/single-layer/smoke/profile runtime
+status, attention primitive report completeness, decode-step tensor conversion
 counts, output token and paged KV-cache shapes, optional full-depth and
 program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
@@ -869,6 +875,10 @@ reports include `reference.kind=structural_shape_op_sequence`, which checks
 observed output shapes against the primitive plan and verifies the expected
 raw TTNN wrapper call sequence, while keeping
 `numeric_reference.status=not_run`.
+`validate-real-decode` also runs the full primitive list as a real acceptance
+gate before `smoke-attention-layer`; the evidence manifest records the
+primitive report directory, per-primitive statuses, TTNN environment, and
+failed checks when a wrapper has an API mismatch or incomplete report schema.
 
 ## Phase 2 PR-F: One-Layer Attention Smoke
 
