@@ -647,8 +647,9 @@ weight paths for single-layer/smoke/profile, decode-step structural
 references, generated observed op sequence coverage for the
 shell/single-layer/smoke/profile paths, trace capture/execute status plus
 requested execute iteration/sample-count evidence, measured profile latency,
-complete profile attribution sections, per-layer attention/MLP timing records,
-bottleneck summary, positive profile throughput, and, unless
+complete profile attribution sections, LM-head split/argmax profile evidence,
+per-layer attention/MLP timing records, bottleneck summary, positive profile
+throughput, and, unless
 `--skip-autotune` is used, a real-weight decode-step autotune best candidate
 with a passed structural reference. When a throughput baseline is supplied, the
 evidence also records the observed/baseline ratio and gates it against the

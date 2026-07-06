@@ -820,6 +820,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "profile_decode_step.lm_head_profile",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "profile_decode_step.observed_op_sequence",
                 acceptance_check_names,
             )
@@ -1081,6 +1085,22 @@ class ValidateDirectTest(unittest.TestCase):
                 [0],
             )
             self.assertEqual(profile_report["trace"]["status"], "captured_and_executed")
+            self.assertGreater(
+                profile_report["lm_head_profile"]["split_count"],
+                0,
+            )
+            self.assertGreaterEqual(
+                profile_report["lm_head_profile"]["lm_head_ms"],
+                0.0,
+            )
+            self.assertGreaterEqual(
+                profile_report["lm_head_profile"]["argmax_ms"],
+                0.0,
+            )
+            self.assertEqual(
+                profile_report["lm_head_profile"]["argmax_status"],
+                "profiled",
+            )
             self.assertEqual(
                 profile_report["parameter_setup"]["tensorization"][
                     "memory_config_counts"
@@ -1240,6 +1260,30 @@ class ValidateDirectTest(unittest.TestCase):
                     "output_shapes"
                 ]["value_cache"],
                 [2, 16, 2, 4],
+            )
+            self.assertGreater(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["split_count"],
+                0,
+            )
+            self.assertGreaterEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["lm_head_ms"],
+                0.0,
+            )
+            self.assertGreaterEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["argmax_ms"],
+                0.0,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["argmax_status"],
+                "profiled",
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["decode_shell"]["input_source"],
@@ -2238,6 +2282,97 @@ class ValidateDirectTest(unittest.TestCase):
                     "output_shapes"
                 ]["key_cache"],
                 [2, 8, 2, 4],
+            )
+
+    def test_validate_real_decode_fails_without_lm_head_profile(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_profile = validation_module.profile_decode_step
+
+            def profile_without_lm_head_profile(*args, **kwargs):
+                profile = original_profile(*args, **kwargs)
+                profile["lm_head_profile"] = {
+                    "split_count": 0,
+                    "lm_head_ms": 0.0,
+                    "argmax_ms": 0.0,
+                    "argmax_status": "skipped",
+                }
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(profile, indent=2) + "\n")
+                return profile
+
+            with patch.object(
+                validation_module,
+                "profile_decode_step",
+                side_effect=profile_without_lm_head_profile,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["profile_decode_step.lm_head_profile"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_decode_step.lm_head_profile"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["argmax_status"],
+                "skipped",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "lm_head_profile"
+                ]["split_count"],
+                0,
             )
 
     def test_validate_real_decode_fails_without_measured_throughput(self) -> None:

@@ -1875,6 +1875,7 @@ def _real_decode_acceptance(
     throughput = profile.get("throughput_summary") or {}
     throughput_baseline = _throughput_baseline_summary(report, profile)
     profile_section_latency = profile.get("section_latency_ms")
+    profile_lm_head = profile.get("lm_head_profile")
     profile_layer_profiles = profile.get("layer_profiles")
     profile_bottleneck = profile.get("bottleneck_summary")
     skip_autotune = bool(report.get("skip_autotune"))
@@ -2419,6 +2420,17 @@ def _real_decode_acceptance(
             ),
         ),
         _acceptance_check(
+            "profile_decode_step.lm_head_profile",
+            _lm_head_profile_complete(profile_lm_head),
+            observed=_lm_head_profile_observed(profile_lm_head),
+            expected={
+                "split_count": "positive",
+                "lm_head_ms": "nonnegative",
+                "argmax_ms": "nonnegative",
+                "argmax_status": "profiled",
+            },
+        ),
+        _acceptance_check(
             "profile_decode_step.observed_op_sequence",
             _observed_ops_cover_planned(
                 profile.get("reference_planned_ops"),
@@ -2781,6 +2793,28 @@ def _field_keys(value: Any) -> list[str]:
     if not isinstance(value, dict):
         return []
     return sorted(str(key) for key in value)
+
+
+def _lm_head_profile_complete(profile: Any) -> bool:
+    if not isinstance(profile, dict):
+        return False
+    return (
+        _positive_number(profile.get("split_count"))
+        and _nonnegative_number(profile.get("lm_head_ms"))
+        and _nonnegative_number(profile.get("argmax_ms"))
+        and profile.get("argmax_status") == "profiled"
+    )
+
+
+def _lm_head_profile_observed(profile: Any) -> dict[str, Any]:
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        "split_count": profile.get("split_count"),
+        "lm_head_ms": profile.get("lm_head_ms"),
+        "argmax_ms": profile.get("argmax_ms"),
+        "argmax_status": profile.get("argmax_status"),
+    }
 
 
 def _layer_profile_ids(layer_profiles: Any) -> list[int]:
