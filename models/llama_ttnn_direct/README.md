@@ -567,8 +567,9 @@ weight files.
 
 For the real-weight path, use `validate-real-decode` after `build-program`.
 This validation gate first writes an official-config parity diff for the
-generated program, materializes selected HF safetensors, then runs real-weight
-`smoke-decode-step`, `profile-decode-step`, and optionally
+generated program, materializes selected HF safetensors, then runs the
+attention-disabled decode shell, a real-weight single-layer generated decode
+smoke, real-weight `smoke-decode-step`, `profile-decode-step`, and optionally
 `autotune-decode-step` against the existing generated program:
 
 ```bash
@@ -592,11 +593,14 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
-official config diff, materialization, attention-disabled decode shell, smoke,
-profile, and autotune subreports. The decode shell gate runs before full
-decode-step smoke/profile so embedding/RMSNorm/MLP/LM-head correctness can
-fail early; when a torch reference can run, `--decode-shell-pcc-threshold`
-gates the final-hidden PCC.
+official config diff, materialization, attention-disabled decode shell,
+single-layer generated decode, full decode-step smoke/profile, and autotune
+subreports. The decode shell gate runs before full attention, then the
+single-layer gate proves the generated
+`embedding -> layer0 attention -> layer0 MLP -> final norm -> LM-head` path
+before the validation scales to the requested layer count. When a torch
+reference can run, `--decode-shell-pcc-threshold` gates the shell final-hidden
+PCC.
 The validation also writes
 `/tmp/validate_ttnn_direct_real/real_decode_evidence_manifest.json`, a compact
 evidence bundle index that records artifact existence, TTNN environment,
@@ -619,15 +623,16 @@ opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-r
 and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, resolved
-official config diff evidence, layer/batch/cache runtime shape, TTNN module availability, TTNN version and
-tt-metal git commit evidence, successful shell/smoke/profile runtime status,
-decode-step tensor conversion counts, shell numeric/structural references,
-decode-step tensorization roles and memory config evidence, required
-tensorized decode weight paths for smoke/profile,
-decode-step structural references, generated observed op sequence coverage for
-the shell/smoke/profile paths, trace capture/execute status plus requested
-execute iteration/sample-count evidence, measured profile latency, complete
-profile attribution sections, per-layer attention/MLP timing records,
+official config diff evidence, layer/batch/cache runtime shape, TTNN module
+availability, TTNN version and tt-metal git commit evidence, successful
+shell/single-layer/smoke/profile runtime status, decode-step tensor conversion
+counts, shell numeric/structural references, single-layer and decode-step
+tensorization roles and memory config evidence, required tensorized decode
+weight paths for single-layer/smoke/profile, decode-step structural
+references, generated observed op sequence coverage for the
+shell/single-layer/smoke/profile paths, trace capture/execute status plus
+requested execute iteration/sample-count evidence, measured profile latency,
+complete profile attribution sections, per-layer attention/MLP timing records,
 bottleneck summary, positive profile throughput, and, unless
 `--skip-autotune` is used, a real-weight decode-step autotune best candidate
 with a passed structural reference before marking the validation as accepted.

@@ -270,6 +270,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["materialize_parameters"], "dry_run")
             self.assertEqual(report["results"]["official_config_diff"], "pass")
             self.assertEqual(report["results"]["decode_shell"], "dry_run")
+            self.assertEqual(report["results"]["single_layer_decode"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
@@ -323,6 +324,7 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "parameter_materialization_report.json").is_file()
             )
             self.assertTrue((out_dir / "decode_shell_report.json").is_file())
+            self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
             evidence = json.loads(
@@ -348,6 +350,7 @@ class ValidateDirectTest(unittest.TestCase):
             }
             self.assertTrue(artifact_names["report"]["exists"])
             self.assertTrue(artifact_names["official_config_diff"]["exists"])
+            self.assertTrue(artifact_names["single_layer_decode_report"]["exists"])
             self.assertTrue(artifact_names["smoke_report"]["exists"])
             self.assertFalse(artifact_names["autotune_report"]["exists"])
             self.assertEqual(
@@ -463,6 +466,43 @@ class ValidateDirectTest(unittest.TestCase):
                 "not_run",
             )
             self.assertEqual(
+                report["steps"]["single_layer_decode"]["parameter_source"],
+                "hf_model",
+            )
+            self.assertEqual(report["steps"]["single_layer_decode"]["layers"], 1)
+            self.assertEqual(
+                report["steps"]["single_layer_decode"]["batch_size"],
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["single_layer_decode"]["cache_len"],
+                16,
+            )
+            self.assertEqual(
+                report["steps"]["single_layer_decode"]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["steps"]["single_layer_decode"]["trace"]["iterations"],
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["single_layer_decode"]["trace"][
+                    "execute_sample_count"
+                ],
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["single_layer_decode"][
+                    "missing_required_tensorized_tensor_paths"
+                ],
+                [],
+            )
+            self.assertIn(
+                "qkv_linear",
+                report["steps"]["single_layer_decode"]["reference_observed_ops"],
+            )
+            self.assertEqual(
                 report["steps"]["smoke_decode_step"]["parameter_source"],
                 "hf_model",
             )
@@ -555,6 +595,22 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "decode_shell.observed_op_sequence",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.parameter_source",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.runtime_status",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.required_tensorized_tensor_paths",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.observed_op_sequence",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -659,6 +715,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "smoke_decode_step.trace_iterations",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "single_layer_decode.trace_iterations",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -970,6 +1030,12 @@ class ValidateDirectTest(unittest.TestCase):
                 {"dram": 17},
             )
             self.assertEqual(
+                evidence["weight_evidence"]["single_layer_tensorization"][
+                    "missing_required_tensorized_tensor_paths"
+                ],
+                [],
+            )
+            self.assertEqual(
                 evidence["weight_evidence"]["smoke_tensorization"][
                     "missing_required_tensorized_tensor_paths"
                 ],
@@ -986,6 +1052,22 @@ class ValidateDirectTest(unittest.TestCase):
                     "trace_status"
                 ],
                 "captured_and_executed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "runtime_status"
+                ],
+                "passed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["single_layer_decode"]["layers"],
+                1,
+            )
+            self.assertIn(
+                "qkv_linear",
+                evidence["runtime_evidence"]["single_layer_decode"][
+                    "reference_observed_ops"
+                ],
             )
             self.assertGreater(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -1368,6 +1450,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["skipped_steps"],
                 [
+                    "single_layer_decode",
                     "smoke_decode_step",
                     "profile_decode_step",
                     "decode_step_autotune",
@@ -2268,6 +2351,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 [check["name"] for check in failed_checks],
                 [
+                    "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",
                     "profile_decode_step.tt_metal_git_commit",
                 ],
@@ -2279,6 +2363,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["acceptance"]["failed_checks"],
                 [
+                    "single_layer_decode.tt_metal_git_commit",
                     "smoke_decode_step.tt_metal_git_commit",
                     "profile_decode_step.tt_metal_git_commit",
                 ],

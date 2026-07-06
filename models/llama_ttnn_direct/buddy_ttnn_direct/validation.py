@@ -81,6 +81,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "official_config_diff",
     "materialize_parameters",
     "decode_shell",
+    "single_layer_decode",
     "smoke_decode_step",
     "profile_decode_step",
     "decode_step_autotune",
@@ -710,6 +711,7 @@ def validate_real_decode(
         "official_config_diff": root / "official_config_diff.json",
         "materialize_report": root / "parameter_materialization_report.json",
         "decode_shell_report": root / "decode_shell_report.json",
+        "single_layer_decode_report": root / "single_layer_decode_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
         "autotune_report": root / "decode_step_autotune_report.json",
@@ -905,13 +907,15 @@ def validate_real_decode(
 
     def tensorization_path_detail(
         runtime_report: dict[str, Any],
+        *,
+        required_layer_count: int = layer_count,
     ) -> dict[str, Any]:
         setup = runtime_report.get("parameter_setup") or {}
         tensorization = setup.get("tensorization") or {}
         if not isinstance(tensorization, dict):
             tensorization = {}
         required_tensor_paths = _required_tensorized_tensor_paths(
-            layer_count=layer_count,
+            layer_count=required_layer_count,
             lm_head_split_count=materialized_lm_head_split_count(),
         )
         tensorized_tensor_paths = _tensorized_tensor_paths(tensorization)
@@ -958,6 +962,51 @@ def validate_real_decode(
                 decode_shell_pcc_threshold,
             ),
             **_reference_summary(shell_report),
+        }
+
+    def single_layer_decode_step() -> dict[str, Any]:
+        single_layer_report = run_smoke_single_layer_decode(
+            out=paths["single_layer_decode_report"],
+            program_dir=program_dir,
+            model_path=None if dry_run else model_path,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            dry_run=dry_run,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+        )
+        return {
+            "status": _runtime_step_status(
+                single_layer_report,
+                dry_run=dry_run,
+            ),
+            "single_layer_decode_report": str(
+                paths["single_layer_decode_report"]
+            ),
+            "runtime_status": single_layer_report["status"],
+            "layers": single_layer_report.get("layers"),
+            "batch_size": single_layer_report.get("batch_size"),
+            "cache_len": single_layer_report.get("cache_len"),
+            "parameter_source": single_layer_report.get("parameter_source"),
+            "input_source": single_layer_report.get("input_source"),
+            "tensor_conversion_count": single_layer_report.get(
+                "tensor_conversion_count"
+            ),
+            "output_shapes": single_layer_report.get("output_shapes"),
+            "trace_status": single_layer_report.get("trace", {}).get("status"),
+            "trace": _trace_summary(single_layer_report.get("trace")),
+            "ttnn_environment": single_layer_report.get("ttnn_environment"),
+            "parameter_setup": single_layer_report.get("parameter_setup"),
+            **tensorization_path_detail(
+                single_layer_report,
+                required_layer_count=1,
+            ),
+            **_reference_summary(single_layer_report),
         }
 
     def smoke_step() -> dict[str, Any]:
@@ -1128,6 +1177,7 @@ def validate_real_decode(
         "official_config_diff": official_config_diff_step,
         "materialize_parameters": materialize_step,
         "decode_shell": decode_shell_step,
+        "single_layer_decode": single_layer_decode_step,
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
         "decode_step_autotune": autotune_step,
@@ -1310,6 +1360,7 @@ def _real_decode_evidence_manifest(
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
+    single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     autotune = steps.get("decode_step_autotune", {})
@@ -1384,6 +1435,9 @@ def _real_decode_evidence_manifest(
             if name != "evidence_manifest"
         ],
         "device_evidence": {
+            "single_layer_ttnn_environment": single_layer.get(
+                "ttnn_environment"
+            ),
             "smoke_ttnn_environment": smoke.get("ttnn_environment"),
             "profile_ttnn_environment": profile.get("ttnn_environment"),
         },
@@ -1425,6 +1479,9 @@ def _real_decode_evidence_manifest(
                 ),
                 "key_tensors": materialize.get("key_tensors", {}),
             },
+            "single_layer_tensorization": _tensorization_evidence(
+                single_layer
+            ),
             "smoke_tensorization": _tensorization_evidence(smoke),
             "profile_tensorization": _tensorization_evidence(profile),
         },
@@ -1451,6 +1508,33 @@ def _real_decode_evidence_manifest(
                     "reference_observed_ops"
                 ),
                 "reference_failed_checks": decode_shell.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+            },
+            "single_layer_decode": {
+                "status": single_layer.get("status"),
+                "runtime_status": single_layer.get("runtime_status"),
+                "layers": single_layer.get("layers"),
+                "batch_size": single_layer.get("batch_size"),
+                "cache_len": single_layer.get("cache_len"),
+                "parameter_source": single_layer.get("parameter_source"),
+                "input_source": single_layer.get("input_source"),
+                "tensor_conversion_count": single_layer.get(
+                    "tensor_conversion_count"
+                ),
+                "output_shapes": single_layer.get("output_shapes"),
+                "trace_status": single_layer.get("trace_status"),
+                "trace": single_layer.get("trace"),
+                "reference_status": single_layer.get("reference_status"),
+                "reference_kind": single_layer.get("reference_kind"),
+                "reference_planned_ops": single_layer.get(
+                    "reference_planned_ops"
+                ),
+                "reference_observed_ops": single_layer.get(
+                    "reference_observed_ops"
+                ),
+                "reference_failed_checks": single_layer.get(
                     "reference_failed_checks",
                     [],
                 ),
@@ -1638,13 +1722,17 @@ def _real_decode_acceptance(
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
     decode_shell = steps.get("decode_shell", {})
+    single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     autotune = steps.get("decode_step_autotune", {})
+    single_layer_tensorization = _step_tensorization_summary(single_layer)
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
+    single_layer_environment = _step_ttnn_environment(single_layer)
     smoke_environment = _step_ttnn_environment(smoke)
     profile_environment = _step_ttnn_environment(profile)
+    single_layer_trace = _step_trace_summary(single_layer)
     smoke_trace = _step_trace_summary(smoke)
     profile_trace = _step_trace_summary(profile)
     expected_layers = report.get("layers")
@@ -1742,6 +1830,122 @@ def _real_decode_acceptance(
             ),
             observed=decode_shell.get("reference_observed_ops"),
             expected=decode_shell.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "single_layer_decode.parameter_source",
+            single_layer.get("parameter_source") == "hf_model",
+            observed=single_layer.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "single_layer_decode.layers",
+            _int_equal(single_layer.get("layers"), 1),
+            observed=single_layer.get("layers"),
+            expected=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.batch_size",
+            _int_equal(single_layer.get("batch_size"), expected_batch_size),
+            observed=single_layer.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "single_layer_decode.cache_len",
+            _int_equal(single_layer.get("cache_len"), expected_cache_len),
+            observed=single_layer.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensor_conversion_count",
+            _positive_number(single_layer.get("tensor_conversion_count")),
+            observed=single_layer.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.runtime_status",
+            single_layer.get("runtime_status") == "passed",
+            observed=single_layer.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "single_layer_decode.ttnn_module_available",
+            single_layer_environment.get("module_available") is True,
+            observed=single_layer_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.ttnn_version",
+            _non_empty_string(single_layer_environment.get("version")),
+            observed=single_layer_environment.get("version"),
+            required=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tt_metal_git_commit",
+            _non_empty_string(
+                single_layer_environment.get("tt_metal_git_commit")
+            ),
+            observed=single_layer_environment.get("tt_metal_git_commit"),
+            source=single_layer_environment.get(
+                "tt_metal_git_commit_source"
+            ),
+            required=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_status",
+            single_layer_tensorization.get("status") == "pass",
+            observed=single_layer_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_roles",
+            _contains_all(
+                single_layer_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=single_layer_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "single_layer_decode.required_tensorized_tensor_paths",
+            single_layer.get("missing_required_tensorized_tensor_paths")
+            == [],
+            observed=single_layer.get(
+                "missing_required_tensorized_tensor_paths"
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_memory_configs",
+            _positive_count(
+                single_layer_tensorization.get("memory_config_counts")
+            ),
+            observed=single_layer_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_ttnn_memory_configs",
+            _positive_count(
+                single_layer_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=single_layer_tensorization.get(
+                "ttnn_memory_config_counts"
+            ),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.reference_status",
+            single_layer.get("reference_status") == "passed",
+            observed=single_layer.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "single_layer_decode.observed_op_sequence",
+            _observed_ops_cover_planned(
+                single_layer.get("reference_planned_ops"),
+                single_layer.get("reference_observed_ops"),
+            ),
+            observed=single_layer.get("reference_observed_ops"),
+            expected=single_layer.get("reference_planned_ops"),
         ),
         _acceptance_check(
             "smoke_decode_step.parameter_source",
@@ -2044,6 +2248,31 @@ def _real_decode_acceptance(
     if require_trace:
         checks.extend(
             [
+                _acceptance_check(
+                    "single_layer_decode.trace_status",
+                    single_layer.get("trace_status")
+                    == "captured_and_executed",
+                    observed=single_layer.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "single_layer_decode.trace_iterations",
+                    _int_equal(
+                        single_layer_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=single_layer_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "single_layer_decode.trace_execute_sample_count",
+                    _int_equal(
+                        single_layer_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=single_layer_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
+                ),
                 _acceptance_check(
                     "smoke_decode_step.trace_status",
                     smoke.get("trace_status") == "captured_and_executed",
