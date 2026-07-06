@@ -353,6 +353,7 @@ def to_ttnn_parameters(
             {
                 **copy.deepcopy(record),
                 "status": "tensorized",
+                "source_shape": _tensor_shape(source_tensor),
                 "shape": _tensor_shape(torch_tensor),
                 "ttnn_dtype": str(_resolve_ttnn_dtype(ttnn, record["target_dtype"])),
                 "ttnn_layout": str(_resolve_ttnn_layout(ttnn, record["layout"])),

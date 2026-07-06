@@ -201,6 +201,10 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "tile",
             )
             self.assertEqual(
+                records["lm_head.splits.0.weight"]["transform"],
+                "transpose_2d",
+            )
+            self.assertEqual(
                 records["lm_head.splits.0.weight"]["memory_config"],
                 "dram",
             )
@@ -344,6 +348,28 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 result.parameters.lm_head.splits[0].weight.layout,
                 "ttnn.TILE_LAYOUT",
+            )
+            lm_head_records = [
+                record
+                for record in result.report["tensors"]
+                if record["role_group"] == "lm_head"
+            ]
+            self.assertEqual(len(lm_head_records), 8)
+            self.assertEqual(
+                lm_head_records[0]["transform"],
+                "transpose_2d",
+            )
+            self.assertEqual(
+                lm_head_records[0]["source_shape"],
+                [16, 16],
+            )
+            self.assertEqual(
+                lm_head_records[0]["shape"],
+                [16, 16],
+            )
+            self.assertIn(
+                ".transpose(0,1)",
+                fake_ttnn.calls[-1]["tensor"],
             )
             self.assertEqual(
                 result.report["tensors"][0]["memory_config"],

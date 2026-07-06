@@ -1606,6 +1606,8 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
             "ttnn_dtype": record.get("ttnn_dtype"),
             "ttnn_layout": record.get("ttnn_layout"),
             "ttnn_memory_config": record.get("ttnn_memory_config"),
+            "transform": record.get("transform"),
+            "source_shape": record.get("source_shape"),
             "shape": record.get("shape"),
         }
     return {
@@ -1616,6 +1618,7 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
         "target_dtype_counts": _field_counts(tensors, "target_dtype"),
         "layout_counts": _field_counts(tensors, "layout"),
         "memory_config_counts": _field_counts(tensors, "memory_config"),
+        "transform_counts": _field_counts(tensors, "transform"),
         "ttnn_dtype_counts": _field_counts(tensors, "ttnn_dtype"),
         "ttnn_layout_counts": _field_counts(tensors, "ttnn_layout"),
         "ttnn_memory_config_counts": _field_counts(

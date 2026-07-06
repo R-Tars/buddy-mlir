@@ -2049,6 +2049,7 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
         "target_dtype_counts": tensorization.get("target_dtype_counts", {}),
         "layout_counts": tensorization.get("layout_counts", {}),
         "memory_config_counts": tensorization.get("memory_config_counts", {}),
+        "transform_counts": tensorization.get("transform_counts", {}),
         "ttnn_dtype_counts": tensorization.get("ttnn_dtype_counts", {}),
         "ttnn_layout_counts": tensorization.get("ttnn_layout_counts", {}),
         "ttnn_memory_config_counts": tensorization.get(
@@ -2233,6 +2234,7 @@ def _real_decode_acceptance(
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
     expected_output_kind = decode_contract.get("output_kind")
+    lm_head_split_count = _safe_int(materialize.get("lm_head_split_count"))
     expected_token_input_shape = [expected_batch_size, 1]
     expected_page_table_shape = [
         expected_batch_size,
@@ -2755,6 +2757,18 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "single_layer_decode.lm_head_transform",
+            _lm_head_transform_complete(
+                single_layer_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(single_layer_tensorization),
+            expected={
+                "transform": "transpose_2d",
+                "count": lm_head_split_count,
+            },
+        ),
+        _acceptance_check(
             "single_layer_decode.reference_status",
             single_layer.get("reference_status") == "passed",
             observed=single_layer.get("reference_status"),
@@ -2901,6 +2915,18 @@ def _real_decode_acceptance(
             ),
             observed=smoke_tensorization.get("ttnn_memory_config_counts"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.lm_head_transform",
+            _lm_head_transform_complete(
+                smoke_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(smoke_tensorization),
+            expected={
+                "transform": "transpose_2d",
+                "count": lm_head_split_count,
+            },
         ),
         _acceptance_check(
             "smoke_decode_step.reference_status",
@@ -3055,6 +3081,18 @@ def _real_decode_acceptance(
             ),
             observed=profile_tensorization.get("ttnn_memory_config_counts"),
             minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.lm_head_transform",
+            _lm_head_transform_complete(
+                profile_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(profile_tensorization),
+            expected={
+                "transform": "transpose_2d",
+                "count": lm_head_split_count,
+            },
         ),
         _acceptance_check(
             "profile_decode_step.reference_status",
@@ -3631,6 +3669,48 @@ def _lm_head_profile_observed(profile: Any) -> dict[str, Any]:
         "lm_head_ms": profile.get("lm_head_ms"),
         "argmax_ms": profile.get("argmax_ms"),
         "argmax_status": profile.get("argmax_status"),
+    }
+
+
+def _lm_head_transform_complete(
+    tensorization: Any,
+    split_count: Any,
+) -> bool:
+    if not isinstance(tensorization, dict):
+        return False
+    expected_count = _safe_int(split_count)
+    if expected_count is None or expected_count <= 0:
+        return False
+    counts = tensorization.get("transform_counts")
+    if not isinstance(counts, dict):
+        return False
+    if counts.get("transpose_2d") != expected_count:
+        return False
+    key_tensors = tensorization.get("key_tensors")
+    if not isinstance(key_tensors, dict):
+        return False
+    split0 = key_tensors.get("lm_head.splits.0.weight")
+    if not isinstance(split0, dict):
+        return False
+    return split0.get("transform") == "transpose_2d"
+
+
+def _lm_head_transform_observed(tensorization: Any) -> dict[str, Any]:
+    if not isinstance(tensorization, dict):
+        return {}
+    key_tensors = tensorization.get("key_tensors")
+    split0 = {}
+    if isinstance(key_tensors, dict):
+        maybe_split0 = key_tensors.get("lm_head.splits.0.weight")
+        if isinstance(maybe_split0, dict):
+            split0 = {
+                "transform": maybe_split0.get("transform"),
+                "source_shape": maybe_split0.get("source_shape"),
+                "shape": maybe_split0.get("shape"),
+            }
+    return {
+        "transform_counts": tensorization.get("transform_counts", {}),
+        "lm_head.splits.0.weight": split0,
     }
 
 
