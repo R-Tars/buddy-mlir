@@ -662,9 +662,10 @@ counts, token-or-logits output and paged KV-cache shapes, optional full-depth
 and program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
-weight paths for single-layer/smoke/profile, generated linear weight transform
-evidence, LM-head split tensor transform evidence, decode-step structural
-references, generated observed op sequence coverage for the
+weight paths for single-layer/smoke/profile, LM-head source metadata-reference
+and sliced-read evidence, generated linear weight transform evidence, LM-head
+split tensor transform evidence, decode-step structural references, generated
+observed op sequence coverage for the
 shell/single-layer/smoke/profile paths, trace capture/execute status plus
 requested execute iteration/sample-count evidence, trace execute latency
 samples and derived trace throughput, measured profile latency, complete
@@ -714,8 +715,12 @@ Use `--layers 0` or another comma-separated layer list while bringing up real
 models. The materializer dynamically imports `torch` and `safetensors` only
 when the torch backend is used, reads individual safetensors keys through
 `safe_open` when available, packs QKV on output-feature axis `0`, and slices
-the LM-head on vocab axis `0`. The output report records each materialized
-tensor's source key and shape.
+the LM-head on vocab axis `0`. When `safe_open.get_slice` is available,
+`params.lm_head.weight` is kept as a metadata reference with shape/dtype while
+each `params.lm_head.splits[j].weight` is read directly from its vocab range,
+avoiding a full LM-head tensor load during layer-limited bring-up. The output
+report records each tensor path's source key, shape, materialization mode, and
+whether LM-head splits came from sliced tensor reads.
 
 ## Phase 2 PR-C: TTNN Tensorization Seed
 

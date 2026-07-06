@@ -597,6 +597,23 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["materialize_parameters"]["key_tensors"],
             )
             self.assertEqual(
+                report["steps"]["materialize_parameters"]["key_tensors"][
+                    "lm_head.weight"
+                ]["materialization"],
+                "metadata_reference",
+            )
+            self.assertFalse(
+                report["steps"]["materialize_parameters"]["key_tensors"][
+                    "lm_head.weight"
+                ]["materialized"]
+            )
+            self.assertEqual(
+                report["steps"]["materialize_parameters"]["key_tensors"][
+                    "lm_head.splits.0.weight"
+                ]["source_read"],
+                "sliced_tensor",
+            )
+            self.assertEqual(
                 report["steps"]["materialize_parameters"][
                     "materialized_layer_ids"
                 ],
@@ -875,6 +892,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "materialize_parameters.required_tensor_paths",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "materialize_parameters.lm_head_source_reference",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1718,6 +1739,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIn(
                 "lm_head.splits.0.weight",
                 evidence["weight_evidence"]["materialization"]["key_tensors"],
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["materialization"][
+                    "key_tensors"
+                ]["lm_head.weight"]["materialization"],
+                "metadata_reference",
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["materialization"][
+                    "key_tensors"
+                ]["lm_head.splits.0.weight"]["source_read"],
+                "sliced_tensor",
             )
             self.assertEqual(
                 evidence["weight_evidence"]["smoke_tensorization"][

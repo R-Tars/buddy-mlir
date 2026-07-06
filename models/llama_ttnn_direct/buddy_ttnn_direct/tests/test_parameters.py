@@ -12,6 +12,7 @@ from typing import Any
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
+    TensorMetadataReference,
     load_llama_parameters_from_manifests,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
@@ -76,6 +77,70 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(len(params.lm_head.splits), 8)
             self.assertEqual(params.lm_head.splits[0].weight.shape, [16, 16])
             self.assertEqual(params.metadata["tensor_count"], 21)
+
+    def test_lm_head_splits_do_not_require_full_lm_head_load(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            loader = SliceOnlyFakeLoader()
+            params = load_llama_parameters_from_manifests(
+                model_path=model_dir,
+                weights_manifest=program_dir / "weights_manifest.json",
+                config=program_dir / "config.json",
+                tensor_backend="torch",
+                layers=[0],
+                tensor_loader=loader,
+            )
+
+            self.assertNotIn("lm_head.weight", loader.loaded_keys)
+            self.assertEqual(loader.reference_keys, ["lm_head.weight"])
+            self.assertEqual(len(loader.slice_calls), 8)
+            self.assertEqual(loader.slice_calls[0], ("lm_head.weight", 0, 16))
+            self.assertEqual(
+                loader.slice_calls[-1],
+                ("lm_head.weight", 112, 128),
+            )
+            self.assertFalse(params.lm_head.weight.materialized)
+            self.assertEqual(params.lm_head.weight.shape, [128, 16])
+            self.assertEqual(
+                params.lm_head.splits[0].weight.name,
+                "lm_head.weight[0:16]",
+            )
+            self.assertEqual(
+                params.metadata["tensors"]["lm_head.weight"][
+                    "materialization"
+                ],
+                "metadata_reference",
+            )
+            self.assertFalse(
+                params.metadata["tensors"]["lm_head.weight"]["materialized"]
+            )
+            self.assertEqual(
+                params.metadata["tensors"]["lm_head.splits.0.weight"][
+                    "shape"
+                ],
+                [16, 16],
+            )
 
     def test_cli_materialize_parameters_writes_shape_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -614,6 +679,76 @@ class FakeTTNN:
         return FakeTTNNTensor(tensor, dtype, layout, device, memory_config)
 
 
+class SliceOnlyFakeLoader:
+    def __init__(self) -> None:
+        self.loaded_keys: list[str] = []
+        self.reference_keys: list[str] = []
+        self.slice_calls: list[tuple[str, int, int]] = []
+
+    def load_tensor(self, key: str, entry: dict[str, Any]) -> FakeTensor:
+        if key == "lm_head.weight":
+            raise AssertionError("full LM-head tensor should not be loaded")
+        self.loaded_keys.append(key)
+        return FakeTensor(
+            key,
+            [int(dim) for dim in entry["shape"]],
+            f"torch.{entry['dtype']}",
+        )
+
+    def tensor_reference(
+        self,
+        key: str,
+        entry: dict[str, Any],
+    ) -> TensorMetadataReference:
+        self.reference_keys.append(key)
+        return TensorMetadataReference(
+            source_key=key,
+            shape=[int(dim) for dim in entry["shape"]],
+            dtype=str(entry["dtype"]),
+        )
+
+    def slice_tensor(
+        self,
+        key: str,
+        entry: dict[str, Any],
+        start: int,
+        end: int,
+    ) -> FakeTensor:
+        self.slice_calls.append((key, start, end))
+        return FakeTensor(
+            f"{key}[{start}:{end}]",
+            [end - start, int(entry["shape"][1])],
+            f"torch.{entry['dtype']}",
+        )
+
+    def cat(self, tensors: list[FakeTensor], *, dim: int) -> FakeTensor:
+        shape = list(tensors[0].shape)
+        shape[dim] = sum(tensor.shape[dim] for tensor in tensors)
+        return FakeTensor("cat", shape, tensors[0].dtype)
+
+
+class FakeSafeSlice:
+    def __init__(self, key: str, entry: dict[str, Any]):
+        self.key = key
+        self.entry = entry
+        self.shape = [int(dim) for dim in entry["shape"]]
+        self.dtype = f"torch.{entry['dtype']}"
+
+    def __getitem__(self, key: Any) -> FakeTensor:
+        if not isinstance(key, tuple) or len(key) != 2:
+            raise AssertionError(f"unexpected fake safe slice: {key!r}")
+        vocab_slice, hidden_slice = key
+        if hidden_slice != slice(None, None, None):
+            raise AssertionError(f"unexpected hidden slice: {hidden_slice!r}")
+        start = int(vocab_slice.start or 0)
+        stop = int(vocab_slice.stop)
+        return FakeTensor(
+            f"{self.key}[{start}:{stop}]",
+            [stop - start, self.shape[1]],
+            self.dtype,
+        )
+
+
 class FakeSafeOpen:
     def __init__(self, path: str, *_args: Any, **_kwargs: Any):
         self.path = Path(path)
@@ -632,6 +767,9 @@ class FakeSafeOpen:
             [int(dim) for dim in entry["shape"]],
             f"torch.{entry['dtype']}",
         )
+
+    def get_slice(self, key: str) -> FakeSafeSlice:
+        return FakeSafeSlice(key, self.header[key])
 
 
 @contextmanager

@@ -25,6 +25,14 @@ class TensorParameter:
 
 
 @dataclass(frozen=True)
+class TensorMetadataReference:
+    source_key: str
+    shape: list[int]
+    dtype: str | None = None
+    materialized: bool = False
+
+
+@dataclass(frozen=True)
 class PackedTensorParameter:
     weight: Any
     source_keys: list[str]
@@ -306,6 +314,45 @@ class TorchSafetensorsTensorLoader:
     def cat(self, tensors: Sequence[Any], *, dim: int) -> Any:
         return self.torch.cat(list(tensors), dim=dim)
 
+    def supports_tensor_slicing(self) -> bool:
+        return getattr(self.safetensors, "safe_open", None) is not None
+
+    def tensor_reference(
+        self,
+        key: str,
+        entry: Mapping[str, Any],
+    ) -> TensorMetadataReference:
+        return TensorMetadataReference(
+            source_key=key,
+            shape=_shape_from_entry(entry),
+            dtype=_dtype_from_entry(entry),
+        )
+
+    def slice_tensor(
+        self,
+        key: str,
+        entry: Mapping[str, Any],
+        start: int,
+        end: int,
+    ) -> Any:
+        filename = entry.get("filename")
+        if not filename:
+            raise ParameterMaterializationError(
+                f"weight {key!r} has no safetensors filename in manifest"
+            )
+        path = self.root / str(filename)
+        safe_open = getattr(self.safetensors, "safe_open", None)
+        if safe_open is not None:
+            with safe_open(str(path), framework="pt", device="cpu") as handle:
+                get_slice = getattr(handle, "get_slice", None)
+                if callable(get_slice):
+                    return get_slice(key)[start:end, :]
+                raise ParameterMaterializationError(
+                    "safetensors.safe_open handle must provide get_slice "
+                    "for sliced LM-head materialization"
+                )
+        return self.slice_vocab(self.load_tensor(key, entry), start, end)
+
     def slice_vocab(self, tensor: Any, start: int, end: int) -> Any:
         return tensor[start:end, :]
 
@@ -317,7 +364,9 @@ def _materialize_lm_head(
     tensor_records: dict[str, dict[str, Any]],
 ) -> SimpleNamespace:
     source_key, source_entry = _find_weight(weights, "lm_head", None)
-    source_tensor = loader.load_tensor(source_key, source_entry)
+    slice_lm_head = _can_slice_tensor(loader)
+    source_tensor = _lm_head_source_tensor(loader, source_key, source_entry)
+    full_source_tensor = None if slice_lm_head else source_tensor
     source_param = TensorParameter(
         weight=source_tensor,
         source_key=source_key,
@@ -341,7 +390,24 @@ def _materialize_lm_head(
         shard_id = int(split["shard_id"])
         vocab_start = int(split["vocab_start"])
         vocab_end = int(split["vocab_end"])
-        tensor = loader.slice_vocab(source_tensor, vocab_start, vocab_end)
+        if slice_lm_head:
+            tensor = loader.slice_tensor(
+                source_key,
+                source_entry,
+                vocab_start,
+                vocab_end,
+            )
+        else:
+            if full_source_tensor is None:
+                full_source_tensor = loader.load_tensor(
+                    source_key,
+                    source_entry,
+                )
+            tensor = loader.slice_vocab(
+                full_source_tensor,
+                vocab_start,
+                vocab_end,
+            )
         parameter = TensorParameter(
             weight=tensor,
             source_key=source_key,
@@ -354,6 +420,9 @@ def _materialize_lm_head(
             **_tensor_record(parameter),
             "vocab_start": vocab_start,
             "vocab_end": vocab_end,
+            "source_read": (
+                "sliced_tensor" if slice_lm_head else "full_tensor_slice"
+            ),
         }
         split_params.append(
             SimpleNamespace(
@@ -365,7 +434,35 @@ def _materialize_lm_head(
             )
         )
 
-    return SimpleNamespace(weight=source_param.weight, weight_param=source_param, splits=split_params)
+    return SimpleNamespace(
+        weight=source_param.weight,
+        weight_param=source_param,
+        splits=split_params,
+    )
+
+
+def _lm_head_source_tensor(
+    loader: Any,
+    source_key: str,
+    source_entry: Mapping[str, Any],
+) -> Any:
+    if _can_slice_tensor(loader):
+        tensor_reference = getattr(loader, "tensor_reference", None)
+        if callable(tensor_reference):
+            return tensor_reference(source_key, source_entry)
+        return TensorMetadataReference(
+            source_key=source_key,
+            shape=_shape_from_entry(source_entry),
+            dtype=_dtype_from_entry(source_entry),
+        )
+    return loader.load_tensor(source_key, source_entry)
+
+
+def _can_slice_tensor(loader: Any) -> bool:
+    supports_slicing = getattr(loader, "supports_tensor_slicing", None)
+    if callable(supports_slicing):
+        return bool(supports_slicing())
+    return callable(getattr(loader, "slice_tensor", None))
 
 
 def _pack_qkv(
@@ -476,12 +573,19 @@ def _load_mapping(value: str | Path | Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _tensor_record(parameter: TensorParameter) -> dict[str, Any]:
-    return {
+    record = {
         "role": parameter.role,
         "shape": list(parameter.shape),
         "dtype": parameter.dtype,
         "source_key": parameter.source_key,
     }
+    materialized = getattr(parameter.weight, "materialized", None)
+    if materialized is not None:
+        record["materialized"] = bool(materialized)
+        record["materialization"] = (
+            "tensor" if materialized else "metadata_reference"
+        )
+    return record
 
 
 def _tensor_shape(
@@ -499,6 +603,15 @@ def _tensor_shape(
     )
 
 
+def _shape_from_entry(entry: Mapping[str, Any]) -> list[int]:
+    shape = entry.get("shape")
+    if not isinstance(shape, list):
+        raise ParameterMaterializationError(
+            f"weight {entry.get('key')} does not expose shape metadata"
+        )
+    return [int(dim) for dim in shape]
+
+
 def _shape_from_attr(tensor: Any) -> list[int] | None:
     shape = getattr(tensor, "shape", None)
     if shape is None:
@@ -513,5 +626,9 @@ def _tensor_dtype(
     dtype = getattr(tensor, "dtype", None)
     if dtype is not None:
         return str(dtype)
+    return _dtype_from_entry(entry)
+
+
+def _dtype_from_entry(entry: Mapping[str, Any]) -> str | None:
     entry_dtype = entry.get("dtype")
     return str(entry_dtype) if entry_dtype is not None else None

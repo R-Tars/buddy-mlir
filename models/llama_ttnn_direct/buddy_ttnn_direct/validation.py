@@ -1594,6 +1594,39 @@ def _materialization_key_tensors(
     }
 
 
+def _lm_head_source_reference_complete(materialize: Any) -> bool:
+    observed = _lm_head_source_reference_observed(materialize)
+    lm_head = observed.get("lm_head.weight")
+    split0 = observed.get("lm_head.splits.0.weight")
+    if not isinstance(lm_head, dict) or not isinstance(split0, dict):
+        return False
+    return (
+        lm_head.get("materialization") == "metadata_reference"
+        and lm_head.get("materialized") is False
+        and split0.get("source_read") == "sliced_tensor"
+    )
+
+
+def _lm_head_source_reference_observed(materialize: Any) -> dict[str, Any]:
+    if not isinstance(materialize, dict):
+        return {}
+    key_tensors = materialize.get("key_tensors")
+    if not isinstance(key_tensors, dict):
+        return {}
+    observed: dict[str, Any] = {}
+    for path in ("lm_head.weight", "lm_head.splits.0.weight"):
+        tensor = key_tensors.get(path)
+        if not isinstance(tensor, dict):
+            continue
+        observed[path] = {
+            "shape": tensor.get("shape"),
+            "materialization": tensor.get("materialization"),
+            "materialized": tensor.get("materialized"),
+            "source_read": tensor.get("source_read"),
+        }
+    return observed
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -2320,6 +2353,16 @@ def _real_decode_acceptance(
             materialize.get("missing_required_tensor_paths") == [],
             observed=materialize.get("missing_required_tensor_paths"),
             expected=[],
+        ),
+        _acceptance_check(
+            "materialize_parameters.lm_head_source_reference",
+            _lm_head_source_reference_complete(materialize),
+            observed=_lm_head_source_reference_observed(materialize),
+            expected={
+                "lm_head.weight.materialization": "metadata_reference",
+                "lm_head.weight.materialized": False,
+                "lm_head.splits.0.weight.source_read": "sliced_tensor",
+            },
         ),
         _acceptance_check(
             "decode_step_contract.decode_seq_len",
