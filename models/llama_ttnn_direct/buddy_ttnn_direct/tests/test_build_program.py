@@ -246,8 +246,16 @@ class BuildProgramTest(unittest.TestCase):
                     "--dry-run",
                     "--skip-autotune",
                     "--require-trace",
+                    "--require-official-config-match",
+                    "--require-full-depth",
+                    "--require-program-runtime-shape",
+                    "--require-batch32-decode-step",
                     "--min-tokens-per-second-per-user",
                     "1.0",
+                    "--baseline-tokens-per-second-per-user",
+                    "33.1",
+                    "--min-baseline-ratio",
+                    "0.1",
                     "--decode-shell-pcc-threshold",
                     "0.5",
                     "--require-decode-shell-numeric-reference",
@@ -272,10 +280,25 @@ class BuildProgramTest(unittest.TestCase):
             validation_payload = json.loads(validation_report.read_text())
             self.assertEqual(validation_payload["command"], "validate-real-decode")
             self.assertTrue(validation_payload["require_trace"])
+            self.assertTrue(
+                validation_payload["require_official_config_match"]
+            )
+            self.assertTrue(validation_payload["require_full_depth"])
+            self.assertTrue(
+                validation_payload["require_program_runtime_shape"]
+            )
+            self.assertTrue(
+                validation_payload["require_batch32_decode_step"]
+            )
             self.assertEqual(
                 validation_payload["min_tokens_per_second_per_user"],
                 1.0,
             )
+            self.assertEqual(
+                validation_payload["baseline_tokens_per_second_per_user"],
+                33.1,
+            )
+            self.assertEqual(validation_payload["min_baseline_ratio"], 0.1)
             self.assertEqual(
                 validation_payload["decode_shell_pcc_threshold"],
                 0.5,
@@ -287,6 +310,29 @@ class BuildProgramTest(unittest.TestCase):
             )
             self.assertEqual(validation_payload["acceptance"]["status"], "dry_run")
             self.assertTrue(validation_payload["acceptance"]["require_trace"])
+            self.assertTrue(
+                validation_payload["acceptance"][
+                    "require_batch32_decode_step"
+                ]
+            )
+            evidence = json.loads(
+                (validate_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertTrue(
+                evidence["requirements"]["require_official_config_match"]
+            )
+            self.assertTrue(evidence["requirements"]["require_full_depth"])
+            self.assertTrue(
+                evidence["requirements"]["require_program_runtime_shape"]
+            )
+            self.assertTrue(
+                evidence["requirements"]["require_batch32_decode_step"]
+            )
+            self.assertEqual(
+                evidence["requirements"]["baseline_tokens_per_second_per_user"],
+                33.1,
+            )
+            self.assertEqual(evidence["requirements"]["min_baseline_ratio"], 0.1)
 
 
 def _write_fake_model_config(model_dir: Path) -> None:

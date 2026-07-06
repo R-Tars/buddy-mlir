@@ -136,10 +136,25 @@ def main(argv=None):
     parser.add_argument("--trace-iterations", type=int, default=1)
     parser.add_argument("--metric", default="latency_ms")
     parser.add_argument("--decode-step-search-space", type=Path, default=None)
+    parser.add_argument("--official-config", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
     parser.add_argument("--require-trace", action="store_true")
+    parser.add_argument("--require-official-config-match", action="store_true")
+    parser.add_argument("--require-full-depth", action="store_true")
+    parser.add_argument("--require-program-runtime-shape", action="store_true")
+    parser.add_argument("--require-batch32-decode-step", action="store_true")
     parser.add_argument(
         "--min-tokens-per-second-per-user",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
+        "--baseline-tokens-per-second-per-user",
+        type=float,
+        default=None,
+    )
+    parser.add_argument(
+        "--min-baseline-ratio",
         type=float,
         default=None,
     )
@@ -231,6 +246,7 @@ def main(argv=None):
         program_dir=program_dir,
         model_path=args.model_path or program_dir,
         out_dir=out_dir,
+        official_config_path=args.official_config,
         decode_step_search_space_path=args.decode_step_search_space,
         layers=args.layers,
         batch_size=args.batch_size,
@@ -244,7 +260,15 @@ def main(argv=None):
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_trace=args.require_trace,
+        require_official_config_match=args.require_official_config_match,
+        require_full_depth=args.require_full_depth,
+        require_program_runtime_shape=args.require_program_runtime_shape,
+        require_batch32_decode_step=args.require_batch32_decode_step,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            args.baseline_tokens_per_second_per_user
+        ),
+        min_baseline_ratio=args.min_baseline_ratio,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(
             args.require_decode_shell_numeric_reference
@@ -349,7 +373,11 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --trace \
           --trace-iterations 10 \
           --require-trace \
+          --require-program-runtime-shape \
+          --require-batch32-decode-step \
           --min-tokens-per-second-per-user 1.0 \
+          --baseline-tokens-per-second-per-user 33.1 \
+          --min-baseline-ratio 0.1 \
           --decode-shell-pcc-threshold 0.99 \
           --require-decode-shell-numeric-reference \
           --out-dir /tmp/validate_ttnn_direct_real

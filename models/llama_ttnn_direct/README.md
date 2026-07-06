@@ -367,7 +367,10 @@ python /tmp/llama31_ttnn_program/run_decode.py \
   --require-trace \
   --require-full-depth \
   --require-program-runtime-shape \
+  --require-batch32-decode-step \
   --min-tokens-per-second-per-user 1.0 \
+  --baseline-tokens-per-second-per-user 33.1 \
+  --min-baseline-ratio 0.1 \
   --decode-shell-pcc-threshold 0.99 \
   --require-decode-shell-numeric-reference \
   --out-dir /tmp/validate_ttnn_direct_real
@@ -588,6 +591,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --trace \
   --trace-iterations 10 \
   --require-trace \
+  --require-batch32-decode-step \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-tokens-per-second-per-user 33.1 \
   --min-baseline-ratio 0.1 \
@@ -625,6 +629,9 @@ config mismatch.
 Use `--require-full-depth` and `--require-program-runtime-shape` for final
 acceptance runs that must prove the generated program's full layer count and
 configured batch/cache dimensions, instead of a smaller bring-up shape.
+Use `--require-batch32-decode-step` for the review Step 3 batch-32 decode
+contract; this is also exposed by generated bundle `run_decode.py --mode
+validate-real`.
 Use `--baseline-tokens-per-second-per-user` to record the observed throughput
 ratio against a reference, such as the TT-Metal official Llama 3.1 8B batch-32
 baseline from the review table, and `--min-baseline-ratio` to fail acceptance
