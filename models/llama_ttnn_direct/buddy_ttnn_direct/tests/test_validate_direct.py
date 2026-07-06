@@ -688,7 +688,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 primitive_step["primitive_reports"][0]["output_shapes"]["qkv"],
-                [2, 1, 32],
+                [1, 1, 2, 32],
             )
             self.assertEqual(
                 primitive_step["ttnn_environment"]["version"],
@@ -723,7 +723,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 attention_step["output_shapes"]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(
                 attention_step["output_shapes"]["key_cache"],
@@ -1426,7 +1426,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 attention_report["output_shapes"]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(
                 attention_report["output_shapes"]["key_cache"],
@@ -1451,13 +1451,13 @@ class ValidateDirectTest(unittest.TestCase):
                 attention_report["primitive_reports"][0][
                     "expected_output_shapes"
                 ]["qkv"],
-                [2, 1, 32],
+                [1, 1, 2, 32],
             )
             self.assertEqual(
                 attention_report["primitive_reports"][-1]["output_shapes"][
                     "attention_output"
                 ],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             smoke_report = json.loads(
                 (out_dir / "decode_step_smoke_report.json").read_text()
@@ -1985,7 +1985,7 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["attention_layer"][
                     "output_shapes"
                 ]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["attention_layer"][

@@ -53,7 +53,7 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["input_shapes"]["query"],
-                [32, 32, 1, 128],
+                [1, 32, 32, 128],
             )
             self.assertEqual(
                 report["input_shapes"]["key_cache"],
@@ -313,7 +313,8 @@ def _fake_ttnn(*, with_transformer: bool = True):
         num_heads = int(kwargs["num_heads"])
         num_kv_heads = int(kwargs["num_kv_heads"])
         head_dim = fused_qkv.shape[-1] // (num_heads + 2 * num_kv_heads)
-        batch = fused_qkv.shape[0]
+        physical_decode = len(fused_qkv.shape) >= 4
+        batch = fused_qkv.shape[-2] if physical_decode else fused_qkv.shape[0]
         module.calls.append(
             {
                 "op": "nlp_create_qkv_heads_decode",
@@ -322,9 +323,24 @@ def _fake_ttnn(*, with_transformer: bool = True):
             }
         )
         return (
-            FakeTTNNTensor("query", [batch, num_heads, 1, head_dim]),
-            FakeTTNNTensor("key", [batch, num_kv_heads, 1, head_dim]),
-            FakeTTNNTensor("value", [batch, num_kv_heads, 1, head_dim]),
+            FakeTTNNTensor(
+                "query",
+                [1, batch, num_heads, head_dim]
+                if physical_decode
+                else [batch, num_heads, 1, head_dim],
+            ),
+            FakeTTNNTensor(
+                "key",
+                [1, batch, num_kv_heads, head_dim]
+                if physical_decode
+                else [batch, num_kv_heads, 1, head_dim],
+            ),
+            FakeTTNNTensor(
+                "value",
+                [1, batch, num_kv_heads, head_dim]
+                if physical_decode
+                else [batch, num_kv_heads, 1, head_dim],
+            ),
         )
 
     def rotary_embedding_llama(tensor, cos, sin, transform, **kwargs):
@@ -370,7 +386,8 @@ def _fake_ttnn(*, with_transformer: bool = True):
 
     def nlp_concat_heads_decode(attention, **kwargs):
         num_heads = int(kwargs["num_heads"])
-        batch = attention.shape[0]
+        physical_decode = len(attention.shape) >= 4
+        batch = attention.shape[1] if physical_decode else attention.shape[0]
         head_dim = attention.shape[-1]
         module.calls.append(
             {
@@ -379,7 +396,12 @@ def _fake_ttnn(*, with_transformer: bool = True):
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTTNNTensor("concat_heads", [batch, 1, num_heads * head_dim])
+        return FakeTTNNTensor(
+            "concat_heads",
+            [1, 1, batch, num_heads * head_dim]
+            if physical_decode
+            else [batch, 1, num_heads * head_dim],
+        )
 
     module.from_torch = from_torch
     module.linear = linear

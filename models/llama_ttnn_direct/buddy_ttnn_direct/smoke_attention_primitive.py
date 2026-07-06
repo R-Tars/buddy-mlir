@@ -399,38 +399,40 @@ def _primitive_plan(
     plans = {
         "qkv_linear": {
             "input_shapes": {
-                "hidden": [batch_size, 1, hidden_size],
+                "hidden": _decode_hidden_shape(batch_size, hidden_size),
                 "qkv_weight": [hidden_size, qkv_size],
             },
-            "expected_output_shapes": {"qkv": [batch_size, 1, qkv_size]},
+            "expected_output_shapes": {
+                "qkv": _decode_hidden_shape(batch_size, qkv_size)
+            },
         },
         "nlp_create_qkv_heads_decode": {
             "input_shapes": {
-                "fused_qkv": [batch_size, 1, qkv_size],
+                "fused_qkv": _decode_hidden_shape(batch_size, qkv_size),
             },
             "expected_output_shapes": {
-                "query": [batch_size, num_heads, 1, head_dim],
-                "key": [batch_size, num_kv_heads, 1, head_dim],
-                "value": [batch_size, num_kv_heads, 1, head_dim],
+                "query": _decode_head_shape(batch_size, num_heads, head_dim),
+                "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
+                "value": _decode_head_shape(batch_size, num_kv_heads, head_dim),
             },
         },
         "rotary_embedding_decode": {
             "input_shapes": {
-                "query": [batch_size, num_heads, 1, head_dim],
-                "key": [batch_size, num_kv_heads, 1, head_dim],
+                "query": _decode_head_shape(batch_size, num_heads, head_dim),
+                "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
                 "cos_matrix": [1, 1, head_dim, head_dim],
                 "sin_matrix": [1, 1, head_dim, head_dim],
                 "transformation_matrix": [1, 1, head_dim, head_dim],
             },
             "expected_output_shapes": {
-                "query": [batch_size, num_heads, 1, head_dim],
-                "key": [batch_size, num_kv_heads, 1, head_dim],
+                "query": _decode_head_shape(batch_size, num_heads, head_dim),
+                "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
             },
         },
         "paged_update_cache": {
             "input_shapes": {
                 "cache": kv_cache_shape,
-                "update": [batch_size, 1, num_kv_heads, head_dim],
+                "update": _decode_head_shape(batch_size, num_kv_heads, head_dim),
                 "cache_position": [batch_size],
                 "page_table": [batch_size, page_count],
             },
@@ -440,37 +442,55 @@ def _primitive_plan(
         },
         "paged_scaled_dot_product_attention_decode": {
             "input_shapes": {
-                "query": [batch_size, num_heads, 1, head_dim],
+                "query": _decode_head_shape(batch_size, num_heads, head_dim),
                 "key_cache": kv_cache_shape,
                 "value_cache": kv_cache_shape,
                 "page_table": [batch_size, page_count],
                 "cache_position": [batch_size],
             },
             "expected_output_shapes": {
-                "attention": [batch_size, num_heads, 1, head_dim],
+                "attention": _decode_head_shape(batch_size, num_heads, head_dim),
             },
         },
         "nlp_concat_heads_decode": {
             "input_shapes": {
-                "attention": [batch_size, num_heads, 1, head_dim],
+                "attention": _decode_head_shape(batch_size, num_heads, head_dim),
             },
             "expected_output_shapes": {
-                "hidden": [batch_size, 1, num_heads * head_dim],
+                "hidden": _decode_hidden_shape(
+                    batch_size,
+                    num_heads * head_dim,
+                ),
             },
         },
         "o_proj_linear": {
             "input_shapes": {
-                "attention": [batch_size, 1, num_heads * head_dim],
+                "attention": _decode_hidden_shape(
+                    batch_size,
+                    num_heads * head_dim,
+                ),
                 "o_proj_weight": [num_heads * head_dim, hidden_size],
             },
             "expected_output_shapes": {
-                "hidden": [batch_size, 1, hidden_size],
+                "hidden": _decode_hidden_shape(batch_size, hidden_size),
             },
         },
     }
     plan = dict(plans[primitive])
     plan["tensor_conversion_count"] = len(plan["input_shapes"])
     return plan
+
+
+def _decode_hidden_shape(batch_size: int, hidden_size: int) -> list[int]:
+    return [1, 1, batch_size, hidden_size]
+
+
+def _decode_head_shape(
+    batch_size: int,
+    num_heads: int,
+    head_dim: int,
+) -> list[int]:
+    return [1, batch_size, num_heads, head_dim]
 
 
 def _base_report(

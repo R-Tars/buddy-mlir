@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .smoke_attention_primitive import (
+    _decode_head_shape,
+    _decode_hidden_shape,
     _memory_config,
     _maybe_managed_device,
     _randn,
@@ -567,7 +569,7 @@ def _attention_layer_plan(
         head_dim,
     ]
     input_shapes = {
-        "hidden": [batch_size, 1, hidden_size],
+        "hidden": _decode_hidden_shape(batch_size, hidden_size),
         "qkv_weight": [hidden_size, qkv_size],
         "cos_matrix": [1, 1, head_dim, head_dim],
         "sin_matrix": [1, 1, head_dim, head_dim],
@@ -581,15 +583,18 @@ def _attention_layer_plan(
     return {
         "input_shapes": input_shapes,
         "expected_intermediate_shapes": {
-            "qkv": [batch_size, 1, qkv_size],
-            "query": [batch_size, num_heads, 1, head_dim],
-            "key": [batch_size, num_kv_heads, 1, head_dim],
-            "value": [batch_size, num_kv_heads, 1, head_dim],
-            "attention": [batch_size, num_heads, 1, head_dim],
-            "concat_heads": [batch_size, 1, num_heads * head_dim],
+            "qkv": _decode_hidden_shape(batch_size, qkv_size),
+            "query": _decode_head_shape(batch_size, num_heads, head_dim),
+            "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
+            "value": _decode_head_shape(batch_size, num_kv_heads, head_dim),
+            "attention": _decode_head_shape(batch_size, num_heads, head_dim),
+            "concat_heads": _decode_hidden_shape(
+                batch_size,
+                num_heads * head_dim,
+            ),
         },
         "expected_output_shapes": {
-            "attention_output": [batch_size, 1, hidden_size],
+            "attention_output": _decode_hidden_shape(batch_size, hidden_size),
             "key_cache": kv_cache_shape,
             "value_cache": kv_cache_shape,
         },

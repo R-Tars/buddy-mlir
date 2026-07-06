@@ -18,6 +18,8 @@ from .codegen.ttnn_tensorizer import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .smoke_attention_primitive import (
+    _decode_head_shape,
+    _decode_hidden_shape,
     _maybe_managed_device,
     _randn,
     _ttnn_dtype,
@@ -1844,15 +1846,21 @@ def _decode_step_plan(
         "parameter_shapes": parameter_shapes,
         "layer_parameter_shapes": layer_parameter_shapes,
         "expected_intermediate_shapes": {
-            "embedding": [batch_size, 1, hidden_size],
-            "qkv": [batch_size, 1, qkv_size],
-            "query": [batch_size, num_heads, 1, head_dim],
-            "key": [batch_size, num_kv_heads, 1, head_dim],
-            "value": [batch_size, num_kv_heads, 1, head_dim],
-            "attention": [batch_size, num_heads, 1, head_dim],
-            "concat_heads": [batch_size, 1, num_heads * head_dim],
-            "attention_output": [batch_size, 1, hidden_size],
-            "mlp_intermediate": [batch_size, 1, intermediate_size],
+            "embedding": _decode_hidden_shape(batch_size, hidden_size),
+            "qkv": _decode_hidden_shape(batch_size, qkv_size),
+            "query": _decode_head_shape(batch_size, num_heads, head_dim),
+            "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
+            "value": _decode_head_shape(batch_size, num_kv_heads, head_dim),
+            "attention": _decode_head_shape(batch_size, num_heads, head_dim),
+            "concat_heads": _decode_hidden_shape(
+                batch_size,
+                num_heads * head_dim,
+            ),
+            "attention_output": _decode_hidden_shape(batch_size, hidden_size),
+            "mlp_intermediate": _decode_hidden_shape(
+                batch_size,
+                intermediate_size,
+            ),
         },
         "expected_output_shapes": {
             output_kind: expected_decode_output,

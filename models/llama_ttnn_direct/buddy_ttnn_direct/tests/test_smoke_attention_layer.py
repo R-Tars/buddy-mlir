@@ -69,16 +69,19 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(report["op_sequence"], ATTENTION_LAYER_OPS)
             self.assertEqual(
                 report["expected_output_shapes"]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
             self.assertEqual(len(report["primitive_reports"]), len(ATTENTION_LAYER_OPS))
             first = report["primitive_reports"][0]
             self.assertEqual(first["primitive"], "qkv_linear")
-            self.assertEqual(first["input_shapes"]["hidden"], [2, 1, 16])
+            self.assertEqual(first["input_shapes"]["hidden"], [1, 1, 2, 16])
             self.assertEqual(first["input_shapes"]["qkv_weight"], [16, 32])
-            self.assertEqual(first["expected_output_shapes"]["qkv"], [2, 1, 32])
+            self.assertEqual(
+                first["expected_output_shapes"]["qkv"],
+                [1, 1, 2, 32],
+            )
             self.assertIsNone(first["output_shapes"])
             self.assertEqual(first["dtype"], "bfloat16")
             self.assertEqual(first["layout"], "tile")
@@ -141,7 +144,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["output_shapes"]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 2, 32, 4])
             self.assertEqual(report["tensor_conversion_count"], 10)
@@ -175,19 +178,19 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             primitive_reports = report["primitive_reports"]
             self.assertEqual(
                 primitive_reports[0]["expected_output_shapes"]["qkv"],
-                [2, 1, 32],
+                [1, 1, 2, 32],
             )
             self.assertEqual(
                 primitive_reports[0]["output_shapes"]["qkv"],
-                [2, 1, 32],
+                [1, 1, 2, 32],
             )
             self.assertEqual(
                 primitive_reports[-1]["output_shapes"]["attention_output"],
-                [2, 1, 16],
+                [1, 1, 2, 16],
             )
             self.assertEqual(
                 primitive_reports[2]["input_shapes"]["query"],
-                [2, 4, 1, 4],
+                [1, 2, 4, 4],
             )
             self.assertEqual(
                 primitive_reports[5]["input_shapes"]["value_cache"],

@@ -899,6 +899,11 @@ reports include `reference.kind=structural_shape_op_sequence`, which checks
 observed output shapes against the primitive plan and verifies the expected
 raw TTNN wrapper call sequence, while keeping
 `numeric_reference.status=not_run`.
+Decode attention activation shapes follow the official TT-Transformers 4D
+physical convention: hidden/QKV tensors are `[1, 1, batch, hidden]`, head
+tensors are `[1, batch, heads, head_dim]`, concat-head output is
+`[1, 1, batch, hidden]`, and paged K/V cache tensors use
+`[max_num_blocks, num_kv_heads, page_block_size, head_dim]`.
 `validate-real-decode` also runs the full primitive list as a real acceptance
 gate before `smoke-attention-layer`; the evidence manifest records the
 primitive report directory, per-primitive statuses, TTNN environment, and
@@ -945,7 +950,10 @@ individual attention issues stay easier to isolate. Successful non-dry-run repor
 paged KV cache shapes, and expected raw TTNN wrapper call coverage. Each
 primitive report also records `expected_output_shapes`, and the reference
 checks include intermediate QKV, rotary, SDPA, concat-heads, and O-projection
-shapes. This is still not a torch PCC check.
+shapes. These shape checks use the official decode physical activation
+convention (`[1, 1, batch, hidden]` and `[1, batch, heads, head_dim]`) rather
+than the older logical `[batch, seq, hidden]` summary. This is still not a
+torch PCC check.
 
 ## Performance Step 1: Official Config Diff
 
@@ -1025,6 +1033,9 @@ The report records the expanded generated op sequence, synthetic input and
 parameter shapes, expected intermediate shapes, output shapes, tensor
 conversion count, TTNN environment metadata, and explicit `api_mismatch` /
 `no_device` status when a required TTNN op or device is unavailable.
+Expected intermediate attention shapes in the report use official decode
+physical axes (`[1, 1, batch, hidden]` and `[1, batch, heads, head_dim]`);
+token input/output contract fields remain logical batch-facing shapes.
 
 When a local HF model directory is available, add `--model-path` in device mode
 to materialize real weights through `materialize-parameters` and tensorize the

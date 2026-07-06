@@ -4488,7 +4488,7 @@ def _expected_attention_layer_output_shape_summary(
     batch = _safe_int(batch_size)
     hidden = _safe_int(hidden_size)
     attention_output = (
-        [batch, 1, hidden] if None not in (batch, hidden) else []
+        [1, 1, batch, hidden] if None not in (batch, hidden) else []
     )
     kv_shape = _paged_kv_cache_shape(
         batch_size=batch_size,
