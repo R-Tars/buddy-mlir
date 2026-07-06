@@ -455,6 +455,7 @@ def profile_decode_step(
                     _planned_layer_profile(layer_id)
                     for layer_id in range(layer_count)
                 ],
+                "lm_head_profile": _planned_lm_head_profile(config),
                 "bottleneck_summary": _bottleneck_summary(
                     _empty_section_latency(),
                     [],
@@ -2213,6 +2214,28 @@ def _planned_layer_profile(layer_id: int) -> dict[str, Any]:
         "mlp_ms": 0.0,
         "residual_add_mlp_ms": 0.0,
         "total_ms": 0.0,
+    }
+
+
+def _planned_lm_head_profile(config: dict[str, Any]) -> dict[str, Any]:
+    lm_head = config.get("lm_head")
+    if not isinstance(lm_head, dict):
+        lm_head = {}
+    generation = config.get("generation")
+    if not isinstance(generation, dict):
+        generation = {}
+    retain_logits = bool(lm_head.get("retain_logits")) or bool(
+        generation.get("retain_logits")
+    )
+    try:
+        split_count = int(lm_head.get("split_count", 0))
+    except (TypeError, ValueError):
+        split_count = 0
+    return {
+        "split_count": split_count,
+        "lm_head_ms": 0.0,
+        "argmax_ms": 0.0,
+        "argmax_status": "skipped" if retain_logits else "profiled",
     }
 
 

@@ -10,6 +10,24 @@ from ..smoke_single_layer_decode import profile_decode_step
 
 DEFAULT_DECODE_DEPTH_TARGETS = (1, 2, 4, "full")
 
+PROFILE_SECTION_LATENCY_KEYS = (
+    "embedding_ms",
+    "final_norm_ms",
+    "lm_head_ms",
+    "argmax_ms",
+    "host_copy_ms",
+)
+
+PROFILE_LAYER_LATENCY_KEYS = (
+    "rms_norm_attn_ms",
+    "attention_ms",
+    "residual_add_attn_ms",
+    "rms_norm_mlp_ms",
+    "mlp_ms",
+    "residual_add_mlp_ms",
+    "total_ms",
+)
+
 
 def run_decode_depth_sweep(
     *,
@@ -247,12 +265,15 @@ def _profile_record(
         "latency_ms": profile.get("latency_ms"),
         "tensor_conversion_count": profile.get("tensor_conversion_count"),
         "tensor_conversion_ms": profile.get("tensor_conversion_ms"),
+        "section_latency_ms": profile.get("section_latency_ms"),
         "layer_profile_count": len(layer_profiles),
         "layer_profile_ids": [
             layer.get("layer_id")
             for layer in layer_profiles
             if isinstance(layer, dict)
         ],
+        "layer_profiles": layer_profiles,
+        "lm_head_profile": profile.get("lm_head_profile"),
         "output_shapes": profile.get("output_shapes"),
         "throughput_summary": throughput,
         "tokens_per_second_per_user": throughput.get(
@@ -344,6 +365,21 @@ def _depth_sweep_acceptance(
             ],
             expected="dry_run or measured throughput for each depth",
         ),
+        _check(
+            "decode_depth_sweep.profile_breakdown",
+            all(
+                _record_has_profile_breakdown(record)
+                for record in records
+            ),
+            observed=[
+                _record_profile_breakdown_observed(record)
+                for record in records
+            ],
+            expected=(
+                "section latency, per-layer latency, and LM-head/argmax "
+                "profile evidence for each depth"
+            ),
+        ),
     ]
     if require_full_depth:
         checks.insert(
@@ -399,9 +435,121 @@ def _record_has_throughput(
     )
 
 
+def _record_has_profile_breakdown(
+    record: dict[str, Any],
+) -> bool:
+    if record.get("status") == "skipped":
+        return False
+    depth = record.get("depth")
+    try:
+        expected_layer_ids = list(range(int(depth)))
+    except (TypeError, ValueError):
+        return False
+    layer_profiles = record.get("layer_profiles")
+    lm_head_profile = record.get("lm_head_profile")
+    return (
+        _has_nonnegative_fields(
+            record.get("section_latency_ms"),
+            PROFILE_SECTION_LATENCY_KEYS,
+        )
+        and _layer_profile_ids(layer_profiles) == expected_layer_ids
+        and _layer_profiles_have_nonnegative_fields(
+            layer_profiles,
+            PROFILE_LAYER_LATENCY_KEYS,
+        )
+        and _lm_head_profile_complete(lm_head_profile)
+    )
+
+
+def _record_profile_breakdown_observed(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "depth": record.get("depth"),
+        "section_latency_ms": _field_keys(record.get("section_latency_ms")),
+        "layer_profile_ids": _layer_profile_ids(record.get("layer_profiles")),
+        "layer_profile_fields": [
+            _field_keys(profile)
+            for profile in record.get("layer_profiles") or []
+            if isinstance(profile, dict)
+        ],
+        "lm_head_profile": _lm_head_profile_observed(
+            record.get("lm_head_profile")
+        ),
+    }
+
+
+def _layer_profile_ids(layer_profiles: Any) -> list[int]:
+    if not isinstance(layer_profiles, list):
+        return []
+    layer_ids = []
+    for profile in layer_profiles:
+        if not isinstance(profile, dict):
+            return []
+        try:
+            layer_ids.append(int(profile["layer_id"]))
+        except (KeyError, TypeError, ValueError):
+            return []
+    return layer_ids
+
+
+def _layer_profiles_have_nonnegative_fields(
+    layer_profiles: Any,
+    fields: tuple[str, ...],
+) -> bool:
+    if not isinstance(layer_profiles, list) or not layer_profiles:
+        return False
+    return all(
+        isinstance(profile, dict)
+        and _has_nonnegative_fields(profile, fields)
+        for profile in layer_profiles
+    )
+
+
+def _lm_head_profile_complete(profile: Any) -> bool:
+    if not isinstance(profile, dict):
+        return False
+    return (
+        _positive_number(profile.get("split_count"))
+        and _nonnegative_number(profile.get("lm_head_ms"))
+        and _nonnegative_number(profile.get("argmax_ms"))
+        and profile.get("argmax_status") in {"profiled", "skipped"}
+    )
+
+
+def _lm_head_profile_observed(profile: Any) -> dict[str, Any]:
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        "split_count": profile.get("split_count"),
+        "lm_head_ms": profile.get("lm_head_ms"),
+        "argmax_ms": profile.get("argmax_ms"),
+        "argmax_status": profile.get("argmax_status"),
+    }
+
+
+def _has_nonnegative_fields(value: Any, fields: tuple[str, ...]) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return all(_nonnegative_number(value.get(field)) for field in fields)
+
+
+def _field_keys(value: Any) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    return sorted(str(key) for key in value)
+
+
 def _positive_number(value: Any) -> bool:
     try:
         return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _nonnegative_number(value: Any) -> bool:
+    try:
+        return float(value) >= 0.0
     except (TypeError, ValueError):
         return False
 

@@ -1155,11 +1155,12 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 When `--depths` is omitted, the default is `1,2,4,full`, clipped to the
 generated program's layer count. The report records per-depth status, profile
-report paths, latency, throughput, layer profile ids, output shapes, trace
-status, reference status, and acceptance checks for increasing unique depths,
-full-depth coverage, per-depth pass status, layer profile counts, and
-throughput availability. Use `--dry-run` to generate the same schema without
-opening a TTNN device.
+report paths, latency, section latency, full per-layer timing records, LM-head
+split/argmax profile evidence, throughput, output shapes, trace status,
+reference status, and acceptance checks for increasing unique depths,
+full-depth coverage, per-depth pass status, layer profile counts, profile
+breakdown completeness, and throughput availability. Use `--dry-run` to
+generate the same schema without opening a TTNN device.
 When invoked through `validate-real-decode`, full-depth coverage is required
 only when that command is run with `--require-full-depth`; otherwise the sweep
 is scoped to the requested validation depth so small bring-up runs stay
@@ -1171,8 +1172,10 @@ paged K/V cache `[max_num_blocks, num_kv_heads, page_block_size, head_dim]`
 input shapes, account for `3 + 2 * depth` synthetic runtime-input tensors and
 `3 * depth` synthetic rotary tensors, expose layer-profile ids for
 `[0..depth)`, pass the reference checks, report measured throughput, include
-decode output/KV-cache shapes, and include bottleneck timing evidence. When
-`--require-trace` is used, each depth record must also show
+decode output/KV-cache shapes, include complete section latency fields,
+per-layer attention/MLP timing records, LM-head split/argmax profile evidence,
+and complete bottleneck timing sections. When `--require-trace` is used, each
+depth record must also show
 `captured_and_executed` trace status with the requested iteration count.
 
 ## Performance Step 3: Batch32 Decode-Step Contract Gate

@@ -6389,6 +6389,20 @@ def _decode_depth_sweep_record_complete(
         and _nonnegative_number(record.get("tensor_conversion_ms"))
         and _int_equal(record.get("layer_profile_count"), depth)
         and record.get("layer_profile_ids") == list(range(depth))
+        and _has_nonnegative_fields(
+            record.get("section_latency_ms"),
+            PROFILE_SECTION_LATENCY_KEYS,
+        )
+        and _layer_profile_ids(record.get("layer_profiles"))
+        == list(range(depth))
+        and _layer_profiles_have_nonnegative_fields(
+            record.get("layer_profiles"),
+            PROFILE_LAYER_LATENCY_KEYS,
+        )
+        and _lm_head_profile_complete(
+            record.get("lm_head_profile"),
+            output_kind=output_kind,
+        )
         and record.get("reference_status") == "passed"
         and record.get("reference_failed_checks") == []
         and throughput.get("status") == "measured"
@@ -6456,6 +6470,15 @@ def _decode_depth_sweep_records_observed(
                 ),
                 "layer_profile_count": record.get("layer_profile_count"),
                 "layer_profile_ids": record.get("layer_profile_ids"),
+                "section_latency_ms": _field_keys(
+                    record.get("section_latency_ms")
+                ),
+                "layer_profile_fields": _layer_profile_field_keys(
+                    record.get("layer_profiles")
+                ),
+                "lm_head_profile": _lm_head_profile_observed(
+                    record.get("lm_head_profile")
+                ),
                 "reference_status": record.get("reference_status"),
                 "reference_failed_checks": record.get(
                     "reference_failed_checks"
