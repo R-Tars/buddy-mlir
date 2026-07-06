@@ -688,8 +688,9 @@ counts, token-or-logits output and paged KV-cache shapes, optional full-depth
 and program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
-weight paths for single-layer/smoke/profile, LM-head source metadata-reference
-and sliced-read evidence, generated linear weight transform evidence,
+weight paths for single-layer/smoke/profile, tensorized key-weight physical
+shapes derived from each transform, LM-head source metadata-reference and
+sliced-read evidence, generated linear weight transform evidence,
 embedding/RMSNorm weight shape-transform evidence, LM-head split tensor
 transform evidence, decode-step structural references, empty structural
 reference failed-check lists, generated observed op sequence coverage for the
@@ -763,6 +764,9 @@ tensors for selected role groups. The default remains the conservative
 can receive TTNN tensors for embedding, RMSNorm/final norm, packed QKV,
 attention output projection, MLP, and LM-head split weights. KV-cache tensors
 are still created by the smoke paths rather than materialized from weights.
+Real-decode validation checks the key tensorized physical shapes implied by
+these transforms, such as linear weights `[1, 1, in_features, out_features]`,
+embedding weights `[1, 1, vocab, hidden]`, and RMSNorm weights in 4D form.
 
 Dry-run, no device or TTNN import:
 

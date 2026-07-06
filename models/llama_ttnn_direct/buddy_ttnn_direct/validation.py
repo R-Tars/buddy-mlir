@@ -2648,6 +2648,9 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
             "missing_required_tensorized_tensor_paths",
             [],
         ),
+        "physical_shape_mismatches": _tensorized_physical_shape_mismatches(
+            tensorization
+        ),
         "key_paths": tensorization.get("key_paths", []),
         "key_tensors": tensorization.get("key_tensors", {}),
     }
@@ -3348,6 +3351,17 @@ def _real_decode_acceptance(
             expected=[],
         ),
         _acceptance_check(
+            "decode_shell.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(
+                decode_shell_tensorization
+            )
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                decode_shell_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
             "decode_shell.embedding_norm_weight_transforms",
             _embedding_norm_weight_transform_complete(
                 decode_shell_tensorization,
@@ -3717,6 +3731,17 @@ def _real_decode_acceptance(
             expected=[],
         ),
         _acceptance_check(
+            "single_layer_decode.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(
+                single_layer_tensorization
+            )
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                single_layer_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
             "single_layer_decode.tensorization_memory_configs",
             _positive_count(
                 single_layer_tensorization.get("memory_config_counts")
@@ -3940,6 +3965,14 @@ def _real_decode_acceptance(
             "smoke_decode_step.required_tensorized_tensor_paths",
             smoke.get("missing_required_tensorized_tensor_paths") == [],
             observed=smoke.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(smoke_tensorization) == [],
+            observed=_tensorized_physical_shape_mismatches(
+                smoke_tensorization
+            ),
             expected=[],
         ),
         _acceptance_check(
@@ -4170,6 +4203,15 @@ def _real_decode_acceptance(
             "profile_decode_step.required_tensorized_tensor_paths",
             profile.get("missing_required_tensorized_tensor_paths") == [],
             observed=profile.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(profile_tensorization)
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                profile_tensorization
+            ),
             expected=[],
         ),
         _acceptance_check(
@@ -5476,6 +5518,79 @@ def _lm_head_transform_observed(tensorization: Any) -> dict[str, Any]:
         ),
         "lm_head.splits.0.weight": split0,
     }
+
+
+def _tensorized_physical_shape_mismatches(
+    tensorization: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(tensorization, dict):
+        return []
+    key_tensors = tensorization.get("key_tensors")
+    if not isinstance(key_tensors, dict):
+        return []
+    mismatches = []
+    for path, tensor in sorted(key_tensors.items()):
+        if not isinstance(tensor, dict):
+            continue
+        transform = tensor.get("transform")
+        if transform not in _TENSORIZED_PHYSICAL_SHAPE_TRANSFORMS:
+            continue
+        expected = _expected_tensorized_physical_shape(tensor)
+        observed = _int_list(tensor.get("shape"))
+        source_shape = _int_list(tensor.get("source_shape"))
+        if expected is None:
+            mismatches.append(
+                {
+                    "path": path,
+                    "transform": transform,
+                    "source_shape": source_shape or None,
+                    "observed": observed or None,
+                    "expected": "known transform/source shape",
+                }
+            )
+        elif observed != expected:
+            mismatches.append(
+                {
+                    "path": path,
+                    "transform": transform,
+                    "source_shape": source_shape or None,
+                    "observed": observed or None,
+                    "expected": expected,
+                }
+            )
+    return mismatches
+
+
+_TENSORIZED_PHYSICAL_SHAPE_TRANSFORMS = {
+    LINEAR_WEIGHT_TRANSFORM,
+    "reshape_embedding_weight_4d",
+    "reshape_norm_weight_4d",
+}
+
+
+def _expected_tensorized_physical_shape(
+    tensor: dict[str, Any],
+) -> list[int] | None:
+    transform = tensor.get("transform")
+    source_shape = _int_list(tensor.get("source_shape"))
+    if transform == LINEAR_WEIGHT_TRANSFORM:
+        if len(source_shape) != 2:
+            return None
+        return [1, 1, source_shape[1], source_shape[0]]
+    if transform == "reshape_embedding_weight_4d":
+        if len(source_shape) != 2:
+            return None
+        return [1, 1, source_shape[0], source_shape[1]]
+    if transform == "reshape_norm_weight_4d":
+        if len(source_shape) != 1:
+            return None
+        hidden = source_shape[0]
+        if hidden <= 0:
+            return None
+        if hidden % 32 == 0:
+            return [1, 1, hidden // 32, 32]
+        return [1, 1, 1, hidden]
+    return None
 
 
 def _trace_profile_complete(
