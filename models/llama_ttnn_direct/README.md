@@ -634,7 +634,9 @@ opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-r
 and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, resolved
-official config diff evidence, layer/batch/cache runtime shape, TTNN module
+synthetic runtime input source/count evidence for token ids, page tables,
+cache position, and paged KV cache, official config diff evidence,
+layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/single-layer/smoke/profile runtime status, decode-step tensor conversion
 counts, optional full-depth and program runtime-shape requirements, shell

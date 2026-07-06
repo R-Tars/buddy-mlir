@@ -1021,6 +1021,9 @@ def validate_real_decode(
             "cache_len": single_layer_report.get("cache_len"),
             "parameter_source": single_layer_report.get("parameter_source"),
             "input_source": single_layer_report.get("input_source"),
+            "synthetic_runtime_input_tensor_count": (
+                _step_synthetic_runtime_input_count(single_layer_report)
+            ),
             "tensor_conversion_count": single_layer_report.get(
                 "tensor_conversion_count"
             ),
@@ -1062,6 +1065,9 @@ def validate_real_decode(
             "cache_len": smoke_report.get("cache_len"),
             "parameter_source": smoke_report.get("parameter_source"),
             "input_source": smoke_report.get("input_source"),
+            "synthetic_runtime_input_tensor_count": (
+                _step_synthetic_runtime_input_count(smoke_report)
+            ),
             "tensor_conversion_count": smoke_report.get(
                 "tensor_conversion_count"
             ),
@@ -1100,6 +1106,9 @@ def validate_real_decode(
             "cache_len": profile_report.get("cache_len"),
             "parameter_source": profile_report.get("parameter_source"),
             "input_source": profile_report.get("input_source"),
+            "synthetic_runtime_input_tensor_count": (
+                _step_synthetic_runtime_input_count(profile_report)
+            ),
             "tensor_conversion_count": profile_report.get(
                 "tensor_conversion_count"
             ),
@@ -1549,6 +1558,9 @@ def _real_decode_evidence_manifest(
                 "layers": decode_shell.get("layers"),
                 "parameter_source": decode_shell.get("parameter_source"),
                 "input_source": decode_shell.get("input_source"),
+                "runtime_input_tensor_count": decode_shell.get(
+                    "runtime_input_tensor_count"
+                ),
                 "reference_status": decode_shell.get("reference_status"),
                 "numeric_reference_status": decode_shell.get(
                     "numeric_reference_status"
@@ -1577,6 +1589,9 @@ def _real_decode_evidence_manifest(
                 "cache_len": single_layer.get("cache_len"),
                 "parameter_source": single_layer.get("parameter_source"),
                 "input_source": single_layer.get("input_source"),
+                "synthetic_runtime_input_tensor_count": single_layer.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
                 "tensor_conversion_count": single_layer.get(
                     "tensor_conversion_count"
                 ),
@@ -1604,6 +1619,9 @@ def _real_decode_evidence_manifest(
                 "cache_len": smoke.get("cache_len"),
                 "parameter_source": smoke.get("parameter_source"),
                 "input_source": smoke.get("input_source"),
+                "synthetic_runtime_input_tensor_count": smoke.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
                 "tensor_conversion_count": smoke.get(
                     "tensor_conversion_count"
                 ),
@@ -1626,6 +1644,9 @@ def _real_decode_evidence_manifest(
                 "cache_len": profile.get("cache_len"),
                 "parameter_source": profile.get("parameter_source"),
                 "input_source": profile.get("input_source"),
+                "synthetic_runtime_input_tensor_count": profile.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
                 "tensor_conversion_count": profile.get(
                     "tensor_conversion_count"
                 ),
@@ -1905,6 +1926,20 @@ def _real_decode_acceptance(
             expected="hf_model",
         ),
         _acceptance_check(
+            "decode_shell.input_source",
+            decode_shell.get("input_source") == "synthetic",
+            observed=decode_shell.get("input_source"),
+            expected="synthetic",
+        ),
+        _acceptance_check(
+            "decode_shell.runtime_input_tensor_count",
+            _positive_number(
+                decode_shell.get("runtime_input_tensor_count")
+            ),
+            observed=decode_shell.get("runtime_input_tensor_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
             "decode_shell.runtime_status",
             decode_shell.get("runtime_status") == "passed",
             observed=decode_shell.get("runtime_status"),
@@ -1930,6 +1965,22 @@ def _real_decode_acceptance(
             single_layer.get("parameter_source") == "hf_model",
             observed=single_layer.get("parameter_source"),
             expected="hf_model",
+        ),
+        _acceptance_check(
+            "single_layer_decode.input_source",
+            single_layer.get("input_source") == "synthetic",
+            observed=single_layer.get("input_source"),
+            expected="synthetic",
+        ),
+        _acceptance_check(
+            "single_layer_decode.synthetic_runtime_inputs",
+            _positive_number(
+                single_layer.get("synthetic_runtime_input_tensor_count")
+            ),
+            observed=single_layer.get(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            minimum=1,
         ),
         _acceptance_check(
             "single_layer_decode.layers",
@@ -2048,6 +2099,20 @@ def _real_decode_acceptance(
             expected="hf_model",
         ),
         _acceptance_check(
+            "smoke_decode_step.input_source",
+            smoke.get("input_source") == "synthetic",
+            observed=smoke.get("input_source"),
+            expected="synthetic",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.synthetic_runtime_inputs",
+            _positive_number(
+                smoke.get("synthetic_runtime_input_tensor_count")
+            ),
+            observed=smoke.get("synthetic_runtime_input_tensor_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
             "smoke_decode_step.layers",
             _int_equal(smoke.get("layers"), expected_layers),
             observed=smoke.get("layers"),
@@ -2153,6 +2218,20 @@ def _real_decode_acceptance(
             profile.get("parameter_source") == "hf_model",
             observed=profile.get("parameter_source"),
             expected="hf_model",
+        ),
+        _acceptance_check(
+            "profile_decode_step.input_source",
+            profile.get("input_source") == "synthetic",
+            observed=profile.get("input_source"),
+            expected="synthetic",
+        ),
+        _acceptance_check(
+            "profile_decode_step.synthetic_runtime_inputs",
+            _positive_number(
+                profile.get("synthetic_runtime_input_tensor_count")
+            ),
+            observed=profile.get("synthetic_runtime_input_tensor_count"),
+            minimum=1,
         ),
         _acceptance_check(
             "profile_decode_step.layers",
@@ -2723,6 +2802,13 @@ def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
     setup = step.get("parameter_setup") or {}
     tensorization = setup.get("tensorization") or {}
     return tensorization if isinstance(tensorization, dict) else {}
+
+
+def _step_synthetic_runtime_input_count(step: dict[str, Any]) -> Any:
+    setup = step.get("parameter_setup") or {}
+    if not isinstance(setup, dict):
+        return None
+    return setup.get("synthetic_runtime_input_tensor_count")
 
 
 def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:
