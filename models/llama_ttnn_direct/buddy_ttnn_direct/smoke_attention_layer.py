@@ -557,15 +557,23 @@ def _attention_layer_plan(
     cache_len: int,
 ) -> dict[str, Any]:
     qkv_size = (num_heads + 2 * num_kv_heads) * head_dim
-    page_count = max(1, (cache_len + 31) // 32)
+    page_block_size = 32
+    page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
+    max_num_blocks = batch_size * page_count
+    kv_cache_shape = [
+        max_num_blocks,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    ]
     input_shapes = {
         "hidden": [batch_size, 1, hidden_size],
         "qkv_weight": [hidden_size, qkv_size],
         "cos_matrix": [1, 1, head_dim, head_dim],
         "sin_matrix": [1, 1, head_dim, head_dim],
         "transformation_matrix": [1, 1, head_dim, head_dim],
-        "key_cache": [batch_size, cache_len, num_kv_heads, head_dim],
-        "value_cache": [batch_size, cache_len, num_kv_heads, head_dim],
+        "key_cache": kv_cache_shape,
+        "value_cache": kv_cache_shape,
         "page_table": [batch_size, page_count],
         "cache_position": [batch_size],
         "o_proj_weight": [num_heads * head_dim, hidden_size],
@@ -582,8 +590,15 @@ def _attention_layer_plan(
         },
         "expected_output_shapes": {
             "attention_output": [batch_size, 1, hidden_size],
-            "key_cache": [batch_size, cache_len, num_kv_heads, head_dim],
-            "value_cache": [batch_size, cache_len, num_kv_heads, head_dim],
+            "key_cache": kv_cache_shape,
+            "value_cache": kv_cache_shape,
+        },
+        "paged_kv_cache": {
+            "page_block_size": page_block_size,
+            "pages_per_user": page_count,
+            "max_num_blocks": max_num_blocks,
+            "physical_shape": kv_cache_shape,
+            "logical_shape": [batch_size, cache_len, num_kv_heads, head_dim],
         },
         "tensor_conversion_count": len(input_shapes),
     }
@@ -715,6 +730,7 @@ def _base_report(
         "input_shapes": plan["input_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
+        "paged_kv_cache": plan["paged_kv_cache"],
         "ttnn_environment": collect_ttnn_environment(None),
     }
 

@@ -1799,6 +1799,13 @@ def _decode_step_plan(
         kv_cache_config = {}
     page_block_size = int(kv_cache_config.get("page_block_size", 32))
     page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
+    max_num_blocks = batch_size * page_count
+    kv_cache_shape = [
+        max_num_blocks,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    ]
     lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
     output_kind = _decode_output_kind(config)
     expected_decode_output = (
@@ -1810,8 +1817,8 @@ def _decode_step_plan(
         "token_ids": [batch_size, 1],
         "page_table": [batch_size, page_count],
         "cache_position": [batch_size],
-        "key_cache": [batch_size, cache_len, num_kv_heads, head_dim],
-        "value_cache": [batch_size, cache_len, num_kv_heads, head_dim],
+        "key_cache": kv_cache_shape,
+        "value_cache": kv_cache_shape,
     }
     layer_parameter_shapes = {
         "input_norm": [hidden_size],
@@ -1858,6 +1865,9 @@ def _decode_step_plan(
             "template": kv_cache_config.get("template", "paged_kv_cache"),
             "page_block_size": page_block_size,
             "page_count": page_count,
+            "max_num_blocks": max_num_blocks,
+            "physical_shape": kv_cache_shape,
+            "logical_shape": [batch_size, cache_len, num_kv_heads, head_dim],
         },
         "tensor_conversion_count": 5 + len(lm_head_splits) + 12 * layers,
         "op_sequence": _decode_op_sequence(layers, output_kind=output_kind),
@@ -1943,6 +1953,7 @@ def _base_report(
         "layer_parameter_shapes": plan["layer_parameter_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
         "expected_output_shapes": plan["expected_output_shapes"],
+        "kv_cache": plan["kv_cache"],
         "ttnn_environment": collect_ttnn_environment(None),
     }
 

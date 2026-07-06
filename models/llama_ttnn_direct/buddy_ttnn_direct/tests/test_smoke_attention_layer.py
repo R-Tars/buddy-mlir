@@ -83,6 +83,14 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(first["dtype"], "bfloat16")
             self.assertEqual(first["layout"], "tile")
             self.assertEqual(first["memory_config"], "default_or_l1")
+            self.assertEqual(
+                report["input_shapes"]["key_cache"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                report["paged_kv_cache"]["logical_shape"],
+                [2, 16, 2, 4],
+            )
             self.assertEqual(report["reference"]["status"], "dry_run")
             self.assertEqual(
                 report["reference"]["numeric_reference"]["status"],
@@ -135,7 +143,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
                 report["output_shapes"]["attention_output"],
                 [2, 1, 16],
             )
-            self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
+            self.assertEqual(report["output_shapes"]["key_cache"], [2, 2, 32, 4])
             self.assertEqual(report["tensor_conversion_count"], 10)
             self.assertEqual(report["memory_config_conversion_count"], 1)
             self.assertEqual(report["ttnn_environment"]["version"], "fake-ttnn")
@@ -183,7 +191,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             )
             self.assertEqual(
                 primitive_reports[5]["input_shapes"]["value_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(primitive_reports[5]["dtype"], "bfloat16")
             self.assertEqual(

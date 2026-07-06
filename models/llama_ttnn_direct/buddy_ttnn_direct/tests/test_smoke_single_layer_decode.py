@@ -78,7 +78,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["input_shapes"]["token_ids"], [2, 1])
             self.assertEqual(
                 report["expected_output_shapes"]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(report["parameter_shapes"]["attention_wqkv"], [16, 32])
             self.assertEqual(report["reference"]["status"], "dry_run")
@@ -127,8 +127,8 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 cache_position=FakeTensor("cache_position", [2]),
                 kv_cache=[
                     types.SimpleNamespace(
-                        k=FakeTensor("key_cache", [2, 16, 2, 4]),
-                        v=FakeTensor("value_cache", [2, 16, 2, 4]),
+                        k=FakeTensor("key_cache", [2, 2, 32, 4]),
+                        v=FakeTensor("value_cache", [2, 2, 32, 4]),
                     )
                 ],
             )
@@ -136,7 +136,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
-            self.assertEqual(report["output_shapes"]["key_cache"], [2, 16, 2, 4])
+            self.assertEqual(report["output_shapes"]["key_cache"], [2, 2, 32, 4])
             self.assertEqual(report["tensor_conversion_count"], 0)
             self.assertEqual(report["reference"]["status"], "passed")
             self.assertEqual(
@@ -229,8 +229,8 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 cache_position=FakeTensor("cache_position", [2]),
                 kv_cache=[
                     types.SimpleNamespace(
-                        k=FakeTensor("key_cache", [2, 16, 2, 4]),
-                        v=FakeTensor("value_cache", [2, 16, 2, 4]),
+                        k=FakeTensor("key_cache", [2, 2, 32, 4]),
+                        v=FakeTensor("value_cache", [2, 2, 32, 4]),
                     )
                 ],
             )
@@ -835,8 +835,8 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 cache_position=FakeTensor("cache_position", [2]),
                 kv_cache=[
                     types.SimpleNamespace(
-                        k=FakeTensor("key_cache", [2, 16, 2, 4]),
-                        v=FakeTensor("value_cache", [2, 16, 2, 4]),
+                        k=FakeTensor("key_cache", [2, 2, 32, 4]),
+                        v=FakeTensor("value_cache", [2, 2, 32, 4]),
                     )
                 ],
             )

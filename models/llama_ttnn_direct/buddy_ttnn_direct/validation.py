@@ -2162,6 +2162,19 @@ def _decode_step_contract(
 ) -> dict[str, Any]:
     page_block_size = _safe_int(kv_cache.get("page_block_size")) or 32
     page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
+    max_num_blocks = batch_size * page_count
+    physical_kv_cache_shape = [
+        max_num_blocks,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    ]
+    logical_kv_cache_shape = [
+        batch_size,
+        cache_len,
+        num_kv_heads,
+        head_dim,
+    ]
     kv_policy = kv_cache.get("policy")
     kv_template = kv_cache.get("template")
     generation_template = generation.get("template")
@@ -2182,14 +2195,12 @@ def _decode_step_contract(
         ),
         "kv_page_block_size": page_block_size,
         "page_count": page_count,
+        "max_num_blocks": max_num_blocks,
         "page_table_shape": [batch_size, page_count],
         "cache_position_shape": [batch_size],
-        "kv_cache_shape": [
-            batch_size,
-            cache_len,
-            num_kv_heads,
-            head_dim,
-        ],
+        "kv_cache_shape": physical_kv_cache_shape,
+        "kv_cache_physical_shape": physical_kv_cache_shape,
+        "kv_cache_logical_shape": logical_kv_cache_shape,
         "kv_cache_layer_ids": list(range(layer_count)),
         "generation_template": generation_template,
         "output_kind": output_kind,
@@ -2278,7 +2289,19 @@ def _real_decode_acceptance(
         decode_contract.get("page_count"),
     ]
     expected_cache_position_shape = [expected_batch_size]
+    expected_max_num_blocks = (
+        expected_batch_size * decode_contract.get("page_count")
+        if isinstance(expected_batch_size, int)
+        and isinstance(decode_contract.get("page_count"), int)
+        else None
+    )
     expected_kv_cache_shape = [
+        expected_max_num_blocks,
+        program_num_kv_heads,
+        decode_contract.get("kv_page_block_size"),
+        program_head_dim,
+    ]
+    expected_logical_kv_cache_shape = [
         expected_batch_size,
         expected_cache_len,
         program_num_kv_heads,
@@ -2398,6 +2421,15 @@ def _real_decode_acceptance(
             minimum=1,
         ),
         _acceptance_check(
+            "decode_step_contract.max_num_blocks",
+            _int_equal(
+                decode_contract.get("max_num_blocks"),
+                expected_max_num_blocks,
+            ),
+            observed=decode_contract.get("max_num_blocks"),
+            expected=expected_max_num_blocks,
+        ),
+        _acceptance_check(
             "decode_step_contract.page_table_shape",
             _int_list(decode_contract.get("page_table_shape"))
             == expected_page_table_shape,
@@ -2417,6 +2449,20 @@ def _real_decode_acceptance(
             == expected_kv_cache_shape,
             observed=decode_contract.get("kv_cache_shape"),
             expected=expected_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_physical_shape",
+            _int_list(decode_contract.get("kv_cache_physical_shape"))
+            == expected_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_physical_shape"),
+            expected=expected_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_logical_shape",
+            _int_list(decode_contract.get("kv_cache_logical_shape"))
+            == expected_logical_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_logical_shape"),
+            expected=expected_logical_kv_cache_shape,
         ),
         _acceptance_check(
             "decode_step_contract.output_kind",
@@ -2665,6 +2711,7 @@ def _real_decode_acceptance(
                 hidden_size=program_hidden_size,
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
             observed=_attention_layer_output_shape_observed(
                 attention_layer.get("output_shapes")
@@ -2675,6 +2722,7 @@ def _real_decode_acceptance(
                 hidden_size=program_hidden_size,
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
         ),
         _acceptance_check(
@@ -2864,6 +2912,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
             observed=_decode_output_shape_observed(
                 single_layer.get("output_shapes")
@@ -2877,6 +2926,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
         ),
         _acceptance_check(
@@ -3057,6 +3107,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
             observed=_decode_output_shape_observed(
                 smoke.get("output_shapes")
@@ -3070,6 +3121,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
         ),
         _acceptance_check(
@@ -3256,6 +3308,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
             observed=_decode_output_shape_observed(
                 profile.get("output_shapes")
@@ -3269,6 +3322,7 @@ def _real_decode_acceptance(
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
                 output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
             ),
         ),
         _acceptance_check(
@@ -4345,6 +4399,7 @@ def _decode_output_shapes_complete(
     num_kv_heads: Any,
     head_dim: Any,
     output_kind: Any = "token",
+    page_block_size: Any = 32,
 ) -> bool:
     expected = _expected_decode_output_shape_summary(
         layer_count=layer_count,
@@ -4355,6 +4410,7 @@ def _decode_output_shapes_complete(
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
         output_kind=output_kind,
+        page_block_size=page_block_size,
     )
     if not isinstance(output_shapes, dict):
         return False
@@ -4398,6 +4454,7 @@ def _attention_layer_output_shapes_complete(
     hidden_size: Any,
     num_kv_heads: Any,
     head_dim: Any,
+    page_block_size: Any = 32,
 ) -> bool:
     expected = _expected_attention_layer_output_shape_summary(
         batch_size=batch_size,
@@ -4405,6 +4462,7 @@ def _attention_layer_output_shapes_complete(
         hidden_size=hidden_size,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
+        page_block_size=page_block_size,
     )
     if not isinstance(output_shapes, dict):
         return False
@@ -4425,19 +4483,19 @@ def _expected_attention_layer_output_shape_summary(
     hidden_size: Any,
     num_kv_heads: Any,
     head_dim: Any,
+    page_block_size: Any = 32,
 ) -> dict[str, Any]:
     batch = _safe_int(batch_size)
-    cache = _safe_int(cache_len)
     hidden = _safe_int(hidden_size)
-    kv_heads = _safe_int(num_kv_heads)
-    dim = _safe_int(head_dim)
     attention_output = (
         [batch, 1, hidden] if None not in (batch, hidden) else []
     )
-    kv_shape = (
-        [batch, cache, kv_heads, dim]
-        if None not in (batch, cache, kv_heads, dim)
-        else []
+    kv_shape = _paged_kv_cache_shape(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        page_block_size=page_block_size,
     )
     return {
         "attention_output": attention_output,
@@ -4457,6 +4515,25 @@ def _attention_layer_output_shape_observed(
         "key_cache": _int_list(output_shapes.get("key_cache")),
         "value_cache": _int_list(output_shapes.get("value_cache")),
     }
+
+
+def _paged_kv_cache_shape(
+    *,
+    batch_size: Any,
+    cache_len: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    page_block_size: Any = 32,
+) -> list[int]:
+    batch = _safe_int(batch_size)
+    cache = _safe_int(cache_len)
+    kv_heads = _safe_int(num_kv_heads)
+    dim = _safe_int(head_dim)
+    block = _safe_int(page_block_size) or 32
+    if None in (batch, cache, kv_heads, dim) or cache < 0 or block <= 0:
+        return []
+    pages_per_user = max(1, (cache + block - 1) // block)
+    return [batch * pages_per_user, kv_heads, block, dim]
 
 
 def _attention_primitive_reports_complete(
@@ -4669,13 +4746,11 @@ def _expected_decode_output_shape_summary(
     num_kv_heads: Any,
     head_dim: Any,
     output_kind: Any = "token",
+    page_block_size: Any = 32,
 ) -> dict[str, Any]:
     batch = _safe_int(batch_size)
     seq = _safe_int(seq_len)
-    cache = _safe_int(cache_len)
     vocab = _safe_int(vocab_size)
-    kv_heads = _safe_int(num_kv_heads)
-    dim = _safe_int(head_dim)
     layers = _safe_int(layer_count)
     token_shape = [batch, seq] if batch is not None and seq is not None else []
     token_vector = [batch] if batch is not None else []
@@ -4688,10 +4763,12 @@ def _expected_decode_output_shape_summary(
         else []
     )
     output_shape = logits_shape if normalized_output_kind == "logits" else token_shape
-    kv_shape = (
-        [batch, cache, kv_heads, dim]
-        if None not in (batch, cache, kv_heads, dim)
-        else []
+    kv_shape = _paged_kv_cache_shape(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+        page_block_size=page_block_size,
     )
     layer_ids = list(range(layers)) if layers is not None and layers > 0 else []
     return {

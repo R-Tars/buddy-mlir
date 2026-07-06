@@ -304,7 +304,19 @@ class ValidateDirectTest(unittest.TestCase):
                 [2, 1],
             )
             self.assertEqual(
+                report["decode_step_contract"]["max_num_blocks"],
+                2,
+            )
+            self.assertEqual(
                 report["decode_step_contract"]["kv_cache_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["kv_cache_physical_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                report["decode_step_contract"]["kv_cache_logical_shape"],
                 [2, 16, 2, 4],
             )
             self.assertEqual(
@@ -433,6 +445,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 evidence["decode_step_contract"]["kv_cache_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_physical_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_logical_shape"],
                 [2, 16, 2, 4],
             )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
@@ -560,9 +580,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "uses_paged_kv_cache": True,
                     "kv_page_block_size": 32,
                     "page_count": 1,
+                    "max_num_blocks": 2,
                     "page_table_shape": [2, 1],
                     "cache_position_shape": [2],
-                    "kv_cache_shape": [2, 16, 2, 4],
+                    "kv_cache_shape": [2, 2, 32, 4],
+                    "kv_cache_physical_shape": [2, 2, 32, 4],
+                    "kv_cache_logical_shape": [2, 16, 2, 4],
                     "kv_cache_layer_ids": [0],
                     "generation_template": "device_argmax_greedy",
                     "output_kind": "token",
@@ -704,11 +727,11 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 attention_step["output_shapes"]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 attention_step["output_shapes"]["value_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(attention_step["tensor_conversion_count"], 10)
             self.assertEqual(
@@ -915,6 +938,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_step_contract.max_num_blocks",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "decode_step_contract.page_table_shape",
                 acceptance_check_names,
             )
@@ -924,6 +951,14 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "decode_step_contract.kv_cache_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.kv_cache_physical_shape",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_contract.kv_cache_logical_shape",
                 acceptance_check_names,
             )
             self.assertIn(
@@ -1395,7 +1430,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 attention_report["output_shapes"]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 attention_report["tensor_conversion_count"],
@@ -1438,7 +1473,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(smoke_report["output_shapes"]["token"], [2, 1])
             self.assertEqual(
                 smoke_report["output_shapes"]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 [
@@ -1569,7 +1604,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(profile_report["output_shapes"]["token"], [2, 1])
             self.assertEqual(
                 profile_report["output_shapes"]["value_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 [
@@ -1740,6 +1775,18 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 evidence["decode_step_contract"]["kv_cache_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["max_num_blocks"],
+                2,
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_physical_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                evidence["decode_step_contract"]["kv_cache_logical_shape"],
                 [2, 16, 2, 4],
             )
             self.assertEqual(
@@ -1870,13 +1917,13 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["smoke_decode_step"][
                     "output_shapes"
                 ]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["profile_decode_step"][
                     "output_shapes"
                 ]["value_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertGreater(
                 evidence["runtime_evidence"]["profile_decode_step"][
@@ -1944,7 +1991,7 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["attention_layer"][
                     "output_shapes"
                 ]["key_cache"],
-                [2, 16, 2, 4],
+                [2, 2, 32, 4],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["attention_primitives"][

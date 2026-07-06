@@ -387,7 +387,15 @@ def _primitive_plan(
 ) -> dict[str, Any]:
     qkv_size = (num_heads + 2 * num_kv_heads) * head_dim
     kv_size = num_kv_heads * head_dim
-    page_count = max(1, (max_cache_len + 31) // 32)
+    page_block_size = 32
+    page_count = max(1, (max_cache_len + page_block_size - 1) // page_block_size)
+    max_num_blocks = batch_size * page_count
+    kv_cache_shape = [
+        max_num_blocks,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    ]
     plans = {
         "qkv_linear": {
             "input_shapes": {
@@ -421,20 +429,20 @@ def _primitive_plan(
         },
         "paged_update_cache": {
             "input_shapes": {
-                "cache": [batch_size, max_cache_len, num_kv_heads, head_dim],
+                "cache": kv_cache_shape,
                 "update": [batch_size, 1, num_kv_heads, head_dim],
                 "cache_position": [batch_size],
                 "page_table": [batch_size, page_count],
             },
             "expected_output_shapes": {
-                "cache": [batch_size, max_cache_len, num_kv_heads, head_dim],
+                "cache": kv_cache_shape,
             },
         },
         "paged_scaled_dot_product_attention_decode": {
             "input_shapes": {
                 "query": [batch_size, num_heads, 1, head_dim],
-                "key_cache": [batch_size, max_cache_len, num_kv_heads, head_dim],
-                "value_cache": [batch_size, max_cache_len, num_kv_heads, head_dim],
+                "key_cache": kv_cache_shape,
+                "value_cache": kv_cache_shape,
                 "page_table": [batch_size, page_count],
                 "cache_position": [batch_size],
             },

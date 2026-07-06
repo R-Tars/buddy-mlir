@@ -1126,7 +1126,11 @@ opening a TTNN device.
 generated decode path. The block makes the review Step 3 contract explicit:
 token input `[B, 1]`, decode `seq_len = 1`, paged KV-cache metadata, page
 table shape, cache-position shape, per-layer KV-cache shape, and whether the
-generated output is a token or retained logits.
+generated output is a token or retained logits. For paged attention, the
+contract distinguishes logical cache length from the physical TT-Transformers
+cache tensor shape: `page_count = ceil(cache_len / page_block_size)`,
+`max_num_blocks = batch * page_count`, and each K/V cache tensor is planned as
+`[max_num_blocks, num_kv_heads, page_block_size, head_dim]`.
 
 For the P150A Llama 3.1 8B batch32 target, run the real validation without a
 small-batch override and require the batch32 contract:

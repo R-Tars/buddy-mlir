@@ -55,6 +55,14 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                 report["input_shapes"]["query"],
                 [32, 32, 1, 128],
             )
+            self.assertEqual(
+                report["input_shapes"]["key_cache"],
+                [1024, 8, 32, 128],
+            )
+            self.assertEqual(
+                report["input_shapes"]["page_table"],
+                [32, 32],
+            )
             self.assertEqual(report["layout"], "tile")
             self.assertEqual(report["dtype"], "bfloat16")
             self.assertEqual(report["memory_config"], "default_or_l1")
