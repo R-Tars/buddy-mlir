@@ -699,6 +699,9 @@ def validate_real_decode(
     program_num_layers = int(program_config["num_layers"])
     program_batch_size = int(program_config["batch_size"])
     program_cache_len = int(program_config["max_cache_len"])
+    program_seq_len = int(program_config.get("seq_len", 1))
+    program_num_kv_heads = int(program_config["num_key_value_heads"])
+    program_head_dim = int(program_config["head_dim"])
     if layer_count > program_num_layers:
         raise ValueError(
             "layers must be <= generated config num_layers "
@@ -750,6 +753,9 @@ def validate_real_decode(
         "program_num_layers": program_num_layers,
         "program_batch_size": program_batch_size,
         "program_cache_len": program_cache_len,
+        "program_seq_len": program_seq_len,
+        "program_num_key_value_heads": program_num_kv_heads,
+        "program_head_dim": program_head_dim,
         "layers": layer_count,
         "requested_batch_size": batch_size,
         "requested_cache_len": cache_len,
@@ -1071,6 +1077,7 @@ def validate_real_decode(
             "tensor_conversion_count": smoke_report.get(
                 "tensor_conversion_count"
             ),
+            "output_shapes": smoke_report.get("output_shapes"),
             "trace_status": smoke_report.get("trace", {}).get("status"),
             "trace": _trace_summary(smoke_report.get("trace")),
             "ttnn_environment": smoke_report.get("ttnn_environment"),
@@ -1117,6 +1124,7 @@ def validate_real_decode(
             "section_latency_ms": profile_report.get("section_latency_ms"),
             "layer_profiles": profile_report.get("layer_profiles", []),
             "lm_head_profile": profile_report.get("lm_head_profile"),
+            "output_shapes": profile_report.get("output_shapes"),
             "throughput_summary": profile_report.get("throughput_summary"),
             "bottleneck_summary": bottleneck,
             "max_section": bottleneck.get("max_section"),
@@ -1433,6 +1441,11 @@ def _real_decode_evidence_manifest(
             "program_num_layers": report.get("program_num_layers"),
             "program_batch_size": report.get("program_batch_size"),
             "program_cache_len": report.get("program_cache_len"),
+            "program_seq_len": report.get("program_seq_len"),
+            "program_num_key_value_heads": report.get(
+                "program_num_key_value_heads"
+            ),
+            "program_head_dim": report.get("program_head_dim"),
             "layers": report.get("layers"),
             "requested_batch_size": report.get("requested_batch_size"),
             "requested_cache_len": report.get("requested_cache_len"),
@@ -1625,6 +1638,7 @@ def _real_decode_evidence_manifest(
                 "tensor_conversion_count": smoke.get(
                     "tensor_conversion_count"
                 ),
+                "output_shapes": smoke.get("output_shapes"),
                 "trace_status": smoke.get("trace_status"),
                 "trace": smoke.get("trace"),
                 "reference_status": smoke.get("reference_status"),
@@ -1655,6 +1669,7 @@ def _real_decode_evidence_manifest(
                 "section_latency_ms": profile.get("section_latency_ms"),
                 "layer_profiles": profile.get("layer_profiles", []),
                 "lm_head_profile": profile.get("lm_head_profile"),
+                "output_shapes": profile.get("output_shapes"),
                 "trace_status": profile.get("trace_status"),
                 "trace": profile.get("trace"),
                 "reference_status": profile.get("reference_status"),
@@ -1851,6 +1866,9 @@ def _real_decode_acceptance(
     program_num_layers = report.get("program_num_layers")
     program_batch_size = report.get("program_batch_size")
     program_cache_len = report.get("program_cache_len")
+    program_seq_len = report.get("program_seq_len")
+    program_num_kv_heads = report.get("program_num_key_value_heads")
+    program_head_dim = report.get("program_head_dim")
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
@@ -2084,6 +2102,29 @@ def _real_decode_acceptance(
             expected="passed",
         ),
         _acceptance_check(
+            "single_layer_decode.output_shapes",
+            _decode_output_shapes_complete(
+                single_layer.get("output_shapes"),
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+            observed=_decode_output_shape_observed(
+                single_layer.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+        ),
+        _acceptance_check(
             "single_layer_decode.observed_op_sequence",
             _observed_ops_cover_planned(
                 single_layer.get("reference_planned_ops"),
@@ -2203,6 +2244,29 @@ def _real_decode_acceptance(
             smoke.get("reference_status") == "passed",
             observed=smoke.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.output_shapes",
+            _decode_output_shapes_complete(
+                smoke.get("output_shapes"),
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+            observed=_decode_output_shape_observed(
+                smoke.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
         ),
         _acceptance_check(
             "smoke_decode_step.observed_op_sequence",
@@ -2330,6 +2394,29 @@ def _real_decode_acceptance(
             profile.get("reference_status") == "passed",
             observed=profile.get("reference_status"),
             expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.output_shapes",
+            _decode_output_shapes_complete(
+                profile.get("output_shapes"),
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+            observed=_decode_output_shape_observed(
+                profile.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
         ),
         _acceptance_check(
             "profile_decode_step.observed_op_sequence",
@@ -2809,6 +2896,134 @@ def _step_synthetic_runtime_input_count(step: dict[str, Any]) -> Any:
     if not isinstance(setup, dict):
         return None
     return setup.get("synthetic_runtime_input_tensor_count")
+
+
+def _decode_output_shapes_complete(
+    output_shapes: Any,
+    *,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+) -> bool:
+    expected = _expected_decode_output_shape_summary(
+        layer_count=layer_count,
+        batch_size=batch_size,
+        seq_len=seq_len,
+        cache_len=cache_len,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+    )
+    if not isinstance(output_shapes, dict):
+        return False
+    token_shape = _int_list(output_shapes.get("token"))
+    if token_shape not in expected["accepted_token_shapes"]:
+        return False
+    if _int_list(output_shapes.get("key_cache")) != expected["kv_cache_shape"]:
+        return False
+    if _int_list(output_shapes.get("value_cache")) != expected["kv_cache_shape"]:
+        return False
+    layers = output_shapes.get("kv_cache_layers")
+    if not isinstance(layers, list):
+        return False
+    if len(layers) != len(expected["kv_cache_layer_ids"]):
+        return False
+    observed_layer_ids = []
+    for layer in layers:
+        if not isinstance(layer, dict):
+            return False
+        try:
+            layer_id = int(layer["layer_id"])
+        except (KeyError, TypeError, ValueError):
+            return False
+        observed_layer_ids.append(layer_id)
+        if _int_list(layer.get("key_cache")) != expected["kv_cache_shape"]:
+            return False
+        if _int_list(layer.get("value_cache")) != expected["kv_cache_shape"]:
+            return False
+    return observed_layer_ids == expected["kv_cache_layer_ids"]
+
+
+def _expected_decode_output_shape_summary(
+    *,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+) -> dict[str, Any]:
+    batch = _safe_int(batch_size)
+    seq = _safe_int(seq_len)
+    cache = _safe_int(cache_len)
+    kv_heads = _safe_int(num_kv_heads)
+    dim = _safe_int(head_dim)
+    layers = _safe_int(layer_count)
+    token_shape = [batch, seq] if batch is not None and seq is not None else []
+    token_vector = [batch] if batch is not None else []
+    kv_shape = (
+        [batch, cache, kv_heads, dim]
+        if None not in (batch, cache, kv_heads, dim)
+        else []
+    )
+    layer_ids = list(range(layers)) if layers is not None and layers > 0 else []
+    return {
+        "accepted_token_shapes": [
+            shape for shape in (token_shape, token_vector) if shape
+        ],
+        "kv_cache_shape": kv_shape,
+        "kv_cache_layer_ids": layer_ids,
+    }
+
+
+def _decode_output_shape_observed(output_shapes: Any) -> dict[str, Any]:
+    if not isinstance(output_shapes, dict):
+        return {}
+    layers = output_shapes.get("kv_cache_layers")
+    return {
+        "token": _int_list(output_shapes.get("token")),
+        "key_cache": _int_list(output_shapes.get("key_cache")),
+        "value_cache": _int_list(output_shapes.get("value_cache")),
+        "kv_cache_layer_ids": [
+            _safe_int(layer.get("layer_id"))
+            for layer in layers
+            if isinstance(layer, dict)
+        ]
+        if isinstance(layers, list)
+        else [],
+        "kv_cache_layer_shapes": [
+            {
+                "layer_id": _safe_int(layer.get("layer_id")),
+                "key_cache": _int_list(layer.get("key_cache")),
+                "value_cache": _int_list(layer.get("value_cache")),
+            }
+            for layer in layers
+            if isinstance(layer, dict)
+        ]
+        if isinstance(layers, list)
+        else [],
+    }
+
+
+def _int_list(value: Any) -> list[int]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    result = []
+    for item in value:
+        converted = _safe_int(item)
+        if converted is None:
+            return []
+        result.append(converted)
+    return result
+
+
+def _safe_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:

@@ -639,7 +639,8 @@ cache position, and paged KV cache, official config diff evidence,
 layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/single-layer/smoke/profile runtime status, decode-step tensor conversion
-counts, optional full-depth and program runtime-shape requirements, shell
+counts, output token and paged KV-cache shapes, optional full-depth and
+program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
 weight paths for single-layer/smoke/profile, decode-step structural
