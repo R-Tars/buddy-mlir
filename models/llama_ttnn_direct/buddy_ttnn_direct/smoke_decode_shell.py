@@ -120,6 +120,7 @@ def run_smoke_decode_shell(
         with _maybe_managed_device(ttnn, device_id, ttnn_module) as ttnn_device:
             shell_params = parameters
             host_reference_params = reference_parameters
+            parameter_setup = None
             parameter_source = "injected" if shell_params is not None else "hf_model"
             if shell_params is None:
                 if model_path is None:
@@ -135,13 +136,21 @@ def run_smoke_decode_shell(
                 )
                 if host_reference_params is None:
                     host_reference_params = host_params
-                shell_params = _tensorize_shell_parameters(
+                tensorization_result = _tensorize_shell_parameters(
                     ttnn,
                     host_params,
                     load_parameter_config_from_program(program_root),
                     ttnn_device,
                     layer_count,
                 )
+                assert tensorization_result.parameters is not None
+                shell_params = tensorization_result.parameters
+                parameter_setup = {
+                    "materialization": _materialization_summary(host_params),
+                    "tensorization": _tensorization_summary(
+                        tensorization_result.report
+                    ),
+                }
             runtime_token_ids = token_ids
             runtime_input_tensor_count = 0
             input_source = "injected"
@@ -177,6 +186,8 @@ def run_smoke_decode_shell(
                 )
             }
             report["runtime_input_tensor_count"] = runtime_input_tensor_count
+            if parameter_setup is not None:
+                report["parameter_setup"] = parameter_setup
             report.update(
                 {
                     **_base_report(
@@ -312,8 +323,8 @@ def _tensorize_shell_parameters(
     parameter_config: dict[str, Any],
     device: Any,
     layer_count: int,
-) -> SimpleNamespace:
-    result = to_ttnn_parameters(
+) -> Any:
+    return to_ttnn_parameters(
         host_params,
         device,
         parameter_config,
@@ -321,8 +332,6 @@ def _tensorize_shell_parameters(
         layers=range(layer_count),
         ttnn_module=ttnn,
     )
-    assert result.parameters is not None
-    return result.parameters
 
 
 def _load_torch_for_runtime_inputs(torch_module: Any | None) -> Any:
@@ -383,6 +392,124 @@ def _decode_shell_input_shapes(config: dict[str, Any]) -> dict[str, list[int]]:
     return {
         "token_ids": [int(config["batch_size"]), int(config["seq_len"])]
     }
+
+
+def _materialization_summary(params: Any) -> dict[str, Any]:
+    metadata = dict(getattr(params, "metadata", {}))
+    tensors = metadata.get("tensors", {})
+    key_paths = [
+        path
+        for path in _decode_shell_key_tensor_paths()
+        if isinstance(tensors, dict) and path in tensors
+    ]
+    return {
+        "backend": metadata.get("backend"),
+        "model_name": metadata.get("model_name"),
+        "num_layers": metadata.get("num_layers"),
+        "materialized_layer_ids": list(
+            metadata.get("materialized_layer_ids", [])
+        ),
+        "tensor_count": metadata.get("tensor_count"),
+        "key_paths": key_paths,
+    }
+
+
+def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
+    tensors = [
+        record
+        for record in report.get("tensors", [])
+        if isinstance(record, dict)
+    ]
+    tensor_paths = sorted(
+        str(record["path"])
+        for record in tensors
+        if record.get("path") is not None
+    )
+    key_paths = [
+        record["path"]
+        for record in tensors
+        if record.get("path") in _decode_shell_key_tensor_paths()
+    ]
+    key_tensor_records = {}
+    for record in tensors:
+        path = record.get("path")
+        if path not in key_paths:
+            continue
+        key_tensor_records[path] = {
+            "role": record.get("role"),
+            "role_group": record.get("role_group"),
+            "target_dtype": record.get("target_dtype"),
+            "layout": record.get("layout"),
+            "memory_config": record.get("memory_config"),
+            "ttnn_dtype": record.get("ttnn_dtype"),
+            "ttnn_layout": record.get("ttnn_layout"),
+            "ttnn_memory_config": record.get("ttnn_memory_config"),
+            "transform": record.get("transform"),
+            "source_shape": record.get("source_shape"),
+            "shape": record.get("shape"),
+        }
+    return {
+        "status": report.get("status"),
+        "backend": "ttnn",
+        "roles": list(report.get("roles", [])),
+        "tensor_count": report.get("tensor_count"),
+        "target_dtype_counts": _field_counts(tensors, "target_dtype"),
+        "layout_counts": _field_counts(tensors, "layout"),
+        "memory_config_counts": _field_counts(tensors, "memory_config"),
+        "transform_counts": _field_counts(tensors, "transform"),
+        "transform_paths_by_kind": _paths_by_field_value(
+            tensors,
+            "transform",
+        ),
+        "ttnn_dtype_counts": _field_counts(tensors, "ttnn_dtype"),
+        "ttnn_layout_counts": _field_counts(tensors, "ttnn_layout"),
+        "ttnn_memory_config_counts": _field_counts(
+            tensors,
+            "ttnn_memory_config",
+        ),
+        "tensor_paths": tensor_paths,
+        "key_paths": key_paths,
+        "key_tensors": key_tensor_records,
+    }
+
+
+def _decode_shell_key_tensor_paths() -> tuple[str, ...]:
+    return (
+        "embedding.weight",
+        "layers.0.input_norm.weight",
+        "layers.0.post_attention_norm.weight",
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight",
+        "layers.0.mlp.down_proj.weight",
+        "final_norm.weight",
+        "lm_head.splits.0.weight",
+    )
+
+
+def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for record in records:
+        value = record.get(field)
+        if value is None:
+            continue
+        value = str(value)
+        counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _paths_by_field_value(
+    records: list[dict[str, Any]],
+    field: str,
+) -> dict[str, list[str]]:
+    paths: dict[str, list[str]] = {}
+    for record in records:
+        value = record.get(field)
+        path = record.get("path")
+        if value is None or path is None:
+            continue
+        value = str(value)
+        paths.setdefault(value, []).append(str(path))
+    return {value: sorted(items) for value, items in sorted(paths.items())}
 
 
 @contextmanager

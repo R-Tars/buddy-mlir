@@ -856,7 +856,10 @@ parameters or `ttnn.to_torch` output conversion are unavailable,
 `numeric_reference.status` remains `not_run` with the reason recorded. Reports
 also record `input_source`, `input_shapes.token_ids`, and
 `runtime_input_tensor_count` so real device bring-up can distinguish injected
-inputs from synthesized runtime inputs.
+inputs from synthesized runtime inputs. When `--model-path` is used, the shell
+report also records compact materialization and tensorization evidence,
+including tensorized role groups, required tensor paths, transform counts, and
+key 4D weight shapes.
 
 ## Phase 2 PR-E: Attention Primitive Smoke
 

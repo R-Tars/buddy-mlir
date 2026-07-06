@@ -1014,6 +1014,26 @@ def validate_real_decode(
             ),
         }
 
+    def decode_shell_tensorization_path_detail(
+        runtime_report: dict[str, Any],
+    ) -> dict[str, Any]:
+        setup = runtime_report.get("parameter_setup") or {}
+        tensorization = setup.get("tensorization") or {}
+        if not isinstance(tensorization, dict):
+            tensorization = {}
+        required_tensor_paths = _required_decode_shell_tensorized_tensor_paths(
+            layer_count=layer_count,
+            lm_head_split_count=materialized_lm_head_split_count(),
+        )
+        tensorized_tensor_paths = _tensorized_tensor_paths(tensorization)
+        return {
+            "tensorized_tensor_paths": tensorized_tensor_paths,
+            "required_tensorized_tensor_paths": required_tensor_paths,
+            "missing_required_tensorized_tensor_paths": sorted(
+                set(required_tensor_paths) - set(tensorized_tensor_paths)
+            ),
+        }
+
     def decode_shell_step() -> dict[str, Any]:
         shell_report = run_smoke_decode_shell(
             out=paths["decode_shell_report"],
@@ -1048,6 +1068,8 @@ def validate_real_decode(
                 "pcc_threshold",
                 decode_shell_pcc_threshold,
             ),
+            "parameter_setup": shell_report.get("parameter_setup"),
+            **decode_shell_tensorization_path_detail(shell_report),
             **_reference_summary(shell_report),
         }
 
@@ -1574,6 +1596,33 @@ def _required_tensorized_tensor_paths(
     return paths
 
 
+def _required_decode_shell_tensorized_tensor_paths(
+    *,
+    layer_count: int,
+    lm_head_split_count: int | None,
+) -> list[str]:
+    paths = [
+        "embedding.weight",
+        "final_norm.weight",
+    ]
+    for layer_id in range(layer_count):
+        paths.extend(
+            [
+                f"layers.{layer_id}.mlp.gate_proj.weight",
+                f"layers.{layer_id}.mlp.up_proj.weight",
+                f"layers.{layer_id}.mlp.down_proj.weight",
+                f"layers.{layer_id}.input_norm.weight",
+                f"layers.{layer_id}.post_attention_norm.weight",
+            ]
+        )
+    if lm_head_split_count is not None:
+        paths.extend(
+            f"lm_head.splits.{shard_id}.weight"
+            for shard_id in range(int(lm_head_split_count))
+        )
+    return paths
+
+
 def _materialization_key_tensors(
     tensors: dict[str, Any],
     required_tensor_paths: list[str],
@@ -1810,6 +1859,9 @@ def _real_decode_evidence_manifest(
                 ),
                 "key_tensors": materialize.get("key_tensors", {}),
             },
+            "decode_shell_tensorization": _tensorization_evidence(
+                decode_shell
+            ),
             "single_layer_tensorization": _tensorization_evidence(
                 single_layer
             ),
@@ -2259,6 +2311,7 @@ def _real_decode_acceptance(
     autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
     single_layer_tensorization = _step_tensorization_summary(single_layer)
+    decode_shell_tensorization = _step_tensorization_summary(decode_shell)
     smoke_tensorization = _step_tensorization_summary(smoke)
     profile_tensorization = _step_tensorization_summary(profile)
     attention_primitives_environment = _step_ttnn_environment(
@@ -2519,6 +2572,49 @@ def _real_decode_acceptance(
             ),
             observed=decode_shell.get("reference_observed_ops"),
             expected=decode_shell.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "decode_shell.tensorization_status",
+            decode_shell_tensorization.get("status") == "pass",
+            observed=decode_shell_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "decode_shell.tensorization_roles",
+            decode_shell_tensorization.get("roles")
+            == ["embedding", "norm", "mlp", "lm_head"],
+            observed=decode_shell_tensorization.get("roles"),
+            expected=["embedding", "norm", "mlp", "lm_head"],
+        ),
+        _acceptance_check(
+            "decode_shell.required_tensorized_tensor_paths",
+            decode_shell.get("missing_required_tensorized_tensor_paths") == [],
+            observed=decode_shell.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "decode_shell.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+            ),
+        ),
+        _acceptance_check(
+            "decode_shell.linear_weight_transforms",
+            _decode_shell_linear_weight_transform_complete(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+                split_count=materialize.get("lm_head_split_count"),
+            ),
+            observed=_decode_shell_linear_weight_transform_observed(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+                split_count=materialize.get("lm_head_split_count"),
+            ),
         ),
         _acceptance_check(
             "attention_primitives.primitive_count",
@@ -4055,6 +4151,69 @@ def _linear_weight_transform_paths(layer_count: Any) -> list[str]:
     return paths
 
 
+def _decode_shell_linear_weight_transform_complete(
+    tensorization: Any,
+    *,
+    layer_count: Any,
+    split_count: Any,
+) -> bool:
+    if not isinstance(tensorization, dict):
+        return False
+    expected_paths = set(
+        _decode_shell_linear_weight_transform_paths(
+            layer_count,
+            split_count,
+        )
+    )
+    if not expected_paths:
+        return False
+    transformed_paths = _transformed_tensor_paths(
+        tensorization,
+        LINEAR_WEIGHT_TRANSFORM,
+    )
+    if not expected_paths.issubset(transformed_paths):
+        return False
+    key_tensors = tensorization.get("key_tensors")
+    if not isinstance(key_tensors, dict):
+        return False
+    for key_path in (
+        "layers.0.mlp.gate_proj.weight",
+        "layers.0.mlp.up_proj.weight",
+        "layers.0.mlp.down_proj.weight",
+        "lm_head.splits.0.weight",
+    ):
+        tensor = key_tensors.get(key_path)
+        if isinstance(tensor, dict):
+            if tensor.get("transform") != LINEAR_WEIGHT_TRANSFORM:
+                return False
+            shape = tensor.get("shape")
+            if not isinstance(shape, list) or len(shape) != 4:
+                return False
+    return True
+
+
+def _decode_shell_linear_weight_transform_paths(
+    layer_count: Any,
+    split_count: Any,
+) -> list[str]:
+    paths: list[str] = []
+    for layer_id in _expected_layer_ids(layer_count):
+        paths.extend(
+            [
+                f"layers.{layer_id}.mlp.gate_proj.weight",
+                f"layers.{layer_id}.mlp.up_proj.weight",
+                f"layers.{layer_id}.mlp.down_proj.weight",
+            ]
+        )
+    split_count_int = _safe_int(split_count)
+    if split_count_int is not None and split_count_int > 0:
+        paths.extend(
+            f"lm_head.splits.{shard_id}.weight"
+            for shard_id in range(split_count_int)
+        )
+    return paths
+
+
 def _transformed_tensor_paths(
     tensorization: dict[str, Any],
     transform: str,
@@ -4071,6 +4230,39 @@ def _transformed_tensor_paths(
         str(path)
         for path, tensor in key_tensors.items()
         if isinstance(tensor, dict) and tensor.get("transform") == transform
+    }
+
+
+def _decode_shell_linear_weight_transform_observed(
+    tensorization: Any,
+    *,
+    layer_count: Any,
+    split_count: Any,
+) -> dict[str, Any]:
+    if not isinstance(tensorization, dict):
+        return {}
+    expected_paths = _decode_shell_linear_weight_transform_paths(
+        layer_count,
+        split_count,
+    )
+    transformed_paths = sorted(
+        _transformed_tensor_paths(tensorization, LINEAR_WEIGHT_TRANSFORM)
+    )
+    key_tensors = tensorization.get("key_tensors")
+    key_observed = {}
+    if isinstance(key_tensors, dict):
+        for path in expected_paths:
+            tensor = key_tensors.get(path)
+            if isinstance(tensor, dict):
+                key_observed[path] = {
+                    "transform": tensor.get("transform"),
+                    "source_shape": tensor.get("source_shape"),
+                    "shape": tensor.get("shape"),
+                }
+    return {
+        "expected_paths": expected_paths,
+        "transformed_paths": transformed_paths,
+        "key_tensors": key_observed,
     }
 
 

@@ -20,6 +20,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_decode_shell import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
     _fake_torch,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+    _fake_torch_and_safetensors,
+    _fake_weight_specs,
+    _write_fake_model_weights,
+)
 
 
 class SmokeDecodeShellTest(unittest.TestCase):
@@ -320,6 +325,85 @@ class SmokeDecodeShellTest(unittest.TestCase):
             )
             self.assertEqual(fake_ttnn.calls[1]["op"], "embedding")
             self.assertIsInstance(fake_ttnn.calls[1]["token_ids"], FakeTensor)
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
+    def test_run_smoke_decode_shell_reports_real_weight_tensorization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_shell_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            with _fake_torch_and_safetensors():
+                report = run_smoke_decode_shell(
+                    out=report_json,
+                    program_dir=program_dir,
+                    layers=1,
+                    disable_attention=True,
+                    device="p150a",
+                    model_path=model_dir,
+                    ttnn_module=fake_ttnn,
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["parameter_source"], "hf_model")
+            setup = report["parameter_setup"]
+            self.assertEqual(
+                setup["materialization"]["materialized_layer_ids"],
+                [0],
+            )
+            self.assertEqual(setup["materialization"]["tensor_count"], 21)
+            self.assertEqual(
+                setup["tensorization"]["roles"],
+                ["embedding", "norm", "mlp", "lm_head"],
+            )
+            self.assertEqual(setup["tensorization"]["tensor_count"], 15)
+            self.assertEqual(
+                setup["tensorization"]["transform_counts"],
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d_to_4d": 11,
+                },
+            )
+            self.assertIn(
+                "layers.0.mlp.up_proj.weight",
+                setup["tensorization"]["transform_paths_by_kind"][
+                    "transpose_2d_to_4d"
+                ],
+            )
+            self.assertEqual(
+                setup["tensorization"]["key_tensors"][
+                    "layers.0.mlp.up_proj.weight"
+                ]["shape"],
+                [1, 1, 16, 32],
+            )
+            self.assertEqual(
+                setup["tensorization"]["key_tensors"][
+                    "lm_head.splits.0.weight"
+                ]["shape"],
+                [1, 1, 16, 16],
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
 

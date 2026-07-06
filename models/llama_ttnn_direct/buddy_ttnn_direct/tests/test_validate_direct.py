@@ -663,6 +663,28 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["decode_shell"]["numeric_reference_status"],
                 "not_run",
             )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["parameter_setup"][
+                    "tensorization"
+                ]["roles"],
+                ["embedding", "norm", "mlp", "lm_head"],
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["parameter_setup"][
+                    "tensorization"
+                ]["transform_counts"],
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d_to_4d": 11,
+                },
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"][
+                    "missing_required_tensorized_tensor_paths"
+                ],
+                [],
+            )
             primitive_step = report["steps"]["attention_primitives"]
             self.assertEqual(primitive_step["status"], "pass")
             self.assertEqual(
@@ -1848,6 +1870,22 @@ class ValidateDirectTest(unittest.TestCase):
                     "key_tensors"
                 ]["lm_head.splits.0.weight"]["source_read"],
                 "sliced_tensor",
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["decode_shell_tensorization"][
+                    "transform_counts"
+                ],
+                {
+                    "reshape_embedding_weight_4d": 1,
+                    "reshape_norm_weight_4d": 3,
+                    "transpose_2d_to_4d": 11,
+                },
+            )
+            self.assertEqual(
+                evidence["weight_evidence"]["decode_shell_tensorization"][
+                    "missing_required_tensorized_tensor_paths"
+                ],
+                [],
             )
             self.assertEqual(
                 evidence["weight_evidence"]["smoke_tensorization"][
