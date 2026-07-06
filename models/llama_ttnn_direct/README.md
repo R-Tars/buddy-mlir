@@ -691,7 +691,8 @@ attention/MLP timing records, bottleneck summary, positive profile throughput,
 and, unless
 `--skip-autotune` is used, real-weight decode-step autotune knob coverage and
 a complete `output_kind_counts` summary for the generation templates under
-test, plus a best candidate with a passed structural reference. When a
+test, every profiled autotune candidate's real-weight/profile/reference/shape
+evidence, plus a best candidate with a passed structural reference. When a
 throughput baseline is supplied, the
 evidence also records the observed/baseline ratio and gates it against the
 requested floor before marking the validation as accepted.
@@ -1292,7 +1293,12 @@ report. `knob_coverage` also records `varied_knobs`,
 `missing_varied_knobs`, and `all_knobs_varied`; the bundled default
 `decode_step_minimal.json` validation gate requires all five review knobs to
 vary at least once. Candidates whose profile report does not pass the
-structural reference gate are not considered for `best`.
+structural reference gate are not considered for `best`. In
+`validate-real-decode`, autotune acceptance also checks every candidate
+summary, not just `best`: each candidate must be profiled with HF parameters,
+pass its structural reference, report a valid output kind and decode/KV-cache
+shape summary, include LM-head and bottleneck profile evidence, and, when
+trace is required, show `captured_and_executed` trace status.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate

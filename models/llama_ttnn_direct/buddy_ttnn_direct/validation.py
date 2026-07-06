@@ -1465,6 +1465,9 @@ def validate_real_decode(
                 "output_kind_counts",
                 {},
             ),
+            "candidate_summaries": _autotune_candidate_summaries(
+                autotune_report.get("candidates")
+            ),
             "knob_coverage": autotune_report.get("knob_coverage"),
             "default_search_space": decode_step_search_space_is_default,
             "all_knobs_varied": (
@@ -2234,6 +2237,10 @@ def _real_decode_evidence_manifest(
                 "output_kind_counts": autotune.get(
                     "output_kind_counts",
                     {},
+                ),
+                "candidate_summaries": autotune.get(
+                    "candidate_summaries",
+                    [],
                 ),
                 "knob_coverage": autotune.get("knob_coverage"),
                 "default_search_space": autotune.get(
@@ -4229,6 +4236,40 @@ def _real_decode_acceptance(
                     expected="output kinds implied by generation_template",
                 ),
                 _acceptance_check(
+                    "decode_step_autotune.candidates",
+                    _autotune_candidates_complete(
+                        autotune.get("candidate_summaries"),
+                        candidate_count=autotune.get("candidate_count"),
+                        layer_count=expected_layers,
+                        batch_size=expected_batch_size,
+                        seq_len=program_seq_len,
+                        cache_len=expected_cache_len,
+                        vocab_size=report.get("program_vocab_size"),
+                        num_kv_heads=program_num_kv_heads,
+                        head_dim=program_head_dim,
+                        page_block_size=decode_contract.get(
+                            "kv_page_block_size"
+                        ),
+                        out_dir=report.get("out_dir"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_candidates_observed(
+                        autotune.get("candidate_summaries")
+                    ),
+                    expected={
+                        "candidate_count": autotune.get("candidate_count"),
+                        "status": "profiled",
+                        "passed": True,
+                        "parameter_source": "hf_model",
+                        "reference_status": "passed",
+                        "trace_status": (
+                            "captured_and_executed"
+                            if require_trace
+                            else None
+                        ),
+                    },
+                ),
+                _acceptance_check(
                     "decode_step_autotune.passed_candidate_count",
                     _positive_number(autotune.get("passed_candidate_count")),
                     observed=autotune.get("passed_candidate_count"),
@@ -4332,6 +4373,24 @@ def _paths_exist(paths: Any) -> bool:
     if not isinstance(paths, list) or not paths:
         return False
     return all(_path_exists(path) for path in paths)
+
+
+def _path_exists_relative_to(path: Any, base_dir: Any) -> bool:
+    if _path_exists(path):
+        return True
+    if path is None or base_dir is None:
+        return False
+    try:
+        candidate = Path(base_dir) / Path(path)
+    except (TypeError, ValueError):
+        return False
+    return candidate.exists()
+
+
+def _paths_exist_relative_to(paths: Any, base_dir: Any) -> bool:
+    if not isinstance(paths, list) or not paths:
+        return False
+    return all(_path_exists_relative_to(path, base_dir) for path in paths)
 
 
 def _status_count_matches_total(
@@ -5069,6 +5128,183 @@ def _autotune_output_kind_counts_observed(
         "counts": counts if isinstance(counts, dict) else {},
         "expected_output_kinds": _autotune_expected_output_kinds(coverage),
     }
+
+
+def _autotune_candidate_summaries(candidates: Any) -> list[dict[str, Any]]:
+    if not isinstance(candidates, list):
+        return []
+    summaries = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        summaries.append(
+            {
+                "id": candidate.get("id"),
+                "config": candidate.get("config"),
+                "model": candidate.get("model"),
+                "profile_metadata": candidate.get("profile_metadata", []),
+                "profile_report": candidate.get("profile_report"),
+                "knobs": candidate.get("knobs"),
+                "status": candidate.get("status"),
+                "passed": candidate.get("passed"),
+                "metric": candidate.get("metric"),
+                "output_kind": candidate.get("output_kind"),
+                "output_shapes": candidate.get("output_shapes"),
+                "lm_head_profile": candidate.get("lm_head_profile"),
+                "bottleneck_summary": candidate.get("bottleneck_summary"),
+                "parameter_source": candidate.get("parameter_source"),
+                "trace_status": candidate.get("trace_status"),
+                "reference_status": candidate.get("reference_status"),
+                "reference_kind": candidate.get("reference_kind"),
+                "reference_failed_checks": candidate.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+                "error": candidate.get("error"),
+            }
+        )
+    return summaries
+
+
+def _autotune_candidates_complete(
+    candidates: Any,
+    *,
+    candidate_count: Any,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    vocab_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    page_block_size: Any,
+    out_dir: Any,
+    require_trace: bool,
+) -> bool:
+    if not isinstance(candidates, list) or not candidates:
+        return False
+    if not _int_equal(len(candidates), candidate_count):
+        return False
+    candidate_ids = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return False
+        candidate_id = candidate.get("id")
+        if not _non_empty_string(candidate_id):
+            return False
+        candidate_ids.append(candidate_id)
+        if not _autotune_candidate_complete(
+            candidate,
+            layer_count=layer_count,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            cache_len=cache_len,
+            vocab_size=vocab_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            page_block_size=page_block_size,
+            out_dir=out_dir,
+            require_trace=require_trace,
+        ):
+            return False
+    return len(candidate_ids) == len(set(candidate_ids))
+
+
+def _autotune_candidate_complete(
+    candidate: dict[str, Any],
+    *,
+    layer_count: Any,
+    batch_size: Any,
+    seq_len: Any,
+    cache_len: Any,
+    vocab_size: Any,
+    num_kv_heads: Any,
+    head_dim: Any,
+    page_block_size: Any,
+    out_dir: Any,
+    require_trace: bool,
+) -> bool:
+    output_kind = candidate.get("output_kind")
+    if output_kind not in {"token", "logits"}:
+        return False
+    knobs = candidate.get("knobs")
+    if not isinstance(knobs, dict) or not _contains_all(
+        list(knobs),
+        DECODE_STEP_AUTOTUNE_KNOBS,
+    ):
+        return False
+    if not (
+        candidate.get("status") == "profiled"
+        and candidate.get("passed") is True
+        and candidate.get("parameter_source") == "hf_model"
+        and candidate.get("reference_status") == "passed"
+        and candidate.get("reference_failed_checks") == []
+        and candidate.get("error") is None
+        and _nonnegative_number(candidate.get("metric"))
+        and _path_exists_relative_to(candidate.get("config"), out_dir)
+        and _path_exists_relative_to(candidate.get("model"), out_dir)
+        and _path_exists_relative_to(candidate.get("profile_report"), out_dir)
+        and _paths_exist_relative_to(candidate.get("profile_metadata"), out_dir)
+        and _lm_head_profile_complete(
+            candidate.get("lm_head_profile"),
+            output_kind=output_kind,
+        )
+        and _bottleneck_summary_complete(candidate.get("bottleneck_summary"))
+        and _decode_output_shapes_complete(
+            candidate.get("output_shapes"),
+            layer_count=layer_count,
+            batch_size=batch_size,
+            seq_len=seq_len,
+            cache_len=cache_len,
+            vocab_size=vocab_size,
+            num_kv_heads=num_kv_heads,
+            head_dim=head_dim,
+            output_kind=output_kind,
+            page_block_size=page_block_size,
+        )
+    ):
+        return False
+    if require_trace:
+        return candidate.get("trace_status") == "captured_and_executed"
+    return True
+
+
+def _autotune_candidates_observed(
+    candidates: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(candidates, list):
+        return []
+    observed = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        observed.append(
+            {
+                "id": candidate.get("id"),
+                "status": candidate.get("status"),
+                "passed": candidate.get("passed"),
+                "metric": candidate.get("metric"),
+                "output_kind": candidate.get("output_kind"),
+                "parameter_source": candidate.get("parameter_source"),
+                "trace_status": candidate.get("trace_status"),
+                "reference_status": candidate.get("reference_status"),
+                "reference_failed_checks": candidate.get(
+                    "reference_failed_checks"
+                ),
+                "error": candidate.get("error"),
+                "knobs": candidate.get("knobs"),
+                "output_shapes": _decode_output_shape_observed(
+                    candidate.get("output_shapes")
+                ),
+                "lm_head_profile": _lm_head_profile_observed(
+                    candidate.get("lm_head_profile")
+                ),
+                "bottleneck": _bottleneck_summary_observed(
+                    candidate.get("bottleneck_summary")
+                ),
+            }
+        )
+    return observed
 
 
 def _autotune_expected_output_kinds(coverage: Any) -> list[str]:
