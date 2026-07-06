@@ -259,6 +259,8 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["command"], "validate-real-decode")
             self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(report["program_batch_size"], 32)
+            self.assertEqual(report["program_cache_len"], 1024)
             self.assertEqual(report["requested_batch_size"], 2)
             self.assertEqual(report["requested_cache_len"], 16)
             self.assertEqual(report["batch_size"], 2)
@@ -291,6 +293,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(report["acceptance"]["passed"])
             self.assertFalse(
                 report["acceptance"]["require_official_config_match"]
+            )
+            self.assertFalse(report["acceptance"]["require_full_depth"])
+            self.assertFalse(
+                report["acceptance"]["require_program_runtime_shape"]
             )
             self.assertTrue(report["acceptance"]["require_trace"])
             self.assertTrue(
@@ -332,11 +338,17 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(evidence["status"], "dry_run")
             self.assertEqual(evidence["validation"]["status"], "dry_run")
+            self.assertEqual(evidence["validation"]["program_batch_size"], 32)
+            self.assertEqual(evidence["validation"]["program_cache_len"], 1024)
             self.assertEqual(evidence["validation"]["batch_size"], 2)
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertTrue(evidence["requirements"]["require_trace"])
             self.assertFalse(
                 evidence["requirements"]["require_official_config_match"]
+            )
+            self.assertFalse(evidence["requirements"]["require_full_depth"])
+            self.assertFalse(
+                evidence["requirements"]["require_program_runtime_shape"]
             )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
             self.assertEqual(
@@ -1259,6 +1271,143 @@ class ValidateDirectTest(unittest.TestCase):
                     "diff_status"
                 ],
                 "diff_found",
+            )
+
+    def test_validate_real_decode_can_require_full_depth(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    require_full_depth=True,
+                    min_tokens_per_second_per_user=0.0,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["program_num_layers"], 2)
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                ["validation.full_depth_layers"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertTrue(evidence["requirements"]["require_full_depth"])
+            self.assertEqual(evidence["validation"]["program_num_layers"], 2)
+            self.assertEqual(evidence["validation"]["layers"], 1)
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["validation.full_depth_layers"],
+            )
+
+    def test_validate_real_decode_can_require_program_runtime_shape(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    require_program_runtime_shape=True,
+                    min_tokens_per_second_per_user=0.0,
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertEqual(report["program_batch_size"], 32)
+            self.assertEqual(report["program_cache_len"], 1024)
+            failed_checks = [
+                check for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                [check["name"] for check in failed_checks],
+                [
+                    "validation.program_batch_size",
+                    "validation.program_cache_len",
+                ],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertTrue(
+                evidence["requirements"]["require_program_runtime_shape"]
+            )
+            self.assertEqual(evidence["validation"]["program_batch_size"], 32)
+            self.assertEqual(evidence["validation"]["program_cache_len"], 1024)
+            self.assertEqual(evidence["validation"]["batch_size"], 2)
+            self.assertEqual(evidence["validation"]["cache_len"], 16)
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                [
+                    "validation.program_batch_size",
+                    "validation.program_cache_len",
+                ],
             )
 
     def test_validate_real_decode_fails_on_autotune_best_reference(

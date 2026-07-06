@@ -365,6 +365,8 @@ python /tmp/llama31_ttnn_program/run_decode.py \
   --trace \
   --trace-iterations 10 \
   --require-trace \
+  --require-full-depth \
+  --require-program-runtime-shape \
   --min-tokens-per-second-per-user 1.0 \
   --decode-shell-pcc-threshold 0.99 \
   --require-decode-shell-numeric-reference \
@@ -615,6 +617,9 @@ acceptable because the bundled official config is a seed reference with known
 gaps. Use `--require-official-config-match` when a curated official parity
 config is available and the real decode acceptance run should fail on any
 config mismatch.
+Use `--require-full-depth` and `--require-program-runtime-shape` for final
+acceptance runs that must prove the generated program's full layer count and
+configured batch/cache dimensions, instead of a smaller bring-up shape.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
@@ -626,7 +631,8 @@ and/or `--min-tokens-per-second-per-user`, the final report includes an
 official config diff evidence, layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/single-layer/smoke/profile runtime status, decode-step tensor conversion
-counts, shell numeric/structural references, single-layer and decode-step
+counts, optional full-depth and program runtime-shape requirements, shell
+numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
 weight paths for single-layer/smoke/profile, decode-step structural
 references, generated observed op sequence coverage for the

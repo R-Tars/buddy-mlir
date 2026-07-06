@@ -656,6 +656,8 @@ def validate_real_decode(
     skip_autotune: bool = False,
     require_trace: bool = False,
     require_official_config_match: bool = False,
+    require_full_depth: bool = False,
+    require_program_runtime_shape: bool = False,
     min_tokens_per_second_per_user: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
@@ -680,6 +682,8 @@ def validate_real_decode(
     model_path = Path(model_path)
     program_config = _load_program_config(program_dir)
     program_num_layers = int(program_config["num_layers"])
+    program_batch_size = int(program_config["batch_size"])
+    program_cache_len = int(program_config["max_cache_len"])
     if layer_count > program_num_layers:
         raise ValueError(
             "layers must be <= generated config num_layers "
@@ -729,6 +733,8 @@ def validate_real_decode(
         "official_config": str(official_config_path),
         "decode_step_search_space": str(decode_step_search_space_path),
         "program_num_layers": program_num_layers,
+        "program_batch_size": program_batch_size,
+        "program_cache_len": program_cache_len,
         "layers": layer_count,
         "requested_batch_size": batch_size,
         "requested_cache_len": cache_len,
@@ -744,6 +750,8 @@ def validate_real_decode(
         "skip_autotune": skip_autotune,
         "require_trace": require_trace,
         "require_official_config_match": require_official_config_match,
+        "require_full_depth": require_full_depth,
+        "require_program_runtime_shape": require_program_runtime_shape,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
         "require_decode_shell_numeric_reference": (
@@ -1192,6 +1200,8 @@ def validate_real_decode(
         report,
         require_trace=require_trace,
         require_official_config_match=require_official_config_match,
+        require_full_depth=require_full_depth,
+        require_program_runtime_shape=require_program_runtime_shape,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
         require_decode_shell_numeric_reference=(
             require_decode_shell_numeric_reference
@@ -1389,6 +1399,8 @@ def _real_decode_evidence_manifest(
             "model_path": report.get("model_path"),
             "official_config": report.get("official_config"),
             "program_num_layers": report.get("program_num_layers"),
+            "program_batch_size": report.get("program_batch_size"),
+            "program_cache_len": report.get("program_cache_len"),
             "layers": report.get("layers"),
             "requested_batch_size": report.get("requested_batch_size"),
             "requested_cache_len": report.get("requested_cache_len"),
@@ -1404,6 +1416,10 @@ def _real_decode_evidence_manifest(
             "require_official_config_match": report.get(
                 "require_official_config_match"
             ),
+            "require_full_depth": report.get("require_full_depth"),
+            "require_program_runtime_shape": report.get(
+                "require_program_runtime_shape"
+            ),
             "results": dict(results),
             "failed_steps": _step_names_with_status(
                 results,
@@ -1417,6 +1433,10 @@ def _real_decode_evidence_manifest(
         "requirements": {
             "require_official_config_match": report.get(
                 "require_official_config_match"
+            ),
+            "require_full_depth": report.get("require_full_depth"),
+            "require_program_runtime_shape": report.get(
+                "require_program_runtime_shape"
             ),
             "require_trace": report.get("require_trace"),
             "min_tokens_per_second_per_user": report.get(
@@ -1699,6 +1719,8 @@ def _real_decode_acceptance(
     *,
     require_trace: bool,
     require_official_config_match: bool,
+    require_full_depth: bool,
+    require_program_runtime_shape: bool,
     min_tokens_per_second_per_user: float | None,
     require_decode_shell_numeric_reference: bool,
 ) -> dict[str, Any]:
@@ -1707,6 +1729,8 @@ def _real_decode_acceptance(
             "status": "dry_run",
             "passed": True,
             "require_official_config_match": require_official_config_match,
+            "require_full_depth": require_full_depth,
+            "require_program_runtime_shape": require_program_runtime_shape,
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
@@ -1737,6 +1761,9 @@ def _real_decode_acceptance(
     profile_trace = _step_trace_summary(profile)
     expected_layers = report.get("layers")
     expected_layer_ids = _expected_layer_ids(expected_layers)
+    program_num_layers = report.get("program_num_layers")
+    program_batch_size = report.get("program_batch_size")
+    program_cache_len = report.get("program_cache_len")
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
@@ -2245,6 +2272,32 @@ def _real_decode_acceptance(
                 issue_count=official_config_diff.get("issue_count"),
             )
         )
+    if require_full_depth:
+        checks.append(
+            _acceptance_check(
+                "validation.full_depth_layers",
+                _int_equal(expected_layers, program_num_layers),
+                observed=expected_layers,
+                expected=program_num_layers,
+            )
+        )
+    if require_program_runtime_shape:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "validation.program_batch_size",
+                    _int_equal(expected_batch_size, program_batch_size),
+                    observed=expected_batch_size,
+                    expected=program_batch_size,
+                ),
+                _acceptance_check(
+                    "validation.program_cache_len",
+                    _int_equal(expected_cache_len, program_cache_len),
+                    observed=expected_cache_len,
+                    expected=program_cache_len,
+                ),
+            ]
+        )
     if require_trace:
         checks.extend(
             [
@@ -2413,6 +2466,8 @@ def _real_decode_acceptance(
         "status": "passed" if passed else "failed",
         "passed": passed,
         "require_official_config_match": require_official_config_match,
+        "require_full_depth": require_full_depth,
+        "require_program_runtime_shape": require_program_runtime_shape,
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "require_decode_shell_numeric_reference": (

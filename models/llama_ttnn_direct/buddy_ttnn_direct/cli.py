@@ -1199,6 +1199,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--require-full-depth",
+        action="store_true",
+        help=(
+            "Require --layers to equal the generated program num_layers "
+            "before accepting validation."
+        ),
+    )
+    validate_real.add_argument(
+        "--require-program-runtime-shape",
+        action="store_true",
+        help=(
+            "Require resolved batch/cache dimensions to match the generated "
+            "program config before accepting validation."
+        ),
+    )
+    validate_real.add_argument(
         "--min-tokens-per-second-per-user",
         type=float,
         default=None,
@@ -1744,6 +1760,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         skip_autotune=args.skip_autotune,
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
+        require_full_depth=args.require_full_depth,
+        require_program_runtime_shape=args.require_program_runtime_shape,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
         decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
         require_decode_shell_numeric_reference=(
