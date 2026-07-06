@@ -1619,6 +1619,10 @@ def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
         "layout_counts": _field_counts(tensors, "layout"),
         "memory_config_counts": _field_counts(tensors, "memory_config"),
         "transform_counts": _field_counts(tensors, "transform"),
+        "transform_paths_by_kind": _paths_by_field_value(
+            tensors,
+            "transform",
+        ),
         "ttnn_dtype_counts": _field_counts(tensors, "ttnn_dtype"),
         "ttnn_layout_counts": _field_counts(tensors, "ttnn_layout"),
         "ttnn_memory_config_counts": _field_counts(
@@ -1640,6 +1644,21 @@ def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
         value = str(value)
         counts[value] = counts.get(value, 0) + 1
     return counts
+
+
+def _paths_by_field_value(
+    records: list[dict[str, Any]],
+    field: str,
+) -> dict[str, list[str]]:
+    paths: dict[str, list[str]] = {}
+    for record in records:
+        value = record.get(field)
+        path = record.get("path")
+        if value is None or path is None:
+            continue
+        value = str(value)
+        paths.setdefault(value, []).append(str(path))
+    return {value: sorted(items) for value, items in sorted(paths.items())}
 
 
 def _build_synthetic_decode_inputs(

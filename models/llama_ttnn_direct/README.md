@@ -662,9 +662,9 @@ counts, token-or-logits output and paged KV-cache shapes, optional full-depth
 and program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
-weight paths for single-layer/smoke/profile, LM-head split tensor transform
-evidence, decode-step structural references, generated observed op sequence
-coverage for the
+weight paths for single-layer/smoke/profile, generated linear weight transform
+evidence, LM-head split tensor transform evidence, decode-step structural
+references, generated observed op sequence coverage for the
 shell/single-layer/smoke/profile paths, trace capture/execute status plus
 requested execute iteration/sample-count evidence, trace execute latency
 samples and derived trace throughput, measured profile latency, complete
@@ -771,11 +771,14 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 The report records each planned or converted tensor path, target dtype, layout,
 memory config, resolved TTNN dtype/layout/memory config in device mode,
 source shape, converted shape, and tensor transform when host tensors are
-available. LM-head split tensors are transposed from the Hugging Face
-`[vocab_shard, hidden]` convention before TTNN conversion so generated
-`linear(hidden, weight)` calls expose full-logits width instead of
-hidden-width shards. Real decode validation records `transform_counts` and
-requires each LM-head split to report `transpose_2d` tensorization evidence.
+available. Generated linear weights are transposed from Hugging Face
+`[out_features, in_features]` convention before TTNN conversion so generated
+`linear(hidden, weight)` calls consume `[in_features, out_features]` weights.
+This applies to packed QKV, attention output projection, MLP gate/up/down, and
+LM-head split tensors. Real decode validation records `transform_counts` plus
+`transform_paths_by_kind`, requires all generated linear weight paths to report
+`transpose_2d`, and separately requires each LM-head split to report the same
+tensorization evidence.
 
 ## Phase 2 PR-D: Decode Shell Without Attention
 

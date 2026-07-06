@@ -190,6 +190,7 @@ def build_tensorization_plan(
                     "layout": str(q_entry.get("layout")),
                     "memory_config": _entry_memory_config(q_entry),
                     "packing": "qkv_pack",
+                    "transform": "transpose_2d",
                 }
             )
             o_key, o_entry = _find_parameter_config_item(
@@ -207,6 +208,7 @@ def build_tensorization_plan(
                     "target_dtype": str(o_entry.get("target_dtype")),
                     "layout": str(o_entry.get("layout")),
                     "memory_config": _entry_memory_config(o_entry),
+                    "transform": "transpose_2d",
                 }
             )
 
@@ -233,6 +235,7 @@ def build_tensorization_plan(
                     "target_dtype": str(entry.get("target_dtype")),
                     "layout": str(entry.get("layout")),
                     "memory_config": _entry_memory_config(entry),
+                    "transform": "transpose_2d",
                 }
             )
 

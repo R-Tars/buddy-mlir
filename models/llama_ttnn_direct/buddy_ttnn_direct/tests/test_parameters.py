@@ -193,6 +193,10 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "dram",
             )
             self.assertEqual(
+                records["layers.0.mlp.gate_proj.weight"]["transform"],
+                "transpose_2d",
+            )
+            self.assertEqual(
                 records["layers.0.mlp.down_proj.weight"]["target_dtype"],
                 "bfloat8_b",
             )
@@ -279,8 +283,18 @@ class ParameterMaterializerTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(
+                records["layers.0.attention.wqkv_packed.weight"][
+                    "transform"
+                ],
+                "transpose_2d",
+            )
+            self.assertEqual(
                 records["layers.0.attention.o_proj.weight"]["target_dtype"],
                 "bfloat8_b",
+            )
+            self.assertEqual(
+                records["layers.0.attention.o_proj.weight"]["transform"],
+                "transpose_2d",
             )
             self.assertEqual(
                 records["final_norm.weight"]["layout"],
@@ -354,6 +368,38 @@ class ParameterMaterializerTest(unittest.TestCase):
                 for record in result.report["tensors"]
                 if record["role_group"] == "lm_head"
             ]
+            mlp_records = [
+                record
+                for record in result.report["tensors"]
+                if record["role_group"] == "mlp"
+            ]
+            records = {
+                record["path"]: record for record in result.report["tensors"]
+            }
+            self.assertEqual(
+                [record["transform"] for record in mlp_records],
+                ["transpose_2d", "transpose_2d", "transpose_2d"],
+            )
+            self.assertEqual(
+                records["layers.0.mlp.gate_proj.weight"]["source_shape"],
+                [32, 16],
+            )
+            self.assertEqual(
+                records["layers.0.mlp.gate_proj.weight"]["shape"],
+                [16, 32],
+            )
+            self.assertIn(
+                ".transpose(0,1)",
+                fake_ttnn.calls[0]["tensor"],
+            )
+            self.assertEqual(
+                result.parameters.layers[0].mlp.gate_proj.weight.shape,
+                [16, 32],
+            )
+            self.assertEqual(
+                result.parameters.layers[0].mlp.down_proj.weight.shape,
+                [32, 16],
+            )
             self.assertEqual(len(lm_head_records), 8)
             self.assertEqual(
                 lm_head_records[0]["transform"],
@@ -452,8 +498,33 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "ttnn.bfloat8_b",
             )
             self.assertEqual(
+                result.parameters.layers[0].attention.wqkv_packed.weight.shape,
+                [16, 32],
+            )
+            self.assertEqual(
                 result.parameters.layers[0].attention.o_proj.weight.layout,
                 "ttnn.TILE_LAYOUT",
+            )
+            records = {
+                record["path"]: record for record in result.report["tensors"]
+            }
+            self.assertEqual(
+                records["layers.0.attention.wqkv_packed.weight"][
+                    "source_shape"
+                ],
+                [32, 16],
+            )
+            self.assertEqual(
+                records["layers.0.attention.wqkv_packed.weight"]["shape"],
+                [16, 32],
+            )
+            self.assertEqual(
+                records["layers.0.mlp.gate_proj.weight"]["shape"],
+                [16, 32],
+            )
+            self.assertEqual(
+                records["layers.0.mlp.down_proj.weight"]["shape"],
+                [32, 16],
             )
             self.assertEqual(
                 result.parameters.final_norm.weight.dtype,
