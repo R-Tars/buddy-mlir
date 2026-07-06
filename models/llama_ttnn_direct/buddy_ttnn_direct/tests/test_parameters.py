@@ -455,6 +455,18 @@ class FakeTensor:
             self.dtype,
         )
 
+    def transpose(self, dim0: int, dim1: int) -> "FakeTensor":
+        shape = list(self.shape)
+        shape[dim0], shape[dim1] = shape[dim1], shape[dim0]
+        return FakeTensor(
+            f"{self.name}.transpose({dim0},{dim1})",
+            shape,
+            self.dtype,
+        )
+
+    def contiguous(self) -> "FakeTensor":
+        return self
+
 
 class FakeTTNNTensor:
     def __init__(

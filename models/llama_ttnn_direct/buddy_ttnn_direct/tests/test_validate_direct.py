@@ -482,7 +482,10 @@ class ValidateDirectTest(unittest.TestCase):
                 json.dumps(
                     {
                         "lm_head_split_count": [2],
-                        "generation_template": ["device_argmax_greedy"],
+                        "generation_template": [
+                            "device_argmax_greedy",
+                            "full_logits",
+                        ],
                         "mlp_intermediate_dtype": [None],
                         "attention_sdpa_output_memory_config": [None],
                         "attention_concat_heads_output_memory_config": [None],
@@ -1198,6 +1201,10 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_step_autotune.output_kind_counts",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "decode_step_autotune.passed_candidate_count",
                 acceptance_check_names,
             )
@@ -1235,7 +1242,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["candidate_count"],
-                1,
+                2,
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["metric_direction"],
@@ -1243,7 +1250,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["status_counts"],
-                {"profiled": 1},
+                {"profiled": 2},
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["knob_coverage"][
@@ -1255,13 +1262,17 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["decode_step_autotune"]["knob_coverage"][
                     "values"
                 ]["generation_template"],
-                ["device_argmax_greedy"],
+                ["device_argmax_greedy", "full_logits"],
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["output_kind_counts"],
+                {"token": 1, "logits": 1},
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"][
                     "passed_candidate_count"
                 ],
-                1,
+                2,
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"][
@@ -1287,11 +1298,11 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["reference_status_counts"],
-                {"passed": 1},
+                {"passed": 2},
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["trace_status_counts"],
-                {"captured_and_executed": 1},
+                {"captured_and_executed": 2},
             )
             self.assertEqual(
                 report["steps"]["official_config_diff"]["diff_status"],
@@ -1530,10 +1541,14 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "decode_step_autotune_report.json").read_text()
             )
             self.assertEqual(autotune_report["best"]["reference_status"], "passed")
-            self.assertEqual(autotune_report["status_counts"], {"profiled": 1})
+            self.assertEqual(autotune_report["status_counts"], {"profiled": 2})
             self.assertEqual(
                 autotune_report["trace_status_counts"],
-                {"captured_and_executed": 1},
+                {"captured_and_executed": 2},
+            )
+            self.assertEqual(
+                autotune_report["output_kind_counts"],
+                {"token": 1, "logits": 1},
             )
             self.assertEqual(
                 autotune_report["candidates"][0]["reference_status"],
@@ -2015,6 +2030,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "knob_coverage"
                 ]["values"]["lm_head_split_count"],
                 [2],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "output_kind_counts"
+                ],
+                {"token": 1, "logits": 1},
             )
 
     def test_validate_real_decode_can_require_official_config_match(

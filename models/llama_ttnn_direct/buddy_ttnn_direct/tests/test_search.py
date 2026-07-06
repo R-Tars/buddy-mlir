@@ -405,6 +405,89 @@ class SearchTest(unittest.TestCase):
                 "passed",
             )
 
+    def test_decode_step_autotune_profiles_argmax_and_full_logits(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_autotune.json"
+            _write_fake_model_config(model_dir)
+            config_json.write_text(json.dumps(_seed_config()))
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = run_decode_step_autotune(
+                program_dir=program_dir,
+                space={
+                    "lm_head_split_count": [2],
+                    "generation_template": [
+                        "device_argmax_greedy",
+                        "full_logits",
+                    ],
+                    "mlp_intermediate_dtype": [None],
+                    "attention_sdpa_output_memory_config": [None],
+                    "attention_concat_heads_output_memory_config": [None],
+                },
+                out=report_json,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                ttnn_module=_make_fake_ttnn(),
+                torch_module=_fake_torch(),
+            )
+
+            self.assertEqual(report["candidate_count"], 2)
+            self.assertEqual(report["passed_candidate_count"], 2)
+            self.assertEqual(report["reference_status_counts"], {"passed": 2})
+            self.assertEqual(report["output_kind_counts"], {"token": 1, "logits": 1})
+            by_kind = {
+                candidate["output_kind"]: candidate
+                for candidate in report["candidates"]
+            }
+            self.assertEqual(
+                by_kind["token"]["output_shapes"]["token"],
+                [2, 1],
+            )
+            self.assertEqual(
+                by_kind["token"]["lm_head_profile"]["argmax_status"],
+                "profiled",
+            )
+            self.assertEqual(
+                by_kind["logits"]["output_shapes"]["logits"],
+                [2, 1, 128],
+            )
+            self.assertEqual(
+                by_kind["logits"]["lm_head_profile"]["argmax_status"],
+                "skipped",
+            )
+            self.assertEqual(by_kind["logits"]["reference_status"], "passed")
+            full_logits_report = json.loads(
+                (
+                    root
+                    / by_kind["logits"]["profile_report"]
+                ).read_text()
+            )
+            self.assertEqual(full_logits_report["output_kind"], "logits")
+            self.assertEqual(
+                full_logits_report["reference"]["status"],
+                "passed",
+            )
+
     def test_decode_step_autotune_profiles_fake_model_weights(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

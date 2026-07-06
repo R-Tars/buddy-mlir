@@ -63,14 +63,21 @@ DECODE_FINAL_OPS = [
     "split_lm_head",
     "argmax_or_sampling",
 ]
+DECODE_FINAL_LOGITS_OPS = [
+    "rms_norm.final",
+    "split_lm_head",
+]
 DECODE_PARAMETER_ROLES = ["embedding", "norm", "attention", "mlp", "lm_head"]
 
 
-def _decode_op_sequence(layers: int) -> list[str]:
+def _decode_op_sequence(layers: int, *, output_kind: str = "token") -> list[str]:
     ops = ["embedding"]
     for _ in range(layers):
         ops.extend(DECODE_LAYER_OPS)
-    ops.extend(DECODE_FINAL_OPS)
+    if output_kind == "logits":
+        ops.extend(DECODE_FINAL_LOGITS_OPS)
+    else:
+        ops.extend(DECODE_FINAL_OPS)
     return ops
 
 
@@ -796,8 +803,9 @@ def _run_generated_decode_step(
             kv_cache=kv_cache,
         )
 
+    output_kind = str(plan.get("output_kind", "token"))
     output_shapes = {
-        "token": _shape(token),
+        output_kind: _shape(token),
         "key_cache": _shape(kv_cache[0].k),
         "value_cache": _shape(kv_cache[0].v),
         "kv_cache_layers": [
@@ -810,6 +818,7 @@ def _run_generated_decode_step(
         ],
     }
     output = {
+        "kind": output_kind,
         "shape": _shape(token),
         "dtype": _dtype(token),
         "repr": repr(token),
@@ -847,19 +856,20 @@ def _decode_step_reference(
     observed_ops: list[str] | None,
 ) -> dict[str, Any]:
     expected_outputs = plan["expected_output_shapes"]
-    expected_token = expected_outputs["token"]
-    accepted_token_shapes = [
-        expected_token,
-        [expected_token[0]],
-    ]
+    output_kind = str(plan.get("output_kind", "token"))
+    expected_output = expected_outputs[output_kind]
+    accepted_output_shapes = [expected_output]
+    if output_kind == "token":
+        accepted_output_shapes.append([expected_output[0]])
     checks: list[dict[str, Any]] = [
         _value_check("layer_count", layer_count, plan["layers"]),
+        _value_check("output_kind", output.get("kind"), output_kind),
         _shape_check(
-            "output.token",
-            output_shapes.get("token"),
-            accepted=accepted_token_shapes,
+            f"output.{output_kind}",
+            output_shapes.get(output_kind),
+            accepted=accepted_output_shapes,
         ),
-        _dtype_check("output.token", output.get("dtype")),
+        _dtype_check(f"output.{output_kind}", output.get("dtype")),
         _shape_check(
             "output.key_cache",
             output_shapes.get("key_cache"),
@@ -1102,8 +1112,9 @@ def _run_generated_decode_profile(
             )
 
     latency_ms = (time.perf_counter() - total_start) * 1000.0
+    output_kind = str(plan.get("output_kind", "token"))
     output_shapes = {
-        "token": _shape(token),
+        output_kind: _shape(token),
         "key_cache": _shape(kv_cache[0].k),
         "value_cache": _shape(kv_cache[0].v),
         "kv_cache_layers": [
@@ -1116,6 +1127,7 @@ def _run_generated_decode_profile(
         ],
     }
     output = {
+        "kind": output_kind,
         "shape": _shape(token),
         "dtype": _dtype(token),
         "repr": repr(token),
@@ -1762,6 +1774,12 @@ def _decode_step_plan(
     page_block_size = int(kv_cache_config.get("page_block_size", 32))
     page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
     lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
+    output_kind = _decode_output_kind(config)
+    expected_decode_output = (
+        [batch_size, 1, vocab_size]
+        if output_kind == "logits"
+        else [batch_size, 1]
+    )
     input_shapes = {
         "token_ids": [batch_size, 1],
         "page_table": [batch_size, page_count],
@@ -1804,10 +1822,11 @@ def _decode_step_plan(
             "mlp_intermediate": [batch_size, 1, intermediate_size],
         },
         "expected_output_shapes": {
-            "token": [batch_size, 1],
+            output_kind: expected_decode_output,
             "key_cache": input_shapes["key_cache"],
             "value_cache": input_shapes["value_cache"],
         },
+        "output_kind": output_kind,
         "kv_cache": {
             "policy": kv_cache_config.get("policy", "paged"),
             "template": kv_cache_config.get("template", "paged_kv_cache"),
@@ -1815,8 +1834,26 @@ def _decode_step_plan(
             "page_count": page_count,
         },
         "tensor_conversion_count": 5 + len(lm_head_splits) + 12 * layers,
-        "op_sequence": _decode_op_sequence(layers),
+        "op_sequence": _decode_op_sequence(layers, output_kind=output_kind),
     }
+
+
+def _decode_output_kind(config: dict[str, Any]) -> str:
+    lm_head_config = config.get("lm_head")
+    if not isinstance(lm_head_config, dict):
+        lm_head_config = {}
+    generation_config = config.get("generation")
+    if not isinstance(generation_config, dict):
+        generation_config = {}
+    if bool(lm_head_config.get("retain_logits")):
+        return "logits"
+    if bool(generation_config.get("retain_logits")):
+        return "logits"
+    if generation_config.get("mode") == "full_logits":
+        return "logits"
+    if generation_config.get("template") == "full_logits":
+        return "logits"
+    return "token"
 
 
 def _lm_head_split_shapes(
@@ -1873,6 +1910,7 @@ def _base_report(
         "dry_run": dry_run,
         "trace_enabled": trace,
         "trace_iterations": trace_iterations if trace else 0,
+        "output_kind": plan["output_kind"],
         "op_sequence": plan["op_sequence"],
         "input_shapes": plan["input_shapes"],
         "parameter_shapes": plan["parameter_shapes"],

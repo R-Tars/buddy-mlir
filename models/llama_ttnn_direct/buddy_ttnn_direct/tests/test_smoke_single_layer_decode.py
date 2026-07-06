@@ -190,6 +190,67 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 ],
             )
 
+    def test_decode_step_accepts_full_logits_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_step_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            _set_program_full_logits(program_dir)
+
+            fake_ttnn = _make_fake_ttnn()
+            report = run_smoke_single_layer_decode(
+                out=report_json,
+                program_dir=program_dir,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                ttnn_module=fake_ttnn,
+                parameters=_fake_parameters(split_count=8),
+                token_ids=FakeTensor("token_ids", [2, 1]),
+                page_table=FakeTensor("page_table", [2, 1]),
+                cache_position=FakeTensor("cache_position", [2]),
+                kv_cache=[
+                    types.SimpleNamespace(
+                        k=FakeTensor("key_cache", [2, 16, 2, 4]),
+                        v=FakeTensor("value_cache", [2, 16, 2, 4]),
+                    )
+                ],
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["output_kind"], "logits")
+            self.assertEqual(report["expected_output_shapes"]["logits"], [2, 1, 128])
+            self.assertEqual(report["output_shapes"]["logits"], [2, 1, 128])
+            self.assertNotIn("token", report["output_shapes"])
+            self.assertEqual(report["output"]["kind"], "logits")
+            self.assertEqual(report["reference"]["status"], "passed")
+            op_check = next(
+                check
+                for check in report["reference"]["checks"]
+                if check["name"] == "observed_op_sequence"
+            )
+            self.assertNotIn("argmax_or_sampling", op_check["expected"])
+            self.assertNotIn("argmax", [call["op"] for call in fake_ttnn.calls])
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
     def test_run_smoke_single_layer_decode_synthesizes_fake_ttnn_state(
         self,
     ) -> None:
@@ -817,6 +878,17 @@ def _fake_parameters(split_count: int):
             ]
         ),
     )
+
+
+def _set_program_full_logits(program_dir: Path) -> None:
+    config_path = program_dir / "config.json"
+    config = json.loads(config_path.read_text())
+    config["generation"]["template"] = "full_logits"
+    config["generation"]["mode"] = "full_logits"
+    config["generation"]["retain_logits"] = True
+    config["lm_head"]["retain_logits"] = True
+    config["final"][-1] = "full_logits"
+    config_path.write_text(json.dumps(config, indent=2) + "\n")
 
 
 def _make_fake_ttnn(*, with_transformer: bool = True):

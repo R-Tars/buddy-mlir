@@ -265,6 +265,7 @@ def build_tensorization_plan(
                     "target_dtype": str(lm_entry.get("target_dtype")),
                     "layout": str(lm_entry.get("layout")),
                     "memory_config": _entry_memory_config(lm_entry),
+                    "transform": "transpose_2d",
                 }
             )
 
@@ -333,7 +334,8 @@ def to_ttnn_parameters(
     output = _empty_ttnn_parameters(torch_params)
     records = []
     for record in plan:
-        torch_tensor = _get_torch_tensor(torch_params, record)
+        source_tensor = _get_torch_tensor(torch_params, record)
+        torch_tensor = _apply_tensor_transform(source_tensor, record)
         converted = _from_torch(
             ttnn,
             torch_tensor,
@@ -456,6 +458,25 @@ def _get_torch_tensor(torch_params: SimpleNamespace, record: Mapping[str, Any]) 
         return torch_params.lm_head.splits[int(record["shard_id"])].weight
     raise TTNNTensorizationError(
         f"unsupported tensorization role group: {record['role_group']}"
+    )
+
+
+def _apply_tensor_transform(tensor: Any, record: Mapping[str, Any]) -> Any:
+    transform = record.get("transform")
+    if transform in (None, "none"):
+        return tensor
+    if transform == "transpose_2d":
+        shape = _tensor_shape(tensor)
+        if len(shape) != 2:
+            raise TTNNTensorizationError(
+                f"{record['path']} requires a 2D tensor for transpose_2d; "
+                f"got shape {shape}"
+            )
+        transposed = tensor.transpose(0, 1)
+        contiguous = getattr(transposed, "contiguous", None)
+        return contiguous() if callable(contiguous) else transposed
+    raise TTNNTensorizationError(
+        f"unsupported tensor transform {transform!r} for {record['path']}"
     )
 
 

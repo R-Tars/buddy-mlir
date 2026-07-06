@@ -709,6 +709,7 @@ def validate_real_decode(
     program_cache_len = int(program_config["max_cache_len"])
     program_seq_len = int(program_config.get("seq_len", 1))
     program_hidden_size = int(program_config["hidden_size"])
+    program_vocab_size = int(program_config["vocab_size"])
     program_num_attention_heads = int(program_config["num_attention_heads"])
     program_num_kv_heads = int(program_config["num_key_value_heads"])
     program_head_dim = int(program_config["head_dim"])
@@ -797,6 +798,7 @@ def validate_real_decode(
         "program_cache_len": program_cache_len,
         "program_seq_len": program_seq_len,
         "program_hidden_size": program_hidden_size,
+        "program_vocab_size": program_vocab_size,
         "program_num_attention_heads": program_num_attention_heads,
         "program_num_key_value_heads": program_num_kv_heads,
         "program_head_dim": program_head_dim,
@@ -1353,8 +1355,17 @@ def validate_real_decode(
                 "trace_status_counts",
                 {},
             ),
+            "output_kind_counts": autotune_report.get(
+                "output_kind_counts",
+                {},
+            ),
             "knob_coverage": autotune_report.get("knob_coverage"),
             "search_space": autotune_report.get("search_space"),
+            "best_output_kind": (
+                autotune_report.get("best", {}).get("output_kind")
+                if autotune_report.get("best") is not None
+                else None
+            ),
             "dry_run": autotune_report["dry_run"],
         }
 
@@ -1627,6 +1638,7 @@ def _real_decode_evidence_manifest(
             "program_cache_len": report.get("program_cache_len"),
             "program_seq_len": report.get("program_seq_len"),
             "program_hidden_size": report.get("program_hidden_size"),
+            "program_vocab_size": report.get("program_vocab_size"),
             "program_num_attention_heads": report.get(
                 "program_num_attention_heads"
             ),
@@ -1967,6 +1979,7 @@ def _real_decode_evidence_manifest(
                     "best_parameter_source"
                 ),
                 "best_metric": autotune.get("best_metric"),
+                "best_output_kind": autotune.get("best_output_kind"),
                 "status_counts": autotune.get("status_counts", {}),
                 "reference_status_counts": autotune.get(
                     "reference_status_counts",
@@ -1974,6 +1987,10 @@ def _real_decode_evidence_manifest(
                 ),
                 "trace_status_counts": autotune.get(
                     "trace_status_counts",
+                    {},
+                ),
+                "output_kind_counts": autotune.get(
+                    "output_kind_counts",
                     {},
                 ),
                 "knob_coverage": autotune.get("knob_coverage"),
@@ -2215,6 +2232,7 @@ def _real_decode_acceptance(
     expected_batch_size = report.get("batch_size")
     expected_cache_len = report.get("cache_len")
     expected_trace_iterations = report.get("trace_iterations")
+    expected_output_kind = decode_contract.get("output_kind")
     expected_token_input_shape = [expected_batch_size, 1]
     expected_page_table_shape = [
         expected_batch_size,
@@ -2750,8 +2768,10 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
             observed=_decode_output_shape_observed(
                 single_layer.get("output_shapes")
@@ -2761,8 +2781,10 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
         ),
         _acceptance_check(
@@ -2894,8 +2916,10 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
             observed=_decode_output_shape_observed(
                 smoke.get("output_shapes")
@@ -2905,8 +2929,10 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
         ),
         _acceptance_check(
@@ -3044,8 +3070,10 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
             observed=_decode_output_shape_observed(
                 profile.get("output_shapes")
@@ -3055,19 +3083,28 @@ def _real_decode_acceptance(
                 batch_size=expected_batch_size,
                 seq_len=program_seq_len,
                 cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
                 num_kv_heads=program_num_kv_heads,
                 head_dim=program_head_dim,
+                output_kind=expected_output_kind,
             ),
         ),
         _acceptance_check(
             "profile_decode_step.lm_head_profile",
-            _lm_head_profile_complete(profile_lm_head),
+            _lm_head_profile_complete(
+                profile_lm_head,
+                output_kind=expected_output_kind,
+            ),
             observed=_lm_head_profile_observed(profile_lm_head),
             expected={
                 "split_count": "positive",
                 "lm_head_ms": "nonnegative",
                 "argmax_ms": "nonnegative",
-                "argmax_status": "profiled",
+                "argmax_status": (
+                    "skipped"
+                    if expected_output_kind == "logits"
+                    else "profiled"
+                ),
             },
         ),
         _acceptance_check(
@@ -3376,6 +3413,18 @@ def _real_decode_acceptance(
                     expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
                 ),
                 _acceptance_check(
+                    "decode_step_autotune.output_kind_counts",
+                    _autotune_output_kind_counts_complete(
+                        autotune.get("output_kind_counts"),
+                        autotune.get("knob_coverage"),
+                    ),
+                    observed=_autotune_output_kind_counts_observed(
+                        autotune.get("output_kind_counts"),
+                        autotune.get("knob_coverage"),
+                    ),
+                    expected="output kinds implied by generation_template",
+                ),
+                _acceptance_check(
                     "decode_step_autotune.passed_candidate_count",
                     _positive_number(autotune.get("passed_candidate_count")),
                     observed=autotune.get("passed_candidate_count"),
@@ -3556,14 +3605,21 @@ def _config_gap_summary_observed(summary: Any) -> dict[str, Any]:
     }
 
 
-def _lm_head_profile_complete(profile: Any) -> bool:
+def _lm_head_profile_complete(
+    profile: Any,
+    *,
+    output_kind: Any = "token",
+) -> bool:
     if not isinstance(profile, dict):
         return False
+    expected_argmax_status = (
+        "skipped" if output_kind == "logits" else "profiled"
+    )
     return (
         _positive_number(profile.get("split_count"))
         and _nonnegative_number(profile.get("lm_head_ms"))
         and _nonnegative_number(profile.get("argmax_ms"))
-        and profile.get("argmax_status") == "profiled"
+        and profile.get("argmax_status") == expected_argmax_status
     )
 
 
@@ -3695,6 +3751,48 @@ def _autotune_knob_coverage_observed(coverage: Any) -> dict[str, Any]:
     }
 
 
+def _autotune_output_kind_counts_complete(
+    counts: Any,
+    coverage: Any,
+) -> bool:
+    if not isinstance(counts, dict) or not isinstance(coverage, dict):
+        return False
+    expected_kinds = _autotune_expected_output_kinds(coverage)
+    if not expected_kinds:
+        return True
+    for kind in expected_kinds:
+        if not _positive_number(counts.get(kind)):
+            return False
+    return True
+
+
+def _autotune_output_kind_counts_observed(
+    counts: Any,
+    coverage: Any,
+) -> dict[str, Any]:
+    return {
+        "counts": counts if isinstance(counts, dict) else {},
+        "expected_output_kinds": _autotune_expected_output_kinds(coverage),
+    }
+
+
+def _autotune_expected_output_kinds(coverage: Any) -> list[str]:
+    if not isinstance(coverage, dict):
+        return []
+    values = coverage.get("values")
+    if not isinstance(values, dict):
+        return []
+    generation_templates = values.get("generation_template")
+    if not isinstance(generation_templates, list):
+        return []
+    kinds = []
+    for template in generation_templates:
+        kind = "token" if template == "device_argmax_greedy" else "logits"
+        if kind not in kinds:
+            kinds.append(kind)
+    return kinds
+
+
 def _layer_profile_ids(layer_profiles: Any) -> list[int]:
     if not isinstance(layer_profiles, list):
         return []
@@ -3817,21 +3915,29 @@ def _decode_output_shapes_complete(
     batch_size: Any,
     seq_len: Any,
     cache_len: Any,
+    vocab_size: Any,
     num_kv_heads: Any,
     head_dim: Any,
+    output_kind: Any = "token",
 ) -> bool:
     expected = _expected_decode_output_shape_summary(
         layer_count=layer_count,
         batch_size=batch_size,
         seq_len=seq_len,
         cache_len=cache_len,
+        vocab_size=vocab_size,
         num_kv_heads=num_kv_heads,
         head_dim=head_dim,
+        output_kind=output_kind,
     )
     if not isinstance(output_shapes, dict):
         return False
-    token_shape = _int_list(output_shapes.get("token"))
-    if token_shape not in expected["accepted_token_shapes"]:
+    output_kind = expected["output_kind"]
+    output_shape = _int_list(output_shapes.get(output_kind))
+    if output_kind == "token":
+        if output_shape not in expected["accepted_output_shapes"]:
+            return False
+    elif output_shape != expected["output_shape"]:
         return False
     if _int_list(output_shapes.get("key_cache")) != expected["kv_cache_shape"]:
         return False
@@ -4133,17 +4239,29 @@ def _expected_decode_output_shape_summary(
     batch_size: Any,
     seq_len: Any,
     cache_len: Any,
+    vocab_size: Any,
     num_kv_heads: Any,
     head_dim: Any,
+    output_kind: Any = "token",
 ) -> dict[str, Any]:
     batch = _safe_int(batch_size)
     seq = _safe_int(seq_len)
     cache = _safe_int(cache_len)
+    vocab = _safe_int(vocab_size)
     kv_heads = _safe_int(num_kv_heads)
     dim = _safe_int(head_dim)
     layers = _safe_int(layer_count)
     token_shape = [batch, seq] if batch is not None and seq is not None else []
     token_vector = [batch] if batch is not None else []
+    normalized_output_kind = (
+        "logits" if output_kind == "logits" else "token"
+    )
+    logits_shape = (
+        [batch, seq, vocab]
+        if None not in (batch, seq, vocab)
+        else []
+    )
+    output_shape = logits_shape if normalized_output_kind == "logits" else token_shape
     kv_shape = (
         [batch, cache, kv_heads, dim]
         if None not in (batch, cache, kv_heads, dim)
@@ -4151,9 +4269,13 @@ def _expected_decode_output_shape_summary(
     )
     layer_ids = list(range(layers)) if layers is not None and layers > 0 else []
     return {
-        "accepted_token_shapes": [
+        "output_kind": normalized_output_kind,
+        "output_shape": output_shape,
+        "accepted_output_shapes": [
             shape for shape in (token_shape, token_vector) if shape
-        ],
+        ]
+        if normalized_output_kind == "token"
+        else [output_shape],
         "kv_cache_shape": kv_shape,
         "kv_cache_layer_ids": layer_ids,
     }
@@ -4164,7 +4286,9 @@ def _decode_output_shape_observed(output_shapes: Any) -> dict[str, Any]:
         return {}
     layers = output_shapes.get("kv_cache_layers")
     return {
+        "output_kind": "logits" if "logits" in output_shapes else "token",
         "token": _int_list(output_shapes.get("token")),
+        "logits": _int_list(output_shapes.get("logits")),
         "key_cache": _int_list(output_shapes.get("key_cache")),
         "value_cache": _int_list(output_shapes.get("value_cache")),
         "kv_cache_layer_ids": [

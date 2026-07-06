@@ -102,6 +102,9 @@ def run_decode_step_autotune(
             "status": "dry_run_planned" if dry_run else "pending",
             "passed": None,
             "metric": None,
+            "output_kind": _candidate_output_kind(candidate),
+            "output_shapes": None,
+            "lm_head_profile": None,
             "profile_report": None,
             "bottleneck_summary": None,
             "parameter_source": None,
@@ -135,6 +138,13 @@ def run_decode_step_autotune(
             record["trace_status"] = (profile.get("trace") or {}).get("status")
             record.update(_reference_summary(profile))
             record["error"] = profile.get("error")
+            record["output_kind"] = str(
+                profile.get("output_kind")
+                or (profile.get("output") or {}).get("kind")
+                or record["output_kind"]
+            )
+            record["output_shapes"] = profile.get("output_shapes")
+            record["lm_head_profile"] = profile.get("lm_head_profile")
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,
@@ -158,6 +168,7 @@ def run_decode_step_autotune(
         "reference_status",
     )
     trace_status_counts = _candidate_field_counts(candidates, "trace_status")
+    output_kind_counts = _candidate_field_counts(candidates, "output_kind")
     knob_coverage = _knob_coverage(candidates)
     return {
         "schema_version": 1,
@@ -184,6 +195,7 @@ def run_decode_step_autotune(
         "search_space": knob_coverage["values"],
         "reference_status_counts": reference_status_counts,
         "trace_status_counts": trace_status_counts,
+        "output_kind_counts": output_kind_counts,
         "candidates_dir": _relative_or_absolute(candidate_root, out_path.parent),
         "candidates": candidates,
         "best": best,
@@ -362,6 +374,14 @@ def _candidate_knobs(candidate: dict[str, Any]) -> dict[str, Any]:
             "attention_concat_heads_output_memory_config"
         ),
     }
+
+
+def _candidate_output_kind(candidate: dict[str, Any]) -> str:
+    return (
+        "token"
+        if candidate["generation_template"] == "device_argmax_greedy"
+        else "logits"
+    )
 
 
 def _copy_profile_metadata(program_root: Path, candidate_dir: Path) -> list[Path]:

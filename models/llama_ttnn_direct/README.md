@@ -655,8 +655,8 @@ layer/batch/cache runtime shape, TTNN module
 availability, TTNN version and tt-metal git commit evidence, successful
 shell/attention-primitive/attention-layer/single-layer/smoke/profile runtime
 status, attention primitive report completeness, decode-step tensor conversion
-counts, output token and paged KV-cache shapes, optional full-depth and
-program runtime-shape requirements, shell
+counts, token-or-logits output and paged KV-cache shapes, optional full-depth
+and program runtime-shape requirements, shell
 numeric/structural references, single-layer and decode-step
 tensorization roles and memory config evidence, required tensorized decode
 weight paths for single-layer/smoke/profile, decode-step structural
@@ -668,8 +668,9 @@ profile attribution sections, LM-head split/argmax profile evidence, per-layer
 attention/MLP timing records, bottleneck summary, positive profile throughput,
 and, unless
 `--skip-autotune` is used, real-weight decode-step autotune knob coverage and
-a best candidate with a passed structural reference. When a throughput baseline
-is supplied, the
+a complete `output_kind_counts` summary for the generation templates under
+test, plus a best candidate with a passed structural reference. When a
+throughput baseline is supplied, the
 evidence also records the observed/baseline ratio and gates it against the
 requested floor before marking the validation as accepted.
 
@@ -765,7 +766,10 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report records each planned or converted tensor path, target dtype, layout,
 memory config, resolved TTNN dtype/layout/memory config in device mode, and
-shape when host tensors are available.
+shape when host tensors are available. LM-head split tensors are transposed
+from the Hugging Face `[vocab_shard, hidden]` convention before TTNN
+conversion so generated `linear(hidden, weight)` calls expose full-logits
+width instead of hidden-width shards.
 
 ## Phase 2 PR-D: Decode Shell Without Attention
 
@@ -1123,8 +1127,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The acceptance report always checks decode `seq_len = 1`, paged KV-cache
 status, page-table/cache-position/KV-cache shapes, and token-or-logits output
-kind. `--require-batch32-decode-step` adds an explicit batch-size-32 gate while
-still allowing small-batch smoke tests when the flag is omitted.
+kind and shape. `--require-batch32-decode-step` adds an explicit batch-size-32
+gate while still allowing small-batch smoke tests when the flag is omitted.
 
 ## Performance Step 4: Decode-Step Trace Smoke
 
@@ -1177,7 +1181,10 @@ that identifies the largest measured section. It also records a
 tokens/sec/user for the one-token-per-user decode step; when trace execution
 samples are available, trace-execute throughput is reported separately. LM-head
 profiling mirrors the generated split LM-head code but separates device argmax
-into its own timed section. Non-dry-run profile reports reuse the generated decode-step
+into its own timed section. When the generated config retains full logits, the
+profile report records `output_kind=logits`, checks logits shape
+`[batch, seq_len, vocab]`, and marks argmax as skipped. Non-dry-run profile
+reports reuse the generated decode-step
 `reference.kind=structural_shape_dtype` checks, so output or KV-cache shape
 mismatches are reported as `reference_mismatch` instead of being treated as
 valid latency measurements.
@@ -1207,12 +1214,14 @@ logits, MLP intermediate dtype, attention SDPA output memory config, and concat
 heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
 profile report path, metric, bottleneck summary, status/reference/trace
-summaries, and the best candidate when measurements are available. `latency_ms`
-is minimized; `tokens_per_second_per_user` and `aggregate_tokens_per_second`
-are maximized. Top-level `status_counts`, `reference_status_counts`, and
-`trace_status_counts` make failed or skipped candidate classes visible without
-opening every nested profile report. Candidates whose profile report does not
-pass the structural reference gate are not considered for `best`.
+summaries, output kind, output shapes, LM-head split/argmax profile summary,
+and the best candidate when measurements are available. `latency_ms` is
+minimized; `tokens_per_second_per_user` and `aggregate_tokens_per_second` are
+maximized. Top-level `status_counts`, `reference_status_counts`,
+`trace_status_counts`, and `output_kind_counts` make failed, skipped, token,
+or full-logits candidate classes visible without opening every nested profile
+report. Candidates whose profile report does not pass the structural reference
+gate are not considered for `best`.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate
