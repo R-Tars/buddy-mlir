@@ -780,8 +780,11 @@ recorded `--decode-shell-pcc-threshold`, a matching threshold value, and no
 numeric-reference failed checks.
 Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
 bring-up, or `--dry-run` to write the schema without loading safetensors or
-opening a TTNN device. With `--require-trace`, `--require-decode-shell-numeric-reference`,
-and/or `--min-tokens-per-second-per-user`, the final report includes an
+opening a TTNN device. `--require-official-performance-parity` rejects
+`--skip-autotune`, because final performance evidence must include the
+decode-step autotune leaderboard and best-candidate summary. With
+`--require-trace`, `--require-decode-shell-numeric-reference`, and/or
+`--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, materialized
 weight shapes against the generated config, resolved

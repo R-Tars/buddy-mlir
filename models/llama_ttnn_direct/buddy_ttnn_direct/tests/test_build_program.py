@@ -382,7 +382,6 @@ class BuildProgramTest(unittest.TestCase):
                     "--mode",
                     "validate-real",
                     "--dry-run",
-                    "--skip-autotune",
                     "--require-official-performance-parity",
                     "--min-tokens-per-second-per-user",
                     "1.0",

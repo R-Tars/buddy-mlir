@@ -461,6 +461,8 @@ def _real_decode_final_acceptance_plan(
             "profile_decode_step.official_baseline_reference",
             "profile_decode_step.official_min_baseline_ratio_positive",
             "profile_decode_step.min_baseline_ratio",
+            "decode_step_autotune.status",
+            "decode_step_autotune.best_candidate_summary",
         ]
 
     model_end_to_end_gate_names = []
@@ -1148,6 +1150,16 @@ def preflight_real_decode(
             observed=min_baseline_ratio,
             expected="> 0.0",
         )
+        add(
+            "requirements.official_performance_autotune_enabled",
+            not skip_autotune,
+            observed={"skip_autotune": skip_autotune},
+            expected="skip_autotune=false",
+            message=(
+                "official performance parity requires decode-step autotune "
+                "evidence; use --skip-autotune only for bring-up"
+            ),
+        )
     if normalized["require_model_end_to_end"]:
         normalized["require_full_decode_step"] = True
     if normalized["require_full_decode_step"]:
@@ -1810,6 +1822,11 @@ def validate_real_decode(
             raise ValueError(
                 "require_official_performance_parity requires positive "
                 "min_baseline_ratio"
+            )
+        if skip_autotune:
+            raise ValueError(
+                "require_official_performance_parity cannot be used with "
+                "skip_autotune"
             )
     if require_model_end_to_end:
         require_full_decode_step = True
