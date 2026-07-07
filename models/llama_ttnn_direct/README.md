@@ -730,10 +730,11 @@ means the requested gates passed, while
 that prove full generated depth, generated batch/cache shape, batch32 decode
 contract, trace capture/execute, and decode-shell numeric reference evidence.
 `acceptance_scope.official_performance_parity_ready=true` additionally requires
-official config match and a baseline-ratio gate, so a small bring-up run cannot
+model end-to-end readiness, official config match, and a baseline-ratio gate, so
+a small bring-up run or smoke/profile path with synthetic runtime inputs cannot
 be mistaken for final end-to-end or performance-parity evidence.
 Use `--require-official-performance-parity` for final performance acceptance.
-It enables `--require-full-decode-step` and
+It enables `--require-model-end-to-end`, `--require-full-decode-step`, and
 `--require-official-config-match`, and it requires an explicit
 `--baseline-reference` plus `--min-baseline-ratio` so final evidence is tied to
 an auditable official baseline.

@@ -411,6 +411,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertTrue(
                 validation_payload["require_official_performance_parity"]
             )
+            self.assertTrue(validation_payload["require_model_end_to_end"])
             self.assertTrue(validation_payload["require_trace"])
             self.assertTrue(
                 validation_payload["require_official_config_match"]
@@ -460,6 +461,11 @@ class BuildProgramTest(unittest.TestCase):
             )
             self.assertTrue(
                 validation_payload["acceptance"][
+                    "require_model_end_to_end"
+                ]
+            )
+            self.assertTrue(
+                validation_payload["acceptance"][
                     "require_official_performance_parity"
                 ]
             )
@@ -467,6 +473,7 @@ class BuildProgramTest(unittest.TestCase):
                 (validate_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertTrue(evidence["requirements"]["require_full_decode_step"])
+            self.assertTrue(evidence["requirements"]["require_model_end_to_end"])
             self.assertTrue(
                 evidence["requirements"][
                     "require_official_performance_parity"

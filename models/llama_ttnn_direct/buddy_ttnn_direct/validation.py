@@ -454,13 +454,14 @@ def _real_decode_final_acceptance_plan(
     official_parity_gate_names = []
     if require_official_performance_parity:
         official_parity_gate_names = [
+            "model_end_to_end_readiness.ready",
             "official_config_diff.match",
             "profile_decode_step.baseline_reference",
             "profile_decode_step.min_baseline_ratio",
         ]
 
     model_end_to_end_gate_names = []
-    if require_model_end_to_end:
+    if require_model_end_to_end or require_official_performance_parity:
         model_end_to_end_gate_names = [
             "model_end_to_end_readiness.ready",
         ]
@@ -1116,6 +1117,7 @@ def preflight_real_decode(
     }
     if normalized["require_official_performance_parity"]:
         normalized["require_full_decode_step"] = True
+        normalized["require_model_end_to_end"] = True
         normalized["require_official_config_match"] = True
         add(
             "requirements.baseline_reference",
@@ -1734,6 +1736,7 @@ def validate_real_decode(
         raise ValueError("decode_shell_pcc_threshold must be between 0 and 1")
     if require_official_performance_parity:
         require_full_decode_step = True
+        require_model_end_to_end = True
         require_official_config_match = True
         if not baseline_reference:
             raise ValueError(
@@ -3537,6 +3540,14 @@ def _real_decode_acceptance_scope(
         and report.get("require_official_config_match") is True
         and _acceptance_check_passed(acceptance, "official_config_diff.match")
     )
+    model_end_to_end = (
+        accepted
+        and report.get("require_model_end_to_end") is True
+        and _acceptance_check_passed(
+            acceptance,
+            "model_end_to_end_readiness.ready",
+        )
+    )
 
     missing_full_decode = []
     if not accepted:
@@ -3560,6 +3571,8 @@ def _real_decode_acceptance_scope(
     missing_parity = []
     if not full_decode_ready:
         missing_parity.append("accepted full decode-step evidence")
+    if not model_end_to_end:
+        missing_parity.append("accepted model end-to-end readiness")
     if not official_config_match:
         missing_parity.append("--require-official-config-match")
     if not performance_floor:
@@ -3569,6 +3582,7 @@ def _real_decode_acceptance_scope(
 
     official_performance_parity_ready = (
         full_decode_ready
+        and model_end_to_end
         and official_config_match
         and performance_floor
     )
@@ -3605,6 +3619,7 @@ def _real_decode_acceptance_scope(
         "batch32_decode_contract_proven": batch32_contract,
         "trace_proven": trace,
         "decode_shell_numeric_reference_proven": numeric_shell,
+        "model_end_to_end_proven": model_end_to_end,
         "official_config_match_proven": official_config_match,
         "performance_baseline_ratio_proven": performance_floor,
         "full_decode_step_ready": full_decode_ready,
