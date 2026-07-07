@@ -3174,6 +3174,26 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(baseline["min_ratio"], 0.0)
             self.assertGreater(baseline["ratio"], 0.0)
             self.assertTrue(baseline["passed"])
+            gap = evidence["performance_evidence"][
+                "performance_gap_summary"
+            ]
+            self.assertEqual(gap["baseline"], 33.1)
+            self.assertEqual(
+                gap["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
+            self.assertGreater(gap["ratio"], 0.0)
+            self.assertTrue(gap["passed_min_ratio"])
+            self.assertGreaterEqual(gap["shortfall_to_baseline"], 0.0)
+            self.assertGreater(gap["required_speedup_to_baseline"], 0.0)
+            self.assertIn(
+                gap["bottleneck"]["max_section"],
+                gap["bottleneck"]["sections_ms"],
+            )
+            self.assertGreaterEqual(
+                gap["bottleneck"]["max_section_share"],
+                0.0,
+            )
             self.assertEqual(
                 evidence["runtime_evidence"]["smoke_decode_step"]["trace"][
                     "iterations"
@@ -4730,6 +4750,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(baseline["min_ratio"], 1.0)
             self.assertLess(baseline["ratio"], 1.0)
             self.assertFalse(baseline["passed"])
+            gap = evidence["performance_evidence"][
+                "performance_gap_summary"
+            ]
+            self.assertEqual(gap["baseline"], 1.0e12)
+            self.assertLess(gap["ratio"], 1.0)
+            self.assertFalse(gap["passed_min_ratio"])
+            self.assertGreater(gap["shortfall_to_min_ratio"], 0.0)
+            self.assertGreater(gap["required_speedup_to_min_ratio"], 1.0)
+            self.assertIn(
+                gap["bottleneck"]["max_section"],
+                gap["bottleneck"]["sections_ms"],
+            )
 
     def test_validate_real_decode_fails_on_profile_runtime_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

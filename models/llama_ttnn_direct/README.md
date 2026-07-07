@@ -1340,6 +1340,9 @@ reports reuse the generated decode-step
 `reference.kind=structural_shape_dtype` checks, so output or KV-cache shape
 mismatches are reported as `reference_mismatch` instead of being treated as
 valid latency measurements.
+`validate-real-decode` copies the profile throughput and bottleneck data into
+the evidence manifest's `performance_gap_summary`, including observed/baseline
+t/s/u, required speedup, min-ratio shortfall, and the largest profile section.
 
 ## Performance Step 6: Minimal Decode-Step Autotune
 

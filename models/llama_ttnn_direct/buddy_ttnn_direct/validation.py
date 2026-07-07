@@ -3501,6 +3501,10 @@ def _real_decode_evidence_manifest(
                 report,
                 profile,
             ),
+            "performance_gap_summary": _performance_gap_summary(
+                report,
+                profile,
+            ),
         },
         "decode_step_contract": decode_step_contract,
         "config_evidence": {
@@ -3948,6 +3952,76 @@ def _throughput_baseline_summary(
     if min_ratio is not None:
         summary["passed"] = _number_at_least(ratio, min_ratio)
     return summary
+
+
+def _performance_gap_summary(
+    report: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    baseline_summary = _throughput_baseline_summary(report, profile)
+    observed = baseline_summary.get("observed")
+    baseline = baseline_summary.get("baseline")
+    min_ratio = baseline_summary.get("min_ratio")
+    bottleneck = profile.get("bottleneck_summary") or {}
+    sections = bottleneck.get("sections_ms")
+    if not isinstance(sections, dict):
+        sections = {}
+    section_total = sum(
+        float(value)
+        for value in sections.values()
+        if isinstance(value, (int, float))
+    )
+    max_section = bottleneck.get("max_section")
+    max_section_ms = bottleneck.get("max_section_ms")
+    max_section_share = None
+    if _nonnegative_number(max_section_ms) and section_total > 0.0:
+        max_section_share = float(max_section_ms) / section_total
+
+    shortfall_to_baseline = None
+    speedup_to_baseline = None
+    if _positive_number(observed) and _positive_number(baseline):
+        shortfall_to_baseline = max(0.0, float(baseline) - float(observed))
+        speedup_to_baseline = float(baseline) / float(observed)
+
+    required_for_min_ratio = None
+    shortfall_to_min_ratio = None
+    speedup_to_min_ratio = None
+    if _positive_number(baseline) and min_ratio is not None:
+        required_for_min_ratio = float(baseline) * float(min_ratio)
+        if _positive_number(observed):
+            shortfall_to_min_ratio = max(
+                0.0,
+                required_for_min_ratio - float(observed),
+            )
+            speedup_to_min_ratio = (
+                required_for_min_ratio / float(observed)
+                if required_for_min_ratio > 0.0
+                else 0.0
+            )
+
+    return {
+        "metric": "tokens_per_second_per_user",
+        "status": (profile.get("throughput_summary") or {}).get("status"),
+        "observed": observed,
+        "baseline": baseline,
+        "baseline_reference": baseline_summary.get("baseline_reference"),
+        "ratio": baseline_summary.get("ratio"),
+        "min_ratio": min_ratio,
+        "passed_min_ratio": baseline_summary.get("passed"),
+        "shortfall_to_baseline": shortfall_to_baseline,
+        "required_speedup_to_baseline": speedup_to_baseline,
+        "required_tokens_per_second_per_user_for_min_ratio": (
+            required_for_min_ratio
+        ),
+        "shortfall_to_min_ratio": shortfall_to_min_ratio,
+        "required_speedup_to_min_ratio": speedup_to_min_ratio,
+        "bottleneck": {
+            "max_section": max_section,
+            "max_section_ms": max_section_ms,
+            "max_section_share": max_section_share,
+            "sections_ms": sections,
+        },
+    }
 
 
 def _kv_cache_contract_from_template_config(
