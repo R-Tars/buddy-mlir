@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import importlib
 import py_compile
+import shlex
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -221,6 +222,139 @@ def resolve_performance_baseline(
 
 def _same_path(lhs: Path, rhs: Path) -> bool:
     return lhs.resolve() == rhs.resolve()
+
+
+def _shell_command(args: list[str]) -> str:
+    return " ".join(shlex.quote(arg) for arg in args)
+
+
+def _append_option(args: list[str], option: str, value: Any) -> None:
+    if value is not None:
+        args.extend([option, str(value)])
+
+
+def _real_decode_cli_args(
+    *,
+    program_dir: str | Path,
+    model_path: str | Path,
+    out_dir: str | Path,
+    official_config_path: str | Path,
+    decode_step_search_space_path: str | Path,
+    performance_baselines_path: str | Path,
+    layers: int,
+    batch_size: int | None,
+    cache_len: int | None,
+    device: str,
+    device_id: int,
+    trace: bool,
+    trace_iterations: int,
+    skip_autotune: bool,
+    require_full_decode_step: bool,
+    require_official_performance_parity: bool,
+    require_trace: bool,
+    require_official_config_match: bool,
+    require_full_depth: bool,
+    require_program_runtime_shape: bool,
+    require_batch32_decode_step: bool,
+    min_tokens_per_second_per_user: float | None,
+    baseline_tokens_per_second_per_user: float | None,
+    baseline_reference: str | None,
+    min_baseline_ratio: float | None,
+    decode_shell_pcc_threshold: float,
+    require_decode_shell_numeric_reference: bool,
+    dtype_seed: str | None = None,
+    metric: str | None = None,
+    dry_run: bool = False,
+    preflight_only: bool = False,
+) -> list[str]:
+    args = [
+        "python",
+        "-m",
+        "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+        "validate-real-decode",
+        "--program-dir",
+        str(program_dir),
+        "--model-path",
+        str(model_path),
+        "--out-dir",
+        str(out_dir),
+        "--official-config",
+        str(official_config_path),
+        "--decode-step-search-space",
+        str(decode_step_search_space_path),
+        "--performance-baselines",
+        str(performance_baselines_path),
+        "--layers",
+        str(layers),
+        "--device",
+        str(device),
+        "--device-id",
+        str(device_id),
+        "--trace-iterations",
+        str(trace_iterations),
+        "--decode-shell-pcc-threshold",
+        str(decode_shell_pcc_threshold),
+    ]
+    _append_option(args, "--batch-size", batch_size)
+    _append_option(args, "--cache-len", cache_len)
+    _append_option(args, "--dtype-seed", dtype_seed)
+    _append_option(args, "--metric", metric)
+    _append_option(
+        args,
+        "--min-tokens-per-second-per-user",
+        min_tokens_per_second_per_user,
+    )
+    _append_option(
+        args,
+        "--baseline-tokens-per-second-per-user",
+        baseline_tokens_per_second_per_user,
+    )
+    _append_option(args, "--baseline-reference", baseline_reference)
+    _append_option(args, "--min-baseline-ratio", min_baseline_ratio)
+    if trace:
+        args.append("--trace")
+    if dry_run:
+        args.append("--dry-run")
+    if skip_autotune:
+        args.append("--skip-autotune")
+    if require_full_decode_step:
+        args.append("--require-full-decode-step")
+    if require_official_performance_parity:
+        args.append("--require-official-performance-parity")
+    if require_trace:
+        args.append("--require-trace")
+    if require_official_config_match:
+        args.append("--require-official-config-match")
+    if require_full_depth:
+        args.append("--require-full-depth")
+    if require_program_runtime_shape:
+        args.append("--require-program-runtime-shape")
+    if require_batch32_decode_step:
+        args.append("--require-batch32-decode-step")
+    if require_decode_shell_numeric_reference:
+        args.append("--require-decode-shell-numeric-reference")
+    if preflight_only:
+        args.append("--preflight-only")
+    return args
+
+
+def _artifact_index(paths: dict[str, Path]) -> dict[str, str]:
+    return {name: str(path) for name, path in paths.items()}
+
+
+def _real_decode_reproducibility(
+    *,
+    validation_args: list[str],
+    preflight_args: list[str],
+    artifact_paths: dict[str, Path],
+) -> dict[str, Any]:
+    return {
+        "validation_cli_args": validation_args,
+        "validation_cli_command": _shell_command(validation_args),
+        "preflight_cli_args": preflight_args,
+        "preflight_cli_command": _shell_command(preflight_args),
+        "artifact_index": _artifact_index(artifact_paths),
+    }
 
 
 def validate_direct(
@@ -1181,6 +1315,95 @@ def preflight_real_decode(
         for check in checks
         if not check["passed"] and check.get("required", True)
     ]
+    rerun_layer_count = layer_count if layer_count is not None else int(layers)
+    rerun_trace_iterations = (
+        trace_iteration_count
+        if trace_iteration_count is not None
+        else int(trace_iterations)
+    )
+    final_cli_args = _real_decode_cli_args(
+        program_dir=program_dir,
+        model_path=model_path,
+        out_dir=out.parent,
+        official_config_path=official_config_path,
+        decode_step_search_space_path=decode_step_search_space_path,
+        performance_baselines_path=performance_baselines_path,
+        layers=rerun_layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        trace=normalized["trace"],
+        trace_iterations=rerun_trace_iterations,
+        skip_autotune=skip_autotune,
+        require_full_decode_step=normalized["require_full_decode_step"],
+        require_official_performance_parity=normalized[
+            "require_official_performance_parity"
+        ],
+        require_trace=normalized["require_trace"],
+        require_official_config_match=normalized[
+            "require_official_config_match"
+        ],
+        require_full_depth=normalized["require_full_depth"],
+        require_program_runtime_shape=normalized[
+            "require_program_runtime_shape"
+        ],
+        require_batch32_decode_step=normalized[
+            "require_batch32_decode_step"
+        ],
+        min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            baseline_tokens_per_second_per_user
+        ),
+        baseline_reference=baseline_reference,
+        min_baseline_ratio=min_baseline_ratio,
+        decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=normalized[
+            "require_decode_shell_numeric_reference"
+        ],
+    )
+    preflight_cli_args = _real_decode_cli_args(
+        program_dir=program_dir,
+        model_path=model_path,
+        out_dir=out.parent,
+        official_config_path=official_config_path,
+        decode_step_search_space_path=decode_step_search_space_path,
+        performance_baselines_path=performance_baselines_path,
+        layers=rerun_layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        trace=normalized["trace"],
+        trace_iterations=rerun_trace_iterations,
+        skip_autotune=skip_autotune,
+        require_full_decode_step=normalized["require_full_decode_step"],
+        require_official_performance_parity=normalized[
+            "require_official_performance_parity"
+        ],
+        require_trace=normalized["require_trace"],
+        require_official_config_match=normalized[
+            "require_official_config_match"
+        ],
+        require_full_depth=normalized["require_full_depth"],
+        require_program_runtime_shape=normalized[
+            "require_program_runtime_shape"
+        ],
+        require_batch32_decode_step=normalized[
+            "require_batch32_decode_step"
+        ],
+        min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            baseline_tokens_per_second_per_user
+        ),
+        baseline_reference=baseline_reference,
+        min_baseline_ratio=min_baseline_ratio,
+        decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=normalized[
+            "require_decode_shell_numeric_reference"
+        ],
+        preflight_only=True,
+    )
     report = {
         "schema_version": 1,
         "command": "preflight-real-decode",
@@ -1213,6 +1436,14 @@ def preflight_real_decode(
         "official_config_diff": official_config_diff_summary,
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
+        "reproducibility": {
+            "preflight_cli_args": preflight_cli_args,
+            "preflight_cli_command": _shell_command(preflight_cli_args),
+            "final_validation_cli_args": final_cli_args,
+            "final_validation_cli_command": _shell_command(final_cli_args),
+            "preflight_report": str(out),
+            "out_dir": str(out.parent),
+        },
         "check_count": len(checks),
         "failed_checks": [check["name"] for check in failed_checks],
         "checks": checks,
@@ -1428,6 +1659,76 @@ def validate_real_decode(
         "evidence_manifest": root / "real_decode_evidence_manifest.json",
         "report": report_path,
     }
+    validation_cli_args = _real_decode_cli_args(
+        program_dir=program_dir,
+        model_path=model_path,
+        out_dir=root,
+        official_config_path=official_config_path,
+        decode_step_search_space_path=decode_step_search_space_path,
+        performance_baselines_path=performance_baselines_path,
+        layers=layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        dtype_seed=dtype_seed,
+        trace=trace,
+        trace_iterations=trace_iterations,
+        metric=metric,
+        dry_run=dry_run,
+        skip_autotune=skip_autotune,
+        require_full_decode_step=require_full_decode_step,
+        require_official_performance_parity=require_official_performance_parity,
+        require_trace=require_trace,
+        require_official_config_match=require_official_config_match,
+        require_full_depth=require_full_depth,
+        require_program_runtime_shape=require_program_runtime_shape,
+        require_batch32_decode_step=require_batch32_decode_step,
+        min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            baseline_tokens_per_second_per_user
+        ),
+        baseline_reference=baseline_reference,
+        min_baseline_ratio=min_baseline_ratio,
+        decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=(
+            require_decode_shell_numeric_reference
+        ),
+    )
+    preflight_cli_args = _real_decode_cli_args(
+        program_dir=program_dir,
+        model_path=model_path,
+        out_dir=root,
+        official_config_path=official_config_path,
+        decode_step_search_space_path=decode_step_search_space_path,
+        performance_baselines_path=performance_baselines_path,
+        layers=layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        trace=trace,
+        trace_iterations=trace_iterations,
+        skip_autotune=skip_autotune,
+        require_full_decode_step=require_full_decode_step,
+        require_official_performance_parity=require_official_performance_parity,
+        require_trace=require_trace,
+        require_official_config_match=require_official_config_match,
+        require_full_depth=require_full_depth,
+        require_program_runtime_shape=require_program_runtime_shape,
+        require_batch32_decode_step=require_batch32_decode_step,
+        min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+        baseline_tokens_per_second_per_user=(
+            baseline_tokens_per_second_per_user
+        ),
+        baseline_reference=baseline_reference,
+        min_baseline_ratio=min_baseline_ratio,
+        decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+        require_decode_shell_numeric_reference=(
+            require_decode_shell_numeric_reference
+        ),
+        preflight_only=True,
+    )
     report: dict[str, Any] = {
         "schema_version": 1,
         "command": "validate-real-decode",
@@ -1492,6 +1793,11 @@ def validate_real_decode(
         "decode_step_contract": decode_step_contract,
         "steps": {},
         "artifacts": {name: str(path) for name, path in paths.items()},
+        "reproducibility": _real_decode_reproducibility(
+            validation_args=validation_cli_args,
+            preflight_args=preflight_cli_args,
+            artifact_paths=paths,
+        ),
     }
 
     def persist() -> None:
@@ -2883,6 +3189,7 @@ def _real_decode_evidence_manifest(
         "schema_version": 1,
         "status": status,
         "acceptance_scope": acceptance_scope,
+        "reproducibility": report.get("reproducibility"),
         "validation": {
             "command": report.get("command"),
             "status": report.get("status"),

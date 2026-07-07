@@ -669,6 +669,9 @@ acceptance checks. If a runtime gate stops early, the manifest is still written
 with `status=incomplete` so the failed bring-up attempt has an inspectable
 evidence bundle. Use this manifest as the primary attachment for P150A
 acceptance runs.
+The validation report and evidence manifest also include a `reproducibility`
+block with canonical `validate-real-decode` and preflight CLI commands plus a
+machine-readable index of the key report/artifact paths.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs

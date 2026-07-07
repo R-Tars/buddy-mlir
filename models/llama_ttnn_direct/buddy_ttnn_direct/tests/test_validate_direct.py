@@ -234,6 +234,29 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.0)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.99)
+            repro = report["reproducibility"]
+            self.assertIn(
+                "--preflight-only",
+                repro["preflight_cli_args"],
+            )
+            self.assertNotIn(
+                "--preflight-only",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn(
+                "validate-real-decode",
+                repro["final_validation_cli_command"],
+            )
+            self.assertIn(
+                "--min-tokens-per-second-per-user",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn("1.0", repro["final_validation_cli_args"])
+            self.assertIn(
+                "--decode-shell-pcc-threshold",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn("0.99", repro["final_validation_cli_args"])
             self.assertEqual(
                 report["ttnn_environment"]["tt_metal_git_commit"],
                 "fake-tt-metal",
@@ -356,6 +379,22 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.25)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.98)
             self.assertEqual(report["min_baseline_ratio"], 0.1)
+            self.assertIn(
+                "--preflight-only",
+                report["reproducibility"]["preflight_cli_args"],
+            )
+            self.assertNotIn(
+                "--preflight-only",
+                report["reproducibility"]["final_validation_cli_args"],
+            )
+            self.assertIn(
+                "1.25",
+                report["reproducibility"]["final_validation_cli_args"],
+            )
+            self.assertIn(
+                "0.98",
+                report["reproducibility"]["final_validation_cli_args"],
+            )
             self.assertEqual(
                 report["baseline_reference"],
                 "tt_metal_official_llama31_8b_b32",
@@ -1146,6 +1185,26 @@ class ValidateDirectTest(unittest.TestCase):
                 },
             )
             self.assertEqual(report["evidence"]["status"], "accepted")
+            repro = report["reproducibility"]
+            self.assertIn(
+                "validate-real-decode",
+                repro["validation_cli_command"],
+            )
+            self.assertIn("--preflight-only", repro["preflight_cli_args"])
+            self.assertNotIn("--preflight-only", repro["validation_cli_args"])
+            self.assertIn("--trace", repro["validation_cli_args"])
+            self.assertIn(
+                "--baseline-reference",
+                repro["validation_cli_args"],
+            )
+            self.assertEqual(
+                repro["artifact_index"]["report"],
+                str(out_dir / "real_decode_validation_report.json"),
+            )
+            self.assertEqual(
+                repro["artifact_index"]["evidence_manifest"],
+                str(out_dir / "real_decode_evidence_manifest.json"),
+            )
             self.assertEqual(
                 report["results"],
                 {step: "pass" for step in REAL_DECODE_VALIDATION_STEPS},
@@ -2528,6 +2587,22 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(
+                evidence["reproducibility"]["validation_cli_args"],
+                report["reproducibility"]["validation_cli_args"],
+            )
+            self.assertEqual(
+                evidence["reproducibility"]["artifact_index"][
+                    "profile_report"
+                ],
+                str(out_dir / "decode_step_profile_report.json"),
+            )
+            self.assertEqual(
+                evidence["reproducibility"]["artifact_index"][
+                    "autotune_report"
+                ],
+                str(out_dir / "decode_step_autotune_report.json"),
+            )
             self.assertEqual(evidence["acceptance_scope"]["status"], "bringup")
             self.assertTrue(
                 evidence["acceptance_scope"]["accepted_real_weight_runtime"]
