@@ -500,7 +500,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["tensor_conversion_count"], 25)
             self.assertEqual(
                 report["parameter_setup"]["synthetic_runtime_input_tensor_count"],
-                2,
+                0,
             )
             self.assertEqual(
                 report["parameter_setup"]["prompt_runtime_input_tensor_count"],
@@ -521,6 +521,12 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "rotary_runtime_input_tensor_count"
                 ],
                 3,
+            )
+            self.assertEqual(
+                report["parameter_setup"][
+                    "kv_cache_runtime_input_tensor_count"
+                ],
+                2,
             )
             self.assertEqual(
                 report["prompt_tokenization"]["selected_token_id"],
@@ -553,6 +559,18 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 report["rotary_runtime_state"]["tensor_count"],
                 3,
+            )
+            self.assertEqual(
+                report["kv_cache_runtime_state"]["physical_shape"],
+                [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                report["kv_cache_runtime_state"]["logical_shape"],
+                [2, 16, 2, 4],
+            )
+            self.assertEqual(
+                report["kv_cache_runtime_state"]["tensor_count"],
+                2,
             )
             prompt_and_state_calls = [
                 call

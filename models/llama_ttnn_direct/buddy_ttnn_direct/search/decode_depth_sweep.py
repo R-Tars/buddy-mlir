@@ -278,9 +278,15 @@ def _profile_record(
                 "rotary_runtime_input_tensor_count"
             )
         ),
+        "kv_cache_runtime_input_tensor_count": (
+            (profile.get("parameter_setup") or {}).get(
+                "kv_cache_runtime_input_tensor_count"
+            )
+        ),
         "prompt_tokenization": profile.get("prompt_tokenization"),
         "decode_runtime_state": profile.get("decode_runtime_state"),
         "rotary_runtime_state": profile.get("rotary_runtime_state"),
+        "kv_cache_runtime_state": profile.get("kv_cache_runtime_state"),
         "synthetic_rotary_tensor_count": (
             (profile.get("parameter_setup") or {}).get(
                 "synthetic_rotary_tensor_count"

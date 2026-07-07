@@ -3499,7 +3499,7 @@ class ValidateDirectTest(unittest.TestCase):
                     report["steps"][step_name][
                         "synthetic_runtime_input_tensor_count"
                     ],
-                    2,
+                    0,
                 )
                 self.assertEqual(
                     report["steps"][step_name][
@@ -3519,6 +3519,12 @@ class ValidateDirectTest(unittest.TestCase):
                     ],
                     3,
                 )
+                self.assertEqual(
+                    report["steps"][step_name][
+                        "kv_cache_runtime_input_tensor_count"
+                    ],
+                    2,
+                )
 
             depth_sweep = report["steps"]["decode_depth_sweep"]
             self.assertEqual(depth_sweep["records"][0]["input_source"], "prompt_runtime")
@@ -3530,7 +3536,7 @@ class ValidateDirectTest(unittest.TestCase):
                 depth_sweep["records"][0][
                     "synthetic_runtime_input_tensor_count"
                 ],
-                2,
+                0,
             )
             self.assertEqual(
                 depth_sweep["records"][0][
@@ -3556,6 +3562,18 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 3,
             )
+            self.assertEqual(
+                depth_sweep["records"][0][
+                    "kv_cache_runtime_input_tensor_count"
+                ],
+                2,
+            )
+            self.assertEqual(
+                depth_sweep["records"][0]["kv_cache_runtime_state"][
+                    "tensor_count"
+                ],
+                2,
+            )
 
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
@@ -3563,9 +3581,10 @@ class ValidateDirectTest(unittest.TestCase):
             e2e = evidence["model_end_to_end_readiness"]
             scope = e2e["runtime_input_scope"]
             self.assertEqual(evidence["status"], "accepted")
-            self.assertEqual(e2e["status"], "synthetic_runtime_inputs")
+            self.assertEqual(e2e["status"], "needs_full_decode_step")
             self.assertFalse(e2e["model_end_to_end_ready"])
-            self.assertTrue(e2e["uses_synthetic_runtime_inputs"])
+            self.assertFalse(e2e["uses_synthetic_runtime_inputs"])
+            self.assertFalse(e2e["decode_loop_runtime_owned"])
             self.assertEqual(
                 scope["runtime_input_sources"],
                 {step: "prompt_runtime" for step in prompt_runtime_steps},
@@ -3590,36 +3609,37 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 3,
                 },
             )
-            self.assertNotIn(
-                "decode_shell",
-                scope["synthetic_runtime_input_steps"],
-            )
             self.assertEqual(
-                scope["synthetic_runtime_input_tensor_counts"],
+                scope["kv_cache_runtime_input_tensor_counts"],
                 {
-                    "decode_shell": 0,
                     "single_layer_decode": 2,
                     "smoke_decode_step": 2,
                     "profile_decode_step": 2,
                 },
             )
-            self.assertIn(
-                "single_layer_decode",
-                scope["synthetic_runtime_input_steps"],
+            self.assertEqual(
+                scope["synthetic_runtime_input_tensor_counts"],
+                {
+                    "decode_shell": 0,
+                    "single_layer_decode": 0,
+                    "smoke_decode_step": 0,
+                    "profile_decode_step": 0,
+                },
             )
-            self.assertIn(
-                "decode_depth_sweep",
-                scope["synthetic_runtime_input_steps"],
-            )
-            self.assertEqual(scope["depth_sweep_synthetic_record_count"], 1)
-            self.assertIn(
-                "real runtime input path for KV cache tensors",
-                e2e["missing_for_model_end_to_end"],
-            )
+            self.assertEqual(scope["synthetic_runtime_input_steps"], [])
+            self.assertEqual(scope["depth_sweep_synthetic_record_count"], 0)
             self.assertIn(
                 "decode loop that owns prompt token ids, page table, cache "
                 "position, rotary tensors, and KV cache beyond "
                 "smoke/profile harnesses",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertIn(
+                "accepted full decode-step evidence",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertNotIn(
+                "real runtime input path for KV cache tensors",
                 e2e["missing_for_model_end_to_end"],
             )
             self.assertNotIn(

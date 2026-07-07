@@ -19,6 +19,7 @@ from .codegen.ttnn_tensorizer import (
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import (
     PromptTokenizationError,
+    build_decode_kv_cache_runtime_state,
     build_decode_rotary_runtime_state,
     build_decode_runtime_state,
     tokenize_prompt_for_decode,
@@ -280,6 +281,9 @@ def run_smoke_decode_step(
                 rotary_runtime_state = getattr(
                     state, "rotary_runtime_state", None
                 )
+                kv_cache_runtime_state = getattr(
+                    state, "kv_cache_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
@@ -288,6 +292,7 @@ def run_smoke_decode_step(
                 prompt_tokenization = None
                 decode_runtime_state = None
                 rotary_runtime_state = None
+                kv_cache_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -323,6 +328,8 @@ def run_smoke_decode_step(
                 report["decode_runtime_state"] = decode_runtime_state
             if rotary_runtime_state is not None:
                 report["rotary_runtime_state"] = rotary_runtime_state
+            if kv_cache_runtime_state is not None:
+                report["kv_cache_runtime_state"] = kv_cache_runtime_state
             report.update(
                 {
                     **_base_report(
@@ -624,6 +631,9 @@ def profile_decode_step(
                 rotary_runtime_state = getattr(
                     synthetic, "rotary_runtime_state", None
                 )
+                kv_cache_runtime_state = getattr(
+                    synthetic, "kv_cache_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
@@ -632,6 +642,7 @@ def profile_decode_step(
                 prompt_tokenization = None
                 decode_runtime_state = None
                 rotary_runtime_state = None
+                kv_cache_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -681,6 +692,8 @@ def profile_decode_step(
                 profile["decode_runtime_state"] = decode_runtime_state
             if rotary_runtime_state is not None:
                 profile["rotary_runtime_state"] = rotary_runtime_state
+            if kv_cache_runtime_state is not None:
+                profile["kv_cache_runtime_state"] = kv_cache_runtime_state
             profile["bottleneck_summary"] = _bottleneck_summary(
                 profile["section_latency_ms"],
                 profile["layer_profiles"],
@@ -1620,6 +1633,7 @@ def _build_model_decode_state(
         prompt_tokenization=synthetic_inputs.prompt_tokenization,
         decode_runtime_state=synthetic_inputs.decode_runtime_state,
         rotary_runtime_state=rotary_runtime_state,
+        kv_cache_runtime_state=synthetic_inputs.kv_cache_runtime_state,
         parameter_setup={
             "materialization": materialization_summary,
             "tensorization": _tensorization_summary(result.report),
@@ -1637,6 +1651,10 @@ def _build_model_decode_state(
             "decode_runtime_state_input_tensor_count": (
                 synthetic_inputs.decode_runtime_state_input_tensor_count
             ),
+            "kv_cache_runtime_input_tensor_count": (
+                synthetic_inputs.kv_cache_runtime_input_tensor_count
+            ),
+            "kv_cache_runtime_state": synthetic_inputs.kv_cache_runtime_state,
         },
     )
 
@@ -1783,8 +1801,10 @@ def _build_synthetic_decode_inputs(
     inputs = plan["input_shapes"]
     prompt_runtime_input_tensor_count = 0
     decode_runtime_state_input_tensor_count = 0
+    kv_cache_runtime_input_tensor_count = 0
     prompt_tokenization = None
     decode_runtime_state = None
+    kv_cache_runtime_state = None
     input_source = "synthetic"
     if prompt is None:
         token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
@@ -1794,6 +1814,22 @@ def _build_synthetic_decode_inputs(
             name="cache_position",
             zeros=True,
         )
+        kv_cache = []
+        for layer_id in range(int(plan["layers"])):
+            kv_cache.append(
+                SimpleNamespace(
+                    k=tensor(
+                        inputs["key_cache"],
+                        name=f"layers.{layer_id}.key_cache",
+                        zeros=True,
+                    ),
+                    v=tensor(
+                        inputs["value_cache"],
+                        name=f"layers.{layer_id}.value_cache",
+                        zeros=True,
+                    ),
+                )
+            )
     else:
         prompt_runtime = _build_prompt_decode_token_ids(
             ttnn=ttnn,
@@ -1825,23 +1861,24 @@ def _build_synthetic_decode_inputs(
             runtime_state.tensor_conversion_count
         )
         decode_runtime_state = runtime_state.decode_runtime_state
-        input_source = "prompt_runtime"
-    kv_cache = []
-    for layer_id in range(int(plan["layers"])):
-        kv_cache.append(
-            SimpleNamespace(
-                k=tensor(
-                    inputs["key_cache"],
-                    name=f"layers.{layer_id}.key_cache",
-                    zeros=True,
-                ),
-                v=tensor(
-                    inputs["value_cache"],
-                    name=f"layers.{layer_id}.value_cache",
-                    zeros=True,
-                ),
-            )
+        kv_runtime = _build_prompt_decode_kv_cache_tensors(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            layer_count=int(plan["layers"]),
+            batch_size=int(inputs["token_ids"][0]),
+            cache_len=int((plan["kv_cache"]["logical_shape"])[1]),
+            page_block_size=int(plan["kv_cache"]["page_block_size"]),
+            num_kv_heads=int((plan["kv_cache"]["logical_shape"])[2]),
+            head_dim=int((plan["kv_cache"]["logical_shape"])[3]),
         )
+        kv_cache = kv_runtime.kv_cache
+        kv_cache_runtime_input_tensor_count = (
+            kv_runtime.tensor_conversion_count
+        )
+        kv_cache_runtime_state = kv_runtime.kv_cache_runtime_state
+        input_source = "prompt_runtime"
     return SimpleNamespace(
         token_ids=token_ids,
         page_table=page_table,
@@ -1850,15 +1887,20 @@ def _build_synthetic_decode_inputs(
         tensor_conversion_count=(
             tensor_count() + prompt_runtime_input_tensor_count
             + decode_runtime_state_input_tensor_count
+            + kv_cache_runtime_input_tensor_count
         ),
         synthetic_runtime_input_tensor_count=tensor_count(),
         prompt_runtime_input_tensor_count=prompt_runtime_input_tensor_count,
         decode_runtime_state_input_tensor_count=(
             decode_runtime_state_input_tensor_count
         ),
+        kv_cache_runtime_input_tensor_count=(
+            kv_cache_runtime_input_tensor_count
+        ),
         input_source=input_source,
         prompt_tokenization=prompt_tokenization,
         decode_runtime_state=decode_runtime_state,
+        kv_cache_runtime_state=kv_cache_runtime_state,
     )
 
 
@@ -1956,6 +1998,65 @@ def _build_prompt_decode_token_ids(
         token_ids=token_ids,
         tensor_conversion_count=1,
         prompt_tokenization=tokenization.to_report(),
+    )
+
+
+def _build_prompt_decode_kv_cache_tensors(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    layer_count: int,
+    batch_size: int,
+    cache_len: int,
+    page_block_size: int,
+    num_kv_heads: int,
+    head_dim: int,
+) -> SimpleNamespace:
+    runtime_state = build_decode_kv_cache_runtime_state(
+        layer_count=layer_count,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        page_block_size=page_block_size,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+    )
+    kwargs = {
+        "device": device,
+        "dtype": _ttnn_dtype(ttnn, dtype_seed),
+    }
+    layout = getattr(ttnn, "TILE_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    tensor_count = 0
+
+    def cache_tensor(name: str) -> Any:
+        nonlocal tensor_count
+        tensor_count += 1
+        return ttnn.from_torch(
+            _runtime_float_tensor(
+                torch,
+                runtime_state.physical_shape,
+                dtype_seed=dtype_seed,
+                name=name,
+            ),
+            **kwargs,
+        )
+
+    kv_cache = []
+    for layer_id in range(layer_count):
+        kv_cache.append(
+            SimpleNamespace(
+                k=cache_tensor(f"runtime.layers.{layer_id}.key_cache"),
+                v=cache_tensor(f"runtime.layers.{layer_id}.value_cache"),
+            )
+        )
+
+    return SimpleNamespace(
+        kv_cache=kv_cache,
+        tensor_conversion_count=tensor_count,
+        kv_cache_runtime_state=runtime_state.to_report(),
     )
 
 
