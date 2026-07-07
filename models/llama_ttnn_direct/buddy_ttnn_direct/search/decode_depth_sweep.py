@@ -45,6 +45,9 @@ def run_decode_depth_sweep(
     trace_iterations: int = 1,
     dry_run: bool = False,
     require_full_depth: bool = True,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -96,6 +99,9 @@ def run_decode_depth_sweep(
                 trace=trace,
                 trace_iterations=trace_iterations,
                 dry_run=dry_run,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
                 ttnn_module=ttnn_module,
                 torch_module=torch_module,
             )
@@ -164,6 +170,8 @@ def run_decode_depth_sweep(
         "dtype_seed": dtype_seed,
         "trace_enabled": trace,
         "trace_iterations": trace_iterations if trace else 0,
+        "prompt_runtime_requested": prompt is not None,
+        "tokenizer_path": str(tokenizer_path) if tokenizer_path else None,
         "status_counts": status_counts,
         "reference_status_counts": reference_status_counts,
         "trace_status_counts": trace_status_counts,
@@ -255,6 +263,12 @@ def _profile_record(
                 "synthetic_runtime_input_tensor_count"
             )
         ),
+        "prompt_runtime_input_tensor_count": (
+            (profile.get("parameter_setup") or {}).get(
+                "prompt_runtime_input_tensor_count"
+            )
+        ),
+        "prompt_tokenization": profile.get("prompt_tokenization"),
         "synthetic_rotary_tensor_count": (
             (profile.get("parameter_setup") or {}).get(
                 "synthetic_rotary_tensor_count"

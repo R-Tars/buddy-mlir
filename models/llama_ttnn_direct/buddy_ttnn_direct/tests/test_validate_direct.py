@@ -42,6 +42,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primi
     _fake_torch,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
+    _fake_tokenizer_module,
     _make_fake_ttnn,
 )
 
@@ -3408,6 +3409,172 @@ class ValidateDirectTest(unittest.TestCase):
                     "best_candidate_summary"
                 ]["reference_status"],
                 "passed",
+            )
+
+    def test_validate_real_decode_uses_prompt_runtime_token_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    min_tokens_per_second_per_user=0.0,
+                    prompt="hello tenstorrent",
+                    tokenizer_path=model_dir,
+                    tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                    ttnn_module=_make_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["prompt_runtime_requested"])
+            self.assertEqual(report["tokenizer_path"], str(model_dir))
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["status"],
+                "skipped",
+            )
+            prompt_runtime_steps = [
+                "decode_shell",
+                "single_layer_decode",
+                "smoke_decode_step",
+                "profile_decode_step",
+            ]
+            for step_name in prompt_runtime_steps:
+                step = report["steps"][step_name]
+                self.assertEqual(step["input_source"], "prompt_runtime")
+                self.assertEqual(step["prompt_runtime_input_tensor_count"], 1)
+                self.assertEqual(
+                    step["prompt_tokenization"]["selected_token_id"],
+                    42,
+                )
+                self.assertEqual(
+                    step["prompt_tokenization"]["token_input_shape"],
+                    [2, 1],
+                )
+
+            self.assertEqual(
+                report["steps"]["decode_shell"]["runtime_input_tensor_count"],
+                0,
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"][
+                    "synthetic_runtime_input_tensor_count"
+                ],
+                0,
+            )
+            for step_name in (
+                "single_layer_decode",
+                "smoke_decode_step",
+                "profile_decode_step",
+            ):
+                self.assertEqual(
+                    report["steps"][step_name][
+                        "synthetic_runtime_input_tensor_count"
+                    ],
+                    4,
+                )
+                self.assertEqual(
+                    report["steps"][step_name][
+                        "synthetic_rotary_tensor_count"
+                    ],
+                    3,
+                )
+
+            depth_sweep = report["steps"]["decode_depth_sweep"]
+            self.assertEqual(depth_sweep["records"][0]["input_source"], "prompt_runtime")
+            self.assertEqual(
+                depth_sweep["records"][0]["prompt_runtime_input_tensor_count"],
+                1,
+            )
+            self.assertEqual(
+                depth_sweep["records"][0][
+                    "synthetic_runtime_input_tensor_count"
+                ],
+                4,
+            )
+
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            e2e = evidence["model_end_to_end_readiness"]
+            scope = e2e["runtime_input_scope"]
+            self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(e2e["status"], "synthetic_runtime_inputs")
+            self.assertFalse(e2e["model_end_to_end_ready"])
+            self.assertTrue(e2e["uses_synthetic_runtime_inputs"])
+            self.assertEqual(
+                scope["runtime_input_sources"],
+                {step: "prompt_runtime" for step in prompt_runtime_steps},
+            )
+            self.assertEqual(
+                scope["prompt_runtime_input_tensor_counts"],
+                {step: 1 for step in prompt_runtime_steps},
+            )
+            self.assertNotIn(
+                "decode_shell",
+                scope["synthetic_runtime_input_steps"],
+            )
+            self.assertEqual(
+                scope["synthetic_runtime_input_tensor_counts"],
+                {
+                    "decode_shell": 0,
+                    "single_layer_decode": 4,
+                    "smoke_decode_step": 4,
+                    "profile_decode_step": 4,
+                },
+            )
+            self.assertIn(
+                "single_layer_decode",
+                scope["synthetic_runtime_input_steps"],
+            )
+            self.assertIn(
+                "decode_depth_sweep",
+                scope["synthetic_runtime_input_steps"],
+            )
+            self.assertEqual(scope["depth_sweep_synthetic_record_count"], 1)
+            self.assertIn(
+                "real runtime input path for page table, cache position, "
+                "KV cache, and rotary tensors",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertIn(
+                "decode loop that owns prompt token ids plus page table, "
+                "cache position, KV cache, and rotary tensors beyond "
+                "smoke/profile harnesses",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertNotIn(
+                "real runtime input path for token ids, page table, cache "
+                "position, KV cache, and rotary tensors",
+                e2e["missing_for_model_end_to_end"],
             )
 
     def test_validate_real_decode_can_require_official_config_match(

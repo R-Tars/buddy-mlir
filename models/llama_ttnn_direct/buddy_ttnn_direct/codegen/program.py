@@ -122,6 +122,8 @@ def main(argv=None):
         ),
     )
     parser.add_argument("--model-path", type=Path, default=None)
+    parser.add_argument("--prompt", default=None)
+    parser.add_argument("--tokenizer-path", type=Path, default=None)
     parser.add_argument("--layers", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--cache-len", type=int, default=None)
@@ -214,6 +216,8 @@ def main(argv=None):
             dtype_seed=args.dtype_seed,
             trace=args.trace,
             trace_iterations=args.trace_iterations,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
             dry_run=args.dry_run,
         )
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -238,6 +242,8 @@ def main(argv=None):
             dtype_seed=args.dtype_seed,
             trace=args.trace,
             trace_iterations=args.trace_iterations,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
             dry_run=args.dry_run,
         )
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -333,6 +339,8 @@ def main(argv=None):
         require_decode_shell_numeric_reference=(
             args.require_decode_shell_numeric_reference
         ),
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
     )
     report_path = out_dir / "real_decode_validation_report.json"
     print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))

@@ -17,6 +17,10 @@ from .codegen.ttnn_tensorizer import (
     to_ttnn_parameters,
 )
 from .runtime_environment import collect_ttnn_environment
+from .runtime_inputs import (
+    PromptTokenizationError,
+    tokenize_prompt_for_decode,
+)
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
@@ -35,6 +39,7 @@ from .smoke_decode_shell import (
     _observed_op_sequence,
     _shape,
     _shape_check,
+    _token_ids_tensor,
     _to_namespace,
     _value_check,
 )
@@ -112,6 +117,9 @@ def run_smoke_decode_step(
     page_table: Any | None = None,
     cache_position: Any | None = None,
     kv_cache: Any | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
 ) -> dict[str, Any]:
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
@@ -247,6 +255,9 @@ def run_smoke_decode_step(
                         plan=plan,
                         program_dir=program_root,
                         model_path=Path(model_path),
+                        prompt=prompt,
+                        tokenizer_path=tokenizer_path,
+                        tokenizer_module=tokenizer_module,
                     )
                 parameters = state.parameters
                 token_ids = state.token_ids
@@ -256,10 +267,16 @@ def run_smoke_decode_step(
                 tensor_conversion_count = state.tensor_conversion_count
                 parameter_source = state.parameter_source
                 parameter_setup = getattr(state, "parameter_setup", None)
+                input_source = getattr(state, "input_source", "synthetic")
+                prompt_tokenization = getattr(
+                    state, "prompt_tokenization", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
                 parameter_setup = None
+                input_source = "injected"
+                prompt_tokenization = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -288,15 +305,9 @@ def run_smoke_decode_step(
             report["parameter_source"] = parameter_source
             if parameter_setup is not None:
                 report["parameter_setup"] = parameter_setup
-            report["input_source"] = (
-                "injected"
-                if any(
-                    item is not None
-                    for item in (token_ids, page_table, cache_position, kv_cache)
-                )
-                and parameter_source == "injected"
-                else "synthetic"
-            )
+            report["input_source"] = input_source
+            if prompt_tokenization is not None:
+                report["prompt_tokenization"] = prompt_tokenization
             report.update(
                 {
                     **_base_report(
@@ -329,7 +340,11 @@ def run_smoke_decode_step(
             plan=plan,
             detail=str(err),
         )
-    except (ParameterMaterializationError, TTNNTensorizationError) as err:
+    except (
+        ParameterMaterializationError,
+        TTNNTensorizationError,
+        PromptTokenizationError,
+    ) as err:
         report = _failed_report(
             program_dir=program_root,
             layers=layer_count,
@@ -409,6 +424,9 @@ def profile_decode_step(
     page_table: Any | None = None,
     cache_position: Any | None = None,
     kv_cache: Any | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
 ) -> dict[str, Any]:
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
@@ -568,6 +586,9 @@ def profile_decode_step(
                         plan=plan,
                         program_dir=program_root,
                         model_path=Path(model_path),
+                        prompt=prompt,
+                        tokenizer_path=tokenizer_path,
+                        tokenizer_module=tokenizer_module,
                     )
                 tensor_conversion_ms = (time.perf_counter() - conversion_start) * 1000.0
                 parameters = synthetic.parameters
@@ -578,10 +599,16 @@ def profile_decode_step(
                 tensor_conversion_count = synthetic.tensor_conversion_count
                 parameter_source = synthetic.parameter_source
                 parameter_setup = getattr(synthetic, "parameter_setup", None)
+                input_source = getattr(synthetic, "input_source", "synthetic")
+                prompt_tokenization = getattr(
+                    synthetic, "prompt_tokenization", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
                 parameter_setup = None
+                input_source = "injected"
+                prompt_tokenization = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -624,15 +651,9 @@ def profile_decode_step(
             profile["parameter_source"] = parameter_source
             if parameter_setup is not None:
                 profile["parameter_setup"] = parameter_setup
-            profile["input_source"] = (
-                "injected"
-                if any(
-                    item is not None
-                    for item in (token_ids, page_table, cache_position, kv_cache)
-                )
-                and parameter_source == "injected"
-                else "synthetic"
-            )
+            profile["input_source"] = input_source
+            if prompt_tokenization is not None:
+                profile["prompt_tokenization"] = prompt_tokenization
             profile["bottleneck_summary"] = _bottleneck_summary(
                 profile["section_latency_ms"],
                 profile["layer_profiles"],
@@ -664,7 +685,11 @@ def profile_decode_step(
             detail=str(err),
             ttnn_version=getattr(ttnn, "__version__", None),
         )
-    except (ParameterMaterializationError, TTNNTensorizationError) as err:
+    except (
+        ParameterMaterializationError,
+        TTNNTensorizationError,
+        PromptTokenizationError,
+    ) as err:
         report = _profile_unavailable_report(
             program_dir=program_root,
             layers=layer_count,
@@ -1490,6 +1515,9 @@ def _build_model_decode_state(
     plan: dict[str, Any],
     program_dir: Path,
     model_path: Path,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
 ) -> SimpleNamespace:
     host_params = load_llama_parameters_from_manifests(
         model_path=model_path,
@@ -1524,6 +1552,9 @@ def _build_model_decode_state(
         device=device,
         dtype_seed=dtype_seed,
         plan=plan,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path or model_path,
+        tokenizer_module=tokenizer_module,
     )
     return SimpleNamespace(
         parameters=result.parameters,
@@ -1535,13 +1566,17 @@ def _build_model_decode_state(
             tensor_conversion_count + synthetic_inputs.tensor_conversion_count
         ),
         parameter_source="hf_model",
-        input_source="synthetic",
+        input_source=synthetic_inputs.input_source,
+        prompt_tokenization=synthetic_inputs.prompt_tokenization,
         parameter_setup={
             "materialization": materialization_summary,
             "tensorization": _tensorization_summary(result.report),
             "synthetic_rotary_tensor_count": synthetic_rotary_count,
             "synthetic_runtime_input_tensor_count": (
-                synthetic_inputs.tensor_conversion_count
+                synthetic_inputs.synthetic_runtime_input_tensor_count
+            ),
+            "prompt_runtime_input_tensor_count": (
+                synthetic_inputs.prompt_runtime_input_tensor_count
             ),
         },
     )
@@ -1676,6 +1711,9 @@ def _build_synthetic_decode_inputs(
     device: Any,
     dtype_seed: str,
     plan: dict[str, Any],
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
 ) -> SimpleNamespace:
     tensor, tensor_count = _synthetic_tensor_factory(
         ttnn=ttnn,
@@ -1684,7 +1722,28 @@ def _build_synthetic_decode_inputs(
         dtype_seed=dtype_seed,
     )
     inputs = plan["input_shapes"]
-    token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
+    prompt_runtime_input_tensor_count = 0
+    prompt_tokenization = None
+    input_source = "synthetic"
+    if prompt is None:
+        token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
+    else:
+        prompt_runtime = _build_prompt_decode_token_ids(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
+            batch_size=int(inputs["token_ids"][0]),
+            vocab_size=plan.get("vocab_size"),
+        )
+        token_ids = prompt_runtime.token_ids
+        prompt_runtime_input_tensor_count = (
+            prompt_runtime.tensor_conversion_count
+        )
+        prompt_tokenization = prompt_runtime.prompt_tokenization
+        input_source = "prompt_runtime"
     page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
     cache_position = tensor(
         inputs["cache_position"],
@@ -1712,8 +1771,67 @@ def _build_synthetic_decode_inputs(
         page_table=page_table,
         cache_position=cache_position,
         kv_cache=kv_cache,
-        tensor_conversion_count=tensor_count(),
+        tensor_conversion_count=(
+            tensor_count() + prompt_runtime_input_tensor_count
+        ),
+        synthetic_runtime_input_tensor_count=tensor_count(),
+        prompt_runtime_input_tensor_count=prompt_runtime_input_tensor_count,
+        input_source=input_source,
+        prompt_tokenization=prompt_tokenization,
     )
+
+
+def _build_prompt_decode_token_ids(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    prompt: str,
+    tokenizer_path: str | Path | None,
+    tokenizer_module: Any | None,
+    batch_size: int,
+    vocab_size: Any,
+) -> SimpleNamespace:
+    if tokenizer_path is None:
+        raise PromptTokenizationError(
+            "tokenizer_path or model_path is required when prompt is used"
+        )
+    tokenization = tokenize_prompt_for_decode(
+        prompt=prompt,
+        batch_size=batch_size,
+        tokenizer_path=tokenizer_path,
+        vocab_size=_safe_int_or_none(vocab_size),
+        tokenizer_module=tokenizer_module,
+    )
+    host_tensor = _token_ids_tensor(
+        torch,
+        tokenization.token_ids,
+        name="prompt_token_ids",
+    )
+    kwargs = {"device": device}
+    dtype = getattr(
+        ttnn,
+        "uint32",
+        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    token_ids = ttnn.from_torch(host_tensor, **kwargs)
+    return SimpleNamespace(
+        token_ids=token_ids,
+        tensor_conversion_count=1,
+        prompt_tokenization=tokenization.to_report(),
+    )
+
+
+def _safe_int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _attach_synthetic_rotary_parameters(
@@ -1847,6 +1965,7 @@ def _decode_step_plan(
     }
     return {
         "layers": layers,
+        "vocab_size": vocab_size,
         "input_shapes": input_shapes,
         "parameter_shapes": parameter_shapes,
         "layer_parameter_shapes": layer_parameter_shapes,

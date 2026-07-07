@@ -1668,6 +1668,9 @@ def validate_real_decode(
     min_baseline_ratio: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -1976,6 +1979,8 @@ def validate_real_decode(
         "require_decode_shell_numeric_reference": (
             require_decode_shell_numeric_reference
         ),
+        "prompt_runtime_requested": prompt is not None,
+        "tokenizer_path": str(tokenizer_path) if tokenizer_path else None,
         "results": {
             step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
         },
@@ -2242,9 +2247,14 @@ def validate_real_decode(
             model_path=None if dry_run else model_path,
             device=device,
             device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
             dry_run=dry_run,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
             pcc_threshold=decode_shell_pcc_threshold,
         )
         numeric_reference = (
@@ -2260,6 +2270,13 @@ def validate_real_decode(
             "runtime_input_tensor_count": shell_report.get(
                 "runtime_input_tensor_count"
             ),
+            "synthetic_runtime_input_tensor_count": shell_report.get(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            "prompt_runtime_input_tensor_count": shell_report.get(
+                "prompt_runtime_input_tensor_count"
+            ),
+            "prompt_tokenization": shell_report.get("prompt_tokenization"),
             "numeric_reference_status": numeric_reference.get("status"),
             "numeric_reference_kind": numeric_reference.get("kind"),
             "numeric_reference_passed": numeric_reference.get("passed"),
@@ -2381,6 +2398,9 @@ def validate_real_decode(
             trace=trace,
             trace_iterations=trace_iterations,
             dry_run=dry_run,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
         )
@@ -2414,6 +2434,14 @@ def validate_real_decode(
             "trace": _trace_summary(single_layer_report.get("trace")),
             "ttnn_environment": single_layer_report.get("ttnn_environment"),
             "parameter_setup": single_layer_report.get("parameter_setup"),
+            "prompt_runtime_input_tensor_count": (
+                (single_layer_report.get("parameter_setup") or {}).get(
+                    "prompt_runtime_input_tensor_count"
+                )
+            ),
+            "prompt_tokenization": single_layer_report.get(
+                "prompt_tokenization"
+            ),
             **tensorization_path_detail(
                 single_layer_report,
                 required_layer_count=1,
@@ -2437,6 +2465,9 @@ def validate_real_decode(
             dry_run=dry_run,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
         )
         return {
             "status": _runtime_step_status(smoke_report, dry_run=dry_run),
@@ -2463,6 +2494,12 @@ def validate_real_decode(
             "trace": _trace_summary(smoke_report.get("trace")),
             "ttnn_environment": smoke_report.get("ttnn_environment"),
             "parameter_setup": smoke_report.get("parameter_setup"),
+            "prompt_runtime_input_tensor_count": (
+                (smoke_report.get("parameter_setup") or {}).get(
+                    "prompt_runtime_input_tensor_count"
+                )
+            ),
+            "prompt_tokenization": smoke_report.get("prompt_tokenization"),
             **tensorization_path_detail(smoke_report),
             **_reference_summary(smoke_report),
         }
@@ -2483,6 +2520,9 @@ def validate_real_decode(
             dry_run=dry_run,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
         )
         bottleneck = profile_report.get("bottleneck_summary", {})
         return {
@@ -2518,6 +2558,12 @@ def validate_real_decode(
             "trace": _trace_summary(profile_report.get("trace")),
             "ttnn_environment": profile_report.get("ttnn_environment"),
             "parameter_setup": profile_report.get("parameter_setup"),
+            "prompt_runtime_input_tensor_count": (
+                (profile_report.get("parameter_setup") or {}).get(
+                    "prompt_runtime_input_tensor_count"
+                )
+            ),
+            "prompt_tokenization": profile_report.get("prompt_tokenization"),
             **tensorization_path_detail(profile_report),
             **_reference_summary(profile_report),
         }
@@ -2543,6 +2589,9 @@ def validate_real_decode(
             trace_iterations=trace_iterations,
             dry_run=dry_run,
             require_full_depth=require_full_depth,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
         )
@@ -2594,6 +2643,9 @@ def validate_real_decode(
             dtype_seed=dtype_seed,
             trace=trace,
             trace_iterations=trace_iterations,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
             ttnn_module=ttnn_module,
             torch_module=torch_module,
         )
@@ -3389,6 +3441,12 @@ def _model_end_to_end_readiness(
     synthetic_inputs = bool(
         runtime_scope.get("uses_synthetic_runtime_inputs")
     )
+    prompt_runtime_observed = any(
+        _positive_scalar_count(value)
+        for value in (
+            runtime_scope.get("prompt_runtime_input_tensor_counts") or {}
+        ).values()
+    )
     missing = []
     if report.get("dry_run"):
         missing.append("run validate-real-decode without --dry-run")
@@ -3397,14 +3455,25 @@ def _model_end_to_end_readiness(
     if not full_decode_ready:
         missing.append("accepted full decode-step evidence")
     if synthetic_inputs:
-        missing.append(
-            "real runtime input path for token ids, page table, cache "
-            "position, KV cache, and rotary tensors"
-        )
-        missing.append(
-            "tokenizer/prompt runner that owns the decode loop instead of "
-            "smoke-generated inputs"
-        )
+        if prompt_runtime_observed:
+            missing.append(
+                "real runtime input path for page table, cache position, "
+                "KV cache, and rotary tensors"
+            )
+            missing.append(
+                "decode loop that owns prompt token ids plus page table, "
+                "cache position, KV cache, and rotary tensors beyond "
+                "smoke/profile harnesses"
+            )
+        else:
+            missing.append(
+                "real runtime input path for token ids, page table, cache "
+                "position, KV cache, and rotary tensors"
+            )
+            missing.append(
+                "tokenizer/prompt runner that owns the decode loop instead "
+                "of smoke-generated inputs"
+            )
 
     ready = accepted and full_decode_ready and not synthetic_inputs
     if ready:
@@ -3447,6 +3516,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
             "runtime_input_sources": {},
             "synthetic_runtime_input_steps": [],
             "synthetic_runtime_input_tensor_counts": {},
+            "prompt_runtime_input_tensor_counts": {},
             "synthetic_rotary_tensor_counts": {},
             "depth_sweep_synthetic_record_count": 0,
         }
@@ -3462,6 +3532,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
     ]
     sources: dict[str, Any] = {}
     runtime_counts: dict[str, Any] = {}
+    prompt_counts: dict[str, Any] = {}
     rotary_counts: dict[str, Any] = {}
     synthetic_steps: list[str] = []
     for name in runtime_step_names:
@@ -3479,14 +3550,21 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         rotary_count = step.get("synthetic_rotary_tensor_count")
         if rotary_count is None:
             rotary_count = _step_synthetic_rotary_tensor_count(step)
+        prompt_count = step.get("prompt_runtime_input_tensor_count")
+        if prompt_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                prompt_count = setup.get("prompt_runtime_input_tensor_count")
         if runtime_count is not None:
             runtime_counts[name] = runtime_count
+        if prompt_count is not None:
+            prompt_counts[name] = prompt_count
         if rotary_count is not None:
             rotary_counts[name] = rotary_count
         if (
             source == "synthetic"
-            or _positive_count(runtime_count)
-            or _positive_count(rotary_count)
+            or _positive_scalar_count(runtime_count)
+            or _positive_scalar_count(rotary_count)
         ):
             synthetic_steps.append(name)
 
@@ -3500,10 +3578,10 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
                     continue
                 if (
                     record.get("input_source") == "synthetic"
-                    or _positive_count(
+                    or _positive_scalar_count(
                         record.get("synthetic_runtime_input_tensor_count")
                     )
-                    or _positive_count(
+                    or _positive_scalar_count(
                         record.get("synthetic_rotary_tensor_count")
                     )
                 ):
@@ -3524,12 +3602,13 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         "runtime_input_sources": sources,
         "synthetic_runtime_input_steps": synthetic_steps,
         "synthetic_runtime_input_tensor_counts": runtime_counts,
+        "prompt_runtime_input_tensor_counts": prompt_counts,
         "synthetic_rotary_tensor_counts": rotary_counts,
         "depth_sweep_synthetic_record_count": synthetic_depth_records,
     }
 
 
-def _positive_count(value: Any) -> bool:
+def _positive_scalar_count(value: Any) -> bool:
     numeric = _safe_int(value)
     return numeric is not None and numeric > 0
 
@@ -4965,17 +5044,29 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "decode_shell.input_source",
-            decode_shell.get("input_source") == "synthetic",
+            _runtime_input_source_supported(decode_shell),
             observed=decode_shell.get("input_source"),
-            expected="synthetic",
+            expected=["synthetic", "prompt_runtime"],
         ),
         _acceptance_check(
             "decode_shell.runtime_input_tensor_count",
-            _positive_number(
-                decode_shell.get("runtime_input_tensor_count")
+            _decode_shell_runtime_inputs_accepted(decode_shell),
+            observed={
+                "input_source": decode_shell.get("input_source"),
+                "runtime_input_tensor_count": decode_shell.get(
+                    "runtime_input_tensor_count"
+                ),
+                "synthetic_runtime_input_tensor_count": decode_shell.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
+                "prompt_runtime_input_tensor_count": decode_shell.get(
+                    "prompt_runtime_input_tensor_count"
+                ),
+            },
+            expected=(
+                "synthetic token_ids or one prompt token_ids tensor with no "
+                "synthetic shell runtime input"
             ),
-            observed=decode_shell.get("runtime_input_tensor_count"),
-            minimum=1,
         ),
         _acceptance_check(
             "decode_shell.runtime_status",
@@ -5289,9 +5380,9 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "single_layer_decode.input_source",
-            single_layer.get("input_source") == "synthetic",
+            _runtime_input_source_supported(single_layer),
             observed=single_layer.get("input_source"),
-            expected="synthetic",
+            expected=["synthetic", "prompt_runtime"],
         ),
         _acceptance_check(
             "single_layer_decode.synthetic_runtime_inputs",
@@ -5533,9 +5624,9 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "smoke_decode_step.input_source",
-            smoke.get("input_source") == "synthetic",
+            _runtime_input_source_supported(smoke),
             observed=smoke.get("input_source"),
-            expected="synthetic",
+            expected=["synthetic", "prompt_runtime"],
         ),
         _acceptance_check(
             "smoke_decode_step.synthetic_runtime_inputs",
@@ -5765,9 +5856,9 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "profile_decode_step.input_source",
-            profile.get("input_source") == "synthetic",
+            _runtime_input_source_supported(profile),
             observed=profile.get("input_source"),
-            expected="synthetic",
+            expected=["synthetic", "prompt_runtime"],
         ),
         _acceptance_check(
             "profile_decode_step.synthetic_runtime_inputs",
@@ -8078,6 +8169,18 @@ def _decode_runtime_inputs_complete(
     kv_cache = step.get("kv_cache")
     if not isinstance(input_shapes, dict) or not isinstance(kv_cache, dict):
         return False
+    input_source = step.get("input_source")
+    expected_synthetic_runtime_count = expected[
+        "synthetic_runtime_input_tensor_count"
+    ]
+    expected_prompt_runtime_count = 0
+    if input_source == "prompt_runtime":
+        expected_synthetic_runtime_count = (
+            expected_synthetic_runtime_count - 1
+            if expected_synthetic_runtime_count is not None
+            else None
+        )
+        expected_prompt_runtime_count = 1
     return (
         _int_list(input_shapes.get("token_ids"))
         == expected["token_ids"]
@@ -8099,16 +8202,45 @@ def _decode_runtime_inputs_complete(
             kv_cache.get("max_num_blocks"),
             expected["max_num_blocks"],
         )
-        and step.get("input_source") == "synthetic"
+        and _runtime_input_source_supported(step)
         and _int_equal(
             step.get("synthetic_runtime_input_tensor_count"),
-            expected["synthetic_runtime_input_tensor_count"],
+            expected_synthetic_runtime_count,
+        )
+        and (
+            input_source != "prompt_runtime"
+            or _int_equal(
+                step.get("prompt_runtime_input_tensor_count"),
+                expected_prompt_runtime_count,
+            )
         )
         and _int_equal(
             step.get("synthetic_rotary_tensor_count"),
             expected["synthetic_rotary_tensor_count"],
         )
     )
+
+
+def _runtime_input_source_supported(step: Any) -> bool:
+    return (
+        isinstance(step, dict)
+        and step.get("input_source") in {"synthetic", "prompt_runtime"}
+    )
+
+
+def _decode_shell_runtime_inputs_accepted(step: Any) -> bool:
+    if not isinstance(step, dict):
+        return False
+    source = step.get("input_source")
+    if source == "prompt_runtime":
+        return (
+            _int_equal(step.get("synthetic_runtime_input_tensor_count"), 0)
+            and _int_equal(step.get("runtime_input_tensor_count"), 0)
+            and _int_equal(step.get("prompt_runtime_input_tensor_count"), 1)
+        )
+    if source == "synthetic":
+        return _positive_number(step.get("runtime_input_tensor_count"))
+    return False
 
 
 def _expected_decode_runtime_input_summary(
@@ -8180,6 +8312,10 @@ def _decode_runtime_input_observed(step: Any) -> dict[str, Any]:
         "synthetic_runtime_input_tensor_count": step.get(
             "synthetic_runtime_input_tensor_count"
         ),
+        "prompt_runtime_input_tensor_count": step.get(
+            "prompt_runtime_input_tensor_count"
+        ),
+        "prompt_tokenization": step.get("prompt_tokenization"),
         "synthetic_rotary_tensor_count": step.get(
             "synthetic_rotary_tensor_count"
         ),
@@ -8709,7 +8845,7 @@ def _decode_depth_sweep_record_complete(
         and _int_equal(record.get("batch_size"), batch_size)
         and _int_equal(record.get("cache_len"), cache_len)
         and record.get("parameter_source") == "hf_model"
-        and record.get("input_source") == "synthetic"
+        and _runtime_input_source_supported(record)
         and _positive_number(record.get("latency_ms"))
         and _positive_number(record.get("tensor_conversion_count"))
         and _nonnegative_number(record.get("tensor_conversion_ms"))

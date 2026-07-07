@@ -455,6 +455,74 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
+    def test_run_smoke_single_layer_decode_uses_prompt_token_ids(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "single_layer_decode_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            with _fake_torch_and_safetensors():
+                report = run_smoke_single_layer_decode(
+                    out=report_json,
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    device="p150a",
+                    batch_size=2,
+                    cache_len=16,
+                    prompt="hello tenstorrent",
+                    tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                    ttnn_module=fake_ttnn,
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["input_source"], "prompt_runtime")
+            self.assertEqual(report["tensor_conversion_count"], 25)
+            self.assertEqual(
+                report["parameter_setup"]["synthetic_runtime_input_tensor_count"],
+                4,
+            )
+            self.assertEqual(
+                report["parameter_setup"]["prompt_runtime_input_tensor_count"],
+                1,
+            )
+            self.assertEqual(
+                report["prompt_tokenization"]["selected_token_id"],
+                42,
+            )
+            self.assertEqual(
+                report["prompt_tokenization"]["token_input_shape"],
+                [2, 1],
+            )
+            prompt_call = next(
+                call
+                for call in fake_ttnn.calls
+                if call["op"] == "from_torch"
+                and call["shape"] == [2, 1]
+                and call["kwargs"].get("layout") == "ttnn.ROW_MAJOR_LAYOUT"
+            )
+            self.assertEqual(prompt_call["kwargs"]["dtype"], "ttnn.bfloat16")
+
     def test_cli_smoke_decode_step_dry_run_two_layers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -930,6 +998,19 @@ def _fake_parameters(split_count: int):
             ]
         ),
     )
+
+
+def _fake_tokenizer_module(token_ids: list[int]):
+    class FakeTokenizer:
+        def __call__(self, prompt: str, add_special_tokens: bool = True):
+            return {"input_ids": list(token_ids)}
+
+    class AutoTokenizer:
+        @staticmethod
+        def from_pretrained(path: str):
+            return FakeTokenizer()
+
+    return types.SimpleNamespace(AutoTokenizer=AutoTokenizer)
 
 
 def _set_program_full_logits(program_dir: Path) -> None:

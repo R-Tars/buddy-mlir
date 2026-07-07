@@ -681,11 +681,17 @@ The manifest also writes an `acceptance_gate_matrix` that maps the planned
 final gate names to the actual acceptance-check status, making failed or
 missing final gates visible without manually comparing report sections.
 The manifest also includes a `model_end_to_end_readiness` block. This is
-stricter than `full_decode_step_ready`: it remains false while token ids, page
-tables, cache positions, paged KV cache, or rotary tensors are supplied by the
-smoke/profile harness as synthetic runtime inputs. Use it to avoid confusing
-generated decode-step evidence with a real tokenizer/prompt driven model
-decode loop.
+stricter than `full_decode_step_ready`: it remains false while runtime inputs
+such as token ids, page tables, cache positions, paged KV cache, or rotary
+tensors are supplied by the smoke/profile harness as synthetic tensors. Use it
+to avoid confusing generated decode-step evidence with a real
+tokenizer/prompt driven model decode loop.
+The smoke/profile commands and generated runner accept `--prompt` plus
+`--tokenizer-path` to build decode `token_ids` through the Hugging Face
+tokenizer and record `input_source=prompt_runtime`. This removes the synthetic
+token-id input from those reports, but page table, cache position, paged
+KV-cache, rotary tensors, and the owning decode loop remain harness-managed
+until `model_end_to_end_ready=true`.
 Use `--require-model-end-to-end` when final validation should fail unless that
 block reports `model_end_to_end_ready=true`; the flag also enables the full
 decode-step acceptance requirements.
@@ -918,8 +924,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 Device mode additionally needs the local model path so host parameters can be
 materialized and converted for the shell. If token ids are not injected by a
-test harness, the smoke synthesizes a row-major TTNN `token_ids` tensor instead
-of passing a Python placeholder through generated embedding:
+test harness or provided through `--prompt`, the smoke synthesizes a row-major
+TTNN `token_ids` tensor instead of passing a Python placeholder through
+generated embedding:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -927,8 +934,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --model-path /path/to/Llama-3.1-8B-Instruct \
   --program-dir /tmp/llama31_ttnn_direct_program \
   --layers 1 \
+  --batch-size 32 \
   --disable-attention \
   --device p150a \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
   --pcc-threshold 0.99 \
   --out /tmp/decode_shell_report.json
 ```
@@ -1149,9 +1159,11 @@ token input/output contract fields remain logical batch-facing shapes.
 
 When a local HF model directory is available, add `--model-path` in device mode
 to materialize real weights through `materialize-parameters` and tensorize the
-generated decode roles through `tensorize-parameters`. Token ids, page table,
-cache position, paged KV cache, and rotary matrices remain synthetic for this
-bring-up step:
+generated decode roles through `tensorize-parameters`. By default token ids,
+page table, cache position, paged KV cache, and rotary matrices remain
+synthetic for this bring-up step. Add `--prompt` and `--tokenizer-path` to
+source token ids from the tokenizer while keeping the other runtime inputs
+synthetic:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -1161,25 +1173,29 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --batch-size 32 \
   --cache-len 1024 \
   --device p150a \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
   --out /tmp/single_layer_decode_real_weights_report.json
 ```
 
 The report sets `parameter_source` to `hf_model` for this path and
-`input_source` to `synthetic`. It also includes a compact `parameter_setup`
-summary with materialized layer ids, materialized/tensorized tensor counts,
-tensorized role groups, complete tensorized weight paths,
-dtype/layout/memory-config counts, key tensor dtype/layout/memory-config
-records, and the number of synthetic
-rotary/runtime-input tensors added around the real weights.
+`input_source` to `synthetic` or `prompt_runtime`. It also includes a compact
+`parameter_setup` summary with materialized layer ids,
+materialized/tensorized tensor counts, tensorized role groups, complete
+tensorized weight paths, dtype/layout/memory-config counts, key tensor
+dtype/layout/memory-config records, prompt tokenization metadata when present,
+and the number of synthetic rotary/runtime-input tensors added around the real
+weights.
 
 ## Performance Step 2b: Generated Decode Layer Stack Smoke
 
 `smoke-decode-step` extends the generated decode smoke path from one layer to a
 configurable layer stack. By default it uses synthetic TTNN tensors for both
 parameters and runtime inputs, but it can also take `--model-path` to
-materialize/tensorize real generated decode weights while keeping token ids,
-page table, cache position, rotary matrices, and per-layer paged KV cache
-synthetic. It then calls generated `decode_step()` with
+materialize/tensorize real generated decode weights. Add `--prompt` and
+`--tokenizer-path` to use tokenizer-owned token ids; page table, cache
+position, rotary matrices, and per-layer paged KV cache remain synthetic at
+this stage. It then calls generated `decode_step()` with
 `config.num_layers = --layers`.
 
 Use it to walk the review plan from 2 layers to 4 layers and finally the full

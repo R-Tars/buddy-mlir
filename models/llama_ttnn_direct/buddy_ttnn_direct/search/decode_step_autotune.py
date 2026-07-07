@@ -43,6 +43,9 @@ def run_decode_step_autotune(
     dtype_seed: str = "bf16",
     trace: bool = False,
     trace_iterations: int = 1,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -129,6 +132,9 @@ def run_decode_step_autotune(
                 dtype_seed=dtype_seed,
                 trace=trace,
                 trace_iterations=trace_iterations,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
                 ttnn_module=ttnn_module,
                 torch_module=torch_module,
             )
@@ -136,6 +142,8 @@ def run_decode_step_autotune(
             record["passed"] = bool(profile.get("passed"))
             record["parameter_source"] = profile.get("parameter_source")
             record["parameter_setup"] = profile.get("parameter_setup")
+            record["input_source"] = profile.get("input_source")
+            record["prompt_tokenization"] = profile.get("prompt_tokenization")
             record["trace_status"] = (profile.get("trace") or {}).get("status")
             record.update(_reference_summary(profile))
             record["error"] = profile.get("error")

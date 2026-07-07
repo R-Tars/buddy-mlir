@@ -19,6 +19,10 @@ from .codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
     to_ttnn_parameters,
 )
+from .runtime_inputs import (
+    PromptTokenizationError,
+    tokenize_prompt_for_decode,
+)
 from .smoke_mlp import (
     NO_TTNN_DEVICE_MESSAGE,
     NoTTNNDeviceError,
@@ -56,12 +60,17 @@ def run_smoke_decode_shell(
     device: str,
     device_id: int = 0,
     model_path: str | Path | None = None,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
     dry_run: bool = False,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
     parameters: Any | None = None,
     reference_parameters: Any | None = None,
     token_ids: Any | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    tokenizer_module: Any | None = None,
     pcc_threshold: float = 0.99,
 ) -> dict[str, Any]:
     if layers <= 0:
@@ -73,6 +82,15 @@ def run_smoke_decode_shell(
 
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
+    config = dict(config)
+    if batch_size is not None:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        config["batch_size"] = int(batch_size)
+    if cache_len is not None:
+        if cache_len <= 0:
+            raise ValueError("cache_len must be positive")
+        config["max_cache_len"] = int(cache_len)
     layer_count = min(layers, int(config["num_layers"]))
     if dry_run:
         report = _base_report(
@@ -153,18 +171,43 @@ def run_smoke_decode_shell(
                 }
             runtime_token_ids = token_ids
             runtime_input_tensor_count = 0
+            prompt_runtime_input_tensor_count = 0
+            prompt_tokenization = None
             input_source = "injected"
             if runtime_token_ids is None:
                 torch = _load_torch_for_runtime_inputs(torch_module)
-                runtime_input = _build_synthetic_decode_shell_inputs(
-                    ttnn=ttnn,
-                    torch=torch,
-                    device=ttnn_device,
-                    config=config,
-                )
-                runtime_token_ids = runtime_input.token_ids
-                runtime_input_tensor_count = runtime_input.tensor_conversion_count
-                input_source = "synthetic"
+                if prompt is not None:
+                    prompt_runtime = _build_prompt_decode_shell_inputs(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        config=config,
+                        prompt=prompt,
+                        tokenizer_path=(
+                            tokenizer_path
+                            or model_path
+                            or program_root
+                        ),
+                        tokenizer_module=tokenizer_module,
+                    )
+                    runtime_token_ids = prompt_runtime.token_ids
+                    prompt_runtime_input_tensor_count = (
+                        prompt_runtime.tensor_conversion_count
+                    )
+                    prompt_tokenization = prompt_runtime.prompt_tokenization
+                    input_source = "prompt_runtime"
+                else:
+                    runtime_input = _build_synthetic_decode_shell_inputs(
+                        ttnn=ttnn,
+                        torch=torch,
+                        device=ttnn_device,
+                        config=config,
+                    )
+                    runtime_token_ids = runtime_input.token_ids
+                    runtime_input_tensor_count = (
+                        runtime_input.tensor_conversion_count
+                    )
+                    input_source = "synthetic"
             report = _run_generated_decode_shell(
                 ttnn=ttnn,
                 program_dir=program_root,
@@ -186,6 +229,14 @@ def run_smoke_decode_shell(
                 )
             }
             report["runtime_input_tensor_count"] = runtime_input_tensor_count
+            report["synthetic_runtime_input_tensor_count"] = (
+                runtime_input_tensor_count
+            )
+            report["prompt_runtime_input_tensor_count"] = (
+                prompt_runtime_input_tensor_count
+            )
+            if prompt_tokenization is not None:
+                report["prompt_tokenization"] = prompt_tokenization
             if parameter_setup is not None:
                 report["parameter_setup"] = parameter_setup
             report.update(
@@ -214,6 +265,7 @@ def run_smoke_decode_shell(
         ParameterMaterializationError,
         TTNNTensorizationError,
         ValueError,
+        PromptTokenizationError,
     ) as err:
         report = _failed_report(
             program_dir=program_root,
@@ -373,6 +425,51 @@ def _build_synthetic_decode_shell_inputs(
     )
 
 
+def _build_prompt_decode_shell_inputs(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    config: dict[str, Any],
+    prompt: str,
+    tokenizer_path: str | Path,
+    tokenizer_module: Any | None,
+) -> SimpleNamespace:
+    if not hasattr(ttnn, "from_torch"):
+        raise ValueError(
+            "ttnn module must provide from_torch to build prompt token_ids"
+        )
+    tokenization = tokenize_prompt_for_decode(
+        prompt=prompt,
+        batch_size=int(config["batch_size"]),
+        tokenizer_path=tokenizer_path,
+        vocab_size=int(config.get("vocab_size", 0)) or None,
+        tokenizer_module=tokenizer_module,
+    )
+    host_tensor = _token_ids_tensor(
+        torch,
+        tokenization.token_ids,
+        name="prompt_token_ids",
+    )
+    kwargs = {"device": device}
+    dtype = getattr(
+        ttnn,
+        "uint32",
+        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    token_ids = ttnn.from_torch(host_tensor, **kwargs)
+    return SimpleNamespace(
+        token_ids=token_ids,
+        tensor_conversion_count=1,
+        prompt_tokenization=tokenization.to_report(),
+    )
+
+
 def _zeros_token_ids(torch: Any, shape: list[int]) -> Any:
     zeros = getattr(torch, "zeros", None)
     if not callable(zeros):
@@ -386,6 +483,32 @@ def _zeros_token_ids(torch: Any, shape: list[int]) -> Any:
         return zeros(shape, dtype=dtype)
     except TypeError:
         return zeros(shape)
+
+
+def _token_ids_tensor(
+    torch: Any,
+    token_ids: list[list[int]],
+    *,
+    name: str,
+) -> Any:
+    dtype = getattr(torch, "int32", None)
+    tensor_fn = getattr(torch, "tensor", None)
+    if callable(tensor_fn):
+        try:
+            tensor = tensor_fn(token_ids, dtype=dtype)
+        except TypeError:
+            tensor = tensor_fn(token_ids)
+    else:
+        zeros = getattr(torch, "zeros", None)
+        if not callable(zeros):
+            raise ValueError("torch module must provide tensor or zeros")
+        shape = [len(token_ids), len(token_ids[0]) if token_ids else 0]
+        tensor = zeros(shape, dtype=dtype) if dtype is not None else zeros(shape)
+    try:
+        tensor.name = name
+    except AttributeError:
+        pass
+    return tensor
 
 
 def _decode_shell_input_shapes(config: dict[str, Any]) -> dict[str, list[int]]:

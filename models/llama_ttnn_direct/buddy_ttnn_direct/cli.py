@@ -84,6 +84,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    def add_prompt_runtime_args(command: argparse.ArgumentParser) -> None:
+        command.add_argument(
+            "--prompt",
+            default=None,
+            help=(
+                "Prompt text used to build decode token_ids through an HF "
+                "tokenizer instead of smoke-synthesized token tensors."
+            ),
+        )
+        command.add_argument(
+            "--tokenizer-path",
+            type=Path,
+            default=None,
+            help=(
+                "Optional tokenizer directory/model id. Defaults to "
+                "--model-path when a prompt is provided."
+            ),
+        )
+
     import_llama = subparsers.add_parser(
         "import-llama",
         help="Import an HF Llama config into a semantic graph JSON.",
@@ -353,11 +372,24 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Local HF model directory. Required for non-dry-run execution.",
     )
+    add_prompt_runtime_args(smoke_decode_shell)
     smoke_decode_shell.add_argument(
         "--layers",
         type=int,
         default=1,
         help="Number of decoder layers to run in the shell.",
+    )
+    smoke_decode_shell.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Override generated batch size for shell token inputs.",
+    )
+    smoke_decode_shell.add_argument(
+        "--cache-len",
+        type=int,
+        default=None,
+        help="Override generated cache length recorded for validation.",
     )
     smoke_decode_shell.add_argument(
         "--disable-attention",
@@ -530,6 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
             "parameters."
         ),
     )
+    add_prompt_runtime_args(smoke_single_layer_decode)
     smoke_single_layer_decode.add_argument(
         "--device",
         default="p150a",
@@ -594,6 +627,7 @@ def build_parser() -> argparse.ArgumentParser:
             "parameters."
         ),
     )
+    add_prompt_runtime_args(smoke_decode_step)
     smoke_decode_step.add_argument(
         "--layers",
         type=int,
@@ -675,6 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
             "parameters."
         ),
     )
+    add_prompt_runtime_args(profile_decode_step_parser)
     profile_decode_step_parser.add_argument(
         "--layers",
         type=int,
@@ -745,6 +780,7 @@ def build_parser() -> argparse.ArgumentParser:
             "each depth profile materializes and tensorizes real weights."
         ),
     )
+    add_prompt_runtime_args(decode_depth_sweep)
     decode_depth_sweep.add_argument(
         "--depths",
         default=None,
@@ -1066,6 +1102,7 @@ def build_parser() -> argparse.ArgumentParser:
             "candidate profiles materialize and tensorize real weights."
         ),
     )
+    add_prompt_runtime_args(autotune_decode_step)
     autotune_decode_step.add_argument(
         "--space",
         type=Path,
@@ -1204,6 +1241,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Local HF Llama model directory containing safetensors files.",
     )
+    add_prompt_runtime_args(validate_real)
     validate_real.add_argument(
         "--out-dir",
         type=Path,
@@ -1539,6 +1577,10 @@ def _cmd_smoke_decode_shell(args: argparse.Namespace) -> int:
         device=args.device,
         device_id=args.device_id,
         model_path=args.model_path,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
         pcc_threshold=args.pcc_threshold,
     )
@@ -1600,6 +1642,8 @@ def _cmd_smoke_single_layer_decode(args: argparse.Namespace) -> int:
         batch_size=args.batch_size,
         cache_len=args.cache_len,
         dtype_seed=args.dtype_seed,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
     )
     print(f"wrote single-layer decode smoke report: {args.out}")
@@ -1622,6 +1666,8 @@ def _cmd_smoke_decode_step(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         trace=args.trace,
         trace_iterations=args.trace_iterations,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step smoke report: {args.out}")
@@ -1644,6 +1690,8 @@ def _cmd_profile_decode_step(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         trace=args.trace,
         trace_iterations=args.trace_iterations,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step profile report: {args.out}")
@@ -1667,6 +1715,8 @@ def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         trace=args.trace,
         trace_iterations=args.trace_iterations,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
     )
     print(f"wrote decode depth sweep report: {args.out}")
@@ -1885,6 +1935,8 @@ def _cmd_autotune_decode_step(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         trace=args.trace,
         trace_iterations=args.trace_iterations,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
     )
     dump_search_report(report, args.out)
     print(f"wrote TTNN Direct decode-step autotune report: {args.out}")
@@ -2006,6 +2058,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         require_decode_shell_numeric_reference=(
             args.require_decode_shell_numeric_reference
         ),
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
     )
     print(
         "wrote TTNN Direct real decode validation report: "
