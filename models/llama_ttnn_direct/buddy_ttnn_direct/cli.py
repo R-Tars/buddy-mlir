@@ -2075,6 +2075,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             device_id=args.device_id,
             trace=args.trace,
             trace_iterations=args.trace_iterations,
+            metric=args.metric,
             skip_autotune=args.skip_autotune,
             require_full_decode_step=args.require_full_decode_step,
             require_model_end_to_end=args.require_model_end_to_end,

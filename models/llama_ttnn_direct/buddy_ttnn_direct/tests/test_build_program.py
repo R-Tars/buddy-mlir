@@ -198,6 +198,7 @@ class BuildProgramTest(unittest.TestCase):
             program_readme = (out_dir / "README.md").read_text()
             self.assertIn("--preflight-only", program_readme)
             self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
+            self.assertIn("--metric tokens_per_second_per_user", program_readme)
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
             self.assertIn("--require-model-end-to-end", program_readme)
@@ -308,6 +309,8 @@ class BuildProgramTest(unittest.TestCase):
                     str(model_dir),
                     "--require-model-end-to-end",
                     "--require-official-performance-parity",
+                    "--metric",
+                    "tokens_per_second_per_user",
                     "--min-tokens-per-second-per-user",
                     "1.25",
                     "--baseline-reference",
@@ -339,6 +342,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(preflight_summary["report"], str(preflight_report))
             preflight_payload = json.loads(preflight_report.read_text())
             self.assertEqual(preflight_payload["status"], "pass")
+            self.assertEqual(
+                preflight_payload["metric"],
+                "tokens_per_second_per_user",
+            )
             self.assertTrue(preflight_payload["prompt_runtime_requested"])
             self.assertEqual(
                 preflight_payload["effective_tokenizer_path"],
@@ -383,6 +390,8 @@ class BuildProgramTest(unittest.TestCase):
                     "validate-real",
                     "--dry-run",
                     "--require-official-performance-parity",
+                    "--metric",
+                    "tokens_per_second_per_user",
                     "--min-tokens-per-second-per-user",
                     "1.0",
                     "--baseline-reference",
@@ -411,6 +420,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(validation_summary["report"], str(validation_report))
             validation_payload = json.loads(validation_report.read_text())
             self.assertEqual(validation_payload["command"], "validate-real-decode")
+            self.assertEqual(
+                validation_payload["metric"],
+                "tokens_per_second_per_user",
+            )
             self.assertTrue(validation_payload["require_full_decode_step"])
             self.assertTrue(
                 validation_payload["require_official_performance_parity"]

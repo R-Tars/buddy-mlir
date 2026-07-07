@@ -621,6 +621,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --trace-iterations 10 \
   --require-model-end-to-end \
   --require-official-performance-parity \
+  --metric tokens_per_second_per_user \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
@@ -643,6 +644,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --trace-iterations 10 \
   --require-model-end-to-end \
   --require-official-performance-parity \
+  --metric tokens_per_second_per_user \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
@@ -782,7 +784,10 @@ Use `--skip-autotune` to stop after materialize/shell/smoke/profile during
 bring-up, or `--dry-run` to write the schema without loading safetensors or
 opening a TTNN device. `--require-official-performance-parity` rejects
 `--skip-autotune`, because final performance evidence must include the
-decode-step autotune leaderboard and best-candidate summary. With
+decode-step autotune leaderboard and best-candidate summary. It also requires
+`--metric tokens_per_second_per_user`, so the best candidate is selected by the
+same per-user decode throughput used for official baseline ratios; latency
+remains useful for exploratory bring-up runs. With
 `--require-trace`, `--require-decode-shell-numeric-reference`, and/or
 `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight

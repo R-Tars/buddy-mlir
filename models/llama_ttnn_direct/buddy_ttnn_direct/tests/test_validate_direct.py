@@ -109,6 +109,19 @@ class ValidateDirectTest(unittest.TestCase):
                 )
             with self.assertRaisesRegex(
                 ValueError,
+                "tokens_per_second_per_user",
+            ):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    require_official_performance_parity=True,
+                    baseline_reference="tt_metal_official_llama31_8b_b32",
+                    min_baseline_ratio=0.1,
+                    metric="latency_ms",
+                )
+            with self.assertRaisesRegex(
+                ValueError,
                 "min_tokens_per_second_per_user",
             ):
                 validate_real_decode(
@@ -193,6 +206,10 @@ class ValidateDirectTest(unittest.TestCase):
                     "name": (
                         "profile_decode_step.official_baseline_reference"
                     ),
+                    "passed": True,
+                },
+                {
+                    "name": "decode_step_autotune.metric",
                     "passed": True,
                 },
             ],
@@ -322,6 +339,7 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=32,
                 cache_len=1024,
                 trace_iterations=10,
+                metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
                 min_tokens_per_second_per_user=1.0,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
@@ -365,6 +383,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.0)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.99)
+            self.assertEqual(report["metric"], "tokens_per_second_per_user")
             self.assertTrue(report["prompt_runtime_requested"])
             self.assertEqual(report["prompt_char_count"], len("hello tenstorrent"))
             self.assertEqual(report["tokenizer_path"], str(model_dir))
@@ -374,6 +393,7 @@ class ValidateDirectTest(unittest.TestCase):
                 plan["target_scope"],
                 "official_performance_parity",
             )
+            self.assertEqual(plan["metric"], "tokens_per_second_per_user")
             self.assertIn(
                 "decode_shell.numeric_reference",
                 plan["full_decode_step_gate_names"],
@@ -403,6 +423,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "decode_step_autotune.status",
+                plan["official_performance_parity_gate_names"],
+            )
+            self.assertIn(
+                "decode_step_autotune.metric",
                 plan["official_performance_parity_gate_names"],
             )
             self.assertIn(
@@ -440,6 +464,11 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "--min-tokens-per-second-per-user",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn("--metric", repro["final_validation_cli_args"])
+            self.assertIn(
+                "tokens_per_second_per_user",
                 repro["final_validation_cli_args"],
             )
             self.assertIn("--prompt", repro["final_validation_cli_args"])
@@ -500,6 +529,7 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=32,
                 cache_len=1024,
                 trace_iterations=10,
+                metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
                 min_baseline_ratio=0.1,
@@ -558,6 +588,7 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=32,
                 cache_len=1024,
                 trace_iterations=10,
+                metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
                 min_baseline_ratio=0.0,
@@ -611,6 +642,7 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=32,
                 cache_len=1024,
                 trace_iterations=10,
+                metric="tokens_per_second_per_user",
                 skip_autotune=True,
                 require_official_performance_parity=True,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
@@ -624,6 +656,61 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(report["ready_to_run"])
             self.assertIn(
                 "requirements.official_performance_autotune_enabled",
+                report["failed_checks"],
+            )
+
+    def test_preflight_rejects_latency_metric_for_official_performance_parity(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            _write_official_parity_from_program(program_dir, official_json)
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=official_json,
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                metric="latency_ms",
+                require_official_performance_parity=True,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertEqual(report["metric"], "latency_ms")
+            self.assertIn(
+                "requirements.official_performance_metric",
                 report["failed_checks"],
             )
 
@@ -665,6 +752,7 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=32,
                 cache_len=1024,
                 trace_iterations=10,
+                metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
                 baseline_reference="tt_metal_official_llama32_3b_b32",
                 min_baseline_ratio=0.1,
@@ -838,6 +926,8 @@ class ValidateDirectTest(unittest.TestCase):
                         "--tokenizer-path",
                         str(model_dir),
                         "--require-official-performance-parity",
+                        "--metric",
+                        "tokens_per_second_per_user",
                         "--min-tokens-per-second-per-user",
                         "1.25",
                         "--baseline-reference",
@@ -855,6 +945,7 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_preflight_report.json").read_text()
             )
             self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["metric"], "tokens_per_second_per_user")
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.25)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.98)
             self.assertEqual(report["min_baseline_ratio"], 0.1)
@@ -4435,6 +4526,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "accepted model end-to-end readiness",
                     "--require-official-config-match",
                     "--baseline-reference plus --min-baseline-ratio",
+                    "--metric tokens_per_second_per_user",
                 ],
             )
             self.assertEqual(

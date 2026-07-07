@@ -88,6 +88,8 @@ VALIDATION_STEPS = (
     "package_program",
 )
 
+OFFICIAL_PERFORMANCE_PARITY_METRIC = "tokens_per_second_per_user"
+
 REAL_DECODE_VALIDATION_STEPS = (
     "official_config_diff",
     "materialize_parameters",
@@ -368,6 +370,7 @@ def _real_decode_reproducibility(
 
 def _real_decode_final_acceptance_plan(
     *,
+    metric: str,
     skip_autotune: bool,
     require_full_decode_step: bool,
     require_model_end_to_end: bool,
@@ -461,6 +464,7 @@ def _real_decode_final_acceptance_plan(
             "profile_decode_step.official_baseline_reference",
             "profile_decode_step.official_min_baseline_ratio_positive",
             "profile_decode_step.min_baseline_ratio",
+            "decode_step_autotune.metric",
             "decode_step_autotune.status",
             "decode_step_autotune.best_candidate_summary",
         ]
@@ -494,6 +498,7 @@ def _real_decode_final_acceptance_plan(
         "model_end_to_end_gate_names": model_end_to_end_gate_names,
         "official_performance_parity_gate_names": official_parity_gate_names,
         "optional_gate_names": optional_gate_names,
+        "metric": metric,
         "thresholds": {
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
@@ -1044,6 +1049,7 @@ def preflight_real_decode(
     device_id: int = 0,
     trace: bool = False,
     trace_iterations: int = 1,
+    metric: str = "latency_ms",
     skip_autotune: bool = False,
     require_full_decode_step: bool = False,
     require_model_end_to_end: bool = False,
@@ -1158,6 +1164,16 @@ def preflight_real_decode(
             message=(
                 "official performance parity requires decode-step autotune "
                 "evidence; use --skip-autotune only for bring-up"
+            ),
+        )
+        add(
+            "requirements.official_performance_metric",
+            metric == OFFICIAL_PERFORMANCE_PARITY_METRIC,
+            observed=metric,
+            expected=OFFICIAL_PERFORMANCE_PARITY_METRIC,
+            message=(
+                "official performance parity requires the throughput "
+                "autotune metric"
             ),
         )
     if normalized["require_model_end_to_end"]:
@@ -1583,6 +1599,7 @@ def preflight_real_decode(
         device_id=device_id,
         trace=normalized["trace"],
         trace_iterations=rerun_trace_iterations,
+        metric=metric,
         skip_autotune=skip_autotune,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
@@ -1627,6 +1644,7 @@ def preflight_real_decode(
         device_id=device_id,
         trace=normalized["trace"],
         trace_iterations=rerun_trace_iterations,
+        metric=metric,
         skip_autotune=skip_autotune,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
@@ -1674,6 +1692,7 @@ def preflight_real_decode(
         "batch_size": resolved_batch_size,
         "cache_len": resolved_cache_len,
         "trace_iterations": trace_iteration_count,
+        "metric": metric,
         "requirements": normalized,
         "baseline_reference": baseline_reference,
         "baseline_reference_entry": _performance_baseline_entry_summary(
@@ -1693,6 +1712,7 @@ def preflight_real_decode(
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
+            metric=metric,
             skip_autotune=skip_autotune,
             require_full_decode_step=normalized[
                 "require_full_decode_step"
@@ -1827,6 +1847,11 @@ def validate_real_decode(
             raise ValueError(
                 "require_official_performance_parity cannot be used with "
                 "skip_autotune"
+            )
+        if metric != OFFICIAL_PERFORMANCE_PARITY_METRIC:
+            raise ValueError(
+                "require_official_performance_parity requires "
+                f"{OFFICIAL_PERFORMANCE_PARITY_METRIC} autotune metric"
             )
     if require_model_end_to_end:
         require_full_decode_step = True
@@ -2023,6 +2048,7 @@ def validate_real_decode(
         device_id=device_id,
         trace=trace,
         trace_iterations=trace_iterations,
+        metric=metric,
         skip_autotune=skip_autotune,
         require_full_decode_step=require_full_decode_step,
         require_model_end_to_end=require_model_end_to_end,
@@ -2117,6 +2143,7 @@ def validate_real_decode(
             artifact_paths=paths,
         ),
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
+            metric=metric,
             skip_autotune=skip_autotune,
             require_full_decode_step=require_full_decode_step,
             require_model_end_to_end=require_model_end_to_end,
@@ -3640,6 +3667,14 @@ def _real_decode_acceptance_scope(
             "profile_decode_step.official_baseline_reference",
         )
     )
+    official_metric = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and _acceptance_check_passed(
+            acceptance,
+            "decode_step_autotune.metric",
+        )
+    )
     official_config_match = (
         accepted
         and report.get("require_official_config_match") is True
@@ -3690,12 +3725,17 @@ def _real_decode_acceptance_scope(
         )
     elif not official_baseline:
         missing_parity.append("official Llama 3.1 8B batch32 baseline")
+    if not official_metric:
+        missing_parity.append(
+            f"--metric {OFFICIAL_PERFORMANCE_PARITY_METRIC}"
+        )
 
     official_performance_parity_ready = (
         full_decode_ready
         and model_end_to_end
         and official_config_match
         and official_baseline
+        and official_metric
         and performance_floor
     )
 
@@ -3734,6 +3774,7 @@ def _real_decode_acceptance_scope(
         "model_end_to_end_proven": model_end_to_end,
         "official_config_match_proven": official_config_match,
         "official_performance_baseline_proven": official_baseline,
+        "official_performance_metric_proven": official_metric,
         "official_positive_baseline_ratio_floor_proven": (
             official_positive_floor
             if report.get("require_official_performance_parity") is True
@@ -7029,6 +7070,14 @@ def _real_decode_acceptance(
                 _positive_number(min_baseline_ratio),
                 observed=min_baseline_ratio,
                 expected="> 0.0",
+            )
+        )
+        checks.append(
+            _acceptance_check(
+                "decode_step_autotune.metric",
+                autotune.get("metric") == OFFICIAL_PERFORMANCE_PARITY_METRIC,
+                observed=autotune.get("metric"),
+                expected=OFFICIAL_PERFORMANCE_PARITY_METRIC,
             )
         )
     if min_baseline_ratio is not None:

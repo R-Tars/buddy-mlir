@@ -307,6 +307,7 @@ def main(argv=None):
             device_id=args.device_id,
             trace=args.trace,
             trace_iterations=args.trace_iterations,
+            metric=args.metric,
             skip_autotune=args.skip_autotune,
             require_full_decode_step=args.require_full_decode_step,
             require_model_end_to_end=args.require_model_end_to_end,
@@ -492,6 +493,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --trace-iterations 10 \
           --require-model-end-to-end \
           --require-official-performance-parity \
+          --metric tokens_per_second_per_user \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
@@ -507,6 +509,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --trace-iterations 10 \
           --require-model-end-to-end \
           --require-official-performance-parity \
+          --metric tokens_per_second_per_user \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
