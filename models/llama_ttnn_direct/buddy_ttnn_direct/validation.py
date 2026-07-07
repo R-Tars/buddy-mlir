@@ -751,6 +751,7 @@ def validate_real_decode(
     metric: str = "latency_ms",
     dry_run: bool = False,
     skip_autotune: bool = False,
+    require_full_decode_step: bool = False,
     require_trace: bool = False,
     require_official_config_match: bool = False,
     require_full_depth: bool = False,
@@ -792,6 +793,13 @@ def validate_real_decode(
                 "baseline_tokens_per_second_per_user or baseline_reference "
                 "is required when min_baseline_ratio is set"
             )
+    if require_full_decode_step:
+        trace = True
+        require_trace = True
+        require_full_depth = True
+        require_program_runtime_shape = True
+        require_batch32_decode_step = True
+        require_decode_shell_numeric_reference = True
 
     root = Path(out_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -951,6 +959,7 @@ def validate_real_decode(
         "metric": metric,
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
+        "require_full_decode_step": require_full_decode_step,
         "require_trace": require_trace,
         "require_official_config_match": require_official_config_match,
         "require_full_depth": require_full_depth,
@@ -2104,6 +2113,9 @@ def _real_decode_acceptance_scope(
         return {
             "status": "dry_run",
             "accepted_real_weight_runtime": False,
+            "require_full_decode_step": bool(
+                report.get("require_full_decode_step")
+            ),
             "full_decode_step_ready": False,
             "official_performance_parity_ready": False,
             "missing_for_full_decode_step": [
@@ -2202,6 +2214,9 @@ def _real_decode_acceptance_scope(
     return {
         "status": scope,
         "accepted_real_weight_runtime": accepted,
+        "require_full_decode_step": bool(
+            report.get("require_full_decode_step")
+        ),
         "requested_layers": report.get("layers"),
         "generated_program_layers": report.get("program_num_layers"),
         "batch_size": report.get("batch_size"),
@@ -2335,6 +2350,9 @@ def _real_decode_evidence_manifest(
             "require_batch32_decode_step": report.get(
                 "require_batch32_decode_step"
             ),
+            "require_full_decode_step": report.get(
+                "require_full_decode_step"
+            ),
             "results": dict(results),
             "failed_steps": _step_names_with_status(
                 results,
@@ -2355,6 +2373,9 @@ def _real_decode_evidence_manifest(
             ),
             "require_batch32_decode_step": report.get(
                 "require_batch32_decode_step"
+            ),
+            "require_full_decode_step": report.get(
+                "require_full_decode_step"
             ),
             "require_trace": report.get("require_trace"),
             "min_tokens_per_second_per_user": report.get(
@@ -3197,6 +3218,9 @@ def _real_decode_acceptance(
             "require_full_depth": require_full_depth,
             "require_program_runtime_shape": require_program_runtime_shape,
             "require_batch32_decode_step": require_batch32_decode_step,
+            "require_full_decode_step": bool(
+                report.get("require_full_decode_step")
+            ),
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
                 min_tokens_per_second_per_user
@@ -5030,6 +5054,7 @@ def _real_decode_acceptance(
         "require_full_depth": require_full_depth,
         "require_program_runtime_shape": require_program_runtime_shape,
         "require_batch32_decode_step": require_batch32_decode_step,
+        "require_full_decode_step": bool(report.get("require_full_decode_step")),
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (

@@ -139,6 +139,7 @@ def main(argv=None):
     parser.add_argument("--official-config", type=Path, default=None)
     parser.add_argument("--performance-baselines", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
+    parser.add_argument("--require-full-decode-step", action="store_true")
     parser.add_argument("--require-trace", action="store_true")
     parser.add_argument("--require-official-config-match", action="store_true")
     parser.add_argument("--require-full-depth", action="store_true")
@@ -261,6 +262,7 @@ def main(argv=None):
         metric=args.metric,
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
+        require_full_decode_step=args.require_full_decode_step,
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,
@@ -374,16 +376,13 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         ```bash
         python run_decode.py --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
-          --trace \
+          --layers 32 \
           --trace-iterations 10 \
-          --require-trace \
-          --require-program-runtime-shape \
-          --require-batch32-decode-step \
+          --require-full-decode-step \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
           --decode-shell-pcc-threshold 0.99 \
-          --require-decode-shell-numeric-reference \
           --out-dir /tmp/validate_ttnn_direct_real
         ```
 

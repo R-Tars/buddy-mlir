@@ -597,20 +597,16 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   validate-real-decode \
   --program-dir /tmp/llama31_ttnn_direct_program \
   --model-path /path/to/Llama-3.1-8B-Instruct \
-  --layers 1 \
-  --batch-size 32 \
+  --layers 32 \
   --cache-len 1024 \
   --device p150a \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
-  --trace \
   --trace-iterations 10 \
-  --require-trace \
-  --require-batch32-decode-step \
+  --require-full-decode-step \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
   --decode-shell-pcc-threshold 0.99 \
-  --require-decode-shell-numeric-reference \
   --out-dir /tmp/validate_ttnn_direct_real
 ```
 
@@ -636,6 +632,9 @@ review ladder. By default it covers `1`, `2`, and `4` where those depths are
 not greater than the requested `--layers`, and always includes the requested
 depth. Passing `--require-full-depth` also adds the generated program's full
 layer count and gates full-depth coverage.
+Use `--require-full-decode-step` for final functional acceptance. It enables
+trace capture, full generated depth, generated batch/cache shape, the batch32
+decode contract, and decode-shell numeric reference gates together.
 The validation also writes
 `/tmp/validate_ttnn_direct_real/real_decode_evidence_manifest.json`, a compact
 evidence bundle index that records artifact existence, TTNN environment,
@@ -658,9 +657,11 @@ acceptable because the bundled official config is a seed reference with known
 gaps. Use `--require-official-config-match` when a curated official parity
 config is available and the real decode acceptance run should fail on any
 config mismatch.
-Use `--require-full-depth` and `--require-program-runtime-shape` for final
-acceptance runs that must prove the generated program's full layer count and
-configured batch/cache dimensions, instead of a smaller bring-up shape.
+Use `--require-full-depth` and `--require-program-runtime-shape` separately
+when debugging one strict requirement at a time. Prefer
+`--require-full-decode-step` for final acceptance runs that must prove the
+generated program's full layer count, configured batch/cache dimensions,
+batch32 contract, trace, and shell numeric reference together.
 Use `--require-batch32-decode-step` for the review Step 3 batch-32 decode
 contract; this is also exposed by generated bundle `run_decode.py --mode
 validate-real`.

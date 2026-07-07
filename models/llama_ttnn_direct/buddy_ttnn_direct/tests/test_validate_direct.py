@@ -3099,23 +3099,28 @@ class ValidateDirectTest(unittest.TestCase):
                         cache_len=1024,
                         device="p150a",
                         skip_autotune=True,
-                        require_full_depth=True,
-                        require_program_runtime_shape=True,
-                        require_batch32_decode_step=True,
-                        trace=True,
-                        require_trace=True,
-                        require_decode_shell_numeric_reference=True,
+                        require_full_decode_step=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
 
             self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["require_full_decode_step"])
+            self.assertTrue(report["require_full_depth"])
+            self.assertTrue(report["require_program_runtime_shape"])
+            self.assertTrue(report["require_batch32_decode_step"])
+            self.assertTrue(report["trace_enabled"])
+            self.assertTrue(report["require_trace"])
+            self.assertTrue(
+                report["require_decode_shell_numeric_reference"]
+            )
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             scope = evidence["acceptance_scope"]
             self.assertEqual(evidence["status"], "accepted")
             self.assertEqual(scope["status"], "full_decode_step")
+            self.assertTrue(scope["require_full_decode_step"])
             self.assertTrue(scope["accepted_real_weight_runtime"])
             self.assertTrue(scope["full_depth_proven"])
             self.assertTrue(scope["program_runtime_shape_proven"])

@@ -1263,6 +1263,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run materialize/smoke/profile gates without candidate search.",
     )
     validate_real.add_argument(
+        "--require-full-decode-step",
+        action="store_true",
+        help=(
+            "Require final full decode-step acceptance scope. This enables "
+            "trace capture, full generated depth, generated batch/cache "
+            "shape, batch32 decode contract, and decode-shell numeric "
+            "reference gates."
+        ),
+    )
+    validate_real.add_argument(
         "--require-trace",
         action="store_true",
         help=(
@@ -1905,6 +1915,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         metric=args.metric,
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
+        require_full_decode_step=args.require_full_decode_step,
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,

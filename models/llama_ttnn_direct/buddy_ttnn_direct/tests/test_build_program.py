@@ -245,11 +245,8 @@ class BuildProgramTest(unittest.TestCase):
                     "validate-real",
                     "--dry-run",
                     "--skip-autotune",
-                    "--require-trace",
                     "--require-official-config-match",
-                    "--require-full-depth",
-                    "--require-program-runtime-shape",
-                    "--require-batch32-decode-step",
+                    "--require-full-decode-step",
                     "--min-tokens-per-second-per-user",
                     "1.0",
                     "--baseline-reference",
@@ -258,7 +255,6 @@ class BuildProgramTest(unittest.TestCase):
                     "0.1",
                     "--decode-shell-pcc-threshold",
                     "0.5",
-                    "--require-decode-shell-numeric-reference",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -279,6 +275,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(validation_summary["report"], str(validation_report))
             validation_payload = json.loads(validation_report.read_text())
             self.assertEqual(validation_payload["command"], "validate-real-decode")
+            self.assertTrue(validation_payload["require_full_decode_step"])
             self.assertTrue(validation_payload["require_trace"])
             self.assertTrue(
                 validation_payload["require_official_config_match"]
@@ -323,9 +320,13 @@ class BuildProgramTest(unittest.TestCase):
                     "require_batch32_decode_step"
                 ]
             )
+            self.assertTrue(
+                validation_payload["acceptance"]["require_full_decode_step"]
+            )
             evidence = json.loads(
                 (validate_dir / "real_decode_evidence_manifest.json").read_text()
             )
+            self.assertTrue(evidence["requirements"]["require_full_decode_step"])
             self.assertTrue(
                 evidence["requirements"]["require_official_config_match"]
             )
