@@ -615,8 +615,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --layers 32 \
   --cache-len 1024 \
   --device p150a \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
   --trace-iterations 10 \
+  --require-model-end-to-end \
   --require-official-performance-parity \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
@@ -634,8 +637,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --layers 32 \
   --cache-len 1024 \
   --device p150a \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
   --trace-iterations 10 \
+  --require-model-end-to-end \
   --require-official-performance-parity \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
@@ -681,6 +687,9 @@ acceptance runs.
 The validation report and evidence manifest also include a `reproducibility`
 block with canonical `validate-real-decode` and preflight CLI commands plus a
 machine-readable index of the key report/artifact paths.
+When a prompt is provided, those canonical commands preserve `--prompt` and
+`--tokenizer-path`; if `--tokenizer-path` is omitted, preflight records
+`effective_tokenizer_path=<model-path>`, matching the runtime fallback.
 They carry the same `final_acceptance_plan` block, so reviewers can distinguish
 bring-up, full decode-step, and official performance-parity runs from the
 artifact bundle alone.
@@ -711,7 +720,10 @@ feeds each generated token into the next step, and records
 `decode_loop_runtime_owned=true` when the structural checks pass.
 Use `--require-model-end-to-end` when final validation should fail unless that
 block reports `model_end_to_end_ready=true`; the flag also enables the full
-decode-step acceptance requirements.
+decode-step acceptance requirements. Preflight treats a non-empty prompt as
+required for this scope, because the prompt decode loop is the evidence that
+runtime token ids, page table/cache position, rotary tensors, and paged KV cache
+are owned by the decode loop rather than by smoke/profile harnesses.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs
@@ -1278,7 +1290,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 `validate-real-decode` runs this step automatically when `--prompt` is
 provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report
-`decode_loop_runtime_owned=true`.
+`decode_loop_runtime_owned=true`. The `--preflight-only` path fails early for
+`--require-model-end-to-end` if no non-empty prompt is present, and the
+reproducibility block preserves prompt/tokenizer arguments for the final run.
 
 `decode-depth-sweep` automates the same bring-up ladder and writes a single
 summary report while preserving each depth's `profile-decode-step` report:

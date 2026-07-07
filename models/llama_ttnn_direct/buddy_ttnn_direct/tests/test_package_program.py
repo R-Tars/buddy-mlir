@@ -95,6 +95,8 @@ class PackageProgramTest(unittest.TestCase):
             self.assertIn("decode-loop", package_readme)
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)
+            self.assertIn("--require-model-end-to-end", package_readme)
+            self.assertIn("--prompt", package_readme)
             self.assertIn("--min-tokens-per-second-per-user", package_readme)
             self.assertIn("--decode-shell-pcc-threshold", package_readme)
             self.assertIn(

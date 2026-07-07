@@ -133,6 +133,8 @@ python run_decode.py --mode profile --dry-run --out /tmp/decode_step_profile.jso
 python run_decode.py --mode decode-loop --dry-run \\
   --out /tmp/prompt_decode_loop.json
 python run_decode.py --mode validate-real --dry-run --require-trace \\
+  --prompt "Hello from TTNN Direct" \\
+  --require-model-end-to-end \\
   --min-tokens-per-second-per-user 1.0 \\
   --decode-shell-pcc-threshold 0.99 \\
   --require-decode-shell-numeric-reference --out-dir /tmp/validate_real

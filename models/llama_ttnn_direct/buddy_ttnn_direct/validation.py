@@ -265,6 +265,8 @@ def _real_decode_cli_args(
     min_baseline_ratio: float | None,
     decode_shell_pcc_threshold: float,
     require_decode_shell_numeric_reference: bool,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
     dtype_seed: str | None = None,
     metric: str | None = None,
     dry_run: bool = False,
@@ -300,6 +302,8 @@ def _real_decode_cli_args(
     ]
     _append_option(args, "--batch-size", batch_size)
     _append_option(args, "--cache-len", cache_len)
+    _append_option(args, "--prompt", prompt)
+    _append_option(args, "--tokenizer-path", tokenizer_path)
     _append_option(args, "--dtype-seed", dtype_seed)
     _append_option(args, "--metric", metric)
     _append_option(
@@ -1044,12 +1048,16 @@ def preflight_real_decode(
     min_baseline_ratio: float | None = None,
     decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
     ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
     """Check real-decode prerequisites without loading weights or opening a device."""
     program_dir = Path(program_dir)
     model_path = Path(model_path)
     out = Path(out)
+    tokenizer_path = Path(tokenizer_path) if tokenizer_path is not None else None
+    effective_tokenizer_path = tokenizer_path or model_path
     official_config_path = (
         Path(official_config_path)
         if official_config_path is not None
@@ -1178,6 +1186,24 @@ def preflight_real_decode(
         observed=decode_shell_pcc_threshold,
         expected="0.0 <= threshold <= 1.0",
     )
+    if prompt is not None or normalized["require_model_end_to_end"]:
+        add(
+            "prompt_runtime.prompt",
+            isinstance(prompt, str) and prompt != "",
+            observed={
+                "provided": prompt is not None,
+                "char_count": len(prompt) if isinstance(prompt, str) else None,
+            },
+            expected="non-empty prompt",
+            required=normalized["require_model_end_to_end"],
+        )
+        add(
+            "prompt_runtime.tokenizer_path",
+            effective_tokenizer_path.exists(),
+            observed=str(effective_tokenizer_path),
+            expected="tokenizer directory/model path exists",
+            required=normalized["require_model_end_to_end"],
+        )
 
     required_program_files = [
         "config.json",
@@ -1476,6 +1502,8 @@ def preflight_real_decode(
         official_config_path=official_config_path,
         decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
         layers=rerun_layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
@@ -1518,6 +1546,8 @@ def preflight_real_decode(
         official_config_path=official_config_path,
         decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
         layers=rerun_layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
@@ -1577,6 +1607,10 @@ def preflight_real_decode(
         "baseline_reference_entry": _performance_baseline_entry_summary(
             baseline_reference_entry
         ),
+        "prompt_runtime_requested": prompt is not None,
+        "prompt_char_count": len(prompt) if isinstance(prompt, str) else None,
+        "tokenizer_path": str(tokenizer_path) if tokenizer_path else None,
+        "effective_tokenizer_path": str(effective_tokenizer_path),
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (
             baseline_tokens_per_second_per_user
@@ -1858,6 +1892,8 @@ def validate_real_decode(
         official_config_path=official_config_path,
         decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
         layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
@@ -1895,6 +1931,8 @@ def validate_real_decode(
         official_config_path=official_config_path,
         decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
         layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,

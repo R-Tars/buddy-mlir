@@ -2098,6 +2098,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             require_decode_shell_numeric_reference=(
                 args.require_decode_shell_numeric_reference
             ),
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
         )
         report_path = args.out_dir / "real_decode_preflight_report.json"
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))

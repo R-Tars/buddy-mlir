@@ -207,6 +207,8 @@ class ValidateDirectTest(unittest.TestCase):
                 baseline_reference="tt_metal_official_llama31_8b_b32",
                 min_baseline_ratio=0.1,
                 decode_shell_pcc_threshold=0.99,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
                 ttnn_module=_make_fake_ttnn(),
             )
 
@@ -239,6 +241,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.0)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.99)
+            self.assertTrue(report["prompt_runtime_requested"])
+            self.assertEqual(report["prompt_char_count"], len("hello tenstorrent"))
+            self.assertEqual(report["tokenizer_path"], str(model_dir))
+            self.assertEqual(report["effective_tokenizer_path"], str(model_dir))
             plan = report["final_acceptance_plan"]
             self.assertEqual(
                 plan["target_scope"],
@@ -289,6 +295,16 @@ class ValidateDirectTest(unittest.TestCase):
                 "--min-tokens-per-second-per-user",
                 repro["final_validation_cli_args"],
             )
+            self.assertIn("--prompt", repro["final_validation_cli_args"])
+            self.assertIn(
+                "hello tenstorrent",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn(
+                "--tokenizer-path",
+                repro["final_validation_cli_args"],
+            )
+            self.assertIn(str(model_dir), repro["final_validation_cli_args"])
             self.assertIn("1.0", repro["final_validation_cli_args"])
             self.assertIn(
                 "--decode-shell-pcc-threshold",
@@ -346,6 +362,58 @@ class ValidateDirectTest(unittest.TestCase):
                 report["failed_checks"],
             )
             self.assertTrue(report_json.is_file())
+
+    def test_preflight_real_decode_requires_prompt_for_model_end_to_end(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=program_dir / "config.json",
+                layers=1,
+                batch_size=32,
+                cache_len=1024,
+                require_model_end_to_end=True,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertFalse(report["prompt_runtime_requested"])
+            self.assertIn("prompt_runtime.prompt", report["failed_checks"])
+            self.assertIn(
+                "--require-model-end-to-end",
+                report["reproducibility"]["final_validation_cli_args"],
+            )
+            self.assertNotIn(
+                "--prompt",
+                report["reproducibility"]["final_validation_cli_args"],
+            )
 
     def test_cli_validate_real_decode_preflight_records_final_thresholds(
         self,
@@ -3458,6 +3526,14 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertTrue(report["prompt_runtime_requested"])
             self.assertEqual(report["tokenizer_path"], str(model_dir))
+            repro = report["reproducibility"]
+            self.assertIn("--prompt", repro["validation_cli_args"])
+            self.assertIn("hello tenstorrent", repro["validation_cli_args"])
+            self.assertIn("--tokenizer-path", repro["validation_cli_args"])
+            self.assertIn(str(model_dir), repro["validation_cli_args"])
+            self.assertIn("--prompt", repro["preflight_cli_args"])
+            self.assertIn("hello tenstorrent", repro["preflight_cli_args"])
+            self.assertIn("--tokenizer-path", repro["preflight_cli_args"])
             self.assertEqual(
                 report["steps"]["decode_step_autotune"]["status"],
                 "skipped",
@@ -3597,6 +3673,18 @@ class ValidateDirectTest(unittest.TestCase):
 
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(
+                evidence["reproducibility"]["validation_cli_args"],
+                repro["validation_cli_args"],
+            )
+            self.assertIn(
+                "--prompt",
+                evidence["reproducibility"]["validation_cli_args"],
+            )
+            self.assertIn(
+                "--tokenizer-path",
+                evidence["reproducibility"]["validation_cli_args"],
             )
             e2e = evidence["model_end_to_end_readiness"]
             scope = e2e["runtime_input_scope"]

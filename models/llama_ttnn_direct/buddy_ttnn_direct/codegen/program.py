@@ -330,6 +330,8 @@ def main(argv=None):
             require_decode_shell_numeric_reference=(
                 args.require_decode_shell_numeric_reference
             ),
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
         )
         report_path = out_dir / "real_decode_preflight_report.json"
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -484,8 +486,11 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         ```bash
         python run_decode.py --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
+          --prompt "Hello from TTNN Direct" \
+          --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
           --layers 32 \
           --trace-iterations 10 \
+          --require-model-end-to-end \
           --require-official-performance-parity \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \
@@ -496,8 +501,11 @@ def render_program_readme(plan: dict[str, Any]) -> str:
 
         python run_decode.py --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
+          --prompt "Hello from TTNN Direct" \
+          --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
           --layers 32 \
           --trace-iterations 10 \
+          --require-model-end-to-end \
           --require-official-performance-parity \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \

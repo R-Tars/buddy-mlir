@@ -195,6 +195,8 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
+            self.assertIn("--require-model-end-to-end", program_readme)
+            self.assertIn('--prompt "Hello from TTNN Direct"', program_readme)
 
             smoke = subprocess.run(
                 [
@@ -295,6 +297,11 @@ class BuildProgramTest(unittest.TestCase):
                     str(model_dir),
                     "--official-config",
                     str(out_dir / "config.json"),
+                    "--prompt",
+                    "hello tenstorrent",
+                    "--tokenizer-path",
+                    str(model_dir),
+                    "--require-model-end-to-end",
                     "--require-official-performance-parity",
                     "--min-tokens-per-second-per-user",
                     "1.25",
@@ -327,6 +334,11 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(preflight_summary["report"], str(preflight_report))
             preflight_payload = json.loads(preflight_report.read_text())
             self.assertEqual(preflight_payload["status"], "pass")
+            self.assertTrue(preflight_payload["prompt_runtime_requested"])
+            self.assertEqual(
+                preflight_payload["effective_tokenizer_path"],
+                str(model_dir),
+            )
             self.assertEqual(
                 preflight_payload["min_tokens_per_second_per_user"],
                 1.25,
@@ -338,6 +350,24 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 preflight_payload["ttnn_environment"]["version"],
                 "fake-ttnn",
+            )
+            self.assertIn(
+                "--prompt",
+                preflight_payload["reproducibility"][
+                    "final_validation_cli_args"
+                ],
+            )
+            self.assertIn(
+                "hello tenstorrent",
+                preflight_payload["reproducibility"][
+                    "final_validation_cli_args"
+                ],
+            )
+            self.assertIn(
+                "--tokenizer-path",
+                preflight_payload["reproducibility"][
+                    "final_validation_cli_args"
+                ],
             )
 
             validation = subprocess.run(
