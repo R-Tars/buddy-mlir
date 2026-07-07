@@ -1260,10 +1260,11 @@ class ValidateDirectTest(unittest.TestCase):
                 repro["artifact_index"]["evidence_manifest"],
                 str(out_dir / "real_decode_evidence_manifest.json"),
             )
-            self.assertEqual(
-                report["results"],
-                {step: "pass" for step in REAL_DECODE_VALIDATION_STEPS},
-            )
+            expected_results = {
+                step: "pass" for step in REAL_DECODE_VALIDATION_STEPS
+            }
+            expected_results["prompt_decode_loop"] = "skipped"
+            self.assertEqual(report["results"], expected_results)
             self.assertEqual(
                 report["steps"]["materialize_parameters"]["tensor_count"],
                 21,
@@ -3480,6 +3481,25 @@ class ValidateDirectTest(unittest.TestCase):
                     [2, 1],
                 )
 
+            prompt_loop = report["steps"]["prompt_decode_loop"]
+            self.assertEqual(prompt_loop["status"], "pass")
+            self.assertTrue(prompt_loop["decode_loop_runtime_owned"])
+            self.assertEqual(prompt_loop["input_source"], "prompt_decode_loop")
+            self.assertEqual(prompt_loop["runtime_owner"], "prompt_decode_loop")
+            self.assertEqual(prompt_loop["decode_steps"], 2)
+            self.assertEqual(prompt_loop["prompt_runtime_input_tensor_count"], 1)
+            self.assertEqual(
+                prompt_loop["decode_runtime_state_input_tensor_count"],
+                4,
+            )
+            self.assertEqual(prompt_loop["rotary_runtime_input_tensor_count"], 6)
+            self.assertEqual(prompt_loop["kv_cache_runtime_input_tensor_count"], 2)
+            self.assertEqual(
+                prompt_loop["synthetic_runtime_input_tensor_count"],
+                0,
+            )
+            self.assertEqual(prompt_loop["synthetic_rotary_tensor_count"], 0)
+
             self.assertEqual(
                 report["steps"]["decode_shell"]["runtime_input_tensor_count"],
                 0,
@@ -3584,14 +3604,20 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(e2e["status"], "needs_full_decode_step")
             self.assertFalse(e2e["model_end_to_end_ready"])
             self.assertFalse(e2e["uses_synthetic_runtime_inputs"])
-            self.assertFalse(e2e["decode_loop_runtime_owned"])
+            self.assertTrue(e2e["decode_loop_runtime_owned"])
             self.assertEqual(
                 scope["runtime_input_sources"],
-                {step: "prompt_runtime" for step in prompt_runtime_steps},
+                {
+                    **{step: "prompt_runtime" for step in prompt_runtime_steps},
+                    "prompt_decode_loop": "prompt_decode_loop",
+                },
             )
             self.assertEqual(
                 scope["prompt_runtime_input_tensor_counts"],
-                {step: 1 for step in prompt_runtime_steps},
+                {
+                    **{step: 1 for step in prompt_runtime_steps},
+                    "prompt_decode_loop": 1,
+                },
             )
             self.assertEqual(
                 scope["decode_runtime_state_input_tensor_counts"],
@@ -3599,6 +3625,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode": 2,
                     "smoke_decode_step": 2,
                     "profile_decode_step": 2,
+                    "prompt_decode_loop": 4,
                 },
             )
             self.assertEqual(
@@ -3607,6 +3634,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode": 3,
                     "smoke_decode_step": 3,
                     "profile_decode_step": 3,
+                    "prompt_decode_loop": 6,
                 },
             )
             self.assertEqual(
@@ -3615,6 +3643,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode": 2,
                     "smoke_decode_step": 2,
                     "profile_decode_step": 2,
+                    "prompt_decode_loop": 2,
                 },
             )
             self.assertEqual(
@@ -3624,11 +3653,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode": 0,
                     "smoke_decode_step": 0,
                     "profile_decode_step": 0,
+                    "prompt_decode_loop": 0,
                 },
             )
             self.assertEqual(scope["synthetic_runtime_input_steps"], [])
             self.assertEqual(scope["depth_sweep_synthetic_record_count"], 0)
-            self.assertIn(
+            self.assertNotIn(
                 "decode loop that owns prompt token ids, page table, cache "
                 "position, rotary tensors, and KV cache beyond "
                 "smoke/profile harnesses",
@@ -4955,6 +4985,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode",
                     "smoke_decode_step",
                     "profile_decode_step",
+                    "prompt_decode_loop",
                     "decode_depth_sweep",
                     "decode_step_autotune",
                 ],

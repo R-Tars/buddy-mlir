@@ -76,7 +76,13 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(manifest["runtime"]["python_runner"], "run_decode.py")
             self.assertEqual(
                 manifest["runtime"]["runner_modes"],
-                ["inspect", "smoke", "profile", "validate-real"],
+                [
+                    "inspect",
+                    "smoke",
+                    "profile",
+                    "decode-loop",
+                    "validate-real",
+                ],
             )
             self.assertTrue(manifest["runtime"]["dry_run_supported"])
             self.assertTrue(
@@ -86,6 +92,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(manifest["num_layers"], 2)
             package_readme = (package_dir / "PACKAGE_README.md").read_text()
             self.assertIn("python run_decode.py --mode smoke", package_readme)
+            self.assertIn("decode-loop", package_readme)
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)
             self.assertIn("--min-tokens-per-second-per-user", package_readme)

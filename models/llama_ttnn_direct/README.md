@@ -440,15 +440,22 @@ The package writes `manifest.json` with:
     "buddy_cli_supported": false,
     "python_runner": "run_decode.py",
     "python_runner_supported": true,
-    "runner_modes": ["inspect", "smoke", "profile", "validate-real"]
+    "runner_modes": [
+      "inspect",
+      "smoke",
+      "profile",
+      "decode-loop",
+      "validate-real"
+    ]
   }
 }
 ```
 
 The packaged `PACKAGE_README.md` points at the same runner modes exposed by the
-generated bundle. Use `python run_decode.py --mode smoke/profile/validate-real`
-from the package directory for Python TTNN bring-up; `buddy-cli` dispatch remains
-out of scope for this phase.
+generated bundle. Use `python run_decode.py --mode smoke`,
+`--mode profile`, `--mode decode-loop`, or `--mode validate-real` from the
+package directory for Python TTNN bring-up; `buddy-cli` dispatch remains out
+of scope for this phase.
 
 CMake exposes an additive target behind
 `BUDDY_BUILD_LLAMA31_TTNN_DIRECT_MODEL=ON`:
@@ -697,8 +704,11 @@ page-table, and cache-position inputs from those reports, and add
 are also emitted from `rotary_runtime_state` instead of being counted as
 synthetic rotary inputs, and paged KV-cache tensors are emitted from
 `kv_cache_runtime_state` instead of being counted as synthetic runtime inputs.
-The owning multi-step decode loop remains harness-managed until
-`model_end_to_end_ready=true`.
+Use `prompt-decode-loop` or generated `run_decode.py --mode decode-loop` to
+run the separate multi-step prompt loop. That loop initializes paged KV cache
+once, advances page table/cache position and rotary runtime tensors per step,
+feeds each generated token into the next step, and records
+`decode_loop_runtime_owned=true` when the structural checks pass.
 Use `--require-model-end-to-end` when final validation should fail unless that
 block reports `model_end_to_end_ready=true`; the flag also enables the full
 decode-step acceptance requirements.
@@ -1205,8 +1215,9 @@ parameters and runtime inputs, but it can also take `--model-path` to
 materialize/tensorize real generated decode weights. Add `--prompt` and
 `--tokenizer-path` to use tokenizer-owned token ids plus runtime-owned page
 table/cache position, rotary tensors, and paged KV cache tensors. The owning
-multi-step decode loop remains a smoke/profile harness at this stage. It then
-calls generated `decode_step()` with `config.num_layers = --layers`.
+multi-step decode loop is handled by `prompt-decode-loop`; this smoke command
+still calls a single generated `decode_step()` with
+`config.num_layers = --layers`.
 
 Use it to walk the review plan from 2 layers to 4 layers and finally the full
 generated layer count:
@@ -1243,6 +1254,31 @@ shape/dtype checks for token and KV-cache outputs, plus observed fake-op
 sequences when the injected test TTNN module exposes them. This remains a
 functional-path smoke; loading real weights does not yet claim numeric
 correctness or official performance parity.
+
+`prompt-decode-loop` records the first non-smoke loop ownership evidence for
+model end-to-end readiness. It requires a prompt and tokenizer, runs multiple
+generated decode steps, keeps the KV cache returned by one step for the next
+step, and rebuilds runtime page table/cache position plus rotary tensors as
+the cache position advances:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  prompt-decode-loop \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --prompt "Hello from TTNN Direct" \
+  --decode-steps 2 \
+  --layers 1 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/prompt_decode_loop_report.json
+```
+
+`validate-real-decode` runs this step automatically when `--prompt` is
+provided. Without a prompt it is marked skipped; with
+`--require-model-end-to-end`, readiness also requires this loop to report
+`decode_loop_runtime_owned=true`.
 
 `decode-depth-sweep` automates the same bring-up ladder and writes a single
 summary report while preserving each depth's `profile-decode-step` report:

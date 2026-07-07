@@ -105,11 +105,18 @@ def main(argv=None):
     )
     parser.add_argument(
         "--mode",
-        choices=("inspect", "smoke", "profile", "validate-real"),
+        choices=(
+            "inspect",
+            "smoke",
+            "profile",
+            "decode-loop",
+            "validate-real",
+        ),
         default="inspect",
         help=(
             "inspect prints the planned op sequence; smoke/profile run the "
-            "generated decode_step path; validate-real chains real-weight "
+            "generated decode_step path; decode-loop runs a multi-step "
+            "prompt-owned loop; validate-real chains real-weight "
             "materialize/smoke/profile/autotune gates."
         ),
     )
@@ -117,14 +124,16 @@ def main(argv=None):
         "--dry-run",
         action="store_true",
         help=(
-            "For inspect, print the op sequence. For smoke/profile/validate, "
-            "write reports without opening a TTNN device."
+            "For inspect, print the op sequence. For smoke/profile/"
+            "decode-loop/validate, write reports without opening a TTNN "
+            "device."
         ),
     )
     parser.add_argument("--model-path", type=Path, default=None)
     parser.add_argument("--prompt", default=None)
     parser.add_argument("--tokenizer-path", type=Path, default=None)
     parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument("--decode-steps", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--cache-len", type=int, default=None)
     parser.add_argument("--device", default="p150a")
@@ -244,6 +253,31 @@ def main(argv=None):
             trace_iterations=args.trace_iterations,
             prompt=args.prompt,
             tokenizer_path=args.tokenizer_path,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        return _report_exit_code(report)
+
+    if args.mode == "decode-loop":
+        _ensure_repo_import_path()
+        from models.llama_ttnn_direct.buddy_ttnn_direct.decode_loop import (
+            run_prompt_decode_loop,
+        )
+
+        report_path = args.out or program_dir / "prompt_decode_loop_report.json"
+        report = run_prompt_decode_loop(
+            out=report_path,
+            program_dir=program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            decode_steps=args.decode_steps,
+            layers=args.layers,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
             dry_run=args.dry_run,
         )
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -431,6 +465,18 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         ```bash
         python run_decode.py --mode profile --layers 1 --device p150a \
           --out /tmp/decode_step_profile_report.json
+        ```
+
+        Run a prompt-owned multi-step decode loop:
+
+        ```bash
+        python run_decode.py --mode decode-loop \
+          --model-path /path/to/Llama-3.1-8B-Instruct \
+          --prompt "Hello from TTNN Direct" \
+          --decode-steps 2 \
+          --layers 1 \
+          --device p150a \
+          --out /tmp/prompt_decode_loop_report.json
         ```
 
         Validate the real-weight path after providing a local HF model:

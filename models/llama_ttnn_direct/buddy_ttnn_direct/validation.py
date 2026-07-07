@@ -31,6 +31,7 @@ from .codegen.ttnn_tensorizer import (
     tensorize_parameters_from_program_dry_run,
 )
 from .runtime_environment import collect_ttnn_environment
+from .decode_loop import run_prompt_decode_loop
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -96,6 +97,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "single_layer_decode",
     "smoke_decode_step",
     "profile_decode_step",
+    "prompt_decode_loop",
     "decode_depth_sweep",
     "decode_step_autotune",
 )
@@ -1841,6 +1843,7 @@ def validate_real_decode(
         "single_layer_decode_report": root / "single_layer_decode_report.json",
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
+        "prompt_decode_loop_report": root / "prompt_decode_loop_report.json",
         "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
         "decode_depth_profiles_dir": root / "decode_depth_profiles",
         "autotune_report": root / "decode_step_autotune_report.json",
@@ -2636,6 +2639,95 @@ def validate_real_decode(
             **_reference_summary(profile_report),
         }
 
+    def prompt_decode_loop_step() -> dict[str, Any]:
+        if not dry_run and prompt is None:
+            report["decode_loop_runtime_owned"] = False
+            return {
+                "status": "skipped",
+                "reason": (
+                    "prompt is required for decode loop ownership evidence"
+                ),
+                "decode_loop_runtime_owned": False,
+                "input_source": None,
+            }
+        loop_report = run_prompt_decode_loop(
+            out=paths["prompt_decode_loop_report"],
+            program_dir=program_dir,
+            model_path=None if dry_run else model_path,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            decode_steps=2,
+            layers=layer_count,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            dry_run=dry_run,
+            tokenizer_module=tokenizer_module,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+        )
+        report["decode_loop_runtime_owned"] = bool(
+            loop_report.get("decode_loop_runtime_owned")
+        )
+        return {
+            "status": _runtime_step_status(loop_report, dry_run=dry_run),
+            "prompt_decode_loop_report": str(
+                paths["prompt_decode_loop_report"]
+            ),
+            "runtime_status": loop_report.get("status"),
+            "decode_loop_runtime_owned": loop_report.get(
+                "decode_loop_runtime_owned"
+            ),
+            "decode_steps": loop_report.get("decode_steps"),
+            "layers": loop_report.get("layers"),
+            "batch_size": loop_report.get("batch_size"),
+            "cache_len": loop_report.get("cache_len"),
+            "parameter_source": loop_report.get("parameter_source"),
+            "input_source": loop_report.get("input_source"),
+            "runtime_owner": loop_report.get("runtime_owner"),
+            "synthetic_runtime_input_tensor_count": (
+                loop_report.get("synthetic_runtime_input_tensor_count")
+            ),
+            "synthetic_rotary_tensor_count": (
+                loop_report.get("synthetic_rotary_tensor_count")
+            ),
+            "prompt_runtime_input_tensor_count": (
+                loop_report.get("prompt_runtime_input_tensor_count")
+            ),
+            "decode_runtime_state_input_tensor_count": (
+                loop_report.get("decode_runtime_state_input_tensor_count")
+            ),
+            "rotary_runtime_input_tensor_count": (
+                loop_report.get("rotary_runtime_input_tensor_count")
+            ),
+            "rotary_runtime_state": loop_report.get("rotary_runtime_state"),
+            "kv_cache_runtime_input_tensor_count": (
+                loop_report.get("kv_cache_runtime_input_tensor_count")
+            ),
+            "kv_cache_runtime_state": loop_report.get(
+                "kv_cache_runtime_state"
+            ),
+            "tensor_conversion_count": loop_report.get(
+                "tensor_conversion_count"
+            ),
+            "latency_ms": loop_report.get("latency_ms"),
+            "throughput_summary": loop_report.get("throughput_summary"),
+            "step_reports": loop_report.get("step_reports", []),
+            "input_shapes": loop_report.get("input_shapes"),
+            "kv_cache": loop_report.get("kv_cache"),
+            "output_shapes": loop_report.get("output_shapes"),
+            "trace_status": loop_report.get("trace", {}).get("status"),
+            "trace": _trace_summary(loop_report.get("trace")),
+            "ttnn_environment": loop_report.get("ttnn_environment"),
+            "parameter_setup": loop_report.get("parameter_setup"),
+            "prompt_tokenization": loop_report.get("prompt_tokenization"),
+            "decode_runtime_state": loop_report.get("decode_runtime_state"),
+            **tensorization_path_detail(loop_report),
+            **_reference_summary(loop_report),
+        }
+
     def decode_depth_sweep_step() -> dict[str, Any]:
         sweep_depths = _validation_depth_sweep_targets(
             layer_count=layer_count,
@@ -2807,6 +2899,7 @@ def validate_real_decode(
         "single_layer_decode": single_layer_decode_step,
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
+        "prompt_decode_loop": prompt_decode_loop_step,
         "decode_depth_sweep": decode_depth_sweep_step,
         "decode_step_autotune": autotune_step,
     }
@@ -3534,8 +3627,15 @@ def _model_end_to_end_readiness(
             runtime_scope.get("kv_cache_runtime_input_tensor_counts") or {}
         ).values()
     )
+    steps = report.get("steps")
+    if not isinstance(steps, dict):
+        steps = {}
+    prompt_loop = steps.get("prompt_decode_loop")
+    if not isinstance(prompt_loop, dict):
+        prompt_loop = {}
     decode_loop_runtime_owned = bool(
         report.get("decode_loop_runtime_owned")
+        or prompt_loop.get("decode_loop_runtime_owned")
     )
     missing = []
     if report.get("dry_run"):
@@ -3667,6 +3767,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         "single_layer_decode",
         "smoke_decode_step",
         "profile_decode_step",
+        "prompt_decode_loop",
     ]
     sources: dict[str, Any] = {}
     runtime_counts: dict[str, Any] = {}
@@ -3801,6 +3902,7 @@ def _real_decode_evidence_manifest(
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    prompt_loop = steps.get("prompt_decode_loop", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
@@ -3972,6 +4074,9 @@ def _real_decode_evidence_manifest(
             ),
             "smoke_ttnn_environment": smoke.get("ttnn_environment"),
             "profile_ttnn_environment": profile.get("ttnn_environment"),
+            "prompt_decode_loop_ttnn_environment": prompt_loop.get(
+                "ttnn_environment"
+            ),
         },
         "performance_evidence": {
             "throughput_baseline": _throughput_baseline_summary(
@@ -4044,6 +4149,9 @@ def _real_decode_evidence_manifest(
             ),
             "smoke_tensorization": _tensorization_evidence(smoke),
             "profile_tensorization": _tensorization_evidence(profile),
+            "prompt_decode_loop_tensorization": _tensorization_evidence(
+                prompt_loop
+            ),
         },
         "runtime_evidence": {
             "decode_shell": {
@@ -4247,6 +4355,52 @@ def _real_decode_evidence_manifest(
                 "throughput_summary": profile.get("throughput_summary"),
                 "bottleneck_summary": profile.get("bottleneck_summary"),
                 "max_section": profile.get("max_section"),
+            },
+            "prompt_decode_loop": {
+                "status": prompt_loop.get("status"),
+                "runtime_status": prompt_loop.get("runtime_status"),
+                "decode_loop_runtime_owned": prompt_loop.get(
+                    "decode_loop_runtime_owned"
+                ),
+                "runtime_owner": prompt_loop.get("runtime_owner"),
+                "decode_steps": prompt_loop.get("decode_steps"),
+                "layers": prompt_loop.get("layers"),
+                "batch_size": prompt_loop.get("batch_size"),
+                "cache_len": prompt_loop.get("cache_len"),
+                "parameter_source": prompt_loop.get("parameter_source"),
+                "input_source": prompt_loop.get("input_source"),
+                "synthetic_runtime_input_tensor_count": prompt_loop.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
+                "synthetic_rotary_tensor_count": prompt_loop.get(
+                    "synthetic_rotary_tensor_count"
+                ),
+                "prompt_runtime_input_tensor_count": prompt_loop.get(
+                    "prompt_runtime_input_tensor_count"
+                ),
+                "decode_runtime_state_input_tensor_count": prompt_loop.get(
+                    "decode_runtime_state_input_tensor_count"
+                ),
+                "rotary_runtime_input_tensor_count": prompt_loop.get(
+                    "rotary_runtime_input_tensor_count"
+                ),
+                "kv_cache_runtime_input_tensor_count": prompt_loop.get(
+                    "kv_cache_runtime_input_tensor_count"
+                ),
+                "tensor_conversion_count": prompt_loop.get(
+                    "tensor_conversion_count"
+                ),
+                "latency_ms": prompt_loop.get("latency_ms"),
+                "throughput_summary": prompt_loop.get("throughput_summary"),
+                "output_shapes": prompt_loop.get("output_shapes"),
+                "trace_status": prompt_loop.get("trace_status"),
+                "trace": prompt_loop.get("trace"),
+                "reference_status": prompt_loop.get("reference_status"),
+                "reference_kind": prompt_loop.get("reference_kind"),
+                "reference_failed_checks": prompt_loop.get(
+                    "reference_failed_checks",
+                    [],
+                ),
             },
             "decode_depth_sweep": {
                 "status": depth_sweep.get("status"),
@@ -4970,6 +5124,7 @@ def _real_decode_acceptance(
     single_layer = steps.get("single_layer_decode", {})
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
+    prompt_loop = steps.get("prompt_decode_loop", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
@@ -6470,10 +6625,17 @@ def _real_decode_acceptance(
         )
     if require_model_end_to_end:
         runtime_scope = _runtime_input_scope(report)
+        decode_loop_runtime_owned = bool(
+            report.get("decode_loop_runtime_owned")
+            or prompt_loop.get("decode_loop_runtime_owned")
+        )
         checks.append(
             _acceptance_check(
                 "model_end_to_end_readiness.ready",
-                not runtime_scope.get("uses_synthetic_runtime_inputs"),
+                (
+                    not runtime_scope.get("uses_synthetic_runtime_inputs")
+                    and decode_loop_runtime_owned
+                ),
                 observed={
                     "status": runtime_scope.get("status"),
                     "synthetic_runtime_input_steps": runtime_scope.get(
@@ -6482,8 +6644,14 @@ def _real_decode_acceptance(
                     "runtime_input_sources": runtime_scope.get(
                         "runtime_input_sources"
                     ),
+                    "decode_loop_runtime_owned": (
+                        decode_loop_runtime_owned
+                    ),
                 },
-                expected="no synthetic runtime inputs",
+                expected=(
+                    "no synthetic runtime inputs and prompt decode loop "
+                    "ownership"
+                ),
             )
         )
     if require_trace:

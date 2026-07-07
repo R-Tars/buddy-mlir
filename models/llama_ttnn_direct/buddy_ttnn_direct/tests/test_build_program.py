@@ -161,6 +161,7 @@ class BuildProgramTest(unittest.TestCase):
             out_dir = root / "program"
             smoke_report = root / "decode_step_smoke_report.json"
             profile_report = root / "decode_step_profile_report.json"
+            loop_report = root / "prompt_decode_loop_report.json"
             preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
             _write_fake_model_config(model_dir)
@@ -193,6 +194,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--preflight-only", program_readme)
             self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
+            self.assertIn("--mode decode-loop", program_readme)
 
             smoke = subprocess.run(
                 [
@@ -250,6 +252,37 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 json.loads(profile_report.read_text())["template"],
                 "generated_decode_step_profile",
+            )
+
+            loop = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "decode-loop",
+                    "--dry-run",
+                    "--decode-steps",
+                    "2",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(loop_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            loop_summary = json.loads(loop.stdout)
+            self.assertEqual(loop_summary["status"], "dry_run")
+            self.assertEqual(loop_summary["report"], str(loop_report))
+            self.assertEqual(
+                json.loads(loop_report.read_text())["template"],
+                "prompt_decode_loop",
             )
 
             preflight = subprocess.run(

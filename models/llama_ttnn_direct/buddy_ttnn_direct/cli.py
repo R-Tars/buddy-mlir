@@ -43,6 +43,7 @@ from .search.decode_step_autotune import run_decode_step_autotune
 from .search.decode_depth_sweep import run_decode_depth_sweep
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
+from .decode_loop import run_prompt_decode_loop
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .smoke_decode_shell import run_smoke_decode_shell
 from .smoke_attention_primitive import (
@@ -757,6 +758,65 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output generated decode-step profile report JSON path.",
     )
     profile_decode_step_parser.set_defaults(func=_cmd_profile_decode_step)
+
+    prompt_decode_loop = subparsers.add_parser(
+        "prompt-decode-loop",
+        help=(
+            "Run or dry-run a tokenizer-owned multi-step generated decode "
+            "loop that owns token ids, decode metadata, rotary tensors, "
+            "and paged KV cache."
+        ),
+    )
+    prompt_decode_loop.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    prompt_decode_loop.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Local HF model directory. Required for non-dry-run execution.",
+    )
+    add_prompt_runtime_args(prompt_decode_loop)
+    prompt_decode_loop.add_argument(
+        "--decode-steps",
+        type=int,
+        default=2,
+        help="Number of generated decode steps to run in the loop.",
+    )
+    prompt_decode_loop.add_argument(
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of generated decoder layers to execute per step.",
+    )
+    prompt_decode_loop.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the report.",
+    )
+    prompt_decode_loop.add_argument("--device-id", type=int, default=0)
+    prompt_decode_loop.add_argument("--batch-size", type=int, default=None)
+    prompt_decode_loop.add_argument("--cache-len", type=int, default=None)
+    prompt_decode_loop.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    prompt_decode_loop.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the loop report schema without opening a device.",
+    )
+    prompt_decode_loop.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output prompt decode loop report JSON path.",
+    )
+    prompt_decode_loop.set_defaults(func=_cmd_prompt_decode_loop)
 
     decode_depth_sweep = subparsers.add_parser(
         "decode-depth-sweep",
@@ -1695,6 +1755,29 @@ def _cmd_profile_decode_step(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote decode-step profile report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_prompt_decode_loop(args: argparse.Namespace) -> int:
+    report = run_prompt_decode_loop(
+        out=args.out,
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        decode_steps=args.decode_steps,
+        layers=args.layers,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote prompt decode loop report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
