@@ -596,7 +596,9 @@ Preflight the exact final-acceptance arguments first. This writes a
 `real_decode_preflight_report.json` without loading tensor payloads, opening a
 TTNN device, or running runtime gates. The preflight report records the same
 throughput, baseline-ratio, and decode-shell PCC thresholds that the final
-validation command will use:
+validation command will use. It also records a `final_acceptance_plan` block
+that names the requested acceptance scope, effective requirement flags, final
+gate names, thresholds, and baseline source before runtime execution starts:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -672,6 +674,9 @@ acceptance runs.
 The validation report and evidence manifest also include a `reproducibility`
 block with canonical `validate-real-decode` and preflight CLI commands plus a
 machine-readable index of the key report/artifact paths.
+They carry the same `final_acceptance_plan` block, so reviewers can distinguish
+bring-up, full decode-step, and official performance-parity runs from the
+artifact bundle alone.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs

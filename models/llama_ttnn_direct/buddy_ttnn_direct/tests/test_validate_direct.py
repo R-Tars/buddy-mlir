@@ -234,6 +234,31 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.0)
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.99)
+            plan = report["final_acceptance_plan"]
+            self.assertEqual(
+                plan["target_scope"],
+                "official_performance_parity",
+            )
+            self.assertIn(
+                "decode_shell.numeric_reference",
+                plan["full_decode_step_gate_names"],
+            )
+            self.assertIn(
+                "official_config_diff.match",
+                plan["official_performance_parity_gate_names"],
+            )
+            self.assertIn(
+                "--require-official-performance-parity",
+                plan["requested_acceptance_flags"],
+            )
+            self.assertEqual(
+                plan["thresholds"]["decode_shell_pcc_threshold"],
+                0.99,
+            )
+            self.assertEqual(
+                plan["baseline"]["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
             repro = report["reproducibility"]
             self.assertIn(
                 "--preflight-only",
@@ -1185,6 +1210,18 @@ class ValidateDirectTest(unittest.TestCase):
                 },
             )
             self.assertEqual(report["evidence"]["status"], "accepted")
+            self.assertEqual(
+                report["final_acceptance_plan"]["target_scope"],
+                "bringup",
+            )
+            self.assertIn(
+                "decode_step_autotune",
+                report["final_acceptance_plan"]["required_runtime_steps"],
+            )
+            self.assertEqual(
+                report["final_acceptance_plan"]["optional_gate_names"],
+                ["profile_decode_step.min_tokens_per_second_per_user"],
+            )
             repro = report["reproducibility"]
             self.assertIn(
                 "validate-real-decode",
@@ -2587,6 +2624,10 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(
+                evidence["final_acceptance_plan"],
+                report["final_acceptance_plan"],
+            )
             self.assertEqual(
                 evidence["reproducibility"]["validation_cli_args"],
                 report["reproducibility"]["validation_cli_args"],

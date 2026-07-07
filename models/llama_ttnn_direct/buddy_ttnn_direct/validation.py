@@ -357,6 +357,124 @@ def _real_decode_reproducibility(
     }
 
 
+def _real_decode_final_acceptance_plan(
+    *,
+    skip_autotune: bool,
+    require_full_decode_step: bool,
+    require_official_performance_parity: bool,
+    require_trace: bool,
+    require_official_config_match: bool,
+    require_full_depth: bool,
+    require_program_runtime_shape: bool,
+    require_batch32_decode_step: bool,
+    min_tokens_per_second_per_user: float | None,
+    baseline_tokens_per_second_per_user: float | None,
+    baseline_reference: str | None,
+    min_baseline_ratio: float | None,
+    decode_shell_pcc_threshold: float,
+    require_decode_shell_numeric_reference: bool,
+) -> dict[str, Any]:
+    if require_official_performance_parity:
+        target_scope = "official_performance_parity"
+    elif require_full_decode_step:
+        target_scope = "full_decode_step"
+    else:
+        target_scope = "bringup"
+
+    runtime_steps = [
+        step
+        for step in REAL_DECODE_VALIDATION_STEPS
+        if not (skip_autotune and step == "decode_step_autotune")
+    ]
+    effective_requirements = {
+        "require_full_decode_step": bool(require_full_decode_step),
+        "require_official_performance_parity": bool(
+            require_official_performance_parity
+        ),
+        "require_trace": bool(require_trace),
+        "require_official_config_match": bool(require_official_config_match),
+        "require_full_depth": bool(require_full_depth),
+        "require_program_runtime_shape": bool(
+            require_program_runtime_shape
+        ),
+        "require_batch32_decode_step": bool(require_batch32_decode_step),
+        "require_decode_shell_numeric_reference": bool(
+            require_decode_shell_numeric_reference
+        ),
+    }
+    requested_flags = []
+    for flag, enabled in (
+        ("--require-full-decode-step", require_full_decode_step),
+        (
+            "--require-official-performance-parity",
+            require_official_performance_parity,
+        ),
+        ("--require-trace", require_trace),
+        ("--require-official-config-match", require_official_config_match),
+        ("--require-full-depth", require_full_depth),
+        ("--require-program-runtime-shape", require_program_runtime_shape),
+        ("--require-batch32-decode-step", require_batch32_decode_step),
+        (
+            "--require-decode-shell-numeric-reference",
+            require_decode_shell_numeric_reference,
+        ),
+    ):
+        if enabled:
+            requested_flags.append(flag)
+
+    full_decode_gate_names = []
+    if require_full_decode_step:
+        full_decode_gate_names = [
+            "validation.full_depth_layers",
+            "decode_depth_sweep.full_depth",
+            "validation.program_batch_size",
+            "validation.program_cache_len",
+            "decode_step_contract.batch32",
+            "single_layer_decode.trace_status",
+            "smoke_decode_step.trace_status",
+            "profile_decode_step.trace_status",
+            "profile_decode_step.trace_profile",
+            "decode_shell.numeric_reference",
+        ]
+
+    official_parity_gate_names = []
+    if require_official_performance_parity:
+        official_parity_gate_names = [
+            "official_config_diff.match",
+            "profile_decode_step.min_baseline_ratio",
+        ]
+
+    optional_gate_names = []
+    if min_tokens_per_second_per_user is not None:
+        optional_gate_names.append(
+            "profile_decode_step.min_tokens_per_second_per_user"
+        )
+
+    return {
+        "target_scope": target_scope,
+        "required_runtime_steps": runtime_steps,
+        "effective_requirements": effective_requirements,
+        "requested_acceptance_flags": requested_flags,
+        "full_decode_step_gate_names": full_decode_gate_names,
+        "official_performance_parity_gate_names": official_parity_gate_names,
+        "optional_gate_names": optional_gate_names,
+        "thresholds": {
+            "min_tokens_per_second_per_user": (
+                min_tokens_per_second_per_user
+            ),
+            "min_baseline_ratio": min_baseline_ratio,
+            "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
+        },
+        "baseline": {
+            "baseline_reference": baseline_reference,
+            "baseline_tokens_per_second_per_user": (
+                baseline_tokens_per_second_per_user
+            ),
+            "uses_reference_baseline": baseline_reference is not None,
+        },
+    }
+
+
 def validate_direct(
     *,
     model_path: str | Path,
@@ -1436,6 +1554,38 @@ def preflight_real_decode(
         "official_config_diff": official_config_diff_summary,
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
+        "final_acceptance_plan": _real_decode_final_acceptance_plan(
+            skip_autotune=skip_autotune,
+            require_full_decode_step=normalized[
+                "require_full_decode_step"
+            ],
+            require_official_performance_parity=normalized[
+                "require_official_performance_parity"
+            ],
+            require_trace=normalized["require_trace"],
+            require_official_config_match=normalized[
+                "require_official_config_match"
+            ],
+            require_full_depth=normalized["require_full_depth"],
+            require_program_runtime_shape=normalized[
+                "require_program_runtime_shape"
+            ],
+            require_batch32_decode_step=normalized[
+                "require_batch32_decode_step"
+            ],
+            min_tokens_per_second_per_user=(
+                min_tokens_per_second_per_user
+            ),
+            baseline_tokens_per_second_per_user=(
+                baseline_tokens_per_second_per_user
+            ),
+            baseline_reference=baseline_reference,
+            min_baseline_ratio=min_baseline_ratio,
+            decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+            require_decode_shell_numeric_reference=normalized[
+                "require_decode_shell_numeric_reference"
+            ],
+        ),
         "reproducibility": {
             "preflight_cli_args": preflight_cli_args,
             "preflight_cli_command": _shell_command(preflight_cli_args),
@@ -1797,6 +1947,28 @@ def validate_real_decode(
             validation_args=validation_cli_args,
             preflight_args=preflight_cli_args,
             artifact_paths=paths,
+        ),
+        "final_acceptance_plan": _real_decode_final_acceptance_plan(
+            skip_autotune=skip_autotune,
+            require_full_decode_step=require_full_decode_step,
+            require_official_performance_parity=(
+                require_official_performance_parity
+            ),
+            require_trace=require_trace,
+            require_official_config_match=require_official_config_match,
+            require_full_depth=require_full_depth,
+            require_program_runtime_shape=require_program_runtime_shape,
+            require_batch32_decode_step=require_batch32_decode_step,
+            min_tokens_per_second_per_user=min_tokens_per_second_per_user,
+            baseline_tokens_per_second_per_user=(
+                baseline_tokens_per_second_per_user
+            ),
+            baseline_reference=baseline_reference,
+            min_baseline_ratio=min_baseline_ratio,
+            decode_shell_pcc_threshold=decode_shell_pcc_threshold,
+            require_decode_shell_numeric_reference=(
+                require_decode_shell_numeric_reference
+            ),
         ),
     }
 
@@ -3190,6 +3362,7 @@ def _real_decode_evidence_manifest(
         "status": status,
         "acceptance_scope": acceptance_scope,
         "reproducibility": report.get("reproducibility"),
+        "final_acceptance_plan": report.get("final_acceptance_plan"),
         "validation": {
             "command": report.get("command"),
             "status": report.get("status"),
