@@ -686,6 +686,9 @@ tables, cache positions, paged KV cache, or rotary tensors are supplied by the
 smoke/profile harness as synthetic runtime inputs. Use it to avoid confusing
 generated decode-step evidence with a real tokenizer/prompt driven model
 decode loop.
+Use `--require-model-end-to-end` when final validation should fail unless that
+block reports `model_end_to_end_ready=true`; the flag also enables the full
+decode-step acceptance requirements.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs

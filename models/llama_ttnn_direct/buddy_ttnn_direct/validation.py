@@ -250,6 +250,7 @@ def _real_decode_cli_args(
     trace_iterations: int,
     skip_autotune: bool,
     require_full_decode_step: bool,
+    require_model_end_to_end: bool,
     require_official_performance_parity: bool,
     require_trace: bool,
     require_official_config_match: bool,
@@ -319,6 +320,8 @@ def _real_decode_cli_args(
         args.append("--skip-autotune")
     if require_full_decode_step:
         args.append("--require-full-decode-step")
+    if require_model_end_to_end:
+        args.append("--require-model-end-to-end")
     if require_official_performance_parity:
         args.append("--require-official-performance-parity")
     if require_trace:
@@ -361,6 +364,7 @@ def _real_decode_final_acceptance_plan(
     *,
     skip_autotune: bool,
     require_full_decode_step: bool,
+    require_model_end_to_end: bool,
     require_official_performance_parity: bool,
     require_trace: bool,
     require_official_config_match: bool,
@@ -376,6 +380,8 @@ def _real_decode_final_acceptance_plan(
 ) -> dict[str, Any]:
     if require_official_performance_parity:
         target_scope = "official_performance_parity"
+    elif require_model_end_to_end:
+        target_scope = "model_end_to_end"
     elif require_full_decode_step:
         target_scope = "full_decode_step"
     else:
@@ -388,6 +394,7 @@ def _real_decode_final_acceptance_plan(
     ]
     effective_requirements = {
         "require_full_decode_step": bool(require_full_decode_step),
+        "require_model_end_to_end": bool(require_model_end_to_end),
         "require_official_performance_parity": bool(
             require_official_performance_parity
         ),
@@ -405,6 +412,7 @@ def _real_decode_final_acceptance_plan(
     requested_flags = []
     for flag, enabled in (
         ("--require-full-decode-step", require_full_decode_step),
+        ("--require-model-end-to-end", require_model_end_to_end),
         (
             "--require-official-performance-parity",
             require_official_performance_parity,
@@ -445,6 +453,12 @@ def _real_decode_final_acceptance_plan(
             "profile_decode_step.min_baseline_ratio",
         ]
 
+    model_end_to_end_gate_names = []
+    if require_model_end_to_end:
+        model_end_to_end_gate_names = [
+            "model_end_to_end_readiness.ready",
+        ]
+
     optional_gate_names = []
     if min_tokens_per_second_per_user is not None:
         optional_gate_names.append(
@@ -465,6 +479,7 @@ def _real_decode_final_acceptance_plan(
         "effective_requirements": effective_requirements,
         "requested_acceptance_flags": requested_flags,
         "full_decode_step_gate_names": full_decode_gate_names,
+        "model_end_to_end_gate_names": model_end_to_end_gate_names,
         "official_performance_parity_gate_names": official_parity_gate_names,
         "optional_gate_names": optional_gate_names,
         "thresholds": {
@@ -1014,6 +1029,7 @@ def preflight_real_decode(
     trace_iterations: int = 1,
     skip_autotune: bool = False,
     require_full_decode_step: bool = False,
+    require_model_end_to_end: bool = False,
     require_official_performance_parity: bool = False,
     require_trace: bool = False,
     require_official_config_match: bool = False,
@@ -1075,6 +1091,7 @@ def preflight_real_decode(
     normalized = {
         "trace": bool(trace),
         "require_full_decode_step": bool(require_full_decode_step),
+        "require_model_end_to_end": bool(require_model_end_to_end),
         "require_official_performance_parity": bool(
             require_official_performance_parity
         ),
@@ -1102,6 +1119,8 @@ def preflight_real_decode(
             observed=min_baseline_ratio,
             expected="nonnegative ratio",
         )
+    if normalized["require_model_end_to_end"]:
+        normalized["require_full_decode_step"] = True
     if normalized["require_full_decode_step"]:
         normalized["trace"] = True
         normalized["require_trace"] = True
@@ -1464,6 +1483,7 @@ def preflight_real_decode(
         trace_iterations=rerun_trace_iterations,
         skip_autotune=skip_autotune,
         require_full_decode_step=normalized["require_full_decode_step"],
+        require_model_end_to_end=normalized["require_model_end_to_end"],
         require_official_performance_parity=normalized[
             "require_official_performance_parity"
         ],
@@ -1505,6 +1525,7 @@ def preflight_real_decode(
         trace_iterations=rerun_trace_iterations,
         skip_autotune=skip_autotune,
         require_full_decode_step=normalized["require_full_decode_step"],
+        require_model_end_to_end=normalized["require_model_end_to_end"],
         require_official_performance_parity=normalized[
             "require_official_performance_parity"
         ],
@@ -1568,6 +1589,9 @@ def preflight_real_decode(
             require_full_decode_step=normalized[
                 "require_full_decode_step"
             ],
+            require_model_end_to_end=normalized[
+                "require_model_end_to_end"
+            ],
             require_official_performance_parity=normalized[
                 "require_official_performance_parity"
             ],
@@ -1630,6 +1654,7 @@ def validate_real_decode(
     dry_run: bool = False,
     skip_autotune: bool = False,
     require_full_decode_step: bool = False,
+    require_model_end_to_end: bool = False,
     require_official_performance_parity: bool = False,
     require_trace: bool = False,
     require_official_config_match: bool = False,
@@ -1681,6 +1706,8 @@ def validate_real_decode(
                 "require_official_performance_parity requires "
                 "min_baseline_ratio"
             )
+    if require_model_end_to_end:
+        require_full_decode_step = True
     if min_baseline_ratio is not None:
         if min_baseline_ratio < 0.0:
             raise ValueError("min_baseline_ratio must be nonnegative")
@@ -1837,6 +1864,7 @@ def validate_real_decode(
         dry_run=dry_run,
         skip_autotune=skip_autotune,
         require_full_decode_step=require_full_decode_step,
+        require_model_end_to_end=require_model_end_to_end,
         require_official_performance_parity=require_official_performance_parity,
         require_trace=require_trace,
         require_official_config_match=require_official_config_match,
@@ -1870,6 +1898,7 @@ def validate_real_decode(
         trace_iterations=trace_iterations,
         skip_autotune=skip_autotune,
         require_full_decode_step=require_full_decode_step,
+        require_model_end_to_end=require_model_end_to_end,
         require_official_performance_parity=require_official_performance_parity,
         require_trace=require_trace,
         require_official_config_match=require_official_config_match,
@@ -1929,6 +1958,7 @@ def validate_real_decode(
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
         "require_full_decode_step": require_full_decode_step,
+        "require_model_end_to_end": require_model_end_to_end,
         "require_official_performance_parity": (
             require_official_performance_parity
         ),
@@ -1960,6 +1990,7 @@ def validate_real_decode(
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             skip_autotune=skip_autotune,
             require_full_decode_step=require_full_decode_step,
+            require_model_end_to_end=require_model_end_to_end,
             require_official_performance_parity=(
                 require_official_performance_parity
             ),
@@ -2672,6 +2703,7 @@ def validate_real_decode(
         require_full_depth=require_full_depth,
         require_program_runtime_shape=require_program_runtime_shape,
         require_batch32_decode_step=require_batch32_decode_step,
+        require_model_end_to_end=require_model_end_to_end,
         min_tokens_per_second_per_user=min_tokens_per_second_per_user,
         baseline_tokens_per_second_per_user=(
             baseline_tokens_per_second_per_user
@@ -3190,6 +3222,9 @@ def _real_decode_acceptance_scope(
             "require_full_decode_step": bool(
                 report.get("require_full_decode_step")
             ),
+            "require_model_end_to_end": bool(
+                report.get("require_model_end_to_end")
+            ),
             "require_official_performance_parity": bool(
                 report.get("require_official_performance_parity")
             ),
@@ -3301,6 +3336,9 @@ def _real_decode_acceptance_scope(
         "accepted_real_weight_runtime": accepted,
         "require_full_decode_step": bool(
             report.get("require_full_decode_step")
+        ),
+        "require_model_end_to_end": bool(
+            report.get("require_model_end_to_end")
         ),
         "require_official_performance_parity": bool(
             report.get("require_official_performance_parity")
@@ -3610,6 +3648,9 @@ def _real_decode_evidence_manifest(
             "require_full_decode_step": report.get(
                 "require_full_decode_step"
             ),
+            "require_model_end_to_end": report.get(
+                "require_model_end_to_end"
+            ),
             "results": dict(results),
             "failed_steps": _step_names_with_status(
                 results,
@@ -3636,6 +3677,9 @@ def _real_decode_evidence_manifest(
             ),
             "require_full_decode_step": report.get(
                 "require_full_decode_step"
+            ),
+            "require_model_end_to_end": report.get(
+                "require_model_end_to_end"
             ),
             "require_trace": report.get("require_trace"),
             "min_tokens_per_second_per_user": report.get(
@@ -4050,6 +4094,7 @@ def _final_acceptance_gate_matrix(
 
     groups = {
         "full_decode_step": plan.get("full_decode_step_gate_names", []),
+        "model_end_to_end": plan.get("model_end_to_end_gate_names", []),
         "official_performance_parity": plan.get(
             "official_performance_parity_gate_names",
             [],
@@ -4618,6 +4663,7 @@ def _real_decode_acceptance(
     require_full_depth: bool,
     require_program_runtime_shape: bool,
     require_batch32_decode_step: bool,
+    require_model_end_to_end: bool,
     min_tokens_per_second_per_user: float | None,
     baseline_tokens_per_second_per_user: float | None,
     min_baseline_ratio: float | None,
@@ -4633,6 +4679,9 @@ def _real_decode_acceptance(
             "require_batch32_decode_step": require_batch32_decode_step,
             "require_full_decode_step": bool(
                 report.get("require_full_decode_step")
+            ),
+            "require_model_end_to_end": bool(
+                report.get("require_model_end_to_end")
             ),
             "require_official_performance_parity": bool(
                 report.get("require_official_performance_parity")
@@ -6159,6 +6208,24 @@ def _real_decode_acceptance(
                 expected=32,
             )
         )
+    if require_model_end_to_end:
+        runtime_scope = _runtime_input_scope(report)
+        checks.append(
+            _acceptance_check(
+                "model_end_to_end_readiness.ready",
+                not runtime_scope.get("uses_synthetic_runtime_inputs"),
+                observed={
+                    "status": runtime_scope.get("status"),
+                    "synthetic_runtime_input_steps": runtime_scope.get(
+                        "synthetic_runtime_input_steps"
+                    ),
+                    "runtime_input_sources": runtime_scope.get(
+                        "runtime_input_sources"
+                    ),
+                },
+                expected="no synthetic runtime inputs",
+            )
+        )
     if require_trace:
         checks.extend(
             [
@@ -6506,6 +6573,9 @@ def _real_decode_acceptance(
         "require_program_runtime_shape": require_program_runtime_shape,
         "require_batch32_decode_step": require_batch32_decode_step,
         "require_full_decode_step": bool(report.get("require_full_decode_step")),
+        "require_model_end_to_end": bool(
+            report.get("require_model_end_to_end")
+        ),
         "require_official_performance_parity": bool(
             report.get("require_official_performance_parity")
         ),

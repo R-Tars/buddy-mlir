@@ -141,6 +141,7 @@ def main(argv=None):
     parser.add_argument("--skip-autotune", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--require-full-decode-step", action="store_true")
+    parser.add_argument("--require-model-end-to-end", action="store_true")
     parser.add_argument(
         "--require-official-performance-parity",
         action="store_true",
@@ -268,6 +269,7 @@ def main(argv=None):
             trace_iterations=args.trace_iterations,
             skip_autotune=args.skip_autotune,
             require_full_decode_step=args.require_full_decode_step,
+            require_model_end_to_end=args.require_model_end_to_end,
             require_official_performance_parity=(
                 args.require_official_performance_parity
             ),
@@ -311,6 +313,7 @@ def main(argv=None):
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_full_decode_step=args.require_full_decode_step,
+        require_model_end_to_end=args.require_model_end_to_end,
         require_official_performance_parity=(
             args.require_official_performance_parity
         ),

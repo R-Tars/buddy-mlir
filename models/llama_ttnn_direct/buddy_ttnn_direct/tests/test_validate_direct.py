@@ -201,6 +201,7 @@ class ValidateDirectTest(unittest.TestCase):
                 cache_len=1024,
                 trace_iterations=10,
                 require_official_performance_parity=True,
+                require_model_end_to_end=True,
                 min_tokens_per_second_per_user=1.0,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
                 min_baseline_ratio=0.1,
@@ -213,6 +214,9 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(report_json.is_file())
             self.assertTrue(
                 report["requirements"]["require_full_decode_step"]
+            )
+            self.assertTrue(
+                report["requirements"]["require_model_end_to_end"]
             )
             self.assertTrue(
                 report["requirements"][
@@ -244,11 +248,19 @@ class ValidateDirectTest(unittest.TestCase):
                 plan["full_decode_step_gate_names"],
             )
             self.assertIn(
+                "model_end_to_end_readiness.ready",
+                plan["model_end_to_end_gate_names"],
+            )
+            self.assertIn(
                 "official_config_diff.match",
                 plan["official_performance_parity_gate_names"],
             )
             self.assertIn(
                 "--require-official-performance-parity",
+                plan["requested_acceptance_flags"],
+            )
+            self.assertIn(
+                "--require-model-end-to-end",
                 plan["requested_acceptance_flags"],
             )
             self.assertEqual(
@@ -3559,6 +3571,7 @@ class ValidateDirectTest(unittest.TestCase):
             config_json = root / "template_config.json"
             program_dir = root / "program"
             out_dir = root / "validate_real"
+            e2e_out_dir = root / "validate_real_e2e"
             _write_fake_model_config(model_dir)
             _write_fake_model_weights(model_dir, _fake_weight_specs())
             _write_template_config(config_json)
@@ -3621,6 +3634,19 @@ class ValidateDirectTest(unittest.TestCase):
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
+                    e2e_report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=e2e_out_dir,
+                        layers=2,
+                        batch_size=32,
+                        cache_len=1024,
+                        device="p150a",
+                        skip_autotune=True,
+                        require_model_end_to_end=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
 
             self.assertEqual(report["status"], "pass")
             self.assertTrue(report["require_full_decode_step"])
@@ -3675,6 +3701,35 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["evidence"]["acceptance_scope"]["status"],
                 "full_decode_step",
+            )
+            self.assertEqual(e2e_report["status"], "acceptance_failed")
+            self.assertTrue(e2e_report["require_full_decode_step"])
+            self.assertTrue(e2e_report["require_model_end_to_end"])
+            self.assertEqual(
+                [
+                    check["name"]
+                    for check in e2e_report["acceptance"]["checks"]
+                    if not check["passed"]
+                ],
+                ["model_end_to_end_readiness.ready"],
+            )
+            e2e_evidence = json.loads(
+                (e2e_out_dir / "real_decode_evidence_manifest.json")
+                .read_text()
+            )
+            self.assertEqual(e2e_evidence["status"], "incomplete")
+            self.assertEqual(
+                e2e_evidence["acceptance_gate_matrix"]["target_scope"],
+                "model_end_to_end",
+            )
+            self.assertEqual(
+                e2e_evidence["acceptance_gate_matrix"]["failed_gates"],
+                ["model_end_to_end_readiness.ready"],
+            )
+            self.assertFalse(
+                e2e_evidence["model_end_to_end_readiness"][
+                    "model_end_to_end_ready"
+                ]
             )
 
     def test_validate_real_decode_can_require_full_depth(self) -> None:

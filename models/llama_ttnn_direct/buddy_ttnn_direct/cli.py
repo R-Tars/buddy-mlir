@@ -1274,6 +1274,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--require-model-end-to-end",
+        action="store_true",
+        help=(
+            "Require model end-to-end acceptance. This enables "
+            "--require-full-decode-step and additionally fails while runtime "
+            "inputs are supplied by smoke/profile synthetic tensors."
+        ),
+    )
+    validate_real.add_argument(
         "--require-official-performance-parity",
         action="store_true",
         help=(
@@ -1933,6 +1942,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             trace_iterations=args.trace_iterations,
             skip_autotune=args.skip_autotune,
             require_full_decode_step=args.require_full_decode_step,
+            require_model_end_to_end=args.require_model_end_to_end,
             require_official_performance_parity=(
                 args.require_official_performance_parity
             ),
@@ -1976,6 +1986,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_full_decode_step=args.require_full_decode_step,
+        require_model_end_to_end=args.require_model_end_to_end,
         require_official_performance_parity=(
             args.require_official_performance_parity
         ),
