@@ -602,7 +602,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --device p150a \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
   --trace-iterations 10 \
-  --require-full-decode-step \
+  --require-official-performance-parity \
   --min-tokens-per-second-per-user 1.0 \
   --baseline-reference tt_metal_official_llama31_8b_b32 \
   --min-baseline-ratio 0.1 \
@@ -652,6 +652,11 @@ contract, trace capture/execute, and decode-shell numeric reference evidence.
 `acceptance_scope.official_performance_parity_ready=true` additionally requires
 official config match and a baseline-ratio gate, so a small bring-up run cannot
 be mistaken for final end-to-end or performance-parity evidence.
+Use `--require-official-performance-parity` for final performance acceptance.
+It enables `--require-full-decode-step` and
+`--require-official-config-match`, and it requires an explicit
+`--baseline-reference` plus `--min-baseline-ratio` so final evidence is tied to
+an auditable official baseline.
 By default, the official-config diff is evidence-only: `diff_found` is
 acceptable because the bundled official config is a seed reference with known
 gaps. Use `--require-official-config-match` when a curated official parity

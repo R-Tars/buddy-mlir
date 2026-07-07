@@ -60,6 +60,89 @@ class ValidateDirectTest(unittest.TestCase):
             "performance_baselines.json"
         ))
 
+    def test_validate_real_decode_official_performance_parity_requires_baseline(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with self.assertRaisesRegex(ValueError, "baseline_reference"):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    require_official_performance_parity=True,
+                    min_baseline_ratio=0.1,
+                )
+            with self.assertRaisesRegex(ValueError, "min_baseline_ratio"):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    require_official_performance_parity=True,
+                    baseline_reference="tt_metal_official_llama31_8b_b32",
+                )
+
+    def test_real_decode_scope_marks_official_performance_parity_ready(
+        self,
+    ) -> None:
+        report = {
+            "dry_run": False,
+            "status": "pass",
+            "require_full_decode_step": True,
+            "require_official_performance_parity": True,
+            "require_full_depth": True,
+            "require_program_runtime_shape": True,
+            "require_batch32_decode_step": True,
+            "require_trace": True,
+            "require_decode_shell_numeric_reference": True,
+            "require_official_config_match": True,
+            "min_baseline_ratio": 0.1,
+            "layers": 32,
+            "program_num_layers": 32,
+            "batch_size": 32,
+            "program_batch_size": 32,
+            "cache_len": 1024,
+            "program_cache_len": 1024,
+        }
+        acceptance = {
+            "passed": True,
+            "checks": [
+                {"name": "validation.full_depth_layers", "passed": True},
+                {"name": "decode_depth_sweep.full_depth", "passed": True},
+                {"name": "validation.program_batch_size", "passed": True},
+                {"name": "validation.program_cache_len", "passed": True},
+                {"name": "decode_step_contract.batch32", "passed": True},
+                {"name": "single_layer_decode.trace_status", "passed": True},
+                {"name": "smoke_decode_step.trace_status", "passed": True},
+                {"name": "profile_decode_step.trace_status", "passed": True},
+                {"name": "profile_decode_step.trace_profile", "passed": True},
+                {
+                    "name": "decode_shell.numeric_reference",
+                    "passed": True,
+                },
+                {"name": "official_config_diff.match", "passed": True},
+                {
+                    "name": "profile_decode_step.min_baseline_ratio",
+                    "passed": True,
+                },
+            ],
+        }
+
+        scope = validation_module._real_decode_acceptance_scope(
+            report,
+            acceptance,
+        )
+
+        self.assertEqual(scope["status"], "official_performance_parity")
+        self.assertTrue(scope["require_official_performance_parity"])
+        self.assertTrue(scope["full_decode_step_ready"])
+        self.assertTrue(scope["official_performance_parity_ready"])
+        self.assertEqual(scope["missing_for_full_decode_step"], [])
+        self.assertEqual(
+            scope["missing_for_official_performance_parity"],
+            [],
+        )
+
     def test_cli_validate_direct_runs_all_device_free_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

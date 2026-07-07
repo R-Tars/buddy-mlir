@@ -752,6 +752,7 @@ def validate_real_decode(
     dry_run: bool = False,
     skip_autotune: bool = False,
     require_full_decode_step: bool = False,
+    require_official_performance_parity: bool = False,
     require_trace: bool = False,
     require_official_config_match: bool = False,
     require_full_depth: bool = False,
@@ -782,6 +783,19 @@ def validate_real_decode(
         and baseline_tokens_per_second_per_user <= 0.0
     ):
         raise ValueError("baseline_tokens_per_second_per_user must be positive")
+    if require_official_performance_parity:
+        require_full_decode_step = True
+        require_official_config_match = True
+        if not baseline_reference:
+            raise ValueError(
+                "require_official_performance_parity requires "
+                "baseline_reference"
+            )
+        if min_baseline_ratio is None:
+            raise ValueError(
+                "require_official_performance_parity requires "
+                "min_baseline_ratio"
+            )
     if min_baseline_ratio is not None:
         if min_baseline_ratio < 0.0:
             raise ValueError("min_baseline_ratio must be nonnegative")
@@ -960,6 +974,9 @@ def validate_real_decode(
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
         "require_full_decode_step": require_full_decode_step,
+        "require_official_performance_parity": (
+            require_official_performance_parity
+        ),
         "require_trace": require_trace,
         "require_official_config_match": require_official_config_match,
         "require_full_depth": require_full_depth,
@@ -2116,6 +2133,9 @@ def _real_decode_acceptance_scope(
             "require_full_decode_step": bool(
                 report.get("require_full_decode_step")
             ),
+            "require_official_performance_parity": bool(
+                report.get("require_official_performance_parity")
+            ),
             "full_decode_step_ready": False,
             "official_performance_parity_ready": False,
             "missing_for_full_decode_step": [
@@ -2204,8 +2224,16 @@ def _real_decode_acceptance_scope(
             "--baseline-reference plus --min-baseline-ratio"
         )
 
+    official_performance_parity_ready = (
+        full_decode_ready
+        and official_config_match
+        and performance_floor
+    )
+
     if not accepted:
         scope = "incomplete"
+    elif official_performance_parity_ready:
+        scope = "official_performance_parity"
     elif full_decode_ready:
         scope = "full_decode_step"
     else:
@@ -2216,6 +2244,9 @@ def _real_decode_acceptance_scope(
         "accepted_real_weight_runtime": accepted,
         "require_full_decode_step": bool(
             report.get("require_full_decode_step")
+        ),
+        "require_official_performance_parity": bool(
+            report.get("require_official_performance_parity")
         ),
         "requested_layers": report.get("layers"),
         "generated_program_layers": report.get("program_num_layers"),
@@ -2232,9 +2263,7 @@ def _real_decode_acceptance_scope(
         "performance_baseline_ratio_proven": performance_floor,
         "full_decode_step_ready": full_decode_ready,
         "official_performance_parity_ready": (
-            full_decode_ready
-            and official_config_match
-            and performance_floor
+            official_performance_parity_ready
         ),
         "missing_for_full_decode_step": missing_full_decode,
         "missing_for_official_performance_parity": missing_parity,
@@ -2343,6 +2372,9 @@ def _real_decode_evidence_manifest(
             "require_official_config_match": report.get(
                 "require_official_config_match"
             ),
+            "require_official_performance_parity": report.get(
+                "require_official_performance_parity"
+            ),
             "require_full_depth": report.get("require_full_depth"),
             "require_program_runtime_shape": report.get(
                 "require_program_runtime_shape"
@@ -2366,6 +2398,9 @@ def _real_decode_evidence_manifest(
         "requirements": {
             "require_official_config_match": report.get(
                 "require_official_config_match"
+            ),
+            "require_official_performance_parity": report.get(
+                "require_official_performance_parity"
             ),
             "require_full_depth": report.get("require_full_depth"),
             "require_program_runtime_shape": report.get(
@@ -3220,6 +3255,9 @@ def _real_decode_acceptance(
             "require_batch32_decode_step": require_batch32_decode_step,
             "require_full_decode_step": bool(
                 report.get("require_full_decode_step")
+            ),
+            "require_official_performance_parity": bool(
+                report.get("require_official_performance_parity")
             ),
             "require_trace": require_trace,
             "min_tokens_per_second_per_user": (
@@ -5055,6 +5093,9 @@ def _real_decode_acceptance(
         "require_program_runtime_shape": require_program_runtime_shape,
         "require_batch32_decode_step": require_batch32_decode_step,
         "require_full_decode_step": bool(report.get("require_full_decode_step")),
+        "require_official_performance_parity": bool(
+            report.get("require_official_performance_parity")
+        ),
         "require_trace": require_trace,
         "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (

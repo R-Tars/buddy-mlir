@@ -245,8 +245,7 @@ class BuildProgramTest(unittest.TestCase):
                     "validate-real",
                     "--dry-run",
                     "--skip-autotune",
-                    "--require-official-config-match",
-                    "--require-full-decode-step",
+                    "--require-official-performance-parity",
                     "--min-tokens-per-second-per-user",
                     "1.0",
                     "--baseline-reference",
@@ -276,6 +275,9 @@ class BuildProgramTest(unittest.TestCase):
             validation_payload = json.loads(validation_report.read_text())
             self.assertEqual(validation_payload["command"], "validate-real-decode")
             self.assertTrue(validation_payload["require_full_decode_step"])
+            self.assertTrue(
+                validation_payload["require_official_performance_parity"]
+            )
             self.assertTrue(validation_payload["require_trace"])
             self.assertTrue(
                 validation_payload["require_official_config_match"]
@@ -323,10 +325,20 @@ class BuildProgramTest(unittest.TestCase):
             self.assertTrue(
                 validation_payload["acceptance"]["require_full_decode_step"]
             )
+            self.assertTrue(
+                validation_payload["acceptance"][
+                    "require_official_performance_parity"
+                ]
+            )
             evidence = json.loads(
                 (validate_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertTrue(evidence["requirements"]["require_full_decode_step"])
+            self.assertTrue(
+                evidence["requirements"][
+                    "require_official_performance_parity"
+                ]
+            )
             self.assertTrue(
                 evidence["requirements"]["require_official_config_match"]
             )

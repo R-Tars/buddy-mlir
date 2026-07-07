@@ -1273,6 +1273,15 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.add_argument(
+        "--require-official-performance-parity",
+        action="store_true",
+        help=(
+            "Require official performance-parity acceptance. This enables "
+            "--require-full-decode-step and --require-official-config-match, "
+            "and requires --baseline-reference plus --min-baseline-ratio."
+        ),
+    )
+    validate_real.add_argument(
         "--require-trace",
         action="store_true",
         help=(
@@ -1916,6 +1925,9 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_full_decode_step=args.require_full_decode_step,
+        require_official_performance_parity=(
+            args.require_official_performance_parity
+        ),
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,

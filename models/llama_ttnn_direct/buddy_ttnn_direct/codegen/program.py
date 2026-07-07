@@ -140,6 +140,10 @@ def main(argv=None):
     parser.add_argument("--performance-baselines", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
     parser.add_argument("--require-full-decode-step", action="store_true")
+    parser.add_argument(
+        "--require-official-performance-parity",
+        action="store_true",
+    )
     parser.add_argument("--require-trace", action="store_true")
     parser.add_argument("--require-official-config-match", action="store_true")
     parser.add_argument("--require-full-depth", action="store_true")
@@ -263,6 +267,9 @@ def main(argv=None):
         dry_run=args.dry_run,
         skip_autotune=args.skip_autotune,
         require_full_decode_step=args.require_full_decode_step,
+        require_official_performance_parity=(
+            args.require_official_performance_parity
+        ),
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,
@@ -378,7 +385,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --layers 32 \
           --trace-iterations 10 \
-          --require-full-decode-step \
+          --require-official-performance-parity \
           --min-tokens-per-second-per-user 1.0 \
           --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
