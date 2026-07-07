@@ -680,6 +680,12 @@ artifact bundle alone.
 The manifest also writes an `acceptance_gate_matrix` that maps the planned
 final gate names to the actual acceptance-check status, making failed or
 missing final gates visible without manually comparing report sections.
+The manifest also includes a `model_end_to_end_readiness` block. This is
+stricter than `full_decode_step_ready`: it remains false while token ids, page
+tables, cache positions, paged KV cache, or rotary tensors are supplied by the
+smoke/profile harness as synthetic runtime inputs. Use it to avoid confusing
+generated decode-step evidence with a real tokenizer/prompt driven model
+decode loop.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs

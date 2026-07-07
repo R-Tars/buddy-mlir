@@ -2659,6 +2659,19 @@ class ValidateDirectTest(unittest.TestCase):
                 "profile_decode_step.min_baseline_ratio",
                 matrix["passed_gates"],
             )
+            e2e = evidence["model_end_to_end_readiness"]
+            self.assertEqual(e2e["status"], "synthetic_runtime_inputs")
+            self.assertFalse(e2e["model_end_to_end_ready"])
+            self.assertTrue(e2e["uses_synthetic_runtime_inputs"])
+            self.assertIn(
+                "single_layer_decode",
+                e2e["runtime_input_scope"]["synthetic_runtime_input_steps"],
+            )
+            self.assertIn(
+                "real runtime input path for token ids, page table, cache "
+                "position, KV cache, and rotary tensors",
+                e2e["missing_for_model_end_to_end"],
+            )
             self.assertTrue(
                 evidence["acceptance_scope"]["accepted_real_weight_runtime"]
             )
@@ -3624,6 +3637,7 @@ class ValidateDirectTest(unittest.TestCase):
             )
             scope = evidence["acceptance_scope"]
             matrix = evidence["acceptance_gate_matrix"]
+            e2e = evidence["model_end_to_end_readiness"]
             self.assertEqual(evidence["status"], "accepted")
             self.assertEqual(scope["status"], "full_decode_step")
             self.assertEqual(matrix["target_scope"], "full_decode_step")
@@ -3641,6 +3655,14 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(scope["trace_proven"])
             self.assertTrue(scope["decode_shell_numeric_reference_proven"])
             self.assertTrue(scope["full_decode_step_ready"])
+            self.assertEqual(e2e["status"], "synthetic_runtime_inputs")
+            self.assertTrue(e2e["full_decode_step_ready"])
+            self.assertFalse(e2e["model_end_to_end_ready"])
+            self.assertIn(
+                "tokenizer/prompt runner that owns the decode loop instead "
+                "of smoke-generated inputs",
+                e2e["missing_for_model_end_to_end"],
+            )
             self.assertFalse(scope["official_performance_parity_ready"])
             self.assertEqual(scope["missing_for_full_decode_step"], [])
             self.assertEqual(

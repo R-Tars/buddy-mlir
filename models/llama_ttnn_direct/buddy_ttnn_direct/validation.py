@@ -1992,6 +1992,10 @@ def validate_real_decode(
             "manifest": str(paths["evidence_manifest"]),
             "artifact_count": len(evidence["artifacts"]),
             "acceptance_scope": evidence.get("acceptance_scope", {}),
+            "model_end_to_end_readiness": evidence.get(
+                "model_end_to_end_readiness",
+                {},
+            ),
             "failed_acceptance_checks": evidence["acceptance"][
                 "failed_checks"
             ],
@@ -3335,6 +3339,163 @@ def _acceptance_check_passed(acceptance: Any, name: str) -> bool:
     return False
 
 
+def _model_end_to_end_readiness(
+    report: dict[str, Any],
+    acceptance_scope: dict[str, Any],
+) -> dict[str, Any]:
+    runtime_scope = _runtime_input_scope(report)
+    accepted = bool(acceptance_scope.get("accepted_real_weight_runtime"))
+    full_decode_ready = bool(
+        acceptance_scope.get("full_decode_step_ready")
+    )
+    synthetic_inputs = bool(
+        runtime_scope.get("uses_synthetic_runtime_inputs")
+    )
+    missing = []
+    if report.get("dry_run"):
+        missing.append("run validate-real-decode without --dry-run")
+    if not accepted:
+        missing.append("accepted real-weight runtime gates")
+    if not full_decode_ready:
+        missing.append("accepted full decode-step evidence")
+    if synthetic_inputs:
+        missing.append(
+            "real runtime input path for token ids, page table, cache "
+            "position, KV cache, and rotary tensors"
+        )
+        missing.append(
+            "tokenizer/prompt runner that owns the decode loop instead of "
+            "smoke-generated inputs"
+        )
+
+    ready = accepted and full_decode_ready and not synthetic_inputs
+    if ready:
+        status = "ready"
+    elif report.get("dry_run"):
+        status = "dry_run"
+    elif synthetic_inputs:
+        status = "synthetic_runtime_inputs"
+    elif not full_decode_ready:
+        status = "needs_full_decode_step"
+    else:
+        status = "incomplete"
+
+    return {
+        "schema_version": 1,
+        "status": status,
+        "model_end_to_end_ready": ready,
+        "accepted_real_weight_runtime": accepted,
+        "full_decode_step_ready": full_decode_ready,
+        "uses_synthetic_runtime_inputs": synthetic_inputs,
+        "runtime_input_scope": runtime_scope,
+        "missing_for_model_end_to_end": missing,
+        "note": (
+            "Full decode-step acceptance can prove generated decode-step "
+            "structure, shape, trace, and profile evidence while still using "
+            "synthetic runtime inputs. Model end-to-end readiness is reserved "
+            "for a real tokenizer/prompt runtime that owns token ids, page "
+            "tables, cache positions, KV cache, rotary tensors, and the "
+            "decode loop."
+        ),
+    }
+
+
+def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
+    if report.get("dry_run"):
+        return {
+            "schema_version": 1,
+            "status": "dry_run",
+            "uses_synthetic_runtime_inputs": False,
+            "runtime_input_sources": {},
+            "synthetic_runtime_input_steps": [],
+            "synthetic_runtime_input_tensor_counts": {},
+            "synthetic_rotary_tensor_counts": {},
+            "depth_sweep_synthetic_record_count": 0,
+        }
+
+    steps = report.get("steps")
+    if not isinstance(steps, dict):
+        steps = {}
+    runtime_step_names = [
+        "decode_shell",
+        "single_layer_decode",
+        "smoke_decode_step",
+        "profile_decode_step",
+    ]
+    sources: dict[str, Any] = {}
+    runtime_counts: dict[str, Any] = {}
+    rotary_counts: dict[str, Any] = {}
+    synthetic_steps: list[str] = []
+    for name in runtime_step_names:
+        step = steps.get(name)
+        if not isinstance(step, dict):
+            continue
+        source = step.get("input_source")
+        if source is not None:
+            sources[name] = source
+        runtime_count = step.get("synthetic_runtime_input_tensor_count")
+        if runtime_count is None:
+            runtime_count = _step_synthetic_runtime_input_count(step)
+        if runtime_count is None and source == "synthetic":
+            runtime_count = step.get("runtime_input_tensor_count")
+        rotary_count = step.get("synthetic_rotary_tensor_count")
+        if rotary_count is None:
+            rotary_count = _step_synthetic_rotary_tensor_count(step)
+        if runtime_count is not None:
+            runtime_counts[name] = runtime_count
+        if rotary_count is not None:
+            rotary_counts[name] = rotary_count
+        if (
+            source == "synthetic"
+            or _positive_count(runtime_count)
+            or _positive_count(rotary_count)
+        ):
+            synthetic_steps.append(name)
+
+    depth_sweep = steps.get("decode_depth_sweep")
+    synthetic_depth_records = 0
+    if isinstance(depth_sweep, dict):
+        records = depth_sweep.get("records")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                if (
+                    record.get("input_source") == "synthetic"
+                    or _positive_count(
+                        record.get("synthetic_runtime_input_tensor_count")
+                    )
+                    or _positive_count(
+                        record.get("synthetic_rotary_tensor_count")
+                    )
+                ):
+                    synthetic_depth_records += 1
+            if synthetic_depth_records:
+                synthetic_steps.append("decode_depth_sweep")
+
+    synthetic_steps = sorted(set(synthetic_steps))
+    uses_synthetic = bool(synthetic_steps or synthetic_depth_records)
+    return {
+        "schema_version": 1,
+        "status": (
+            "synthetic_runtime_inputs"
+            if uses_synthetic
+            else "no_synthetic_runtime_inputs_observed"
+        ),
+        "uses_synthetic_runtime_inputs": uses_synthetic,
+        "runtime_input_sources": sources,
+        "synthetic_runtime_input_steps": synthetic_steps,
+        "synthetic_runtime_input_tensor_counts": runtime_counts,
+        "synthetic_rotary_tensor_counts": rotary_counts,
+        "depth_sweep_synthetic_record_count": synthetic_depth_records,
+    }
+
+
+def _positive_count(value: Any) -> bool:
+    numeric = _safe_int(value)
+    return numeric is not None and numeric > 0
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -3365,11 +3526,16 @@ def _real_decode_evidence_manifest(
         status = "incomplete"
     results = report.get("results") or {}
     acceptance_scope = _real_decode_acceptance_scope(report, acceptance)
+    model_end_to_end_readiness = _model_end_to_end_readiness(
+        report,
+        acceptance_scope,
+    )
 
     return {
         "schema_version": 1,
         "status": status,
         "acceptance_scope": acceptance_scope,
+        "model_end_to_end_readiness": model_end_to_end_readiness,
         "reproducibility": report.get("reproducibility"),
         "final_acceptance_plan": report.get("final_acceptance_plan"),
         "acceptance_gate_matrix": _final_acceptance_gate_matrix(
