@@ -87,6 +87,18 @@ class ValidateDirectTest(unittest.TestCase):
                 )
             with self.assertRaisesRegex(
                 ValueError,
+                "positive min_baseline_ratio",
+            ):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    require_official_performance_parity=True,
+                    baseline_reference="tt_metal_official_llama31_8b_b32",
+                    min_baseline_ratio=0.0,
+                )
+            with self.assertRaisesRegex(
+                ValueError,
                 "min_tokens_per_second_per_user",
             ):
                 validate_real_decode(
@@ -471,6 +483,59 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["official_config_diff"]["official_source_format"],
                 "generated_ttnn_direct_config",
+            )
+
+    def test_preflight_rejects_zero_official_performance_ratio(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            _write_official_parity_from_program(program_dir, official_json)
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=official_json,
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                require_official_performance_parity=True,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.0,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertIn(
+                "requirements.official_min_baseline_ratio_positive",
+                report["failed_checks"],
             )
 
     def test_preflight_rejects_non_8b_official_performance_baseline(

@@ -1136,7 +1136,16 @@ def preflight_real_decode(
             "requirements.min_baseline_ratio",
             min_baseline_ratio is not None,
             observed=min_baseline_ratio,
-            expected="nonnegative ratio",
+            expected="positive ratio",
+        )
+        add(
+            "requirements.official_min_baseline_ratio_positive",
+            (
+                min_baseline_ratio is not None
+                and min_baseline_ratio > 0.0
+            ),
+            observed=min_baseline_ratio,
+            expected="> 0.0",
         )
     if normalized["require_model_end_to_end"]:
         normalized["require_full_decode_step"] = True
@@ -1794,6 +1803,11 @@ def validate_real_decode(
         if min_baseline_ratio is None:
             raise ValueError(
                 "require_official_performance_parity requires "
+                "min_baseline_ratio"
+            )
+        if min_baseline_ratio <= 0.0:
+            raise ValueError(
+                "require_official_performance_parity requires positive "
                 "min_baseline_ratio"
             )
     if require_model_end_to_end:
