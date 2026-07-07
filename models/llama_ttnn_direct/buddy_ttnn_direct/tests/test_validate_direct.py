@@ -82,6 +82,26 @@ class ValidateDirectTest(unittest.TestCase):
                     require_official_performance_parity=True,
                     baseline_reference="tt_metal_official_llama31_8b_b32",
                 )
+            with self.assertRaisesRegex(
+                ValueError,
+                "min_tokens_per_second_per_user",
+            ):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    min_tokens_per_second_per_user=-1.0,
+                )
+            with self.assertRaisesRegex(
+                ValueError,
+                "decode_shell_pcc_threshold",
+            ):
+                validate_real_decode(
+                    program_dir=root / "missing_program",
+                    model_path=root / "missing_model",
+                    out_dir=root / "validate_real",
+                    decode_shell_pcc_threshold=1.5,
+                )
 
     def test_real_decode_scope_marks_official_performance_parity_ready(
         self,
@@ -181,8 +201,10 @@ class ValidateDirectTest(unittest.TestCase):
                 cache_len=1024,
                 trace_iterations=10,
                 require_official_performance_parity=True,
+                min_tokens_per_second_per_user=1.0,
                 baseline_reference="tt_metal_official_llama31_8b_b32",
                 min_baseline_ratio=0.1,
+                decode_shell_pcc_threshold=0.99,
                 ttnn_module=_make_fake_ttnn(),
             )
 
@@ -210,6 +232,8 @@ class ValidateDirectTest(unittest.TestCase):
                 report["baseline_reference_entry"]["model"],
                 "Llama 3.1 8B",
             )
+            self.assertEqual(report["min_tokens_per_second_per_user"], 1.0)
+            self.assertEqual(report["decode_shell_pcc_threshold"], 0.99)
             self.assertEqual(
                 report["ttnn_environment"]["tt_metal_git_commit"],
                 "fake-tt-metal",
@@ -261,6 +285,81 @@ class ValidateDirectTest(unittest.TestCase):
                 report["failed_checks"],
             )
             self.assertTrue(report_json.is_file())
+
+    def test_cli_validate_real_decode_preflight_records_final_thresholds(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with patch.object(
+                validation_module.importlib,
+                "import_module",
+                return_value=_make_fake_ttnn(),
+            ):
+                exit_code = main(
+                    [
+                        "validate-real-decode",
+                        "--program-dir",
+                        str(program_dir),
+                        "--model-path",
+                        str(model_dir),
+                        "--out-dir",
+                        str(out_dir),
+                        "--official-config",
+                        str(program_dir / "config.json"),
+                        "--layers",
+                        "2",
+                        "--batch-size",
+                        "32",
+                        "--cache-len",
+                        "1024",
+                        "--require-official-performance-parity",
+                        "--min-tokens-per-second-per-user",
+                        "1.25",
+                        "--baseline-reference",
+                        "tt_metal_official_llama31_8b_b32",
+                        "--min-baseline-ratio",
+                        "0.1",
+                        "--decode-shell-pcc-threshold",
+                        "0.98",
+                        "--preflight-only",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(
+                (out_dir / "real_decode_preflight_report.json").read_text()
+            )
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["min_tokens_per_second_per_user"], 1.25)
+            self.assertEqual(report["decode_shell_pcc_threshold"], 0.98)
+            self.assertEqual(report["min_baseline_ratio"], 0.1)
+            self.assertEqual(
+                report["baseline_reference"],
+                "tt_metal_official_llama31_8b_b32",
+            )
 
     def test_cli_validate_direct_runs_all_device_free_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

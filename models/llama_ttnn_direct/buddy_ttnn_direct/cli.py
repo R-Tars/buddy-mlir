@@ -1941,11 +1941,15 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             require_full_depth=args.require_full_depth,
             require_program_runtime_shape=args.require_program_runtime_shape,
             require_batch32_decode_step=args.require_batch32_decode_step,
+            min_tokens_per_second_per_user=(
+                args.min_tokens_per_second_per_user
+            ),
             baseline_tokens_per_second_per_user=(
                 args.baseline_tokens_per_second_per_user
             ),
             baseline_reference=args.baseline_reference,
             min_baseline_ratio=args.min_baseline_ratio,
+            decode_shell_pcc_threshold=args.decode_shell_pcc_threshold,
             require_decode_shell_numeric_reference=(
                 args.require_decode_shell_numeric_reference
             ),

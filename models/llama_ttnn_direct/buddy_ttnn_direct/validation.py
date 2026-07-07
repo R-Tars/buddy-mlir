@@ -759,9 +759,11 @@ def preflight_real_decode(
     require_full_depth: bool = False,
     require_program_runtime_shape: bool = False,
     require_batch32_decode_step: bool = False,
+    min_tokens_per_second_per_user: float | None = None,
     baseline_tokens_per_second_per_user: float | None = None,
     baseline_reference: str | None = None,
     min_baseline_ratio: float | None = None,
+    decode_shell_pcc_threshold: float = 0.99,
     require_decode_shell_numeric_reference: bool = False,
     ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -853,6 +855,13 @@ def preflight_real_decode(
         trace_iterations,
         checks,
     )
+    if min_tokens_per_second_per_user is not None:
+        add(
+            "requirements.min_tokens_per_second_per_user",
+            min_tokens_per_second_per_user >= 0.0,
+            observed=min_tokens_per_second_per_user,
+            expected=">= 0.0",
+        )
     if baseline_tokens_per_second_per_user is not None:
         add(
             "requirements.baseline_tokens_per_second_per_user",
@@ -881,6 +890,12 @@ def preflight_real_decode(
             },
             expected="baseline tokens/sec/user or baseline reference",
         )
+    add(
+        "requirements.decode_shell_pcc_threshold",
+        0.0 <= decode_shell_pcc_threshold <= 1.0,
+        observed=decode_shell_pcc_threshold,
+        expected="0.0 <= threshold <= 1.0",
+    )
 
     required_program_files = [
         "config.json",
@@ -1189,10 +1204,12 @@ def preflight_real_decode(
         "baseline_reference_entry": _performance_baseline_entry_summary(
             baseline_reference_entry
         ),
+        "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
         "baseline_tokens_per_second_per_user": (
             baseline_tokens_per_second_per_user
         ),
         "min_baseline_ratio": min_baseline_ratio,
+        "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
         "official_config_diff": official_config_diff_summary,
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
@@ -1254,6 +1271,13 @@ def validate_real_decode(
         and baseline_tokens_per_second_per_user <= 0.0
     ):
         raise ValueError("baseline_tokens_per_second_per_user must be positive")
+    if (
+        min_tokens_per_second_per_user is not None
+        and min_tokens_per_second_per_user < 0.0
+    ):
+        raise ValueError("min_tokens_per_second_per_user must be nonnegative")
+    if not 0.0 <= decode_shell_pcc_threshold <= 1.0:
+        raise ValueError("decode_shell_pcc_threshold must be between 0 and 1")
     if require_official_performance_parity:
         require_full_decode_step = True
         require_official_config_match = True

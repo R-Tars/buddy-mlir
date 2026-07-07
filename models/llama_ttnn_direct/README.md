@@ -594,7 +594,9 @@ and optionally
 
 Preflight the exact final-acceptance arguments first. This writes a
 `real_decode_preflight_report.json` without loading tensor payloads, opening a
-TTNN device, or running runtime gates:
+TTNN device, or running runtime gates. The preflight report records the same
+throughput, baseline-ratio, and decode-shell PCC thresholds that the final
+validation command will use:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
