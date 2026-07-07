@@ -677,6 +677,14 @@ class ValidateDirectTest(unittest.TestCase):
                 [2, 16, 2, 4],
             )
             self.assertEqual(evidence["acceptance"]["status"], "dry_run")
+            self.assertEqual(evidence["acceptance_scope"]["status"], "dry_run")
+            self.assertFalse(
+                evidence["acceptance_scope"]["full_decode_step_ready"]
+            )
+            self.assertIn(
+                "run validate-real-decode without --dry-run",
+                evidence["acceptance_scope"]["missing_for_full_decode_step"],
+            )
             self.assertEqual(
                 evidence["runtime_evidence"]["decode_depth_sweep"]["depths"],
                 [1],
@@ -722,6 +730,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["evidence"]["manifest"],
                 str(out_dir / "real_decode_evidence_manifest.json"),
+            )
+            self.assertEqual(
+                report["evidence"]["acceptance_scope"]["status"],
+                "dry_run",
             )
 
     def test_validate_real_decode_runs_fake_real_weight_gates(self) -> None:
@@ -2183,6 +2195,25 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(evidence["acceptance_scope"]["status"], "bringup")
+            self.assertTrue(
+                evidence["acceptance_scope"]["accepted_real_weight_runtime"]
+            )
+            self.assertFalse(
+                evidence["acceptance_scope"]["full_decode_step_ready"]
+            )
+            self.assertIn(
+                "--require-full-depth with layers == generated program layers",
+                evidence["acceptance_scope"]["missing_for_full_decode_step"],
+            )
+            self.assertIn(
+                "--require-batch32-decode-step",
+                evidence["acceptance_scope"]["missing_for_full_decode_step"],
+            )
+            self.assertEqual(
+                report["evidence"]["acceptance_scope"]["status"],
+                "bringup",
+            )
             self.assertEqual(evidence["validation"]["batch_size"], 2)
             self.assertEqual(evidence["validation"]["cache_len"], 16)
             self.assertEqual(evidence["validation"]["program_seq_len"], 1)
@@ -2999,6 +3030,111 @@ class ValidateDirectTest(unittest.TestCase):
                     "official_required_field_coverage"
                 ]["status"],
                 "incomplete",
+            )
+
+    def test_validate_real_decode_scope_marks_full_decode_step_ready(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            original_shell = validation_module.run_smoke_decode_shell
+
+            def shell_with_numeric_reference(*args, **kwargs):
+                shell = original_shell(*args, **kwargs)
+                numeric = dict(
+                    shell.get("reference", {}).get("numeric_reference") or {}
+                )
+                numeric.update(
+                    {
+                        "status": "passed",
+                        "passed": True,
+                        "kind": "torch_decode_shell",
+                        "pcc": 1.0,
+                        "pcc_threshold": kwargs.get("pcc_threshold", 0.99),
+                        "checks": [],
+                    }
+                )
+                reference = dict(shell.get("reference") or {})
+                reference["numeric_reference"] = numeric
+                shell["reference"] = reference
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(shell, indent=2) + "\n")
+                return shell
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_shell",
+                side_effect=shell_with_numeric_reference,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=2,
+                        batch_size=32,
+                        cache_len=1024,
+                        device="p150a",
+                        skip_autotune=True,
+                        require_full_depth=True,
+                        require_program_runtime_shape=True,
+                        require_batch32_decode_step=True,
+                        trace=True,
+                        require_trace=True,
+                        require_decode_shell_numeric_reference=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "pass")
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            scope = evidence["acceptance_scope"]
+            self.assertEqual(evidence["status"], "accepted")
+            self.assertEqual(scope["status"], "full_decode_step")
+            self.assertTrue(scope["accepted_real_weight_runtime"])
+            self.assertTrue(scope["full_depth_proven"])
+            self.assertTrue(scope["program_runtime_shape_proven"])
+            self.assertTrue(scope["batch32_decode_contract_proven"])
+            self.assertTrue(scope["trace_proven"])
+            self.assertTrue(scope["decode_shell_numeric_reference_proven"])
+            self.assertTrue(scope["full_decode_step_ready"])
+            self.assertFalse(scope["official_performance_parity_ready"])
+            self.assertEqual(scope["missing_for_full_decode_step"], [])
+            self.assertEqual(
+                scope["missing_for_official_performance_parity"],
+                [
+                    "--require-official-config-match",
+                    "--baseline-reference plus --min-baseline-ratio",
+                ],
+            )
+            self.assertEqual(
+                report["evidence"]["acceptance_scope"]["status"],
+                "full_decode_step",
             )
 
     def test_validate_real_decode_can_require_full_depth(self) -> None:

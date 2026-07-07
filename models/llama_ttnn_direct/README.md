@@ -645,6 +645,14 @@ acceptance checks. If a runtime gate stops early, the manifest is still written
 with `status=incomplete` so the failed bring-up attempt has an inspectable
 evidence bundle. Use this manifest as the primary attachment for P150A
 acceptance runs.
+The manifest also includes an `acceptance_scope` block. `status=accepted`
+means the requested gates passed, while
+`acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs
+that prove full generated depth, generated batch/cache shape, batch32 decode
+contract, trace capture/execute, and decode-shell numeric reference evidence.
+`acceptance_scope.official_performance_parity_ready=true` additionally requires
+official config match and a baseline-ratio gate, so a small bring-up run cannot
+be mistaken for final end-to-end or performance-parity evidence.
 By default, the official-config diff is evidence-only: `diff_found` is
 acceptable because the bundled official config is a seed reference with known
 gaps. Use `--require-official-config-match` when a curated official parity

@@ -983,6 +983,7 @@ def validate_real_decode(
             "status": evidence["status"],
             "manifest": str(paths["evidence_manifest"]),
             "artifact_count": len(evidence["artifacts"]),
+            "acceptance_scope": evidence.get("acceptance_scope", {}),
             "failed_acceptance_checks": evidence["acceptance"][
                 "failed_checks"
             ],
@@ -2095,6 +2096,148 @@ def _decode_shell_numeric_reference_observed(
     }
 
 
+def _real_decode_acceptance_scope(
+    report: dict[str, Any],
+    acceptance: Any,
+) -> dict[str, Any]:
+    if report.get("dry_run"):
+        return {
+            "status": "dry_run",
+            "accepted_real_weight_runtime": False,
+            "full_decode_step_ready": False,
+            "official_performance_parity_ready": False,
+            "missing_for_full_decode_step": [
+                "run validate-real-decode without --dry-run"
+            ],
+            "missing_for_official_performance_parity": [
+                "accepted full decode-step evidence"
+            ],
+        }
+
+    accepted = (
+        report.get("status") == "pass"
+        and isinstance(acceptance, dict)
+        and acceptance.get("passed") is True
+    )
+    full_depth = (
+        accepted
+        and report.get("require_full_depth") is True
+        and _acceptance_check_passed(acceptance, "validation.full_depth_layers")
+        and _acceptance_check_passed(acceptance, "decode_depth_sweep.full_depth")
+    )
+    program_runtime_shape = (
+        accepted
+        and report.get("require_program_runtime_shape") is True
+        and _acceptance_check_passed(acceptance, "validation.program_batch_size")
+        and _acceptance_check_passed(acceptance, "validation.program_cache_len")
+    )
+    batch32_contract = (
+        accepted
+        and report.get("require_batch32_decode_step") is True
+        and _acceptance_check_passed(acceptance, "decode_step_contract.batch32")
+    )
+    trace = (
+        accepted
+        and report.get("require_trace") is True
+        and _acceptance_check_passed(acceptance, "single_layer_decode.trace_status")
+        and _acceptance_check_passed(acceptance, "smoke_decode_step.trace_status")
+        and _acceptance_check_passed(acceptance, "profile_decode_step.trace_status")
+        and _acceptance_check_passed(acceptance, "profile_decode_step.trace_profile")
+    )
+    numeric_shell = (
+        accepted
+        and report.get("require_decode_shell_numeric_reference") is True
+        and _acceptance_check_passed(acceptance, "decode_shell.numeric_reference")
+    )
+    performance_floor = (
+        accepted
+        and report.get("min_baseline_ratio") is not None
+        and _acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.min_baseline_ratio",
+        )
+    )
+    official_config_match = (
+        accepted
+        and report.get("require_official_config_match") is True
+        and _acceptance_check_passed(acceptance, "official_config_diff.match")
+    )
+
+    missing_full_decode = []
+    if not accepted:
+        missing_full_decode.append("accepted real-weight runtime gates")
+    if not full_depth:
+        missing_full_decode.append(
+            "--require-full-depth with layers == generated program layers"
+        )
+    if not program_runtime_shape:
+        missing_full_decode.append(
+            "--require-program-runtime-shape at generated batch/cache shape"
+        )
+    if not batch32_contract:
+        missing_full_decode.append("--require-batch32-decode-step")
+    if not trace:
+        missing_full_decode.append("--require-trace with captured/executed traces")
+    if not numeric_shell:
+        missing_full_decode.append("--require-decode-shell-numeric-reference")
+
+    full_decode_ready = accepted and not missing_full_decode
+    missing_parity = []
+    if not full_decode_ready:
+        missing_parity.append("accepted full decode-step evidence")
+    if not official_config_match:
+        missing_parity.append("--require-official-config-match")
+    if not performance_floor:
+        missing_parity.append(
+            "--baseline-reference plus --min-baseline-ratio"
+        )
+
+    if not accepted:
+        scope = "incomplete"
+    elif full_decode_ready:
+        scope = "full_decode_step"
+    else:
+        scope = "bringup"
+
+    return {
+        "status": scope,
+        "accepted_real_weight_runtime": accepted,
+        "requested_layers": report.get("layers"),
+        "generated_program_layers": report.get("program_num_layers"),
+        "batch_size": report.get("batch_size"),
+        "generated_program_batch_size": report.get("program_batch_size"),
+        "cache_len": report.get("cache_len"),
+        "generated_program_cache_len": report.get("program_cache_len"),
+        "full_depth_proven": full_depth,
+        "program_runtime_shape_proven": program_runtime_shape,
+        "batch32_decode_contract_proven": batch32_contract,
+        "trace_proven": trace,
+        "decode_shell_numeric_reference_proven": numeric_shell,
+        "official_config_match_proven": official_config_match,
+        "performance_baseline_ratio_proven": performance_floor,
+        "full_decode_step_ready": full_decode_ready,
+        "official_performance_parity_ready": (
+            full_decode_ready
+            and official_config_match
+            and performance_floor
+        ),
+        "missing_for_full_decode_step": missing_full_decode,
+        "missing_for_official_performance_parity": missing_parity,
+    }
+
+
+def _acceptance_check_passed(acceptance: Any, name: str) -> bool:
+    if not isinstance(acceptance, dict):
+        return False
+    checks = acceptance.get("checks")
+    if not isinstance(checks, list):
+        return False
+    for check in checks:
+        if isinstance(check, dict) and check.get("name") == name:
+            return check.get("passed") is True
+    return False
+
+
 def _real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
@@ -2124,10 +2267,12 @@ def _real_decode_evidence_manifest(
     else:
         status = "incomplete"
     results = report.get("results") or {}
+    acceptance_scope = _real_decode_acceptance_scope(report, acceptance)
 
     return {
         "schema_version": 1,
         "status": status,
+        "acceptance_scope": acceptance_scope,
         "validation": {
             "command": report.get("command"),
             "status": report.get("status"),
