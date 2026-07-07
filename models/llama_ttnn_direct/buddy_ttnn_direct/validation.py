@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib
 import py_compile
 import traceback
 from collections.abc import Callable
@@ -28,6 +29,7 @@ from .codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
     tensorize_parameters_from_program_dry_run,
 )
+from .runtime_environment import collect_ttnn_environment
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -730,6 +732,474 @@ def validate_direct(
     report["acceptance"] = acceptance
     report["status"] = "pass" if acceptance["passed"] else "acceptance_failed"
     persist()
+    return report
+
+
+def preflight_real_decode(
+    *,
+    program_dir: str | Path,
+    model_path: str | Path,
+    out: str | Path,
+    official_config_path: str | Path | None = None,
+    decode_step_search_space_path: str | Path | None = None,
+    performance_baselines_path: str | Path | None = None,
+    layers: int = 1,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    device: str = "p150a",
+    device_id: int = 0,
+    trace: bool = False,
+    trace_iterations: int = 1,
+    skip_autotune: bool = False,
+    require_full_decode_step: bool = False,
+    require_official_performance_parity: bool = False,
+    require_trace: bool = False,
+    require_official_config_match: bool = False,
+    require_full_depth: bool = False,
+    require_program_runtime_shape: bool = False,
+    require_batch32_decode_step: bool = False,
+    baseline_tokens_per_second_per_user: float | None = None,
+    baseline_reference: str | None = None,
+    min_baseline_ratio: float | None = None,
+    require_decode_shell_numeric_reference: bool = False,
+    ttnn_module: Any | None = None,
+) -> dict[str, Any]:
+    """Check real-decode prerequisites without loading weights or opening a device."""
+    program_dir = Path(program_dir)
+    model_path = Path(model_path)
+    out = Path(out)
+    official_config_path = (
+        Path(official_config_path)
+        if official_config_path is not None
+        else default_official_parity_config_path()
+    )
+    decode_step_search_space_path = (
+        Path(decode_step_search_space_path)
+        if decode_step_search_space_path is not None
+        else default_decode_step_search_space_path()
+    )
+    performance_baselines_path = (
+        Path(performance_baselines_path)
+        if performance_baselines_path is not None
+        else default_performance_baselines_path()
+    )
+
+    checks: list[dict[str, Any]] = []
+
+    def add(
+        name: str,
+        passed: bool,
+        *,
+        observed: Any = None,
+        expected: Any = None,
+        required: bool = True,
+        message: str | None = None,
+    ) -> None:
+        check = {
+            "name": name,
+            "passed": bool(passed),
+            "required": required,
+        }
+        if observed is not None:
+            check["observed"] = observed
+        if expected is not None:
+            check["expected"] = expected
+        if message:
+            check["message"] = message
+        checks.append(check)
+
+    normalized = {
+        "trace": bool(trace),
+        "require_full_decode_step": bool(require_full_decode_step),
+        "require_official_performance_parity": bool(
+            require_official_performance_parity
+        ),
+        "require_trace": bool(require_trace),
+        "require_official_config_match": bool(require_official_config_match),
+        "require_full_depth": bool(require_full_depth),
+        "require_program_runtime_shape": bool(require_program_runtime_shape),
+        "require_batch32_decode_step": bool(require_batch32_decode_step),
+        "require_decode_shell_numeric_reference": bool(
+            require_decode_shell_numeric_reference
+        ),
+    }
+    if normalized["require_official_performance_parity"]:
+        normalized["require_full_decode_step"] = True
+        normalized["require_official_config_match"] = True
+        add(
+            "requirements.baseline_reference",
+            bool(baseline_reference),
+            observed=baseline_reference,
+            expected="non-empty baseline reference",
+        )
+        add(
+            "requirements.min_baseline_ratio",
+            min_baseline_ratio is not None,
+            observed=min_baseline_ratio,
+            expected="nonnegative ratio",
+        )
+    if normalized["require_full_decode_step"]:
+        normalized["trace"] = True
+        normalized["require_trace"] = True
+        normalized["require_full_depth"] = True
+        normalized["require_program_runtime_shape"] = True
+        normalized["require_batch32_decode_step"] = True
+        normalized["require_decode_shell_numeric_reference"] = True
+
+    layer_count = _safe_positive_int("layers", layers, checks)
+    trace_iteration_count = _safe_positive_int(
+        "trace_iterations",
+        trace_iterations,
+        checks,
+    )
+    if baseline_tokens_per_second_per_user is not None:
+        add(
+            "requirements.baseline_tokens_per_second_per_user",
+            baseline_tokens_per_second_per_user > 0.0,
+            observed=baseline_tokens_per_second_per_user,
+            expected="positive number",
+        )
+    if min_baseline_ratio is not None:
+        add(
+            "requirements.min_baseline_ratio_nonnegative",
+            min_baseline_ratio >= 0.0,
+            observed=min_baseline_ratio,
+            expected=">= 0.0",
+        )
+        add(
+            "requirements.baseline_source_for_ratio",
+            (
+                baseline_tokens_per_second_per_user is not None
+                or baseline_reference is not None
+            ),
+            observed={
+                "baseline_tokens_per_second_per_user": (
+                    baseline_tokens_per_second_per_user
+                ),
+                "baseline_reference": baseline_reference,
+            },
+            expected="baseline tokens/sec/user or baseline reference",
+        )
+
+    required_program_files = [
+        "config.json",
+        "model.py",
+        "execution_plan.json",
+        "weights_manifest.json",
+        "run_decode.py",
+    ]
+    add("program_dir.exists", program_dir.is_dir(), observed=str(program_dir))
+    for filename in required_program_files:
+        path = program_dir / filename
+        add(
+            f"program_file.{filename}",
+            path.is_file(),
+            observed=str(path),
+            expected="file exists",
+        )
+
+    program_config: dict[str, Any] | None = None
+    program_config_error = None
+    try:
+        program_config = _load_program_config(program_dir)
+    except Exception as exc:
+        program_config_error = f"{type(exc).__name__}: {exc}"
+    add(
+        "program_config.load",
+        program_config is not None,
+        observed=program_config_error,
+        expected="valid generated config.json",
+    )
+
+    resolved_batch_size = None
+    resolved_cache_len = None
+    decode_step_contract = None
+    if program_config is not None:
+        program_num_layers = int(program_config["num_layers"])
+        program_batch_size = int(program_config["batch_size"])
+        program_cache_len = int(program_config["max_cache_len"])
+        program_seq_len = int(program_config.get("seq_len", 1))
+        program_num_kv_heads = int(program_config["num_key_value_heads"])
+        program_head_dim = int(program_config["head_dim"])
+        program_template_config = (
+            program_config.get("template_config")
+            if isinstance(program_config.get("template_config"), dict)
+            else {}
+        )
+        program_generation = (
+            program_config.get("generation")
+            if isinstance(program_config.get("generation"), dict)
+            else {}
+        )
+        program_kv_cache = (
+            program_config.get("kv_cache")
+            if isinstance(program_config.get("kv_cache"), dict)
+            else _kv_cache_contract_from_template_config(
+                program_template_config,
+                cache_len=program_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            )
+        )
+        add(
+            "program_config.decode_seq_len",
+            program_seq_len == 1,
+            observed=program_seq_len,
+            expected=1,
+        )
+        add(
+            "program_config.paged_kv_cache",
+            (program_kv_cache or {}).get("policy") == "paged",
+            observed=(program_kv_cache or {}).get("policy"),
+            expected="paged",
+        )
+        if layer_count is not None:
+            add(
+                "runtime.layers_within_program",
+                layer_count <= program_num_layers,
+                observed=layer_count,
+                expected=f"<= {program_num_layers}",
+            )
+            if normalized["require_full_depth"]:
+                add(
+                    "runtime.full_depth_required",
+                    layer_count == program_num_layers,
+                    observed=layer_count,
+                    expected=program_num_layers,
+                )
+        resolved_batch_size = _safe_runtime_dimension(
+            "batch_size",
+            requested=batch_size,
+            fallback=program_batch_size,
+            checks=checks,
+        )
+        resolved_cache_len = _safe_runtime_dimension(
+            "cache_len",
+            requested=cache_len,
+            fallback=program_cache_len,
+            checks=checks,
+        )
+        if (
+            normalized["require_program_runtime_shape"]
+            and resolved_batch_size is not None
+            and resolved_cache_len is not None
+        ):
+            add(
+                "runtime.program_batch_size_required",
+                resolved_batch_size == program_batch_size,
+                observed=resolved_batch_size,
+                expected=program_batch_size,
+            )
+            add(
+                "runtime.program_cache_len_required",
+                resolved_cache_len == program_cache_len,
+                observed=resolved_cache_len,
+                expected=program_cache_len,
+            )
+        if normalized["require_batch32_decode_step"]:
+            add(
+                "runtime.batch32_required",
+                resolved_batch_size == 32,
+                observed=resolved_batch_size,
+                expected=32,
+            )
+        if (
+            layer_count is not None
+            and resolved_batch_size is not None
+            and resolved_cache_len is not None
+        ):
+            decode_step_contract = _decode_step_contract(
+                layer_count=layer_count,
+                batch_size=resolved_batch_size,
+                seq_len=program_seq_len,
+                cache_len=resolved_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                kv_cache=program_kv_cache,
+                generation=program_generation,
+            )
+
+    add("model_path.exists", model_path.is_dir(), observed=str(model_path))
+    add(
+        "model_config.exists",
+        (model_path / "config.json").is_file(),
+        observed=str(model_path / "config.json"),
+        expected="file exists",
+    )
+    safetensor_files = sorted(path.name for path in model_path.glob("*.safetensors"))
+    add(
+        "model_weights.safetensors_present",
+        bool(safetensor_files),
+        observed=safetensor_files,
+        expected="at least one .safetensors shard",
+    )
+
+    add(
+        "official_config.exists",
+        official_config_path.is_file(),
+        observed=str(official_config_path),
+        expected="file exists",
+    )
+    official_config_diff_summary = None
+    if program_config is not None and official_config_path.is_file():
+        try:
+            official_diff = diff_official_config(
+                program_dir / "config.json",
+                official_config_path,
+            )
+            official_config_diff_summary = {
+                "status": official_diff["status"],
+                "issue_count": official_diff["summary"]["issue_count"],
+                "missing_count": official_diff["summary"]["missing_count"],
+                "mismatch_count": official_diff["summary"]["mismatch_count"],
+                "extra_count": official_diff["summary"]["extra_count"],
+                "sections_with_issues": official_diff["summary"][
+                    "sections_with_issues"
+                ],
+            }
+            if normalized["require_official_config_match"]:
+                add(
+                    "official_config.match",
+                    official_diff["status"] == "match",
+                    observed=official_diff["status"],
+                    expected="match",
+                    message=(
+                        f"{official_diff['summary']['issue_count']} parity "
+                        "issue(s)"
+                    ),
+                )
+            else:
+                add(
+                    "official_config.diff_available",
+                    True,
+                    observed=official_diff["status"],
+                    required=False,
+                )
+        except Exception as exc:
+            add(
+                "official_config.diff",
+                False,
+                observed=f"{type(exc).__name__}: {exc}",
+                expected="diff can be computed",
+                required=normalized["require_official_config_match"],
+            )
+    if not skip_autotune:
+        add(
+            "decode_step_search_space.exists",
+            decode_step_search_space_path.is_file(),
+            observed=str(decode_step_search_space_path),
+            expected="file exists",
+        )
+    add(
+        "performance_baselines.exists",
+        performance_baselines_path.is_file(),
+        observed=str(performance_baselines_path),
+        expected="file exists",
+    )
+
+    baseline_reference_entry = None
+    baseline_error = None
+    if baseline_reference:
+        try:
+            baseline_reference_entry = resolve_performance_baseline(
+                baseline_reference,
+                path=performance_baselines_path,
+            )
+        except Exception as exc:
+            baseline_error = f"{type(exc).__name__}: {exc}"
+        add(
+            "baseline_reference.resolve",
+            baseline_reference_entry is not None,
+            observed=baseline_error or baseline_reference,
+            expected="baseline entry resolves",
+        )
+        if baseline_reference_entry is not None:
+            reference_tps = baseline_reference_entry[
+                "decode_tokens_per_second_per_user"
+            ]
+            add(
+                "baseline_reference.tokens_match",
+                (
+                    baseline_tokens_per_second_per_user is None
+                    or _numbers_equal(
+                        baseline_tokens_per_second_per_user,
+                        reference_tps,
+                    )
+                ),
+                observed={
+                    "provided": baseline_tokens_per_second_per_user,
+                    "reference": reference_tps,
+                },
+                expected="provided baseline matches reference",
+            )
+
+    ttnn_import_error = None
+    if ttnn_module is None:
+        try:
+            ttnn_module = importlib.import_module("ttnn")
+        except ImportError as exc:
+            ttnn_import_error = str(exc)
+            ttnn_module = None
+    ttnn_environment = collect_ttnn_environment(ttnn_module)
+    add(
+        "ttnn.module_available",
+        ttnn_environment.get("module_available") is True,
+        observed=ttnn_import_error or ttnn_environment.get("module_file"),
+        expected=True,
+    )
+    add(
+        "ttnn.version",
+        _non_empty_string(ttnn_environment.get("version")),
+        observed=ttnn_environment.get("version"),
+        expected="non-empty version",
+    )
+    add(
+        "ttnn.tt_metal_git_commit",
+        _non_empty_string(ttnn_environment.get("tt_metal_git_commit")),
+        observed=ttnn_environment.get("tt_metal_git_commit"),
+        expected="non-empty tt-metal commit",
+    )
+
+    failed_checks = [
+        check
+        for check in checks
+        if not check["passed"] and check.get("required", True)
+    ]
+    report = {
+        "schema_version": 1,
+        "command": "preflight-real-decode",
+        "status": "pass" if not failed_checks else "fail",
+        "ready_to_run": not failed_checks,
+        "program_dir": str(program_dir),
+        "model_path": str(model_path),
+        "official_config": str(official_config_path),
+        "decode_step_search_space": str(decode_step_search_space_path),
+        "performance_baselines": str(performance_baselines_path),
+        "device": device,
+        "device_id": device_id,
+        "layers": layer_count,
+        "requested_batch_size": batch_size,
+        "requested_cache_len": cache_len,
+        "batch_size": resolved_batch_size,
+        "cache_len": resolved_cache_len,
+        "trace_iterations": trace_iteration_count,
+        "requirements": normalized,
+        "baseline_reference": baseline_reference,
+        "baseline_reference_entry": _performance_baseline_entry_summary(
+            baseline_reference_entry
+        ),
+        "baseline_tokens_per_second_per_user": (
+            baseline_tokens_per_second_per_user
+        ),
+        "min_baseline_ratio": min_baseline_ratio,
+        "official_config_diff": official_config_diff_summary,
+        "decode_step_contract": decode_step_contract,
+        "ttnn_environment": ttnn_environment,
+        "check_count": len(checks),
+        "failed_checks": [check["name"] for check in failed_checks],
+        "checks": checks,
+    }
+    _write_json(out, report)
     return report
 
 
@@ -1807,6 +2277,73 @@ def _resolve_runtime_dimension(
         raise ValueError(f"{name} must be an integer") from exc
     if resolved <= 0:
         raise ValueError(f"{name} must be positive")
+    return resolved
+
+
+def _safe_positive_int(
+    name: str,
+    value: Any,
+    checks: list[dict[str, Any]],
+) -> int | None:
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError):
+        checks.append(
+            {
+                "name": f"runtime.{name}",
+                "passed": False,
+                "required": True,
+                "observed": value,
+                "expected": "positive integer",
+            }
+        )
+        return None
+    checks.append(
+        {
+            "name": f"runtime.{name}",
+            "passed": resolved > 0,
+            "required": True,
+            "observed": resolved,
+            "expected": "positive integer",
+        }
+    )
+    return resolved if resolved > 0 else None
+
+
+def _safe_runtime_dimension(
+    name: str,
+    *,
+    requested: int | None,
+    fallback: Any,
+    checks: list[dict[str, Any]],
+) -> int | None:
+    try:
+        resolved = _resolve_runtime_dimension(
+            name,
+            requested=requested,
+            fallback=fallback,
+        )
+    except ValueError as exc:
+        checks.append(
+            {
+                "name": f"runtime.{name}",
+                "passed": False,
+                "required": True,
+                "observed": requested if requested is not None else fallback,
+                "expected": "positive integer",
+                "message": str(exc),
+            }
+        )
+        return None
+    checks.append(
+        {
+            "name": f"runtime.{name}",
+            "passed": True,
+            "required": True,
+            "observed": resolved,
+            "expected": "positive integer",
+        }
+    )
     return resolved
 
 

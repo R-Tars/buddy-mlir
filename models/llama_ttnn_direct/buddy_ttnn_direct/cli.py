@@ -71,6 +71,7 @@ from .validation import (
     default_official_template_path,
     default_performance_baselines_path,
     default_search_space_path,
+    preflight_real_decode,
     validate_direct,
     validate_real_decode,
 )
@@ -1391,6 +1392,14 @@ def build_parser() -> argparse.ArgumentParser:
             "safetensors or opening a TTNN device."
         ),
     )
+    validate_real.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help=(
+            "Write a real-decode preflight report and exit before loading "
+            "weights, opening a TTNN device, or running runtime gates."
+        ),
+    )
     validate_real.set_defaults(func=_cmd_validate_real_decode)
     return parser
 
@@ -1907,6 +1916,44 @@ def _cmd_validate_direct(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
+    if args.preflight_only:
+        report = preflight_real_decode(
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            out=args.out_dir / "real_decode_preflight_report.json",
+            official_config_path=args.official_config,
+            decode_step_search_space_path=args.decode_step_search_space,
+            performance_baselines_path=args.performance_baselines,
+            layers=args.layers,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            device=args.device,
+            device_id=args.device_id,
+            trace=args.trace,
+            trace_iterations=args.trace_iterations,
+            skip_autotune=args.skip_autotune,
+            require_full_decode_step=args.require_full_decode_step,
+            require_official_performance_parity=(
+                args.require_official_performance_parity
+            ),
+            require_trace=args.require_trace,
+            require_official_config_match=args.require_official_config_match,
+            require_full_depth=args.require_full_depth,
+            require_program_runtime_shape=args.require_program_runtime_shape,
+            require_batch32_decode_step=args.require_batch32_decode_step,
+            baseline_tokens_per_second_per_user=(
+                args.baseline_tokens_per_second_per_user
+            ),
+            baseline_reference=args.baseline_reference,
+            min_baseline_ratio=args.min_baseline_ratio,
+            require_decode_shell_numeric_reference=(
+                args.require_decode_shell_numeric_reference
+            ),
+        )
+        report_path = args.out_dir / "real_decode_preflight_report.json"
+        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        return 0 if report["status"] == "pass" else 1
+
     report = validate_real_decode(
         program_dir=args.program_dir,
         model_path=args.model_path,

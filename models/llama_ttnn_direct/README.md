@@ -592,6 +592,29 @@ generated decode smoke, real-weight
 and optionally
 `autotune-decode-step` against the existing generated program:
 
+Preflight the exact final-acceptance arguments first. This writes a
+`real_decode_preflight_report.json` without loading tensor payloads, opening a
+TTNN device, or running runtime gates:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  validate-real-decode \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --layers 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
+  --trace-iterations 10 \
+  --require-official-performance-parity \
+  --min-tokens-per-second-per-user 1.0 \
+  --baseline-reference tt_metal_official_llama31_8b_b32 \
+  --min-baseline-ratio 0.1 \
+  --decode-shell-pcc-threshold 0.99 \
+  --preflight-only \
+  --out-dir /tmp/validate_ttnn_direct_real
+```
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   validate-real-decode \

@@ -30,6 +30,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import
 from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
     REAL_DECODE_VALIDATION_STEPS,
     VALIDATION_STEPS,
+    preflight_real_decode,
     validate_real_decode,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
@@ -142,6 +143,124 @@ class ValidateDirectTest(unittest.TestCase):
             scope["missing_for_official_performance_parity"],
             [],
         )
+
+    def test_preflight_real_decode_passes_with_official_parity_inputs(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=program_dir / "config.json",
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                require_official_performance_parity=True,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "pass")
+            self.assertTrue(report["ready_to_run"])
+            self.assertTrue(report_json.is_file())
+            self.assertTrue(
+                report["requirements"]["require_full_decode_step"]
+            )
+            self.assertTrue(
+                report["requirements"][
+                    "require_official_performance_parity"
+                ]
+            )
+            self.assertTrue(
+                report["requirements"]["require_official_config_match"]
+            )
+            self.assertEqual(report["official_config_diff"]["status"], "match")
+            self.assertEqual(report["decode_step_contract"]["batch_size"], 32)
+            self.assertEqual(
+                report["decode_step_contract"]["decode_seq_len"],
+                1,
+            )
+            self.assertEqual(
+                report["baseline_reference_entry"]["model"],
+                "Llama 3.1 8B",
+            )
+            self.assertEqual(
+                report["ttnn_environment"]["tt_metal_git_commit"],
+                "fake-tt-metal",
+            )
+            self.assertEqual(report["failed_checks"], [])
+
+    def test_preflight_real_decode_reports_missing_model_weights(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=program_dir / "config.json",
+                layers=1,
+                batch_size=32,
+                cache_len=1024,
+                require_full_decode_step=True,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertIn(
+                "model_weights.safetensors_present",
+                report["failed_checks"],
+            )
+            self.assertTrue(report_json.is_file())
 
     def test_cli_validate_direct_runs_all_device_free_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -139,6 +139,7 @@ def main(argv=None):
     parser.add_argument("--official-config", type=Path, default=None)
     parser.add_argument("--performance-baselines", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
+    parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--require-full-decode-step", action="store_true")
     parser.add_argument(
         "--require-official-performance-parity",
@@ -245,10 +246,49 @@ def main(argv=None):
         raise SystemExit("--model-path is required for --mode validate-real")
     _ensure_repo_import_path()
     from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
+        preflight_real_decode,
         validate_real_decode,
     )
 
     out_dir = args.out_dir or program_dir / "real_decode_validation"
+    if args.preflight_only:
+        report = preflight_real_decode(
+            program_dir=program_dir,
+            model_path=args.model_path or program_dir,
+            out=out_dir / "real_decode_preflight_report.json",
+            official_config_path=args.official_config,
+            decode_step_search_space_path=args.decode_step_search_space,
+            performance_baselines_path=args.performance_baselines,
+            layers=args.layers,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            device=args.device,
+            device_id=args.device_id,
+            trace=args.trace,
+            trace_iterations=args.trace_iterations,
+            skip_autotune=args.skip_autotune,
+            require_full_decode_step=args.require_full_decode_step,
+            require_official_performance_parity=(
+                args.require_official_performance_parity
+            ),
+            require_trace=args.require_trace,
+            require_official_config_match=args.require_official_config_match,
+            require_full_depth=args.require_full_depth,
+            require_program_runtime_shape=args.require_program_runtime_shape,
+            require_batch32_decode_step=args.require_batch32_decode_step,
+            baseline_tokens_per_second_per_user=(
+                args.baseline_tokens_per_second_per_user
+            ),
+            baseline_reference=args.baseline_reference,
+            min_baseline_ratio=args.min_baseline_ratio,
+            require_decode_shell_numeric_reference=(
+                args.require_decode_shell_numeric_reference
+            ),
+        )
+        report_path = out_dir / "real_decode_preflight_report.json"
+        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        return 0 if report["status"] == "pass" else 1
+
     report = validate_real_decode(
         program_dir=program_dir,
         model_path=args.model_path or program_dir,
@@ -381,6 +421,16 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         Validate the real-weight path after providing a local HF model:
 
         ```bash
+        python run_decode.py --mode validate-real \
+          --model-path /path/to/Llama-3.1-8B-Instruct \
+          --layers 32 \
+          --trace-iterations 10 \
+          --require-official-performance-parity \
+          --baseline-reference tt_metal_official_llama31_8b_b32 \
+          --min-baseline-ratio 0.1 \
+          --preflight-only \
+          --out-dir /tmp/validate_ttnn_direct_real
+
         python run_decode.py --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --layers 32 \
