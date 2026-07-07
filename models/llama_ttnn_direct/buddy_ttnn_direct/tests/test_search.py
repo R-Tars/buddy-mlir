@@ -332,7 +332,21 @@ class SearchTest(unittest.TestCase):
             )
             self.assertEqual(report["reference_status_counts"], {})
             self.assertEqual(report["trace_status_counts"], {})
+            self.assertEqual(len(report["leaderboard"]), 2)
+            self.assertEqual(
+                [entry["rank"] for entry in report["leaderboard"]],
+                [1, 2],
+            )
+            self.assertTrue(
+                all(
+                    entry["metric_value"] is None
+                    and entry["throughput_summary"] is None
+                    and entry["status"] == "dry_run_planned"
+                    for entry in report["leaderboard"]
+                )
+            )
             self.assertIsNone(report["best"])
+            self.assertIsNone(report["best_candidate_summary"])
             candidate_root = root / report["candidates_dir"]
             tuned_config = json.loads(
                 (
@@ -437,6 +451,37 @@ class SearchTest(unittest.TestCase):
             )
             self.assertIsInstance(report["best"]["metric"], float)
             self.assertGreater(report["best"]["metric"], 0.0)
+            self.assertEqual(len(report["leaderboard"]), 1)
+            leaderboard_entry = report["leaderboard"][0]
+            self.assertEqual(leaderboard_entry["rank"], 1)
+            self.assertEqual(leaderboard_entry["candidate_id"], report["best"]["id"])
+            self.assertEqual(leaderboard_entry["reference_status"], "passed")
+            self.assertEqual(
+                leaderboard_entry["throughput_summary"]["status"],
+                "measured",
+            )
+            self.assertGreater(
+                leaderboard_entry["throughput_summary"][
+                    "tokens_per_second_per_user"
+                ],
+                0.0,
+            )
+            self.assertEqual(
+                leaderboard_entry["bottleneck_summary"]["max_section"],
+                report["best"]["bottleneck_summary"]["max_section"],
+            )
+            self.assertEqual(
+                leaderboard_entry["lm_head_profile"]["argmax_status"],
+                "profiled",
+            )
+            self.assertEqual(
+                report["best_candidate_summary"]["candidate_id"],
+                report["best"]["id"],
+            )
+            self.assertEqual(
+                report["best_candidate_summary"]["metric_value"],
+                report["best"]["metric"],
+            )
             self.assertEqual(
                 report["candidates"][0]["knobs"]["lm_head_split_count"],
                 2,
@@ -496,6 +541,21 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["passed_candidate_count"], 2)
             self.assertEqual(report["reference_status_counts"], {"passed": 2})
             self.assertEqual(report["output_kind_counts"], {"token": 1, "logits": 1})
+            self.assertEqual(len(report["leaderboard"]), 2)
+            self.assertEqual(
+                {entry["output_kind"] for entry in report["leaderboard"]},
+                {"token", "logits"},
+            )
+            self.assertTrue(
+                all(
+                    entry["throughput_summary"]["status"] == "measured"
+                    for entry in report["leaderboard"]
+                )
+            )
+            self.assertEqual(
+                report["leaderboard"][0]["candidate_id"],
+                report["best_candidate_summary"]["candidate_id"],
+            )
             by_kind = {
                 candidate["output_kind"]: candidate
                 for candidate in report["candidates"]
@@ -585,6 +645,14 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(report["best"]["status"], "profiled")
             self.assertEqual(report["best"]["reference_status"], "passed")
             self.assertEqual(report["best"]["parameter_source"], "hf_model")
+            self.assertEqual(
+                report["best_candidate_summary"]["parameter_source"],
+                "hf_model",
+            )
+            self.assertEqual(
+                report["leaderboard"][0]["candidate_id"],
+                report["best"]["id"],
+            )
             self.assertEqual(
                 report["best"]["parameter_setup"]["tensorization"]["tensor_count"],
                 11,

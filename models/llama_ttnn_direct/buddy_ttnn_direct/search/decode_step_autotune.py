@@ -105,6 +105,7 @@ def run_decode_step_autotune(
             "output_kind": _candidate_output_kind(candidate),
             "output_shapes": None,
             "lm_head_profile": None,
+            "throughput_summary": None,
             "profile_report": None,
             "bottleneck_summary": None,
             "parameter_source": None,
@@ -145,6 +146,7 @@ def run_decode_step_autotune(
             )
             record["output_shapes"] = profile.get("output_shapes")
             record["lm_head_profile"] = profile.get("lm_head_profile")
+            record["throughput_summary"] = profile.get("throughput_summary")
             record["profile_report"] = _relative_or_absolute(
                 report_path,
                 out_path.parent,
@@ -170,6 +172,8 @@ def run_decode_step_autotune(
     trace_status_counts = _candidate_field_counts(candidates, "trace_status")
     output_kind_counts = _candidate_field_counts(candidates, "output_kind")
     knob_coverage = _knob_coverage(candidates)
+    leaderboard = _candidate_leaderboard(candidates, metric)
+    best_candidate_summary = _best_candidate_summary(best, metric)
     return {
         "schema_version": 1,
         "search": "decode_step_minimal",
@@ -198,7 +202,9 @@ def run_decode_step_autotune(
         "output_kind_counts": output_kind_counts,
         "candidates_dir": _relative_or_absolute(candidate_root, out_path.parent),
         "candidates": candidates,
+        "leaderboard": leaderboard,
         "best": best,
+        "best_candidate_summary": best_candidate_summary,
     }
 
 
@@ -283,6 +289,128 @@ def _is_better_metric(candidate: float, current_best: float, metric: str) -> boo
     if direction == "maximize":
         return candidate > current_best
     return candidate < current_best
+
+
+def _candidate_leaderboard(
+    candidates: list[dict[str, Any]],
+    metric: str,
+) -> list[dict[str, Any]]:
+    ordered = sorted(
+        candidates,
+        key=lambda candidate: _leaderboard_sort_key(candidate, metric),
+    )
+    return [
+        _candidate_leaderboard_entry(
+            candidate,
+            metric=metric,
+            rank=rank,
+        )
+        for rank, candidate in enumerate(ordered, start=1)
+    ]
+
+
+def _leaderboard_sort_key(
+    candidate: dict[str, Any],
+    metric: str,
+) -> tuple[int, float, str]:
+    value = candidate.get("metric")
+    if isinstance(value, (int, float)):
+        metric_value = float(value)
+        if DECODE_STEP_METRIC_DIRECTIONS[metric] == "maximize":
+            metric_value = -metric_value
+        return (0, metric_value, str(candidate.get("id", "")))
+    return (1, 0.0, str(candidate.get("id", "")))
+
+
+def _candidate_leaderboard_entry(
+    candidate: dict[str, Any],
+    *,
+    metric: str,
+    rank: int,
+) -> dict[str, Any]:
+    return {
+        "rank": rank,
+        "candidate_id": candidate.get("id"),
+        "status": candidate.get("status"),
+        "passed": candidate.get("passed"),
+        "metric": metric,
+        "metric_direction": DECODE_STEP_METRIC_DIRECTIONS[metric],
+        "metric_value": candidate.get("metric"),
+        "knobs": candidate.get("knobs"),
+        "output_kind": candidate.get("output_kind"),
+        "output_shapes": candidate.get("output_shapes"),
+        "profile_report": candidate.get("profile_report"),
+        "parameter_source": candidate.get("parameter_source"),
+        "reference_status": candidate.get("reference_status"),
+        "trace_status": candidate.get("trace_status"),
+        "throughput_summary": _compact_throughput_summary(
+            candidate.get("throughput_summary")
+        ),
+        "bottleneck_summary": _compact_bottleneck_summary(
+            candidate.get("bottleneck_summary")
+        ),
+        "lm_head_profile": _compact_lm_head_profile(
+            candidate.get("lm_head_profile")
+        ),
+        "error": candidate.get("error"),
+    }
+
+
+def _best_candidate_summary(
+    best: dict[str, Any] | None,
+    metric: str,
+) -> dict[str, Any] | None:
+    if best is None:
+        return None
+    summary = _candidate_leaderboard_entry(best, metric=metric, rank=1)
+    summary["config"] = best.get("config")
+    summary["model"] = best.get("model")
+    summary["profile_metadata"] = best.get("profile_metadata", [])
+    return summary
+
+
+def _compact_throughput_summary(summary: Any) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    return {
+        "status": summary.get("status"),
+        "latency_ms": summary.get("latency_ms"),
+        "tokens_per_second_per_user": summary.get(
+            "tokens_per_second_per_user"
+        ),
+        "aggregate_tokens_per_second": summary.get(
+            "aggregate_tokens_per_second"
+        ),
+        "trace_execute_mean_ms": summary.get("trace_execute_mean_ms"),
+        "trace_execute_tokens_per_second_per_user": summary.get(
+            "trace_execute_tokens_per_second_per_user"
+        ),
+        "trace_execute_aggregate_tokens_per_second": summary.get(
+            "trace_execute_aggregate_tokens_per_second"
+        ),
+        "trace_iterations": summary.get("trace_iterations"),
+    }
+
+
+def _compact_bottleneck_summary(summary: Any) -> dict[str, Any] | None:
+    if not isinstance(summary, dict):
+        return None
+    return {
+        "max_section": summary.get("max_section"),
+        "max_section_ms": summary.get("max_section_ms"),
+        "sections_ms": summary.get("sections_ms"),
+    }
+
+
+def _compact_lm_head_profile(profile: Any) -> dict[str, Any] | None:
+    if not isinstance(profile, dict):
+        return None
+    return {
+        "split_count": profile.get("split_count"),
+        "lm_head_ms": profile.get("lm_head_ms"),
+        "argmax_ms": profile.get("argmax_ms"),
+        "argmax_status": profile.get("argmax_status"),
+    }
 
 
 def _candidate_field_counts(

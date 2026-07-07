@@ -1357,7 +1357,10 @@ heads output memory config. Use `--dry-run` to materialize candidate configs
 without running TTNN profiles. The report records every candidate's knobs,
 profile report path, metric, bottleneck summary, status/reference/trace
 summaries, output kind, output shapes, LM-head split/argmax profile summary,
-and the best candidate when measurements are available. `latency_ms` is
+and the best candidate when measurements are available. It also writes a
+ranked `leaderboard` that covers every candidate plus a compact
+`best_candidate_summary` for the winning candidate, so P150A evidence can be
+reviewed without opening every nested profile report. `latency_ms` is
 minimized; `tokens_per_second_per_user` and `aggregate_tokens_per_second` are
 maximized. Top-level `status_counts`, `reference_status_counts`,
 `trace_status_counts`, and `output_kind_counts` make failed, skipped, token,
@@ -1371,7 +1374,10 @@ structural reference gate are not considered for `best`. In
 summary, not just `best`: each candidate must be profiled with HF parameters,
 pass its structural reference, report a valid output kind and decode/KV-cache
 shape summary, include LM-head and bottleneck profile evidence, and, when
-trace is required, show `captured_and_executed` trace status.
+trace is required, show `captured_and_executed` trace status. The same
+acceptance gate requires the leaderboard to cover all candidates, rank the
+selected best candidate first, and preserve measured throughput, bottleneck,
+and LM-head summaries for the winning candidate.
 
 Add `--model-path /path/to/Llama-3.1-8B-Instruct` in device mode to pass real
 HF weights through each candidate's `profile-decode-step` run. Candidate

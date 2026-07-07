@@ -666,6 +666,7 @@ def validate_direct(
                 paths["decode_step_autotune_candidates_dir"]
             ),
             "candidate_count": autotune_report["candidate_count"],
+            "metric": autotune_report.get("metric"),
             "metric_direction": autotune_report.get("metric_direction"),
             "status_counts": autotune_report.get("status_counts", {}),
             "reference_status_counts": autotune_report.get(
@@ -2110,6 +2111,10 @@ def validate_real_decode(
             "candidate_summaries": _autotune_candidate_summaries(
                 autotune_report.get("candidates")
             ),
+            "leaderboard": autotune_report.get("leaderboard", []),
+            "best_candidate_summary": autotune_report.get(
+                "best_candidate_summary"
+            ),
             "knob_coverage": autotune_report.get("knob_coverage"),
             "default_search_space": decode_step_search_space_is_default,
             "all_knobs_varied": (
@@ -3291,6 +3296,7 @@ def _real_decode_evidence_manifest(
                     "failed_candidate_count"
                 ),
                 "best": autotune.get("best"),
+                "metric": autotune.get("metric"),
                 "best_reference_status": autotune.get(
                     "best_reference_status"
                 ),
@@ -3316,6 +3322,10 @@ def _real_decode_evidence_manifest(
                 "candidate_summaries": autotune.get(
                     "candidate_summaries",
                     [],
+                ),
+                "leaderboard": autotune.get("leaderboard", []),
+                "best_candidate_summary": autotune.get(
+                    "best_candidate_summary"
                 ),
                 "knob_coverage": autotune.get("knob_coverage"),
                 "default_search_space": autotune.get(
@@ -5566,6 +5576,41 @@ def _real_decode_acceptance(
                     },
                 ),
                 _acceptance_check(
+                    "decode_step_autotune.leaderboard",
+                    _autotune_leaderboard_complete(
+                        autotune.get("leaderboard"),
+                        candidate_count=autotune.get("candidate_count"),
+                        candidate_summaries=autotune.get(
+                            "candidate_summaries"
+                        ),
+                        best=autotune.get("best"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_leaderboard_observed(
+                        autotune.get("leaderboard")
+                    ),
+                    expected={
+                        "candidate_count": autotune.get("candidate_count"),
+                        "best": autotune.get("best"),
+                    },
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_candidate_summary",
+                    _autotune_best_candidate_summary_complete(
+                        autotune.get("best_candidate_summary"),
+                        best=autotune.get("best"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_best_candidate_summary_observed(
+                        autotune.get("best_candidate_summary")
+                    ),
+                    expected={
+                        "best": autotune.get("best"),
+                        "parameter_source": "hf_model",
+                        "reference_status": "passed",
+                    },
+                ),
+                _acceptance_check(
                     "decode_step_autotune.passed_candidate_count",
                     _positive_number(autotune.get("passed_candidate_count")),
                     observed=autotune.get("passed_candidate_count"),
@@ -6614,6 +6659,7 @@ def _autotune_candidate_summaries(candidates: Any) -> list[dict[str, Any]]:
                 "output_kind": candidate.get("output_kind"),
                 "output_shapes": candidate.get("output_shapes"),
                 "lm_head_profile": candidate.get("lm_head_profile"),
+                "throughput_summary": candidate.get("throughput_summary"),
                 "bottleneck_summary": candidate.get("bottleneck_summary"),
                 "parameter_source": candidate.get("parameter_source"),
                 "trace_status": candidate.get("trace_status"),
@@ -6712,6 +6758,7 @@ def _autotune_candidate_complete(
             candidate.get("lm_head_profile"),
             output_kind=output_kind,
         )
+        and _throughput_summary_complete(candidate.get("throughput_summary"))
         and _bottleneck_summary_complete(candidate.get("bottleneck_summary"))
         and _decode_output_shapes_complete(
             candidate.get("output_shapes"),
@@ -6762,12 +6809,207 @@ def _autotune_candidates_observed(
                 "lm_head_profile": _lm_head_profile_observed(
                     candidate.get("lm_head_profile")
                 ),
+                "throughput": _throughput_summary_observed(
+                    candidate.get("throughput_summary")
+                ),
                 "bottleneck": _bottleneck_summary_observed(
                     candidate.get("bottleneck_summary")
                 ),
             }
         )
     return observed
+
+
+def _autotune_leaderboard_complete(
+    leaderboard: Any,
+    *,
+    candidate_count: Any,
+    candidate_summaries: Any,
+    best: Any,
+    require_trace: bool,
+) -> bool:
+    if not isinstance(leaderboard, list) or not leaderboard:
+        return False
+    expected_count = _safe_int(candidate_count)
+    if expected_count is None or expected_count <= 0:
+        return False
+    if len(leaderboard) != expected_count:
+        return False
+    expected_ids = _autotune_candidate_ids(candidate_summaries)
+    if len(expected_ids) != expected_count:
+        return False
+    observed_ids = []
+    for expected_rank, entry in enumerate(leaderboard, start=1):
+        if not isinstance(entry, dict):
+            return False
+        if not _int_equal(entry.get("rank"), expected_rank):
+            return False
+        if not _autotune_leaderboard_entry_complete(
+            entry,
+            require_trace=require_trace,
+        ):
+            return False
+        observed_ids.append(str(entry.get("candidate_id")))
+    if sorted(observed_ids) != sorted(expected_ids):
+        return False
+    if _non_empty_string(best):
+        first = leaderboard[0]
+        if first.get("candidate_id") != best:
+            return False
+    return len(observed_ids) == len(set(observed_ids))
+
+
+def _autotune_leaderboard_entry_complete(
+    entry: dict[str, Any],
+    *,
+    require_trace: bool,
+) -> bool:
+    output_kind = entry.get("output_kind")
+    if output_kind not in {"token", "logits"}:
+        return False
+    knobs = entry.get("knobs")
+    if not isinstance(knobs, dict) or not _contains_all(
+        list(knobs),
+        DECODE_STEP_AUTOTUNE_KNOBS,
+    ):
+        return False
+    if not (
+        _non_empty_string(entry.get("candidate_id"))
+        and entry.get("status") == "profiled"
+        and entry.get("passed") is True
+        and entry.get("parameter_source") == "hf_model"
+        and entry.get("reference_status") == "passed"
+        and entry.get("error") is None
+        and _nonnegative_number(entry.get("metric_value"))
+        and _non_empty_string(entry.get("profile_report"))
+        and _throughput_summary_complete(entry.get("throughput_summary"))
+        and _lm_head_profile_complete(
+            entry.get("lm_head_profile"),
+            output_kind=output_kind,
+        )
+        and _bottleneck_summary_complete(entry.get("bottleneck_summary"))
+    ):
+        return False
+    if require_trace:
+        return entry.get("trace_status") == "captured_and_executed"
+    return True
+
+
+def _autotune_best_candidate_summary_complete(
+    summary: Any,
+    *,
+    best: Any,
+    require_trace: bool,
+) -> bool:
+    if not isinstance(summary, dict) or not _non_empty_string(best):
+        return False
+    return (
+        summary.get("candidate_id") == best
+        and _int_equal(summary.get("rank"), 1)
+        and _autotune_leaderboard_entry_complete(
+            summary,
+            require_trace=require_trace,
+        )
+        and _non_empty_string(summary.get("config"))
+        and _non_empty_string(summary.get("model"))
+        and isinstance(summary.get("profile_metadata"), list)
+    )
+
+
+def _autotune_candidate_ids(candidates: Any) -> list[str]:
+    if not isinstance(candidates, list):
+        return []
+    ids = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            return []
+        candidate_id = candidate.get("id") or candidate.get("candidate_id")
+        if not _non_empty_string(candidate_id):
+            return []
+        ids.append(str(candidate_id))
+    return ids
+
+
+def _autotune_leaderboard_observed(
+    leaderboard: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(leaderboard, list):
+        return []
+    observed = []
+    for entry in leaderboard:
+        if not isinstance(entry, dict):
+            continue
+        observed.append(
+            {
+                "rank": entry.get("rank"),
+                "candidate_id": entry.get("candidate_id"),
+                "status": entry.get("status"),
+                "passed": entry.get("passed"),
+                "metric": entry.get("metric"),
+                "metric_value": entry.get("metric_value"),
+                "parameter_source": entry.get("parameter_source"),
+                "trace_status": entry.get("trace_status"),
+                "reference_status": entry.get("reference_status"),
+                "output_kind": entry.get("output_kind"),
+                "throughput": _throughput_summary_observed(
+                    entry.get("throughput_summary")
+                ),
+                "bottleneck": _bottleneck_summary_observed(
+                    entry.get("bottleneck_summary")
+                ),
+                "lm_head_profile": _lm_head_profile_observed(
+                    entry.get("lm_head_profile")
+                ),
+            }
+        )
+    return observed
+
+
+def _autotune_best_candidate_summary_observed(
+    summary: Any,
+) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        return {}
+    observed = _autotune_leaderboard_observed([summary])
+    if not observed:
+        return {}
+    result = observed[0]
+    result["config"] = summary.get("config")
+    result["model"] = summary.get("model")
+    metadata = summary.get("profile_metadata")
+    result["profile_metadata_count"] = (
+        len(metadata) if isinstance(metadata, list) else None
+    )
+    return result
+
+
+def _throughput_summary_complete(summary: Any) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    return (
+        summary.get("status") == "measured"
+        and _positive_number(summary.get("latency_ms"))
+        and _positive_number(summary.get("tokens_per_second_per_user"))
+        and _positive_number(summary.get("aggregate_tokens_per_second"))
+    )
+
+
+def _throughput_summary_observed(summary: Any) -> dict[str, Any]:
+    if not isinstance(summary, dict):
+        return {}
+    return {
+        "status": summary.get("status"),
+        "latency_ms": summary.get("latency_ms"),
+        "tokens_per_second_per_user": summary.get(
+            "tokens_per_second_per_user"
+        ),
+        "aggregate_tokens_per_second": summary.get(
+            "aggregate_tokens_per_second"
+        ),
+        "trace_execute_tokens_per_second_per_user": summary.get(
+            "trace_execute_tokens_per_second_per_user"
+        ),
+    }
 
 
 def _autotune_expected_output_kinds(coverage: Any) -> list[str]:

@@ -1887,6 +1887,14 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
+                "decode_step_autotune.leaderboard",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "decode_step_autotune.best_candidate_summary",
+                acceptance_check_names,
+            )
+            self.assertIn(
                 "decode_step_autotune.passed_candidate_count",
                 acceptance_check_names,
             )
@@ -1995,6 +2003,30 @@ class ValidateDirectTest(unittest.TestCase):
                     ]
                 },
                 {"token", "logits"},
+            )
+            self.assertEqual(
+                len(report["steps"]["decode_step_autotune"]["leaderboard"]),
+                2,
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"]["leaderboard"][0][
+                    "candidate_id"
+                ],
+                report["steps"]["decode_step_autotune"][
+                    "best_candidate_summary"
+                ]["candidate_id"],
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "best_candidate_summary"
+                ]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["steps"]["decode_step_autotune"][
+                    "best_candidate_summary"
+                ]["parameter_source"],
+                "hf_model",
             )
             self.assertEqual(
                 report["steps"]["decode_step_autotune"][
@@ -3079,6 +3111,28 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["decode_step_autotune"][
                     "candidate_summaries"
                 ][0]["reference_status"],
+                "passed",
+            )
+            self.assertEqual(
+                len(
+                    evidence["runtime_evidence"]["decode_step_autotune"][
+                        "leaderboard"
+                    ]
+                ),
+                2,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "leaderboard"
+                ][0]["candidate_id"],
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_candidate_summary"
+                ]["candidate_id"],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["decode_step_autotune"][
+                    "best_candidate_summary"
+                ]["reference_status"],
                 "passed",
             )
 
