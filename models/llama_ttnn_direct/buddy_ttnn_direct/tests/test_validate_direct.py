@@ -1220,7 +1220,12 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["final_acceptance_plan"]["optional_gate_names"],
-                ["profile_decode_step.min_tokens_per_second_per_user"],
+                [
+                    "profile_decode_step.min_tokens_per_second_per_user",
+                    "profile_decode_step.baseline_tokens_per_second_per_user",
+                    "profile_decode_step.baseline_reference",
+                    "profile_decode_step.min_baseline_ratio",
+                ],
             )
             repro = report["reproducibility"]
             self.assertIn(
@@ -2645,6 +2650,15 @@ class ValidateDirectTest(unittest.TestCase):
                 str(out_dir / "decode_step_autotune_report.json"),
             )
             self.assertEqual(evidence["acceptance_scope"]["status"], "bringup")
+            matrix = evidence["acceptance_gate_matrix"]
+            self.assertEqual(matrix["target_scope"], "bringup")
+            self.assertEqual(matrix["planned_gate_count"], 4)
+            self.assertEqual(matrix["failed_gates"], [])
+            self.assertEqual(matrix["missing_gates"], [])
+            self.assertIn(
+                "profile_decode_step.min_baseline_ratio",
+                matrix["passed_gates"],
+            )
             self.assertTrue(
                 evidence["acceptance_scope"]["accepted_real_weight_runtime"]
             )
@@ -3609,8 +3623,16 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
             scope = evidence["acceptance_scope"]
+            matrix = evidence["acceptance_gate_matrix"]
             self.assertEqual(evidence["status"], "accepted")
             self.assertEqual(scope["status"], "full_decode_step")
+            self.assertEqual(matrix["target_scope"], "full_decode_step")
+            self.assertEqual(matrix["failed_gates"], [])
+            self.assertEqual(matrix["missing_gates"], [])
+            self.assertIn(
+                "decode_step_contract.batch32",
+                matrix["passed_gates"],
+            )
             self.assertTrue(scope["require_full_decode_step"])
             self.assertTrue(scope["accepted_real_weight_runtime"])
             self.assertTrue(scope["full_depth_proven"])
@@ -4750,6 +4772,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(baseline["min_ratio"], 1.0)
             self.assertLess(baseline["ratio"], 1.0)
             self.assertFalse(baseline["passed"])
+            matrix = evidence["acceptance_gate_matrix"]
+            self.assertEqual(
+                matrix["failed_gates"],
+                ["profile_decode_step.min_baseline_ratio"],
+            )
+            self.assertEqual(matrix["missing_gates"], [])
             gap = evidence["performance_evidence"][
                 "performance_gap_summary"
             ]

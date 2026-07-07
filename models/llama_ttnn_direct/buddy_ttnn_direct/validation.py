@@ -441,6 +441,7 @@ def _real_decode_final_acceptance_plan(
     if require_official_performance_parity:
         official_parity_gate_names = [
             "official_config_diff.match",
+            "profile_decode_step.baseline_reference",
             "profile_decode_step.min_baseline_ratio",
         ]
 
@@ -449,6 +450,14 @@ def _real_decode_final_acceptance_plan(
         optional_gate_names.append(
             "profile_decode_step.min_tokens_per_second_per_user"
         )
+    if baseline_tokens_per_second_per_user is not None:
+        optional_gate_names.append(
+            "profile_decode_step.baseline_tokens_per_second_per_user"
+        )
+    if baseline_reference is not None and not require_official_performance_parity:
+        optional_gate_names.append("profile_decode_step.baseline_reference")
+    if min_baseline_ratio is not None and not require_official_performance_parity:
+        optional_gate_names.append("profile_decode_step.min_baseline_ratio")
 
     return {
         "target_scope": target_scope,
@@ -3363,6 +3372,10 @@ def _real_decode_evidence_manifest(
         "acceptance_scope": acceptance_scope,
         "reproducibility": report.get("reproducibility"),
         "final_acceptance_plan": report.get("final_acceptance_plan"),
+        "acceptance_gate_matrix": _final_acceptance_gate_matrix(
+            report,
+            acceptance,
+        ),
         "validation": {
             "command": report.get("command"),
             "status": report.get("status"),
@@ -3853,6 +3866,80 @@ def _real_decode_evidence_manifest(
             "check_count": len(acceptance.get("checks", [])),
             "failed_checks": [check.get("name") for check in failed_checks],
         },
+    }
+
+
+def _final_acceptance_gate_matrix(
+    report: dict[str, Any],
+    acceptance: Any,
+) -> dict[str, Any]:
+    plan = report.get("final_acceptance_plan")
+    if not isinstance(plan, dict):
+        plan = {}
+    checks = {}
+    if isinstance(acceptance, dict):
+        for check in acceptance.get("checks", []):
+            if isinstance(check, dict) and isinstance(check.get("name"), str):
+                checks[check["name"]] = check
+
+    groups = {
+        "full_decode_step": plan.get("full_decode_step_gate_names", []),
+        "official_performance_parity": plan.get(
+            "official_performance_parity_gate_names",
+            [],
+        ),
+        "optional": plan.get("optional_gate_names", []),
+    }
+    gate_entries = []
+    for group, names in groups.items():
+        if not isinstance(names, list):
+            names = []
+        for name in names:
+            if not isinstance(name, str):
+                continue
+            check = checks.get(name)
+            if check is None:
+                status = "missing"
+                passed = False
+                details = {}
+            else:
+                passed = check.get("passed") is True
+                status = "passed" if passed else "failed"
+                details = {
+                    key: value
+                    for key, value in check.items()
+                    if key not in {"name", "passed"}
+                }
+            gate_entries.append(
+                {
+                    "group": group,
+                    "name": name,
+                    "status": status,
+                    "passed": passed,
+                    "details": details,
+                }
+            )
+
+    passed_gates = [
+        gate["name"] for gate in gate_entries if gate["status"] == "passed"
+    ]
+    failed_gates = [
+        gate["name"] for gate in gate_entries if gate["status"] == "failed"
+    ]
+    missing_gates = [
+        gate["name"] for gate in gate_entries if gate["status"] == "missing"
+    ]
+    return {
+        "schema_version": 1,
+        "target_scope": plan.get("target_scope"),
+        "planned_gate_count": len(gate_entries),
+        "passed_gate_count": len(passed_gates),
+        "failed_gate_count": len(failed_gates),
+        "missing_gate_count": len(missing_gates),
+        "passed_gates": passed_gates,
+        "failed_gates": failed_gates,
+        "missing_gates": missing_gates,
+        "gates": gate_entries,
     }
 
 

@@ -677,6 +677,9 @@ machine-readable index of the key report/artifact paths.
 They carry the same `final_acceptance_plan` block, so reviewers can distinguish
 bring-up, full decode-step, and official performance-parity runs from the
 artifact bundle alone.
+The manifest also writes an `acceptance_gate_matrix` that maps the planned
+final gate names to the actual acceptance-check status, making failed or
+missing final gates visible without manually comparing report sections.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs
