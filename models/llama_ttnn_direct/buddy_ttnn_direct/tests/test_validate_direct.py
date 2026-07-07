@@ -174,6 +174,13 @@ class ValidateDirectTest(unittest.TestCase):
                 },
                 {
                     "name": (
+                        "profile_decode_step."
+                        "official_min_baseline_ratio_positive"
+                    ),
+                    "passed": True,
+                },
+                {
+                    "name": (
                         "profile_decode_step.official_baseline_reference"
                     ),
                     "passed": True,
@@ -190,6 +197,9 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertTrue(scope["require_official_performance_parity"])
         self.assertTrue(scope["full_decode_step_ready"])
         self.assertTrue(scope["model_end_to_end_proven"])
+        self.assertTrue(
+            scope["official_positive_baseline_ratio_floor_proven"]
+        )
         self.assertTrue(scope["official_performance_parity_ready"])
         self.assertEqual(scope["missing_for_full_decode_step"], [])
         self.assertEqual(
@@ -372,6 +382,13 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_decode_step.official_baseline_reference",
+                plan["official_performance_parity_gate_names"],
+            )
+            self.assertIn(
+                (
+                    "profile_decode_step."
+                    "official_min_baseline_ratio_positive"
+                ),
                 plan["official_performance_parity_gate_names"],
             )
             self.assertIn(

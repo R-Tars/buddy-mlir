@@ -695,7 +695,10 @@ bring-up, full decode-step, and official performance-parity runs from the
 artifact bundle alone.
 The manifest also writes an `acceptance_gate_matrix` that maps the planned
 final gate names to the actual acceptance-check status, making failed or
-missing final gates visible without manually comparing report sections.
+missing final gates visible without manually comparing report sections. For
+official performance parity, the matrix records the official baseline
+reference, the positive `--min-baseline-ratio` floor, and the observed ratio
+gate as separate checks.
 The manifest also includes a `model_end_to_end_readiness` block. This is
 stricter than `full_decode_step_ready`: it remains false while runtime inputs
 such as token ids, page tables, cache positions, paged KV cache, or rotary

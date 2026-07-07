@@ -459,6 +459,7 @@ def _real_decode_final_acceptance_plan(
             "official_config_diff.match",
             "profile_decode_step.baseline_reference",
             "profile_decode_step.official_baseline_reference",
+            "profile_decode_step.official_min_baseline_ratio_positive",
             "profile_decode_step.min_baseline_ratio",
         ]
 
@@ -3594,13 +3595,25 @@ def _real_decode_acceptance_scope(
         and report.get("require_decode_shell_numeric_reference") is True
         and _acceptance_check_passed(acceptance, "decode_shell.numeric_reference")
     )
-    performance_floor = (
+    baseline_ratio_floor = (
         accepted
         and report.get("min_baseline_ratio") is not None
         and _acceptance_check_passed(
             acceptance,
             "profile_decode_step.min_baseline_ratio",
         )
+    )
+    official_positive_floor = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and _acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.official_min_baseline_ratio_positive",
+        )
+    )
+    performance_floor = baseline_ratio_floor and (
+        report.get("require_official_performance_parity") is not True
+        or official_positive_floor
     )
     official_baseline = (
         accepted
@@ -3704,6 +3717,11 @@ def _real_decode_acceptance_scope(
         "model_end_to_end_proven": model_end_to_end,
         "official_config_match_proven": official_config_match,
         "official_performance_baseline_proven": official_baseline,
+        "official_positive_baseline_ratio_floor_proven": (
+            official_positive_floor
+            if report.get("require_official_performance_parity") is True
+            else None
+        ),
         "performance_baseline_ratio_proven": performance_floor,
         "full_decode_step_ready": full_decode_ready,
         "official_performance_parity_ready": (
@@ -6986,6 +7004,14 @@ def _real_decode_acceptance(
                     "model": "Llama 3.1 8B",
                     "batch_size": 32,
                 },
+            )
+        )
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.official_min_baseline_ratio_positive",
+                _positive_number(min_baseline_ratio),
+                observed=min_baseline_ratio,
+                expected="> 0.0",
             )
         )
     if min_baseline_ratio is not None:
