@@ -268,7 +268,13 @@ def _profile_record(
                 "prompt_runtime_input_tensor_count"
             )
         ),
+        "decode_runtime_state_input_tensor_count": (
+            (profile.get("parameter_setup") or {}).get(
+                "decode_runtime_state_input_tensor_count"
+            )
+        ),
         "prompt_tokenization": profile.get("prompt_tokenization"),
+        "decode_runtime_state": profile.get("decode_runtime_state"),
         "synthetic_rotary_tensor_count": (
             (profile.get("parameter_setup") or {}).get(
                 "synthetic_rotary_tensor_count"

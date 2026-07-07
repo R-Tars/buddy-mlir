@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,32 @@ class PromptTokenization:
             "selected_token_id": self.selected_token_id,
             "batch_size": self.batch_size,
             "token_input_shape": [self.batch_size, 1],
+        }
+
+
+@dataclass(frozen=True)
+class DecodeRuntimeState:
+    batch_size: int
+    cache_len: int
+    page_block_size: int
+    page_count: int
+    max_num_blocks: int
+    cache_position_value: int
+    page_table: list[list[int]]
+    cache_position: list[int]
+
+    def to_report(self) -> dict[str, Any]:
+        return {
+            "status": "built",
+            "source": "decode_runtime_state",
+            "batch_size": self.batch_size,
+            "cache_len": self.cache_len,
+            "page_block_size": self.page_block_size,
+            "page_count": self.page_count,
+            "max_num_blocks": self.max_num_blocks,
+            "cache_position_value": self.cache_position_value,
+            "page_table_shape": [self.batch_size, self.page_count],
+            "cache_position_shape": [self.batch_size],
         }
 
 
@@ -72,6 +99,41 @@ def tokenize_prompt_for_decode(
         selected_token_id=selected,
         batch_size=batch_size,
         token_ids=[[selected] for _ in range(batch_size)],
+    )
+
+
+def build_decode_runtime_state(
+    *,
+    batch_size: int,
+    cache_len: int,
+    page_block_size: int,
+    prompt_token_count: int,
+) -> DecodeRuntimeState:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if cache_len <= 0:
+        raise ValueError("cache_len must be positive")
+    if page_block_size <= 0:
+        raise ValueError("page_block_size must be positive")
+    if prompt_token_count <= 0:
+        raise ValueError("prompt_token_count must be positive")
+
+    page_count = max(1, math.ceil(cache_len / page_block_size))
+    max_num_blocks = batch_size * page_count
+    cache_position_value = min(max(prompt_token_count - 1, 0), cache_len - 1)
+    page_table = [
+        [batch_id * page_count + page_id for page_id in range(page_count)]
+        for batch_id in range(batch_size)
+    ]
+    return DecodeRuntimeState(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        page_block_size=page_block_size,
+        page_count=page_count,
+        max_num_blocks=max_num_blocks,
+        cache_position_value=cache_position_value,
+        page_table=page_table,
+        cache_position=[cache_position_value for _ in range(batch_size)],
     )
 
 

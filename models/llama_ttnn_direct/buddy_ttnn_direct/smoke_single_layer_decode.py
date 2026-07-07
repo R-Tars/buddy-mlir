@@ -19,6 +19,7 @@ from .codegen.ttnn_tensorizer import (
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import (
     PromptTokenizationError,
+    build_decode_runtime_state,
     tokenize_prompt_for_decode,
 )
 from .smoke_attention_primitive import (
@@ -37,6 +38,7 @@ from .smoke_decode_shell import (
     _dtype_check,
     _load_generated_model,
     _observed_op_sequence,
+    _runtime_int_tensor,
     _shape,
     _shape_check,
     _token_ids_tensor,
@@ -271,12 +273,16 @@ def run_smoke_decode_step(
                 prompt_tokenization = getattr(
                     state, "prompt_tokenization", None
                 )
+                decode_runtime_state = getattr(
+                    state, "decode_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
                 parameter_setup = None
                 input_source = "injected"
                 prompt_tokenization = None
+                decode_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -308,6 +314,8 @@ def run_smoke_decode_step(
             report["input_source"] = input_source
             if prompt_tokenization is not None:
                 report["prompt_tokenization"] = prompt_tokenization
+            if decode_runtime_state is not None:
+                report["decode_runtime_state"] = decode_runtime_state
             report.update(
                 {
                     **_base_report(
@@ -603,12 +611,16 @@ def profile_decode_step(
                 prompt_tokenization = getattr(
                     synthetic, "prompt_tokenization", None
                 )
+                decode_runtime_state = getattr(
+                    synthetic, "decode_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
                 parameter_setup = None
                 input_source = "injected"
                 prompt_tokenization = None
+                decode_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -654,6 +666,8 @@ def profile_decode_step(
             profile["input_source"] = input_source
             if prompt_tokenization is not None:
                 profile["prompt_tokenization"] = prompt_tokenization
+            if decode_runtime_state is not None:
+                profile["decode_runtime_state"] = decode_runtime_state
             profile["bottleneck_summary"] = _bottleneck_summary(
                 profile["section_latency_ms"],
                 profile["layer_profiles"],
@@ -1568,6 +1582,7 @@ def _build_model_decode_state(
         parameter_source="hf_model",
         input_source=synthetic_inputs.input_source,
         prompt_tokenization=synthetic_inputs.prompt_tokenization,
+        decode_runtime_state=synthetic_inputs.decode_runtime_state,
         parameter_setup={
             "materialization": materialization_summary,
             "tensorization": _tensorization_summary(result.report),
@@ -1577,6 +1592,9 @@ def _build_model_decode_state(
             ),
             "prompt_runtime_input_tensor_count": (
                 synthetic_inputs.prompt_runtime_input_tensor_count
+            ),
+            "decode_runtime_state_input_tensor_count": (
+                synthetic_inputs.decode_runtime_state_input_tensor_count
             ),
         },
     )
@@ -1723,10 +1741,18 @@ def _build_synthetic_decode_inputs(
     )
     inputs = plan["input_shapes"]
     prompt_runtime_input_tensor_count = 0
+    decode_runtime_state_input_tensor_count = 0
     prompt_tokenization = None
+    decode_runtime_state = None
     input_source = "synthetic"
     if prompt is None:
         token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
+        page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
+        cache_position = tensor(
+            inputs["cache_position"],
+            name="cache_position",
+            zeros=True,
+        )
     else:
         prompt_runtime = _build_prompt_decode_token_ids(
             ttnn=ttnn,
@@ -1743,13 +1769,22 @@ def _build_synthetic_decode_inputs(
             prompt_runtime.tensor_conversion_count
         )
         prompt_tokenization = prompt_runtime.prompt_tokenization
+        runtime_state = _build_prompt_decode_runtime_state_tensors(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            batch_size=int(inputs["token_ids"][0]),
+            cache_len=int((plan["kv_cache"]["logical_shape"])[1]),
+            page_block_size=int(plan["kv_cache"]["page_block_size"]),
+            prompt_token_count=int(prompt_tokenization["token_count"]),
+        )
+        page_table = runtime_state.page_table
+        cache_position = runtime_state.cache_position
+        decode_runtime_state_input_tensor_count = (
+            runtime_state.tensor_conversion_count
+        )
+        decode_runtime_state = runtime_state.decode_runtime_state
         input_source = "prompt_runtime"
-    page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
-    cache_position = tensor(
-        inputs["cache_position"],
-        name="cache_position",
-        zeros=True,
-    )
     kv_cache = []
     for layer_id in range(int(plan["layers"])):
         kv_cache.append(
@@ -1773,11 +1808,67 @@ def _build_synthetic_decode_inputs(
         kv_cache=kv_cache,
         tensor_conversion_count=(
             tensor_count() + prompt_runtime_input_tensor_count
+            + decode_runtime_state_input_tensor_count
         ),
         synthetic_runtime_input_tensor_count=tensor_count(),
         prompt_runtime_input_tensor_count=prompt_runtime_input_tensor_count,
+        decode_runtime_state_input_tensor_count=(
+            decode_runtime_state_input_tensor_count
+        ),
         input_source=input_source,
         prompt_tokenization=prompt_tokenization,
+        decode_runtime_state=decode_runtime_state,
+    )
+
+
+def _build_prompt_decode_runtime_state_tensors(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    batch_size: int,
+    cache_len: int,
+    page_block_size: int,
+    prompt_token_count: int,
+) -> SimpleNamespace:
+    runtime_state = build_decode_runtime_state(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        page_block_size=page_block_size,
+        prompt_token_count=prompt_token_count,
+    )
+    kwargs = {"device": device}
+    dtype = getattr(
+        ttnn,
+        "uint32",
+        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    page_table = ttnn.from_torch(
+        _runtime_int_tensor(
+            torch,
+            runtime_state.page_table,
+            name="runtime_page_table",
+        ),
+        **kwargs,
+    )
+    cache_position = ttnn.from_torch(
+        _runtime_int_tensor(
+            torch,
+            runtime_state.cache_position,
+            name="runtime_cache_position",
+        ),
+        **kwargs,
+    )
+    return SimpleNamespace(
+        page_table=page_table,
+        cache_position=cache_position,
+        tensor_conversion_count=2,
+        decode_runtime_state=runtime_state.to_report(),
     )
 
 

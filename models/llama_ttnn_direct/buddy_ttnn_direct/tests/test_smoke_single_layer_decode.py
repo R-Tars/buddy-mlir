@@ -500,11 +500,17 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["tensor_conversion_count"], 25)
             self.assertEqual(
                 report["parameter_setup"]["synthetic_runtime_input_tensor_count"],
-                4,
+                2,
             )
             self.assertEqual(
                 report["parameter_setup"]["prompt_runtime_input_tensor_count"],
                 1,
+            )
+            self.assertEqual(
+                report["parameter_setup"][
+                    "decode_runtime_state_input_tensor_count"
+                ],
+                2,
             )
             self.assertEqual(
                 report["prompt_tokenization"]["selected_token_id"],
@@ -514,14 +520,35 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 report["prompt_tokenization"]["token_input_shape"],
                 [2, 1],
             )
-            prompt_call = next(
+            self.assertEqual(
+                report["decode_runtime_state"]["page_table_shape"],
+                [2, 1],
+            )
+            self.assertEqual(
+                report["decode_runtime_state"]["cache_position_shape"],
+                [2],
+            )
+            self.assertEqual(
+                report["decode_runtime_state"]["cache_position_value"],
+                2,
+            )
+            prompt_and_state_calls = [
                 call
                 for call in fake_ttnn.calls
                 if call["op"] == "from_torch"
-                and call["shape"] == [2, 1]
                 and call["kwargs"].get("layout") == "ttnn.ROW_MAJOR_LAYOUT"
+                and call["shape"] in ([2, 1], [2])
+            ]
+            self.assertEqual(
+                [call["shape"] for call in prompt_and_state_calls[:3]],
+                [[2, 1], [2, 1], [2]],
             )
-            self.assertEqual(prompt_call["kwargs"]["dtype"], "ttnn.bfloat16")
+            self.assertTrue(
+                all(
+                    call["kwargs"]["dtype"] == "ttnn.bfloat16"
+                    for call in prompt_and_state_calls[:3]
+                )
+            )
 
     def test_cli_smoke_decode_step_dry_run_two_layers(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

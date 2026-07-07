@@ -491,24 +491,44 @@ def _token_ids_tensor(
     *,
     name: str,
 ) -> Any:
+    return _runtime_int_tensor(torch, token_ids, name=name)
+
+
+def _runtime_int_tensor(
+    torch: Any,
+    values: Any,
+    *,
+    name: str,
+) -> Any:
     dtype = getattr(torch, "int32", None)
     tensor_fn = getattr(torch, "tensor", None)
     if callable(tensor_fn):
         try:
-            tensor = tensor_fn(token_ids, dtype=dtype)
+            tensor = tensor_fn(values, dtype=dtype)
         except TypeError:
-            tensor = tensor_fn(token_ids)
+            tensor = tensor_fn(values)
     else:
         zeros = getattr(torch, "zeros", None)
         if not callable(zeros):
             raise ValueError("torch module must provide tensor or zeros")
-        shape = [len(token_ids), len(token_ids[0]) if token_ids else 0]
+        shape = _nested_int_shape(values)
         tensor = zeros(shape, dtype=dtype) if dtype is not None else zeros(shape)
     try:
         tensor.name = name
     except AttributeError:
         pass
     return tensor
+
+
+def _nested_int_shape(values: Any) -> list[int]:
+    if not isinstance(values, list):
+        return []
+    shape = [len(values)]
+    current = values
+    while current and isinstance(current[0], list):
+        current = current[0]
+        shape.append(len(current))
+    return shape
 
 
 def _decode_shell_input_shapes(config: dict[str, Any]) -> dict[str, list[int]]:

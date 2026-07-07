@@ -2439,8 +2439,16 @@ def validate_real_decode(
                     "prompt_runtime_input_tensor_count"
                 )
             ),
+            "decode_runtime_state_input_tensor_count": (
+                (single_layer_report.get("parameter_setup") or {}).get(
+                    "decode_runtime_state_input_tensor_count"
+                )
+            ),
             "prompt_tokenization": single_layer_report.get(
                 "prompt_tokenization"
+            ),
+            "decode_runtime_state": single_layer_report.get(
+                "decode_runtime_state"
             ),
             **tensorization_path_detail(
                 single_layer_report,
@@ -2499,7 +2507,13 @@ def validate_real_decode(
                     "prompt_runtime_input_tensor_count"
                 )
             ),
+            "decode_runtime_state_input_tensor_count": (
+                (smoke_report.get("parameter_setup") or {}).get(
+                    "decode_runtime_state_input_tensor_count"
+                )
+            ),
             "prompt_tokenization": smoke_report.get("prompt_tokenization"),
+            "decode_runtime_state": smoke_report.get("decode_runtime_state"),
             **tensorization_path_detail(smoke_report),
             **_reference_summary(smoke_report),
         }
@@ -2563,7 +2577,15 @@ def validate_real_decode(
                     "prompt_runtime_input_tensor_count"
                 )
             ),
+            "decode_runtime_state_input_tensor_count": (
+                (profile_report.get("parameter_setup") or {}).get(
+                    "decode_runtime_state_input_tensor_count"
+                )
+            ),
             "prompt_tokenization": profile_report.get("prompt_tokenization"),
+            "decode_runtime_state": profile_report.get(
+                "decode_runtime_state"
+            ),
             **tensorization_path_detail(profile_report),
             **_reference_summary(profile_report),
         }
@@ -3447,6 +3469,13 @@ def _model_end_to_end_readiness(
             runtime_scope.get("prompt_runtime_input_tensor_counts") or {}
         ).values()
     )
+    decode_runtime_state_observed = any(
+        _positive_scalar_count(value)
+        for value in (
+            runtime_scope.get("decode_runtime_state_input_tensor_counts")
+            or {}
+        ).values()
+    )
     missing = []
     if report.get("dry_run"):
         missing.append("run validate-real-decode without --dry-run")
@@ -3455,7 +3484,16 @@ def _model_end_to_end_readiness(
     if not full_decode_ready:
         missing.append("accepted full decode-step evidence")
     if synthetic_inputs:
-        if prompt_runtime_observed:
+        if prompt_runtime_observed and decode_runtime_state_observed:
+            missing.append(
+                "real runtime input path for KV cache and rotary tensors"
+            )
+            missing.append(
+                "decode loop that owns prompt token ids, page table, cache "
+                "position, KV cache, and rotary tensors beyond smoke/profile "
+                "harnesses"
+            )
+        elif prompt_runtime_observed:
             missing.append(
                 "real runtime input path for page table, cache position, "
                 "KV cache, and rotary tensors"
@@ -3517,6 +3555,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
             "synthetic_runtime_input_steps": [],
             "synthetic_runtime_input_tensor_counts": {},
             "prompt_runtime_input_tensor_counts": {},
+            "decode_runtime_state_input_tensor_counts": {},
             "synthetic_rotary_tensor_counts": {},
             "depth_sweep_synthetic_record_count": 0,
         }
@@ -3533,6 +3572,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
     sources: dict[str, Any] = {}
     runtime_counts: dict[str, Any] = {}
     prompt_counts: dict[str, Any] = {}
+    runtime_state_counts: dict[str, Any] = {}
     rotary_counts: dict[str, Any] = {}
     synthetic_steps: list[str] = []
     for name in runtime_step_names:
@@ -3555,10 +3595,21 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
             setup = step.get("parameter_setup")
             if isinstance(setup, dict):
                 prompt_count = setup.get("prompt_runtime_input_tensor_count")
+        runtime_state_count = step.get(
+            "decode_runtime_state_input_tensor_count"
+        )
+        if runtime_state_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                runtime_state_count = setup.get(
+                    "decode_runtime_state_input_tensor_count"
+                )
         if runtime_count is not None:
             runtime_counts[name] = runtime_count
         if prompt_count is not None:
             prompt_counts[name] = prompt_count
+        if runtime_state_count is not None:
+            runtime_state_counts[name] = runtime_state_count
         if rotary_count is not None:
             rotary_counts[name] = rotary_count
         if (
@@ -3603,6 +3654,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         "synthetic_runtime_input_steps": synthetic_steps,
         "synthetic_runtime_input_tensor_counts": runtime_counts,
         "prompt_runtime_input_tensor_counts": prompt_counts,
+        "decode_runtime_state_input_tensor_counts": runtime_state_counts,
         "synthetic_rotary_tensor_counts": rotary_counts,
         "depth_sweep_synthetic_record_count": synthetic_depth_records,
     }
@@ -8174,13 +8226,15 @@ def _decode_runtime_inputs_complete(
         "synthetic_runtime_input_tensor_count"
     ]
     expected_prompt_runtime_count = 0
+    expected_decode_runtime_state_count = 0
     if input_source == "prompt_runtime":
         expected_synthetic_runtime_count = (
-            expected_synthetic_runtime_count - 1
+            expected_synthetic_runtime_count - 3
             if expected_synthetic_runtime_count is not None
             else None
         )
         expected_prompt_runtime_count = 1
+        expected_decode_runtime_state_count = 2
     return (
         _int_list(input_shapes.get("token_ids"))
         == expected["token_ids"]
@@ -8212,6 +8266,13 @@ def _decode_runtime_inputs_complete(
             or _int_equal(
                 step.get("prompt_runtime_input_tensor_count"),
                 expected_prompt_runtime_count,
+            )
+        )
+        and (
+            input_source != "prompt_runtime"
+            or _int_equal(
+                step.get("decode_runtime_state_input_tensor_count"),
+                expected_decode_runtime_state_count,
             )
         )
         and _int_equal(
@@ -8316,6 +8377,10 @@ def _decode_runtime_input_observed(step: Any) -> dict[str, Any]:
             "prompt_runtime_input_tensor_count"
         ),
         "prompt_tokenization": step.get("prompt_tokenization"),
+        "decode_runtime_state_input_tensor_count": step.get(
+            "decode_runtime_state_input_tensor_count"
+        ),
+        "decode_runtime_state": step.get("decode_runtime_state"),
         "synthetic_rotary_tensor_count": step.get(
             "synthetic_rotary_tensor_count"
         ),

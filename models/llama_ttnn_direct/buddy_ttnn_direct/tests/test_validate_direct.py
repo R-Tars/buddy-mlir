@@ -3499,7 +3499,13 @@ class ValidateDirectTest(unittest.TestCase):
                     report["steps"][step_name][
                         "synthetic_runtime_input_tensor_count"
                     ],
-                    4,
+                    2,
+                )
+                self.assertEqual(
+                    report["steps"][step_name][
+                        "decode_runtime_state_input_tensor_count"
+                    ],
+                    2,
                 )
                 self.assertEqual(
                     report["steps"][step_name][
@@ -3518,7 +3524,19 @@ class ValidateDirectTest(unittest.TestCase):
                 depth_sweep["records"][0][
                     "synthetic_runtime_input_tensor_count"
                 ],
-                4,
+                2,
+            )
+            self.assertEqual(
+                depth_sweep["records"][0][
+                    "decode_runtime_state_input_tensor_count"
+                ],
+                2,
+            )
+            self.assertEqual(
+                depth_sweep["records"][0]["decode_runtime_state"][
+                    "cache_position_value"
+                ],
+                2,
             )
 
             evidence = json.loads(
@@ -3538,6 +3556,14 @@ class ValidateDirectTest(unittest.TestCase):
                 scope["prompt_runtime_input_tensor_counts"],
                 {step: 1 for step in prompt_runtime_steps},
             )
+            self.assertEqual(
+                scope["decode_runtime_state_input_tensor_counts"],
+                {
+                    "single_layer_decode": 2,
+                    "smoke_decode_step": 2,
+                    "profile_decode_step": 2,
+                },
+            )
             self.assertNotIn(
                 "decode_shell",
                 scope["synthetic_runtime_input_steps"],
@@ -3546,9 +3572,9 @@ class ValidateDirectTest(unittest.TestCase):
                 scope["synthetic_runtime_input_tensor_counts"],
                 {
                     "decode_shell": 0,
-                    "single_layer_decode": 4,
-                    "smoke_decode_step": 4,
-                    "profile_decode_step": 4,
+                    "single_layer_decode": 2,
+                    "smoke_decode_step": 2,
+                    "profile_decode_step": 2,
                 },
             )
             self.assertIn(
@@ -3561,14 +3587,18 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(scope["depth_sweep_synthetic_record_count"], 1)
             self.assertIn(
-                "real runtime input path for page table, cache position, "
-                "KV cache, and rotary tensors",
+                "real runtime input path for KV cache and rotary tensors",
                 e2e["missing_for_model_end_to_end"],
             )
             self.assertIn(
-                "decode loop that owns prompt token ids plus page table, "
-                "cache position, KV cache, and rotary tensors beyond "
+                "decode loop that owns prompt token ids, page table, cache "
+                "position, KV cache, and rotary tensors beyond "
                 "smoke/profile harnesses",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertNotIn(
+                "real runtime input path for page table, cache position, "
+                "KV cache, and rotary tensors",
                 e2e["missing_for_model_end_to_end"],
             )
             self.assertNotIn(
