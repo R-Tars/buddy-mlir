@@ -9,6 +9,9 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
+    build_config_parity_view,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
     PROGRAM_ARTIFACTS,
 )
@@ -164,6 +167,7 @@ class BuildProgramTest(unittest.TestCase):
             loop_report = root / "prompt_decode_loop_report.json"
             preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
+            official_json = root / "official_parity_config.json"
             _write_fake_model_config(model_dir)
             _write_template_config(config_json)
             self.assertEqual(
@@ -180,6 +184,7 @@ class BuildProgramTest(unittest.TestCase):
                 ),
                 0,
             )
+            _write_official_parity_from_program(out_dir, official_json)
             (model_dir / "model-00001-of-00001.safetensors").write_bytes(b"")
             (out_dir / "ttnn.py").write_text(
                 "\n".join(
@@ -296,7 +301,7 @@ class BuildProgramTest(unittest.TestCase):
                     "--model-path",
                     str(model_dir),
                     "--official-config",
-                    str(out_dir / "config.json"),
+                    str(official_json),
                     "--prompt",
                     "hello tenstorrent",
                     "--tokenizer-path",
@@ -538,6 +543,20 @@ def _write_template_config(path: Path) -> None:
                 "generation_template": "device_argmax_greedy",
                 "lm_head_split_count": 8,
                 "dtype_recipe": "official_like_performance_seed",
+            }
+        )
+    )
+
+
+def _write_official_parity_from_program(program_dir: Path, path: Path) -> None:
+    generated_config = json.loads((program_dir / "config.json").read_text())
+    parity_view = build_config_parity_view(generated_config)
+    path.write_text(
+        json.dumps(
+            {
+                "model_name": generated_config.get("model_name"),
+                "source": "unit_test_normalized_parity_reference",
+                "parity_config": parity_view["parity_config"],
             }
         )
     )

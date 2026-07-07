@@ -13,6 +13,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     PARITY_SECTIONS,
     REQUIRED_PARITY_PATHS,
+    build_config_parity_view,
     default_official_config_path,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
@@ -143,6 +144,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "name": "decode_shell.numeric_reference",
                     "passed": True,
                 },
+                {
+                    "name": (
+                        "official_config_diff.official_reference_format"
+                    ),
+                    "passed": True,
+                },
                 {"name": "official_config_diff.match", "passed": True},
                 {
                     "name": "model_end_to_end_readiness.ready",
@@ -210,6 +217,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "name": "decode_shell.numeric_reference",
                     "passed": True,
                 },
+                {
+                    "name": (
+                        "official_config_diff.official_reference_format"
+                    ),
+                    "passed": True,
+                },
                 {"name": "official_config_diff.match", "passed": True},
                 {
                     "name": "profile_decode_step.min_baseline_ratio",
@@ -240,6 +253,7 @@ class ValidateDirectTest(unittest.TestCase):
             model_dir = root / "fake_model"
             config_json = root / "template_config.json"
             program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
             report_json = root / "real_decode_preflight_report.json"
             _write_fake_model_config(model_dir)
             _write_fake_model_weights(model_dir, _fake_weight_specs())
@@ -258,12 +272,13 @@ class ValidateDirectTest(unittest.TestCase):
                 ),
                 0,
             )
+            _write_official_parity_from_program(program_dir, official_json)
 
             report = preflight_real_decode(
                 program_dir=program_dir,
                 model_path=model_dir,
                 out=report_json,
-                official_config_path=program_dir / "config.json",
+                official_config_path=official_json,
                 layers=2,
                 batch_size=32,
                 cache_len=1024,
@@ -296,6 +311,10 @@ class ValidateDirectTest(unittest.TestCase):
                 report["requirements"]["require_official_config_match"]
             )
             self.assertEqual(report["official_config_diff"]["status"], "match")
+            self.assertEqual(
+                report["official_config_diff"]["official_source_format"],
+                "normalized_parity_config",
+            )
             self.assertEqual(report["decode_step_contract"]["batch_size"], 32)
             self.assertEqual(
                 report["decode_step_contract"]["decode_seq_len"],
@@ -326,6 +345,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "official_config_diff.match",
+                plan["official_performance_parity_gate_names"],
+            )
+            self.assertIn(
+                "official_config_diff.official_reference_format",
                 plan["official_performance_parity_gate_names"],
             )
             self.assertIn(
@@ -382,6 +405,62 @@ class ValidateDirectTest(unittest.TestCase):
                 "fake-tt-metal",
             )
             self.assertEqual(report["failed_checks"], [])
+
+    def test_preflight_rejects_generated_config_as_official_reference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=program_dir / "config.json",
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                require_official_performance_parity=True,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                ttnn_module=_make_fake_ttnn(),
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertIn(
+                "official_config.reference_format",
+                report["failed_checks"],
+            )
+            self.assertEqual(report["official_config_diff"]["status"], "match")
+            self.assertEqual(
+                report["official_config_diff"]["official_source_format"],
+                "generated_ttnn_direct_config",
+            )
 
     def test_preflight_real_decode_reports_missing_model_weights(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -489,6 +568,7 @@ class ValidateDirectTest(unittest.TestCase):
             model_dir = root / "fake_model"
             config_json = root / "template_config.json"
             program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
             out_dir = root / "validate_real"
             _write_fake_model_config(model_dir)
             _write_fake_model_weights(model_dir, _fake_weight_specs())
@@ -507,6 +587,7 @@ class ValidateDirectTest(unittest.TestCase):
                 ),
                 0,
             )
+            _write_official_parity_from_program(program_dir, official_json)
 
             with patch.object(
                 validation_module.importlib,
@@ -523,7 +604,7 @@ class ValidateDirectTest(unittest.TestCase):
                         "--out-dir",
                         str(out_dir),
                         "--official-config",
-                        str(program_dir / "config.json"),
+                        str(official_json),
                         "--layers",
                         "2",
                         "--batch-size",
@@ -7400,6 +7481,20 @@ def _write_template_config(path: Path) -> None:
                 "generation_template": "device_argmax_greedy",
                 "lm_head_split_count": 8,
                 "dtype_recipe": "official_like_performance_seed",
+            }
+        )
+    )
+
+
+def _write_official_parity_from_program(program_dir: Path, path: Path) -> None:
+    generated_config = json.loads((program_dir / "config.json").read_text())
+    parity_view = build_config_parity_view(generated_config)
+    path.write_text(
+        json.dumps(
+            {
+                "model_name": generated_config.get("model_name"),
+                "source": "unit_test_normalized_parity_reference",
+                "parity_config": parity_view["parity_config"],
             }
         )
     )

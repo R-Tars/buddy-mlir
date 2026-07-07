@@ -455,6 +455,7 @@ def _real_decode_final_acceptance_plan(
     if require_official_performance_parity:
         official_parity_gate_names = [
             "model_end_to_end_readiness.ready",
+            "official_config_diff.official_reference_format",
             "official_config_diff.match",
             "profile_decode_step.baseline_reference",
             "profile_decode_step.min_baseline_ratio",
@@ -759,6 +760,11 @@ def validate_direct(
             "extra_count": diff["summary"]["extra_count"],
             "official_required_field_coverage": coverage.get("official"),
             "required_parity_fields": coverage.get("required_fields", []),
+            "ours_source_format": diff["ours"].get("source_format"),
+            "official_source_format": diff["official"].get(
+                "source_format"
+            ),
+            "official_source": diff["official"].get("source"),
         }
 
     def tensorize_parameters_dry_run_step() -> dict[str, Any]:
@@ -1379,11 +1385,37 @@ def preflight_real_decode(
                 "missing_count": official_diff["summary"]["missing_count"],
                 "mismatch_count": official_diff["summary"]["mismatch_count"],
                 "extra_count": official_diff["summary"]["extra_count"],
+                "ours_source_format": official_diff["ours"].get(
+                    "source_format"
+                ),
+                "official_source_format": official_diff["official"].get(
+                    "source_format"
+                ),
+                "official_source": official_diff["official"].get("source"),
                 "sections_with_issues": official_diff["summary"][
                     "sections_with_issues"
                 ],
             }
             if normalized["require_official_config_match"]:
+                add(
+                    "official_config.reference_format",
+                    official_diff["official"].get("source_format")
+                    == "normalized_parity_config",
+                    observed={
+                        "source_format": official_diff["official"].get(
+                            "source_format"
+                        ),
+                        "source": official_diff["official"].get("source"),
+                    },
+                    expected=(
+                        "normalized_parity_config official/reference JSON"
+                    ),
+                    message=(
+                        "strong official config match must compare against "
+                        "an external normalized parity reference, not a "
+                        "generated TTNN Direct config"
+                    ),
+                )
                 add(
                     "official_config.match",
                     official_diff["status"] == "match",
@@ -2149,6 +2181,11 @@ def validate_real_decode(
             "gap_summary": diff.get("gap_summary"),
             "official_required_field_coverage": coverage.get("official"),
             "required_parity_fields": coverage.get("required_fields", []),
+            "ours_source_format": diff["ours"].get("source_format"),
+            "official_source_format": diff["official"].get(
+                "source_format"
+            ),
+            "official_source": diff["official"].get("source"),
             "sections": sorted(diff["sections"]),
             "section_statuses": section_statuses,
         }
@@ -3538,6 +3575,10 @@ def _real_decode_acceptance_scope(
     official_config_match = (
         accepted
         and report.get("require_official_config_match") is True
+        and _acceptance_check_passed(
+            acceptance,
+            "official_config_diff.official_reference_format",
+        )
         and _acceptance_check_passed(acceptance, "official_config_diff.match")
     )
     model_end_to_end = (
@@ -4155,6 +4196,15 @@ def _real_decode_evidence_manifest(
                 "mismatch_count": official_config_diff.get("mismatch_count"),
                 "extra_count": official_config_diff.get("extra_count"),
                 "matching_count": official_config_diff.get("matching_count"),
+                "ours_source_format": official_config_diff.get(
+                    "ours_source_format"
+                ),
+                "official_source_format": official_config_diff.get(
+                    "official_source_format"
+                ),
+                "official_source": official_config_diff.get(
+                    "official_source"
+                ),
                 "gap_summary": official_config_diff.get("gap_summary"),
                 "official_required_field_coverage": (
                     official_config_diff.get(
@@ -6624,6 +6674,20 @@ def _real_decode_acceptance(
             )
         )
     if require_official_config_match:
+        checks.append(
+            _acceptance_check(
+                "official_config_diff.official_reference_format",
+                official_config_diff.get("official_source_format")
+                == "normalized_parity_config",
+                observed={
+                    "source_format": official_config_diff.get(
+                        "official_source_format"
+                    ),
+                    "source": official_config_diff.get("official_source"),
+                },
+                expected="normalized_parity_config",
+            )
+        )
         checks.append(
             _acceptance_check(
                 "official_config_diff.match",

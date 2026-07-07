@@ -730,9 +730,10 @@ means the requested gates passed, while
 that prove full generated depth, generated batch/cache shape, batch32 decode
 contract, trace capture/execute, and decode-shell numeric reference evidence.
 `acceptance_scope.official_performance_parity_ready=true` additionally requires
-model end-to-end readiness, official config match, and a baseline-ratio gate, so
-a small bring-up run or smoke/profile path with synthetic runtime inputs cannot
-be mistaken for final end-to-end or performance-parity evidence.
+model end-to-end readiness, official config match against a normalized external
+parity reference, and a baseline-ratio gate, so a small bring-up run,
+self-referenced generated config, or smoke/profile path with synthetic runtime
+inputs cannot be mistaken for final end-to-end or performance-parity evidence.
 Use `--require-official-performance-parity` for final performance acceptance.
 It enables `--require-model-end-to-end`, `--require-full-decode-step`, and
 `--require-official-config-match`, and it requires an explicit
@@ -742,7 +743,10 @@ By default, the official-config diff is evidence-only: `diff_found` is
 acceptable because the bundled official config is a seed reference with known
 gaps. Use `--require-official-config-match` when a curated official parity
 config is available and the real decode acceptance run should fail on any
-config mismatch.
+config mismatch. Strong official-config acceptance also requires the
+`--official-config` input to be a normalized parity JSON with a top-level
+`parity_config`; passing the generated program's own `config.json` is still
+allowed for exploratory diffs, but it fails the strong acceptance gate.
 Use `--require-full-depth` and `--require-program-runtime-shape` separately
 when debugging one strict requirement at a time. Prefer
 `--require-full-decode-step` for final acceptance runs that must prove the
@@ -1137,7 +1141,12 @@ config, memory config, core grid, LM-head strategy, or paged attention config.
 The report also records `required_field_coverage` for both the generated config
 and the official reference. `validate-direct` and `validate-real-decode` require
 the official/reference side to cover every required parity field, so an
-incomplete seed cannot be used as strong parity evidence.
+incomplete seed cannot be used as strong parity evidence. When
+`--require-official-config-match` or `--require-official-performance-parity` is
+enabled, the validation gate additionally requires the official side to have
+`source_format=normalized_parity_config`; a generated TTNN Direct config can
+match itself structurally, but that self-reference is not accepted as official
+parity proof.
 
 ## Performance Step 2: Generated Single-Layer Decode Smoke
 
