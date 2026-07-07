@@ -762,6 +762,10 @@ baseline from `reference/performance_baselines.json`, and
 falls below the current phase's floor. `--baseline-tokens-per-second-per-user`
 remains available for ad hoc baselines, but final evidence should prefer a
 reference id so the source/model/batch are auditable.
+When `--require-official-performance-parity` is enabled, validation also
+requires that baseline reference to resolve to an official Llama 3.1 8B
+batch-32 target; flow references, current Buddy baselines, and 3B official
+targets remain useful comparison points but cannot satisfy final 8B parity.
 Use `--require-decode-shell-numeric-reference` for acceptance runs that should
 fail instead of accepting a `numeric_reference.status=not_run` shell report.
 When enabled, acceptance requires `numeric_reference.kind=torch_decode_shell`,

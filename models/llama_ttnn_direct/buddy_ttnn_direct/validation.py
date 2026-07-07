@@ -458,6 +458,7 @@ def _real_decode_final_acceptance_plan(
             "official_config_diff.official_reference_format",
             "official_config_diff.match",
             "profile_decode_step.baseline_reference",
+            "profile_decode_step.official_baseline_reference",
             "profile_decode_step.min_baseline_ratio",
         ]
 
@@ -1489,6 +1490,21 @@ def preflight_real_decode(
                     "reference": reference_tps,
                 },
                 expected="provided baseline matches reference",
+            )
+        if normalized["require_official_performance_parity"]:
+            add(
+                "baseline_reference.official_performance_target",
+                _official_performance_baseline_entry_complete(
+                    baseline_reference_entry
+                ),
+                observed=_performance_baseline_entry_summary(
+                    baseline_reference_entry
+                ),
+                expected={
+                    "role": "official_8b_target",
+                    "model": "Llama 3.1 8B",
+                    "batch_size": 32,
+                },
             )
 
     ttnn_import_error = None
@@ -3572,6 +3588,14 @@ def _real_decode_acceptance_scope(
             "profile_decode_step.min_baseline_ratio",
         )
     )
+    official_baseline = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and _acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.official_baseline_reference",
+        )
+    )
     official_config_match = (
         accepted
         and report.get("require_official_config_match") is True
@@ -3620,11 +3644,14 @@ def _real_decode_acceptance_scope(
         missing_parity.append(
             "--baseline-reference plus --min-baseline-ratio"
         )
+    elif not official_baseline:
+        missing_parity.append("official Llama 3.1 8B batch32 baseline")
 
     official_performance_parity_ready = (
         full_decode_ready
         and model_end_to_end
         and official_config_match
+        and official_baseline
         and performance_floor
     )
 
@@ -3662,6 +3689,7 @@ def _real_decode_acceptance_scope(
         "decode_shell_numeric_reference_proven": numeric_shell,
         "model_end_to_end_proven": model_end_to_end,
         "official_config_match_proven": official_config_match,
+        "official_performance_baseline_proven": official_baseline,
         "performance_baseline_ratio_proven": performance_floor,
         "full_decode_step_ready": full_decode_ready,
         "official_performance_parity_ready": (
@@ -6929,6 +6957,23 @@ def _real_decode_acceptance(
                 expected=report.get("baseline_reference"),
             )
         )
+    if report.get("require_official_performance_parity"):
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.official_baseline_reference",
+                _official_performance_baseline_entry_complete(
+                    report.get("baseline_reference_entry")
+                ),
+                observed=_performance_baseline_entry_summary(
+                    report.get("baseline_reference_entry")
+                ),
+                expected={
+                    "role": "official_8b_target",
+                    "model": "Llama 3.1 8B",
+                    "batch_size": 32,
+                },
+            )
+        )
     if min_baseline_ratio is not None:
         checks.append(
             _acceptance_check(
@@ -7309,6 +7354,15 @@ def _performance_baseline_entry_complete(entry: Any) -> bool:
             entry.get("decode_tokens_per_second_per_user")
         )
         and _positive_number(entry.get("aggregate_tokens_per_second"))
+    )
+
+
+def _official_performance_baseline_entry_complete(entry: Any) -> bool:
+    return (
+        _performance_baseline_entry_complete(entry)
+        and entry.get("role") == "official_8b_target"
+        and entry.get("model") == "Llama 3.1 8B"
+        and _numbers_equal(entry.get("batch_size"), 32)
     )
 
 
