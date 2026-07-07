@@ -19,6 +19,7 @@ from .codegen.ttnn_tensorizer import (
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import (
     PromptTokenizationError,
+    build_decode_rotary_runtime_state,
     build_decode_runtime_state,
     tokenize_prompt_for_decode,
 )
@@ -276,6 +277,9 @@ def run_smoke_decode_step(
                 decode_runtime_state = getattr(
                     state, "decode_runtime_state", None
                 )
+                rotary_runtime_state = getattr(
+                    state, "rotary_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
@@ -283,6 +287,7 @@ def run_smoke_decode_step(
                 input_source = "injected"
                 prompt_tokenization = None
                 decode_runtime_state = None
+                rotary_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -316,6 +321,8 @@ def run_smoke_decode_step(
                 report["prompt_tokenization"] = prompt_tokenization
             if decode_runtime_state is not None:
                 report["decode_runtime_state"] = decode_runtime_state
+            if rotary_runtime_state is not None:
+                report["rotary_runtime_state"] = rotary_runtime_state
             report.update(
                 {
                     **_base_report(
@@ -614,6 +621,9 @@ def profile_decode_step(
                 decode_runtime_state = getattr(
                     synthetic, "decode_runtime_state", None
                 )
+                rotary_runtime_state = getattr(
+                    synthetic, "rotary_runtime_state", None
+                )
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
@@ -621,6 +631,7 @@ def profile_decode_step(
                 input_source = "injected"
                 prompt_tokenization = None
                 decode_runtime_state = None
+                rotary_runtime_state = None
 
             if any(
                 item is None for item in (token_ids, page_table, cache_position, kv_cache)
@@ -668,6 +679,8 @@ def profile_decode_step(
                 profile["prompt_tokenization"] = prompt_tokenization
             if decode_runtime_state is not None:
                 profile["decode_runtime_state"] = decode_runtime_state
+            if rotary_runtime_state is not None:
+                profile["rotary_runtime_state"] = rotary_runtime_state
             profile["bottleneck_summary"] = _bottleneck_summary(
                 profile["section_latency_ms"],
                 profile["layer_profiles"],
@@ -1550,16 +1563,6 @@ def _build_model_decode_state(
         ttnn_module=ttnn,
     )
     assert result.parameters is not None
-    tensor_conversion_count = int(result.report["tensor_count"])
-    synthetic_rotary_count = _attach_synthetic_rotary_parameters(
-        parameters=result.parameters,
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        plan=plan,
-    )
-    tensor_conversion_count += synthetic_rotary_count
     synthetic_inputs = _build_synthetic_decode_inputs(
         ttnn=ttnn,
         torch=torch,
@@ -1570,6 +1573,39 @@ def _build_model_decode_state(
         tokenizer_path=tokenizer_path or model_path,
         tokenizer_module=tokenizer_module,
     )
+    tensor_conversion_count = int(result.report["tensor_count"])
+    rotary_runtime_state = None
+    rotary_runtime_input_tensor_count = 0
+    if synthetic_inputs.decode_runtime_state is not None:
+        rotary_runtime = _attach_runtime_rotary_parameters(
+            parameters=result.parameters,
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            plan=plan,
+            cache_position_value=int(
+                synthetic_inputs.decode_runtime_state[
+                    "cache_position_value"
+                ]
+            ),
+        )
+        synthetic_rotary_count = 0
+        rotary_runtime_input_tensor_count = (
+            rotary_runtime.tensor_conversion_count
+        )
+        rotary_runtime_state = rotary_runtime.rotary_runtime_state
+        tensor_conversion_count += rotary_runtime_input_tensor_count
+    else:
+        synthetic_rotary_count = _attach_synthetic_rotary_parameters(
+            parameters=result.parameters,
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            plan=plan,
+        )
+        tensor_conversion_count += synthetic_rotary_count
     return SimpleNamespace(
         parameters=result.parameters,
         token_ids=synthetic_inputs.token_ids,
@@ -1583,10 +1619,15 @@ def _build_model_decode_state(
         input_source=synthetic_inputs.input_source,
         prompt_tokenization=synthetic_inputs.prompt_tokenization,
         decode_runtime_state=synthetic_inputs.decode_runtime_state,
+        rotary_runtime_state=rotary_runtime_state,
         parameter_setup={
             "materialization": materialization_summary,
             "tensorization": _tensorization_summary(result.report),
             "synthetic_rotary_tensor_count": synthetic_rotary_count,
+            "rotary_runtime_input_tensor_count": (
+                rotary_runtime_input_tensor_count
+            ),
+            "rotary_runtime_state": rotary_runtime_state,
             "synthetic_runtime_input_tensor_count": (
                 synthetic_inputs.synthetic_runtime_input_tensor_count
             ),
@@ -1962,6 +2003,97 @@ def _attach_synthetic_rotary_parameters(
             ),
         )
     return tensor_count()
+
+
+def _attach_runtime_rotary_parameters(
+    *,
+    parameters: Any,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    plan: dict[str, Any],
+    cache_position_value: int,
+) -> SimpleNamespace:
+    layer_count = int(plan["layers"])
+    layer_params = plan["layer_parameter_shapes"]
+    matrix_shape = list(layer_params["rotary_cos_matrix"])
+    head_dim = int(matrix_shape[-1])
+    runtime_state = build_decode_rotary_runtime_state(
+        layer_count=layer_count,
+        head_dim=head_dim,
+        cache_position_value=cache_position_value,
+    )
+    kwargs = {
+        "device": device,
+        "dtype": _ttnn_dtype(ttnn, dtype_seed),
+    }
+    layout = getattr(ttnn, "TILE_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    tensor_count = 0
+
+    def runtime_tensor(name: str) -> Any:
+        nonlocal tensor_count
+        tensor_count += 1
+        return ttnn.from_torch(
+            _runtime_float_tensor(
+                torch,
+                runtime_state.matrix_shape,
+                dtype_seed=dtype_seed,
+                name=name,
+            ),
+            **kwargs,
+        )
+
+    for layer_id in range(layer_count):
+        layer = parameters.layers[layer_id]
+        attention = getattr(layer, "attention", None)
+        if attention is None:
+            attention = SimpleNamespace()
+            layer.attention = attention
+        attention.rotary = SimpleNamespace(
+            cos_matrix=runtime_tensor(
+                f"runtime.layers.{layer_id}.rotary_cos"
+            ),
+            sin_matrix=runtime_tensor(
+                f"runtime.layers.{layer_id}.rotary_sin"
+            ),
+            transformation_matrix=runtime_tensor(
+                f"runtime.layers.{layer_id}.rotary_transform"
+            ),
+        )
+
+    return SimpleNamespace(
+        tensor_conversion_count=tensor_count,
+        rotary_runtime_state=runtime_state.to_report(),
+    )
+
+
+def _runtime_float_tensor(
+    torch: Any,
+    shape: list[int],
+    *,
+    dtype_seed: str,
+    name: str,
+) -> Any:
+    zeros = getattr(torch, "zeros", None)
+    if not callable(zeros):
+        raise ValueError("torch module must provide zeros")
+    dtype = (
+        getattr(torch, "bfloat16", None)
+        if dtype_seed == "bf16"
+        else getattr(torch, "float32", None)
+    )
+    try:
+        tensor = zeros(tuple(shape), dtype=dtype)
+    except TypeError:
+        tensor = zeros(tuple(shape))
+    try:
+        tensor.name = name
+    except AttributeError:
+        pass
+    return tensor
 
 
 def _synthetic_tensor_factory(

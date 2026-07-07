@@ -62,6 +62,32 @@ class DecodeRuntimeState:
         }
 
 
+@dataclass(frozen=True)
+class DecodeRotaryRuntimeState:
+    layer_count: int
+    head_dim: int
+    cache_position_value: int
+    matrix_shape: list[int]
+    tensor_count: int
+
+    def to_report(self) -> dict[str, Any]:
+        return {
+            "status": "built",
+            "source": "rotary_runtime_state",
+            "layer_count": self.layer_count,
+            "head_dim": self.head_dim,
+            "cache_position_value": self.cache_position_value,
+            "matrix_shape": list(self.matrix_shape),
+            "tensors_per_layer": 3,
+            "tensor_count": self.tensor_count,
+            "tensor_roles": [
+                "cos_matrix",
+                "sin_matrix",
+                "transformation_matrix",
+            ],
+        }
+
+
 def tokenize_prompt_for_decode(
     *,
     prompt: str,
@@ -134,6 +160,28 @@ def build_decode_runtime_state(
         cache_position_value=cache_position_value,
         page_table=page_table,
         cache_position=[cache_position_value for _ in range(batch_size)],
+    )
+
+
+def build_decode_rotary_runtime_state(
+    *,
+    layer_count: int,
+    head_dim: int,
+    cache_position_value: int,
+) -> DecodeRotaryRuntimeState:
+    if layer_count <= 0:
+        raise ValueError("layer_count must be positive")
+    if head_dim <= 0:
+        raise ValueError("head_dim must be positive")
+    if cache_position_value < 0:
+        raise ValueError("cache_position_value must be non-negative")
+
+    return DecodeRotaryRuntimeState(
+        layer_count=layer_count,
+        head_dim=head_dim,
+        cache_position_value=cache_position_value,
+        matrix_shape=[1, 1, head_dim, head_dim],
+        tensor_count=3 * layer_count,
     )
 
 

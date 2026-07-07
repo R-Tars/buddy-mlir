@@ -513,6 +513,16 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 2,
             )
             self.assertEqual(
+                report["parameter_setup"]["synthetic_rotary_tensor_count"],
+                0,
+            )
+            self.assertEqual(
+                report["parameter_setup"][
+                    "rotary_runtime_input_tensor_count"
+                ],
+                3,
+            )
+            self.assertEqual(
                 report["prompt_tokenization"]["selected_token_id"],
                 42,
             )
@@ -531,6 +541,18 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 report["decode_runtime_state"]["cache_position_value"],
                 2,
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["matrix_shape"],
+                [1, 1, 4, 4],
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["cache_position_value"],
+                2,
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["tensor_count"],
+                3,
             )
             prompt_and_state_calls = [
                 call

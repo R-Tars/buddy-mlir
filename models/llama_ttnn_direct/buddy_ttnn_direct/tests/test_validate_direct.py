@@ -3511,6 +3511,12 @@ class ValidateDirectTest(unittest.TestCase):
                     report["steps"][step_name][
                         "synthetic_rotary_tensor_count"
                     ],
+                    0,
+                )
+                self.assertEqual(
+                    report["steps"][step_name][
+                        "rotary_runtime_input_tensor_count"
+                    ],
                     3,
                 )
 
@@ -3538,6 +3544,18 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 2,
             )
+            self.assertEqual(
+                depth_sweep["records"][0][
+                    "rotary_runtime_input_tensor_count"
+                ],
+                3,
+            )
+            self.assertEqual(
+                depth_sweep["records"][0]["rotary_runtime_state"][
+                    "tensor_count"
+                ],
+                3,
+            )
 
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
@@ -3564,6 +3582,14 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 2,
                 },
             )
+            self.assertEqual(
+                scope["rotary_runtime_input_tensor_counts"],
+                {
+                    "single_layer_decode": 3,
+                    "smoke_decode_step": 3,
+                    "profile_decode_step": 3,
+                },
+            )
             self.assertNotIn(
                 "decode_shell",
                 scope["synthetic_runtime_input_steps"],
@@ -3587,13 +3613,17 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(scope["depth_sweep_synthetic_record_count"], 1)
             self.assertIn(
-                "real runtime input path for KV cache and rotary tensors",
+                "real runtime input path for KV cache tensors",
                 e2e["missing_for_model_end_to_end"],
             )
             self.assertIn(
                 "decode loop that owns prompt token ids, page table, cache "
-                "position, KV cache, and rotary tensors beyond "
+                "position, rotary tensors, and KV cache beyond "
                 "smoke/profile harnesses",
+                e2e["missing_for_model_end_to_end"],
+            )
+            self.assertNotIn(
+                "real runtime input path for KV cache and rotary tensors",
                 e2e["missing_for_model_end_to_end"],
             )
             self.assertNotIn(

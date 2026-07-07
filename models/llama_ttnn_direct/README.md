@@ -691,9 +691,10 @@ The smoke/profile commands and generated runner accept `--prompt` plus
 tokenizer and derive paged decode metadata for page table and cache position.
 They record `input_source=prompt_runtime`, remove the synthetic token-id,
 page-table, and cache-position inputs from those reports, and add
-`decode_runtime_state` evidence. Paged KV-cache tensors, rotary tensors, and
-the owning decode loop remain harness-managed until
-`model_end_to_end_ready=true`.
+`decode_runtime_state` evidence. In prompt mode the per-layer rotary tensors
+are also emitted from `rotary_runtime_state` instead of being counted as
+synthetic rotary inputs. Paged KV-cache tensors and the owning decode loop
+remain harness-managed until `model_end_to_end_ready=true`.
 Use `--require-model-end-to-end` when final validation should fail unless that
 block reports `model_end_to_end_ready=true`; the flag also enables the full
 decode-step acceptance requirements.
@@ -743,8 +744,8 @@ and/or `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight
 `hf_model` parameter sources, required materialized tensor paths, materialized
 weight shapes against the generated config, resolved
-synthetic runtime input source/count evidence for token ids, page tables,
-cache position, paged KV cache, and per-layer synthetic rotary tensors,
+synthetic/runtime input source/count evidence for token ids, page tables,
+cache position, paged KV cache, and per-layer rotary tensors,
 runtime input shape evidence for token/page/cache-position/KV tensors,
 official config diff evidence including required parity-field coverage,
 layer/batch/cache runtime shape, TTNN module
@@ -1165,8 +1166,8 @@ generated decode roles through `tensorize-parameters`. By default token ids,
 page table, cache position, paged KV cache, and rotary matrices remain
 synthetic for this bring-up step. Add `--prompt` and `--tokenizer-path` to
 source token ids from the tokenizer and page table/cache position from the
-decode runtime state while keeping paged KV cache and rotary tensors
-synthetic:
+decode runtime state. Prompt mode also creates per-layer rotary tensors from
+`rotary_runtime_state`, while paged KV cache tensors remain synthetic:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
@@ -1188,7 +1189,8 @@ materialized/tensorized tensor counts, tensorized role groups, complete
 tensorized weight paths, dtype/layout/memory-config counts, key tensor
 dtype/layout/memory-config records, prompt tokenization metadata when present,
 decode runtime state metadata for page table/cache position when present, and
-the number of synthetic rotary/KV-cache tensors added around the real weights.
+rotary runtime-state metadata when present, plus the number of remaining
+synthetic KV-cache tensors added around the real weights.
 
 ## Performance Step 2b: Generated Decode Layer Stack Smoke
 
@@ -1197,8 +1199,8 @@ configurable layer stack. By default it uses synthetic TTNN tensors for both
 parameters and runtime inputs, but it can also take `--model-path` to
 materialize/tensorize real generated decode weights. Add `--prompt` and
 `--tokenizer-path` to use tokenizer-owned token ids plus runtime-owned page
-table/cache position; rotary matrices and per-layer paged KV cache remain
-synthetic at this stage. It then calls generated `decode_step()` with
+table/cache position plus runtime-owned rotary tensors; per-layer paged KV
+cache remains synthetic at this stage. It then calls generated `decode_step()` with
 `config.num_layers = --layers`.
 
 Use it to walk the review plan from 2 layers to 4 layers and finally the full
@@ -1270,8 +1272,8 @@ token ids `[B, 1]`, page table `[B, page_count]`, cache position `[B]`, and
 paged K/V cache `[max_num_blocks, num_kv_heads, page_block_size, head_dim]`
 input shapes, account for `3 + 2 * depth` synthetic runtime-input tensors and
 `3 * depth` synthetic rotary tensors in synthetic mode, or `2 * depth`
-synthetic runtime-input tensors plus prompt/runtime-state counts in
-`prompt_runtime` mode, expose layer-profile ids for `[0..depth)`, pass the
+synthetic runtime-input tensors plus prompt/runtime-state/rotary-runtime
+counts in `prompt_runtime` mode, expose layer-profile ids for `[0..depth)`, pass the
 reference checks, report measured throughput, include decode output/KV-cache
 shapes, include complete section latency fields, per-layer attention/MLP
 timing records, LM-head split/argmax profile evidence, and complete bottleneck
@@ -1430,7 +1432,7 @@ HF weights through each candidate's `profile-decode-step` run. Candidate
 directories copy the generated program metadata needed by real-weight profile
 (`semantic_graph.json`, `weights_manifest.json`, and `execution_plan.json`),
 while token ids, page table, and cache position can be runtime-owned when
-`--prompt` is supplied; rotary matrices and paged KV cache remain synthetic at
-this stage. Candidate records forward the
+`--prompt` is supplied; rotary tensors are runtime-owned in prompt mode, and
+paged KV cache remains synthetic at this stage. Candidate records forward the
 `parameter_source` and compact `parameter_setup` summary, including
 tensorization dtype/layout/memory-config evidence, from their profile report.
