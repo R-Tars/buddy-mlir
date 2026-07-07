@@ -161,6 +161,7 @@ class BuildProgramTest(unittest.TestCase):
             out_dir = root / "program"
             smoke_report = root / "decode_step_smoke_report.json"
             profile_report = root / "decode_step_profile_report.json"
+            preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
             _write_fake_model_config(model_dir)
             _write_template_config(config_json)
@@ -178,6 +179,20 @@ class BuildProgramTest(unittest.TestCase):
                 ),
                 0,
             )
+            (model_dir / "model-00001-of-00001.safetensors").write_bytes(b"")
+            (out_dir / "ttnn.py").write_text(
+                "\n".join(
+                    [
+                        '__version__ = "fake-ttnn"',
+                        '__tt_metal_commit__ = "fake-tt-metal"',
+                        "",
+                    ]
+                )
+            )
+            program_readme = (out_dir / "README.md").read_text()
+            self.assertIn("--preflight-only", program_readme)
+            self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
+            self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
 
             smoke = subprocess.run(
                 [
@@ -235,6 +250,61 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 json.loads(profile_report.read_text())["template"],
                 "generated_decode_step_profile",
+            )
+
+            preflight = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "validate-real",
+                    "--model-path",
+                    str(model_dir),
+                    "--official-config",
+                    str(out_dir / "config.json"),
+                    "--require-official-performance-parity",
+                    "--min-tokens-per-second-per-user",
+                    "1.25",
+                    "--baseline-reference",
+                    "tt_metal_official_llama31_8b_b32",
+                    "--min-baseline-ratio",
+                    "0.1",
+                    "--decode-shell-pcc-threshold",
+                    "0.98",
+                    "--layers",
+                    "2",
+                    "--batch-size",
+                    "32",
+                    "--cache-len",
+                    "1024",
+                    "--preflight-only",
+                    "--out-dir",
+                    str(preflight_dir),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            preflight_summary = json.loads(preflight.stdout)
+            self.assertEqual(preflight_summary["status"], "pass")
+            preflight_report = (
+                preflight_dir / "real_decode_preflight_report.json"
+            )
+            self.assertEqual(preflight_summary["report"], str(preflight_report))
+            preflight_payload = json.loads(preflight_report.read_text())
+            self.assertEqual(preflight_payload["status"], "pass")
+            self.assertEqual(
+                preflight_payload["min_tokens_per_second_per_user"],
+                1.25,
+            )
+            self.assertEqual(
+                preflight_payload["decode_shell_pcc_threshold"],
+                0.98,
+            )
+            self.assertEqual(
+                preflight_payload["ttnn_environment"]["version"],
+                "fake-ttnn",
             )
 
             validation = subprocess.run(
