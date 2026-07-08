@@ -1268,6 +1268,19 @@ def _make_fake_ttnn(
         )
         return FakeTensor(cache.name, cache.shape)
 
+    def slice_tensor(tensor, starts, ends, steps=None):
+        output_shape = [int(end) - int(start) for start, end in zip(starts, ends)]
+        module.calls.append(
+            {
+                "op": "slice",
+                "tensor": tensor.name,
+                "starts": list(starts),
+                "ends": list(ends),
+                "steps": list(steps) if steps is not None else None,
+            }
+        )
+        return FakeTensor(f"slice:{tensor.name}:{starts[0]}", output_shape)
+
     def paged_update_cache(cache, update, **kwargs):
         module.calls.append(
             {
@@ -1428,6 +1441,7 @@ def _make_fake_ttnn(
     module.linear = linear
     module.to_memory_config = to_memory_config
     module.fill_cache = fill_cache
+    module.slice = slice_tensor
     module.mul = mul
     module.add = add
     module.concat = concat

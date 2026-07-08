@@ -73,6 +73,14 @@ class SmokePrefillTest(unittest.TestCase):
                 report["expected_output_shapes"]["key_cache"],
                 [2, 2, 32, 4],
             )
+            self.assertEqual(
+                report["cache_population"][0]["write_policy"],
+                "fill_cache_per_user",
+            )
+            self.assertEqual(
+                report["cache_population"][0]["planned_user_count"],
+                2,
+            )
 
     def test_run_smoke_prefill_executes_generated_prefill(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,8 +135,38 @@ class SmokePrefillTest(unittest.TestCase):
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 2, 32, 4])
             self.assertEqual(report["cache_population"][0]["status"], "filled")
             self.assertEqual(
+                report["cache_population"][0]["write_policy"],
+                "fill_cache_per_user",
+            )
+            self.assertEqual(
+                report["cache_population"][0]["filled_user_count"],
+                2,
+            )
+            self.assertEqual(
                 report["cache_population"][0]["key_cache_shape"],
                 [2, 2, 32, 4],
+            )
+            self.assertEqual(
+                [
+                    user["user_id"]
+                    for user in report["cache_population"][0]["users"]
+                ],
+                [0, 1],
+            )
+            self.assertEqual(
+                report["cache_population"][0]["users"][0]["key_update_shape"],
+                [1, 2, 8, 4],
+            )
+            fill_calls = [
+                call for call in fake_ttnn.calls if call["op"] == "fill_cache"
+            ]
+            self.assertEqual(
+                [call["kwargs"].get("user_id") for call in fill_calls],
+                [0, 0, 1, 1],
+            )
+            self.assertEqual(
+                len([call for call in fake_ttnn.calls if call["op"] == "slice"]),
+                4,
             )
             self.assertEqual(report["reference"]["status"], "passed")
             self.assertIn(
@@ -280,6 +318,19 @@ def _make_fake_ttnn():
         module.calls.append({"op": "fill_cache", "kwargs": dict(kwargs)})
         return FakeTensor(cache.name, cache.shape)
 
+    def slice_tensor(tensor, starts, ends, steps=None):
+        output_shape = [int(end) - int(start) for start, end in zip(starts, ends)]
+        module.calls.append(
+            {
+                "op": "slice",
+                "tensor": tensor.name,
+                "starts": list(starts),
+                "ends": list(ends),
+                "steps": list(steps) if steps is not None else None,
+            }
+        )
+        return FakeTensor(f"slice:{tensor.name}:{starts[0]}", output_shape)
+
     def concatenate_heads(attention, **kwargs):
         batch, _, seq_len, head_dim = attention.shape
         module.calls.append({"op": "concatenate_heads", "kwargs": dict(kwargs)})
@@ -318,6 +369,7 @@ def _make_fake_ttnn():
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.slice = slice_tensor
     module.experimental = types.SimpleNamespace(
         rotary_embedding_llama=rotary_embedding_llama,
     )

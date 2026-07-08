@@ -136,7 +136,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "seq_len": int(template_config.get("prefill_seq_len", 128)),
             "attention_op_sequence": official_prefill_attention_op_sequence(),
             "attention_mask": "causal",
-            "cache_write_policy": "fill_cache",
+            "cache_write_policy": "fill_cache_per_user",
             "kv_cache_source": "prefill",
             "qkv_output_memory_config": None,
             "qkv_program_config": None,
@@ -252,6 +252,13 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                 if callable(memory_config):
                     return memory_config()
                 return None
+
+
+            def _tensor_shape(tensor):
+                shape = getattr(tensor, "shape", None)
+                if shape is None:
+                    return None
+                return [int(dim) for dim in shape]
 
 
             class TTNNCompatOps:
@@ -469,6 +476,39 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         return tensor
                     self._record(op_name)
                     return op(tensor, memory_config=memory_config)
+
+                def slice_batch_user(
+                    self,
+                    tensor,
+                    user_id,
+                    *,
+                    op_name="slice.batch_user",
+                ):
+                    shape = _tensor_shape(tensor)
+                    if shape is None or not shape or shape[0] <= 1:
+                        return tensor
+                    slice_op = getattr(self.ttnn, "slice", None)
+                    if not callable(slice_op):
+                        raise ttnn_ops.UnsupportedTTNNOp(
+                            "slice_batch_user",
+                            (("slice",),),
+                        )
+                    starts = [0 for _ in shape]
+                    ends = list(shape)
+                    steps = [1 for _ in shape]
+                    starts[0] = int(user_id)
+                    ends[0] = int(user_id) + 1
+                    self._record(op_name)
+                    try:
+                        return slice_op(tensor, starts, ends, steps)
+                    except TypeError as err:
+                        try:
+                            return slice_op(tensor, starts, ends, steps=steps)
+                        except TypeError:
+                            try:
+                                return slice_op(tensor, starts, ends)
+                            except TypeError:
+                                raise err
 
                 def nlp_create_qkv_heads_decode(
                     self,
@@ -1207,24 +1247,69 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
 
                 def fill_prefill_kv_cache(self, layer_id, k, v, kv_cache):
                     layer_cache = kv_cache[layer_id]
-                    filled_k = self.ops.fill_cache(
-                        layer_cache.k,
-                        k,
-                        user_id=0,
-                        op_name="fill_cache.k",
-                    )
-                    if filled_k is not None:
-                        layer_cache.k = filled_k
-                    filled_v = self.ops.fill_cache(
-                        layer_cache.v,
-                        v,
-                        user_id=0,
-                        op_name="fill_cache.v",
-                    )
-                    if filled_v is not None:
-                        layer_cache.v = filled_v
+                    key_shape = _tensor_shape(k)
+                    value_shape = _tensor_shape(v)
+                    batch_user_count = 1
+                    if key_shape is not None and len(key_shape) >= 1:
+                        batch_user_count = max(batch_user_count, key_shape[0])
+                    if value_shape is not None and len(value_shape) >= 1:
+                        batch_user_count = max(batch_user_count, value_shape[0])
+                    user_reports = []
+                    for user_id in range(batch_user_count):
+                        user_k = (
+                            self.ops.slice_batch_user(
+                                k,
+                                user_id,
+                                op_name="slice.prefill_k",
+                            )
+                            if batch_user_count > 1
+                            else k
+                        )
+                        user_v = (
+                            self.ops.slice_batch_user(
+                                v,
+                                user_id,
+                                op_name="slice.prefill_v",
+                            )
+                            if batch_user_count > 1
+                            else v
+                        )
+                        filled_k = self.ops.fill_cache(
+                            layer_cache.k,
+                            user_k,
+                            user_id=user_id,
+                            op_name="fill_cache.k",
+                        )
+                        if filled_k is not None:
+                            layer_cache.k = filled_k
+                        filled_v = self.ops.fill_cache(
+                            layer_cache.v,
+                            user_v,
+                            user_id=user_id,
+                            op_name="fill_cache.v",
+                        )
+                        if filled_v is not None:
+                            layer_cache.v = filled_v
+                        user_reports.append(
+                            {{
+                                "user_id": user_id,
+                                "key_update_shape": _tensor_shape(user_k),
+                                "value_update_shape": _tensor_shape(user_v),
+                                "key_cache_memory_config": (
+                                    _tensor_memory_config(layer_cache.k)
+                                ),
+                                "value_cache_memory_config": (
+                                    _tensor_memory_config(layer_cache.v)
+                                ),
+                            }}
+                        )
                     return kv_cache, {{
                         "layer_id": layer_id,
+                        "write_policy": "fill_cache_per_user",
+                        "filled_user_count": batch_user_count,
+                        "key_update_shape": key_shape,
+                        "value_update_shape": value_shape,
+                        "users": user_reports,
                         "key_cache_memory_config": _tensor_memory_config(
                             layer_cache.k
                         ),

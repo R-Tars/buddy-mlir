@@ -584,6 +584,82 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 [0, 1],
             )
 
+    def test_generated_prefill_cache_fill_slices_each_batch_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            model = generated.BuddyLlama31TTNN(
+                device=None,
+                parameters=_ns(),
+                config=_ns(batch_size=2),
+            )
+            kv_cache = [
+                _ns(
+                    k=_FakeTensor("key_cache", shape=(2, 2, 32, 4)),
+                    v=_FakeTensor("value_cache", shape=(2, 2, 32, 4)),
+                )
+            ]
+
+            _, report = model.fill_prefill_kv_cache(
+                0,
+                _FakeTensor("key_update", shape=(2, 2, 8, 4)),
+                _FakeTensor("value_update", shape=(2, 2, 8, 4)),
+                kv_cache,
+            )
+
+            self.assertEqual(report["write_policy"], "fill_cache_per_user")
+            self.assertEqual(report["filled_user_count"], 2)
+            self.assertEqual(
+                [user["user_id"] for user in report["users"]],
+                [0, 1],
+            )
+            self.assertEqual(
+                report["users"][0]["key_update_shape"],
+                [1, 2, 8, 4],
+            )
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls],
+                [
+                    "slice",
+                    "slice",
+                    "fill_cache",
+                    "fill_cache",
+                    "slice",
+                    "slice",
+                    "fill_cache",
+                    "fill_cache",
+                ],
+            )
+            fill_calls = [
+                call for call in fake_ttnn.calls if call["op"] == "fill_cache"
+            ]
+            self.assertEqual(
+                [call["kwargs"].get("user_id") for call in fill_calls],
+                [0, 0, 1, 1],
+            )
+
     def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
         self,
     ) -> None:
@@ -856,6 +932,40 @@ def _make_fake_ttnn_module():
             shape=tuple(logical_shape),
         )
 
+    def slice_tensor(tensor, starts, ends, steps=None):
+        shape = tuple(int(end) - int(start) for start, end in zip(starts, ends))
+        module.calls.append(
+            {
+                "op": "slice",
+                "tensor": getattr(tensor, "name", tensor),
+                "starts": list(starts),
+                "ends": list(ends),
+                "steps": list(steps) if steps is not None else None,
+            }
+        )
+        return _FakeTensor(
+            f"slice:{getattr(tensor, 'name', tensor)}:{starts[0]}",
+            getattr(tensor, "_mem_config", None),
+            shape=shape,
+        )
+
+    def fill_cache(cache, update, *args, **kwargs):
+        if args and "user_id" not in kwargs:
+            kwargs["user_id"] = args[0]
+        module.calls.append(
+            {
+                "op": "fill_cache",
+                "cache": getattr(cache, "name", cache),
+                "update": getattr(update, "name", update),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(
+            getattr(cache, "name", "cache"),
+            getattr(cache, "_mem_config", None),
+            shape=getattr(cache, "shape", None),
+        )
+
     def nlp_create_qkv_heads_decode(qkv, **kwargs):
         module.calls.append(
             {
@@ -911,10 +1021,12 @@ def _make_fake_ttnn_module():
     module.argmax = argmax
     module.squeeze = squeeze
     module.reshape = reshape
+    module.slice = slice_tensor
     module.experimental = _ns(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )
+    module.kv_cache = _ns(fill_cache_for_user_=fill_cache)
     module.transformer = _ns(
         paged_scaled_dot_product_attention_decode=(
             paged_scaled_dot_product_attention_decode

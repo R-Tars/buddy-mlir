@@ -189,6 +189,14 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertEqual(report["prefill"]["status"], "passed")
             self.assertEqual(report["prefill"]["cache_population"][0]["status"], "filled")
+            self.assertEqual(
+                report["prefill"]["cache_population"][0]["write_policy"],
+                "fill_cache_per_user",
+            )
+            self.assertEqual(
+                report["prefill"]["cache_population"][0]["filled_user_count"],
+                2,
+            )
             self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["runtime_context"]["status"], "built")
             self.assertTrue(report["runtime_context"]["generated_model_initialized"])
@@ -308,6 +316,7 @@ class GenerateTest(unittest.TestCase):
             ops = [call["op"] for call in fake_ttnn.calls]
             self.assertIn("scaled_dot_product_attention", ops)
             self.assertIn("fill_cache", ops)
+            self.assertEqual(ops.count("fill_cache"), 4)
             self.assertIn("paged_scaled_dot_product_attention_decode", ops)
             self.assertEqual(json.loads(report_json.read_text()), report)
 

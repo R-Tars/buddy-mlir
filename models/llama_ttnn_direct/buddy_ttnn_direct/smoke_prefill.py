@@ -609,7 +609,8 @@ def _prefill_plan(
             "physical_shape": kv_cache_shape,
             "logical_shape": [batch_size, cache_len, num_kv_heads, head_dim],
             "source": "prefill",
-            "write_policy": "fill_cache",
+            "write_policy": "fill_cache_per_user",
+            "planned_user_count": batch_size,
         },
         "tensor_conversion_count": 4 + len(lm_head_splits) + 12 * layers,
         "op_sequence": _prefill_op_sequence(layers),
@@ -782,7 +783,8 @@ def _planned_cache_population(plan: dict[str, Any]) -> list[dict[str, Any]]:
             "status": "planned",
             "key_cache_shape": plan["expected_output_shapes"]["key_cache"],
             "value_cache_shape": plan["expected_output_shapes"]["value_cache"],
-            "write_policy": "fill_cache",
+            "write_policy": "fill_cache_per_user",
+            "planned_user_count": plan["batch_size"],
         }
         for layer_id in range(int(plan["layers"]))
     ]
@@ -802,6 +804,7 @@ def _observed_cache_population(
     population = []
     for layer in output_shapes.get("kv_cache_layers", []):
         layer_id = int(layer["layer_id"])
+        generated_report = by_layer.get(layer_id, {})
         population.append(
             {
                 "layer_id": layer_id,
@@ -814,8 +817,16 @@ def _observed_cache_population(
                 "expected_value_cache_shape": plan["expected_output_shapes"][
                     "value_cache"
                 ],
-                "write_policy": "fill_cache",
-                "generated_report": by_layer.get(layer_id, {}),
+                "write_policy": generated_report.get(
+                    "write_policy",
+                    "fill_cache_per_user",
+                ),
+                "planned_user_count": plan["batch_size"],
+                "filled_user_count": generated_report.get(
+                    "filled_user_count"
+                ),
+                "users": generated_report.get("users", []),
+                "generated_report": generated_report,
             }
         )
     return population
