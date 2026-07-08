@@ -111,6 +111,7 @@ def main(argv=None):
             "prefill-smoke",
             "profile",
             "decode-loop",
+            "generate",
             "validate-real",
         ),
         default="inspect",
@@ -118,7 +119,8 @@ def main(argv=None):
             "inspect prints the planned op sequence; smoke/profile run the "
             "generated decode_step path; prefill-smoke runs generated "
             "prefill_prompt; decode-loop runs a multi-step prompt-owned "
-            "loop; validate-real chains real-weight materialize/smoke/"
+            "loop; generate runs prefill then decode with prefilled KV "
+            "cache; validate-real chains real-weight materialize/smoke/"
             "profile/autotune gates."
         ),
     )
@@ -127,8 +129,8 @@ def main(argv=None):
         action="store_true",
         help=(
             "For inspect, print the op sequence. For smoke/profile/"
-            "prefill-smoke/decode-loop/validate, write reports without "
-            "opening a TTNN device."
+            "prefill-smoke/decode-loop/generate/validate, write reports "
+            "without opening a TTNN device."
         ),
     )
     parser.add_argument("--model-path", type=Path, default=None)
@@ -303,6 +305,36 @@ def main(argv=None):
                 else args.decode_steps
             ),
             layers=args.layers,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        return _report_exit_code(report)
+
+    if args.mode == "generate":
+        _ensure_repo_import_path()
+        from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
+            run_generate,
+        )
+
+        report_path = args.out or program_dir / "generate_report.json"
+        report = run_generate(
+            out=report_path,
+            program_dir=program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            max_new_tokens=(
+                args.max_new_tokens
+                if args.max_new_tokens is not None
+                else args.decode_steps
+            ),
+            layers=args.layers,
+            prefill_len=args.prefill_len,
             device=args.device,
             device_id=args.device_id,
             batch_size=args.batch_size,
@@ -518,6 +550,19 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --layers 1 \
           --device p150a \
           --out /tmp/prompt_decode_loop_report.json
+        ```
+
+        Run prompt prefill followed by decode using prefilled KV cache:
+
+        ```bash
+        python run_decode.py --mode generate \
+          --model-path /path/to/Llama-3.1-8B-Instruct \
+          --prompt "Hello from TTNN Direct" \
+          --prefill-len 128 \
+          --max-new-tokens 8 \
+          --layers 1 \
+          --device p150a \
+          --out /tmp/generate_report.json
         ```
 
         Validate the real-weight path after providing a local HF model:

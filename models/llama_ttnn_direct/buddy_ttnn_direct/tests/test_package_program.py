@@ -82,6 +82,7 @@ class PackageProgramTest(unittest.TestCase):
                     "prefill-smoke",
                     "profile",
                     "decode-loop",
+                    "generate",
                     "validate-real",
                 ],
             )
@@ -95,6 +96,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertIn("python run_decode.py --mode smoke", package_readme)
             self.assertIn("prefill-smoke", package_readme)
             self.assertIn("decode-loop", package_readme)
+            self.assertIn("generate", package_readme)
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)
             self.assertIn("--require-model-end-to-end", package_readme)

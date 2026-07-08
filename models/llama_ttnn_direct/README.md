@@ -1358,8 +1358,49 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report sets `prefill_status`, `kv_cache_source=prefill`, and
 `cache_population[]` entries with expected and observed K/V cache shapes. This
-is still a prefill smoke test; the full `generate` path that consumes prefilled
-KV cache in decode-loop is the next step.
+is still a prefill smoke test.
+
+`generate` is the first prompt-conditioned wiring path. It tokenizes the
+prompt for prefill, runs `prefill_prompt()` to populate KV cache, materializes
+the last prefill token for the first decode input, then runs generated decode
+steps against the prefilled KV cache:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  generate \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
+  --prefill-len 128 \
+  --max-new-tokens 8 \
+  --layers 1 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/generate_report.json
+```
+
+For inspection without a device:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  generate \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --prefill-len 128 \
+  --max-new-tokens 8 \
+  --layers 1 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/generate_report.json
+```
+
+The report sets `mode=generate`, `prefill_status`, `kv_cache_source=prefill`,
+`decode_loop_runtime_owned`, `generated_token_ids`, and `generated_text`. This
+is a functional bring-up path, not a performance-parity result: the first
+version intentionally uses host-side token materialization between prefill and
+decode so the next optimization phase can remove that round trip explicitly.
 
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with

@@ -37,6 +37,38 @@ class PromptTokenization:
 
 
 @dataclass(frozen=True)
+class PrefillPromptTokenization:
+    prompt_sha256: str
+    prompt_char_count: int
+    tokenizer_path: str
+    original_token_count: int
+    effective_token_count: int
+    prefill_len: int
+    selected_token_id: int
+    batch_size: int
+    token_ids: list[list[int]]
+    padding_token_id: int
+    truncation: str
+
+    def to_report(self) -> dict[str, Any]:
+        return {
+            "status": "tokenized",
+            "source": "prompt_tokenizer_prefill",
+            "prompt_sha256": self.prompt_sha256,
+            "prompt_char_count": self.prompt_char_count,
+            "tokenizer_path": self.tokenizer_path,
+            "original_token_count": self.original_token_count,
+            "effective_token_count": self.effective_token_count,
+            "prefill_len": self.prefill_len,
+            "selected_token_id": self.selected_token_id,
+            "batch_size": self.batch_size,
+            "token_input_shape": [self.batch_size, self.prefill_len],
+            "padding_token_id": self.padding_token_id,
+            "truncation": self.truncation,
+        }
+
+
+@dataclass(frozen=True)
 class DecodeRuntimeState:
     batch_size: int
     cache_len: int
@@ -159,6 +191,63 @@ def tokenize_prompt_for_decode(
         selected_token_id=selected,
         batch_size=batch_size,
         token_ids=[[selected] for _ in range(batch_size)],
+    )
+
+
+def tokenize_prompt_for_prefill(
+    *,
+    prompt: str,
+    batch_size: int,
+    prefill_len: int,
+    tokenizer_path: str | Path,
+    vocab_size: int | None = None,
+    tokenizer_module: Any | None = None,
+) -> PrefillPromptTokenization:
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if prefill_len <= 0:
+        raise ValueError("prefill_len must be positive")
+    if prompt == "":
+        raise ValueError("prompt must be non-empty")
+
+    tokenizer_path = Path(tokenizer_path)
+    tokenizer = _load_tokenizer(tokenizer_path, tokenizer_module)
+    raw_token_ids = _encode_prompt(tokenizer, prompt)
+    if not raw_token_ids:
+        raise PromptTokenizationError("tokenizer returned no prompt token ids")
+
+    for token_id in raw_token_ids:
+        if int(token_id) < 0:
+            raise PromptTokenizationError(
+                f"tokenizer returned negative token id {token_id}"
+            )
+        if vocab_size is not None and int(token_id) >= int(vocab_size):
+            raise PromptTokenizationError(
+                f"token id {token_id} is outside vocab size {vocab_size}"
+            )
+
+    if len(raw_token_ids) > prefill_len:
+        effective = [int(token_id) for token_id in raw_token_ids[-prefill_len:]]
+        truncation = "left_truncated_to_prefill_len"
+    else:
+        effective = [int(token_id) for token_id in raw_token_ids]
+        truncation = "none"
+
+    pad_token_id = _tokenizer_pad_token_id(tokenizer)
+    padded = effective + [pad_token_id for _ in range(prefill_len - len(effective))]
+    selected = int(effective[-1])
+    return PrefillPromptTokenization(
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        prompt_char_count=len(prompt),
+        tokenizer_path=str(tokenizer_path),
+        original_token_count=len(raw_token_ids),
+        effective_token_count=len(effective),
+        prefill_len=prefill_len,
+        selected_token_id=selected,
+        batch_size=batch_size,
+        token_ids=[list(padded) for _ in range(batch_size)],
+        padding_token_id=pad_token_id,
+        truncation=truncation,
     )
 
 
@@ -331,6 +420,18 @@ def _load_tokenizer(tokenizer_path: Path, tokenizer_module: Any | None) -> Any:
             "AutoTokenizer must provide from_pretrained"
         )
     return from_pretrained(str(tokenizer_path))
+
+
+def _tokenizer_pad_token_id(tokenizer: Any) -> int:
+    for attr in ("pad_token_id", "eos_token_id", "bos_token_id"):
+        value = getattr(tokenizer, attr, None)
+        if value is None:
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 def _encode_prompt(tokenizer: Any, prompt: str) -> list[int]:

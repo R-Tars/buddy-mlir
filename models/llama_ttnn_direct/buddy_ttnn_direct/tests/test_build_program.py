@@ -169,6 +169,7 @@ class BuildProgramTest(unittest.TestCase):
             profile_report = root / "decode_step_profile_report.json"
             prefill_report = root / "prefill_smoke_report.json"
             loop_report = root / "prompt_decode_loop_report.json"
+            generate_report = root / "generate_report.json"
             preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
             official_json = root / "official_parity_config.json"
@@ -206,7 +207,9 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
             self.assertIn("--mode prefill-smoke", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
+            self.assertIn("--mode generate", program_readme)
             self.assertIn("--max-new-tokens 2", program_readme)
+            self.assertIn("--max-new-tokens 8", program_readme)
             self.assertIn("--require-model-end-to-end", program_readme)
             self.assertIn('--prompt "Hello from TTNN Direct"', program_readme)
 
@@ -338,6 +341,42 @@ class BuildProgramTest(unittest.TestCase):
                 "empty_initialized",
             )
             self.assertEqual(loop_payload["generated_text_status"], "not_run")
+
+            generate = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "generate",
+                    "--dry-run",
+                    "--max-new-tokens",
+                    "3",
+                    "--prefill-len",
+                    "8",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(generate_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            generate_summary = json.loads(generate.stdout)
+            self.assertEqual(generate_summary["status"], "dry_run")
+            self.assertEqual(generate_summary["report"], str(generate_report))
+            generate_payload = json.loads(generate_report.read_text())
+            self.assertEqual(generate_payload["template"], "prefill_then_decode_generate")
+            self.assertEqual(generate_payload["mode"], "generate")
+            self.assertEqual(generate_payload["prefill_status"], "dry_run")
+            self.assertEqual(generate_payload["kv_cache_source"], "prefill")
+            self.assertEqual(generate_payload["max_new_tokens"], 3)
+            self.assertEqual(generate_payload["decode_steps"], 2)
 
             preflight = subprocess.run(
                 [
