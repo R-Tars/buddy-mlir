@@ -170,6 +170,7 @@ class BuildProgramTest(unittest.TestCase):
             prefill_report = root / "prefill_smoke_report.json"
             loop_report = root / "prompt_decode_loop_report.json"
             generate_report = root / "generate_report.json"
+            profile_generate_report = root / "generate_profile_report.json"
             preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
             official_json = root / "official_parity_config.json"
@@ -208,6 +209,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--mode prefill-smoke", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
             self.assertIn("--mode generate", program_readme)
+            self.assertIn("--mode profile-generate", program_readme)
             self.assertIn("--max-new-tokens 2", program_readme)
             self.assertIn("--max-new-tokens 8", program_readme)
             self.assertIn("--require-model-end-to-end", program_readme)
@@ -377,6 +379,49 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(generate_payload["kv_cache_source"], "prefill")
             self.assertEqual(generate_payload["max_new_tokens"], 3)
             self.assertEqual(generate_payload["decode_steps"], 2)
+
+            profile_generate = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "profile-generate",
+                    "--dry-run",
+                    "--max-new-tokens",
+                    "3",
+                    "--prefill-len",
+                    "8",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(profile_generate_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            profile_generate_summary = json.loads(profile_generate.stdout)
+            self.assertEqual(profile_generate_summary["status"], "dry_run")
+            self.assertEqual(
+                profile_generate_summary["report"],
+                str(profile_generate_report),
+            )
+            profile_generate_payload = json.loads(
+                profile_generate_report.read_text()
+            )
+            self.assertEqual(
+                profile_generate_payload["template"],
+                "prefill_then_decode_generate_profile",
+            )
+            self.assertEqual(profile_generate_payload["mode"], "profile-generate")
+            self.assertFalse(
+                profile_generate_payload["official_performance_parity_claimed"]
+            )
 
             preflight = subprocess.run(
                 [

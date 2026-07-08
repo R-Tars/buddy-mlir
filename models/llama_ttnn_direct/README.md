@@ -1459,6 +1459,34 @@ The first generate implementation still materializes the last prefill token on
 host before decode; the persistent context prevents weight/KV reinitialization
 from being hidden inside that bring-up path.
 
+`profile-generate` is the first profile view for the prompt prefill plus decode
+path. It runs `generate`, preserves the underlying generate report, and emits
+latency/throughput fields without claiming official parity:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  profile-generate \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
+  --prefill-len 128 \
+  --max-new-tokens 8 \
+  --layers 1 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/generate_profile_report.json
+```
+
+The report includes `prefill_ms`, `decode_step_ms_mean`,
+`tokens_per_second_per_user`, `aggregate_tokens_per_second`, `sections`, and
+`per_layer`. Section-level timers such as `embedding_ms`, `attention_ms`,
+`mlp_ms`, `lm_head_ms`, and `argmax_ms` are explicitly marked unavailable until
+the generated model records finer-grained timers. The acceptance block only
+requires that the generated model can run and reports positive tokens/s/user in
+non-dry-run mode; `official_performance_parity_claimed=false`.
+
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report

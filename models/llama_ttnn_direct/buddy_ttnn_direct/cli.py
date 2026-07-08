@@ -45,7 +45,7 @@ from .search.generate_depth_sweep import run_generate_depth_sweep
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .decode_loop import run_prompt_decode_loop
-from .generate import run_generate
+from .generate import run_generate, run_profile_generate
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .smoke_decode_shell import run_smoke_decode_shell
 from .smoke_attention_primitive import (
@@ -944,6 +944,67 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output generate report JSON path.",
     )
     generate.set_defaults(func=_cmd_generate)
+
+    profile_generate = subparsers.add_parser(
+        "profile-generate",
+        help=(
+            "Run the prefill+decode generate path and emit first-pass "
+            "latency/throughput profile fields without claiming parity."
+        ),
+    )
+    profile_generate.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    profile_generate.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Local HF model directory. Required for non-dry-run execution.",
+    )
+    add_prompt_runtime_args(profile_generate)
+    profile_generate.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=2,
+        help="Total generated tokens to profile.",
+    )
+    profile_generate.add_argument(
+        "--prefill-len",
+        type=int,
+        default=None,
+        help="Fixed prompt length for prefill. Defaults to generated config.",
+    )
+    profile_generate.add_argument("--layers", type=int, default=1)
+    profile_generate.add_argument("--device", default="p150a")
+    profile_generate.add_argument("--device-id", type=int, default=0)
+    profile_generate.add_argument("--batch-size", type=int, default=None)
+    profile_generate.add_argument("--cache-len", type=int, default=None)
+    profile_generate.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    profile_generate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write profile/generate schemas without opening a TTNN device.",
+    )
+    profile_generate.add_argument(
+        "--generate-report",
+        type=Path,
+        default=None,
+        help="Optional path for the underlying generate report.",
+    )
+    profile_generate.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output generate profile report JSON path.",
+    )
+    profile_generate.set_defaults(func=_cmd_profile_generate)
 
     decode_depth_sweep = subparsers.add_parser(
         "decode-depth-sweep",
@@ -2023,6 +2084,31 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote generate report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_profile_generate(args: argparse.Namespace) -> int:
+    report = run_profile_generate(
+        out=args.out,
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        max_new_tokens=args.max_new_tokens,
+        layers=args.layers,
+        prefill_len=args.prefill_len,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+        generate_report=args.generate_report,
+    )
+    print(f"wrote generate profile report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

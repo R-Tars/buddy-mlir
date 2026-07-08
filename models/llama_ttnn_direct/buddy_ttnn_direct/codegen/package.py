@@ -56,6 +56,7 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
                 "profile",
                 "decode-loop",
                 "generate",
+                "profile-generate",
                 "validate-real",
             ],
             "dry_run_supported": True,
@@ -63,8 +64,8 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
             "notes": (
                 "buddy-cli runtime dispatch is intentionally not wired; use "
                 "run_decode.py for inspect, smoke, prefill smoke, profile, "
-                "prompt decode loop, generate, and real-weight validation "
-                "flows."
+                "prompt decode loop, generate, generate profile, and "
+                "real-weight validation flows."
             ),
         },
         "artifacts": {
@@ -139,6 +140,8 @@ python run_decode.py --mode decode-loop --dry-run \\
   --out /tmp/prompt_decode_loop.json
 python run_decode.py --mode generate --dry-run \\
   --prefill-len 128 --max-new-tokens 8 --out /tmp/generate.json
+python run_decode.py --mode profile-generate --dry-run \\
+  --prefill-len 128 --max-new-tokens 8 --out /tmp/generate_profile.json
 python run_decode.py --mode validate-real --dry-run --require-trace \\
   --prompt "Hello from TTNN Direct" \\
   --require-model-end-to-end \\

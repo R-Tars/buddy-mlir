@@ -932,6 +932,61 @@ def run_generate(
     return report
 
 
+def run_profile_generate(
+    *,
+    out: str | Path,
+    program_dir: str | Path,
+    model_path: str | Path | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    max_new_tokens: int = 2,
+    layers: int = 1,
+    prefill_len: int | None = None,
+    device: str,
+    device_id: int = 0,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    dtype_seed: str = "bf16",
+    dry_run: bool = False,
+    generate_report: str | Path | None = None,
+    ttnn_module: Any | None = None,
+    torch_module: Any | None = None,
+    tokenizer_module: Any | None = None,
+) -> dict[str, Any]:
+    profile_path = Path(out)
+    generate_report_path = (
+        Path(generate_report)
+        if generate_report is not None
+        else _default_generate_report_path(profile_path)
+    )
+    generate_payload = run_generate(
+        out=generate_report_path,
+        program_dir=program_dir,
+        model_path=model_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
+        max_new_tokens=max_new_tokens,
+        layers=layers,
+        prefill_len=prefill_len,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        dry_run=dry_run,
+        ttnn_module=ttnn_module,
+        torch_module=torch_module,
+        tokenizer_module=tokenizer_module,
+    )
+    report = _profile_generate_from_generate_report(
+        generate_payload,
+        profile_path=profile_path,
+        generate_report_path=generate_report_path,
+    )
+    _write_report(profile_path, report)
+    return report
+
+
 def _build_generate_state(
     *,
     ttnn: Any,
@@ -1384,6 +1439,199 @@ def _generate_throughput_summary(
         }
     )
     return summary
+
+
+def _profile_generate_from_generate_report(
+    generate: dict[str, Any],
+    *,
+    profile_path: Path,
+    generate_report_path: Path,
+) -> dict[str, Any]:
+    throughput = generate.get("throughput_summary") or {}
+    step_latencies = [
+        latency
+        for latency in (
+            _float_or_none(step.get("latency_ms"))
+            for step in generate.get("step_reports", [])
+        )
+        if latency is not None
+    ]
+    prefill_ms = _float_or_none((generate.get("prefill") or {}).get("latency_ms"))
+    decode_total_ms = sum(step_latencies) if step_latencies else None
+    decode_step_ms_mean = (
+        decode_total_ms / len(step_latencies)
+        if decode_total_ms is not None and step_latencies
+        else None
+    )
+    tokens_per_second_per_user = _float_or_none(
+        throughput.get("tokens_per_second_per_user")
+    )
+    aggregate_tokens_per_second = _float_or_none(
+        throughput.get("aggregate_tokens_per_second")
+    )
+    dry_run = generate.get("status") == "dry_run"
+    generate_ran = bool(generate.get("passed"))
+    has_positive_throughput = (
+        tokens_per_second_per_user is not None
+        and tokens_per_second_per_user > 0.0
+    )
+    acceptance = _profile_generate_acceptance(
+        dry_run=dry_run,
+        generate_ran=generate_ran,
+        has_positive_throughput=has_positive_throughput,
+    )
+    if dry_run:
+        status = "dry_run"
+    elif acceptance["passed"]:
+        status = "profiled"
+    else:
+        status = generate.get("status") or "profile_incomplete"
+
+    return {
+        "schema_version": 1,
+        "command": "profile-generate",
+        "mode": "profile-generate",
+        "template": "prefill_then_decode_generate_profile",
+        "status": status,
+        "passed": bool(acceptance["passed"]),
+        "dry_run": dry_run,
+        "program_dir": generate.get("program_dir"),
+        "generate_report": str(generate_report_path),
+        "profile_report": str(profile_path),
+        "generate_status": generate.get("status"),
+        "generate_passed": bool(generate.get("passed")),
+        "layers": generate.get("layers"),
+        "batch_size": generate.get("batch_size"),
+        "prefill_len": generate.get("prefill_len"),
+        "cache_len": generate.get("cache_len"),
+        "max_new_tokens": generate.get("max_new_tokens"),
+        "decode_steps": generate.get("decode_steps"),
+        "prefill_status": generate.get("prefill_status"),
+        "kv_cache_source": generate.get("kv_cache_source"),
+        "runtime_context": generate.get("runtime_context"),
+        "parameter_setup": generate.get("parameter_setup"),
+        "generated_text_status": generate.get("generated_text_status"),
+        "generated_token_count_by_user": _generated_token_counts(generate),
+        "latency_ms": _float_or_none(generate.get("latency_ms")),
+        "prefill_ms": prefill_ms,
+        "decode_step_ms_mean": decode_step_ms_mean,
+        "decode_step_ms_min": min(step_latencies) if step_latencies else None,
+        "decode_step_ms_max": max(step_latencies) if step_latencies else None,
+        "decode_step_ms_samples": step_latencies,
+        "tokens_per_second_per_user": tokens_per_second_per_user,
+        "aggregate_tokens_per_second": aggregate_tokens_per_second,
+        "throughput_summary": throughput,
+        "sections": _profile_generate_sections(
+            prefill_ms=prefill_ms,
+            decode_total_ms=decode_total_ms,
+            decode_step_ms_mean=decode_step_ms_mean,
+        ),
+        "per_layer": _profile_generate_per_layer(generate),
+        "acceptance": acceptance,
+        "official_performance_parity_claimed": False,
+        "message": (
+            "First generate profile only; no official performance parity is "
+            "claimed."
+        ),
+        "error": None if acceptance["passed"] else generate.get("error"),
+        "ttnn_environment": generate.get("ttnn_environment"),
+    }
+
+
+def _profile_generate_sections(
+    *,
+    prefill_ms: float | None,
+    decode_total_ms: float | None,
+    decode_step_ms_mean: float | None,
+) -> dict[str, Any]:
+    unavailable = {
+        "status": "unavailable",
+        "value_ms": None,
+        "reason": "generate path does not yet collect section-level timers",
+    }
+    return {
+        "prefill_ms": prefill_ms,
+        "decode_total_ms": decode_total_ms,
+        "decode_step_ms_mean": decode_step_ms_mean,
+        "embedding_ms": dict(unavailable),
+        "prefill_attention_ms": dict(unavailable),
+        "decode_attention_ms": dict(unavailable),
+        "mlp_ms": dict(unavailable),
+        "lm_head_ms": dict(unavailable),
+        "argmax_ms": dict(unavailable),
+        "host_copy_ms": {
+            "status": "unmeasured",
+            "value_ms": None,
+            "host_roundtrip_present": True,
+            "reason": (
+                "first generate implementation materializes the prefill token "
+                "on host, but does not time the copy separately"
+            ),
+        },
+    }
+
+
+def _profile_generate_per_layer(generate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "layers": generate.get("layers"),
+        "attention_ms": None,
+        "mlp_ms": None,
+        "reason": (
+            "profile-generate currently reports whole prefill and decode-step "
+            "timings; per-layer attribution is the next profiling refinement"
+        ),
+    }
+
+
+def _profile_generate_acceptance(
+    *,
+    dry_run: bool,
+    generate_ran: bool,
+    has_positive_throughput: bool,
+) -> dict[str, Any]:
+    checks = [
+        {
+            "name": "profile_generate.full_generated_model_can_run",
+            "passed": bool(dry_run or generate_ran),
+            "dry_run": dry_run,
+        },
+        {
+            "name": "profile_generate.tokens_per_second_per_user_positive",
+            "passed": bool(dry_run or has_positive_throughput),
+            "dry_run": dry_run,
+        },
+        {
+            "name": "profile_generate.no_official_parity_claim",
+            "passed": True,
+        },
+    ]
+    return {
+        "passed": all(check["passed"] for check in checks),
+        "checks": checks,
+        "failed_checks": [
+            check["name"] for check in checks if not check["passed"]
+        ],
+    }
+
+
+def _generated_token_counts(generate: dict[str, Any]) -> list[int]:
+    rows = generate.get("generated_token_ids") or []
+    return [len(row) for row in rows if isinstance(row, list)]
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _default_generate_report_path(out: Path) -> Path:
+    suffix = out.suffix or ".json"
+    return out.with_name(f"{out.stem}_generate{suffix}")
 
 
 class _maybe_generate_device:

@@ -83,6 +83,7 @@ class PackageProgramTest(unittest.TestCase):
                     "profile",
                     "decode-loop",
                     "generate",
+                    "profile-generate",
                     "validate-real",
                 ],
             )
@@ -97,6 +98,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertIn("prefill-smoke", package_readme)
             self.assertIn("decode-loop", package_readme)
             self.assertIn("generate", package_readme)
+            self.assertIn("profile-generate", package_readme)
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)
             self.assertIn("--require-model-end-to-end", package_readme)
