@@ -2883,4 +2883,25 @@ def _trace_report(
 def _write_report(out: str | Path, report: dict[str, Any]) -> None:
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_report = _json_safe_report_value(report)
+    report.clear()
+    report.update(safe_report)
     out_path.write_text(json.dumps(report, indent=2) + "\n")
+
+
+def _json_safe_report_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_report_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_report_value(item) for item in value]
+    return {
+        "type": type(value).__name__,
+        "repr": repr(value),
+    }

@@ -9,6 +9,7 @@ from pathlib import Path
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_single_layer_decode import (
     SINGLE_LAYER_DECODE_OPS,
+    _write_report,
     profile_decode_step,
     run_smoke_decode_step,
     run_smoke_single_layer_decode,
@@ -28,6 +29,34 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
 
 
 class SmokeSingleLayerDecodeTest(unittest.TestCase):
+    def test_write_report_sanitizes_runtime_objects(self) -> None:
+        class FakeMemoryConfig:
+            def __repr__(self) -> str:
+                return "FakeMemoryConfig(layout=HEIGHT_SHARDED)"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            report_path = Path(tmpdir) / "report.json"
+            report = {
+                "status": "pass",
+                "nested": {
+                    "memory_config": FakeMemoryConfig(),
+                    "items": [Path("/tmp/example"), FakeMemoryConfig()],
+                },
+            }
+
+            _write_report(report_path, report)
+
+            loaded = json.loads(report_path.read_text())
+            self.assertEqual(
+                loaded["nested"]["memory_config"]["type"],
+                "FakeMemoryConfig",
+            )
+            self.assertIn(
+                "HEIGHT_SHARDED",
+                loaded["nested"]["memory_config"]["repr"],
+            )
+            self.assertEqual(report, loaded)
+
     def test_cli_smoke_single_layer_decode_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

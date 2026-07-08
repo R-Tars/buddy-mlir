@@ -7879,10 +7879,13 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "attention_primitives.ttnn_version",
-            _non_empty_string(
-                attention_primitives_environment.get("version")
+            _ttnn_runtime_identity_available(
+                attention_primitives_environment
             ),
-            observed=attention_primitives_environment.get("version"),
+            observed=_ttnn_runtime_identity_observed(
+                attention_primitives_environment
+            ),
+            expected="non-empty version or importable source module path",
             required=True,
         ),
         _acceptance_check(
@@ -7987,8 +7990,11 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "attention_layer.ttnn_version",
-            _non_empty_string(attention_layer_environment.get("version")),
-            observed=attention_layer_environment.get("version"),
+            _ttnn_runtime_identity_available(attention_layer_environment),
+            observed=_ttnn_runtime_identity_observed(
+                attention_layer_environment
+            ),
+            expected="non-empty version or importable source module path",
             required=True,
         ),
         _acceptance_check(
@@ -8146,8 +8152,11 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "single_layer_decode.ttnn_version",
-            _non_empty_string(single_layer_environment.get("version")),
-            observed=single_layer_environment.get("version"),
+            _ttnn_runtime_identity_available(single_layer_environment),
+            observed=_ttnn_runtime_identity_observed(
+                single_layer_environment
+            ),
+            expected="non-empty version or importable source module path",
             required=True,
         ),
         _acceptance_check(
@@ -8386,8 +8395,9 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "smoke_decode_step.ttnn_version",
-            _non_empty_string(smoke_environment.get("version")),
-            observed=smoke_environment.get("version"),
+            _ttnn_runtime_identity_available(smoke_environment),
+            observed=_ttnn_runtime_identity_observed(smoke_environment),
+            expected="non-empty version or importable source module path",
             required=True,
         ),
         _acceptance_check(
@@ -8622,8 +8632,9 @@ def _real_decode_acceptance(
         ),
         _acceptance_check(
             "profile_decode_step.ttnn_version",
-            _non_empty_string(profile_environment.get("version")),
-            observed=profile_environment.get("version"),
+            _ttnn_runtime_identity_available(profile_environment),
+            observed=_ttnn_runtime_identity_observed(profile_environment),
+            expected="non-empty version or importable source module path",
             required=True,
         ),
         _acceptance_check(
@@ -11495,7 +11506,7 @@ def _attention_primitive_reports_complete(
             return False
         if environment.get("module_available") is not True:
             return False
-        if not _non_empty_string(environment.get("version")):
+        if not _ttnn_runtime_identity_available(environment):
             return False
         if not _non_empty_string(environment.get("tt_metal_git_commit")):
             return False
@@ -11532,6 +11543,9 @@ def _attention_primitive_reports_observed(
                 "planned_ops": reference.get("planned_ops"),
                 "observed_ops": reference.get("observed_ops"),
                 "ttnn_version": environment.get("version")
+                if isinstance(environment, dict)
+                else None,
+                "ttnn_module_file": environment.get("module_file")
                 if isinstance(environment, dict)
                 else None,
                 "tt_metal_git_commit": environment.get(
@@ -11936,6 +11950,23 @@ def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:
 def _step_ttnn_environment(step: dict[str, Any]) -> dict[str, Any]:
     environment = step.get("ttnn_environment") or {}
     return environment if isinstance(environment, dict) else {}
+
+
+def _ttnn_runtime_identity_available(environment: Any) -> bool:
+    if not isinstance(environment, dict):
+        return False
+    return _non_empty_string(environment.get("version")) or _non_empty_string(
+        environment.get("module_file")
+    )
+
+
+def _ttnn_runtime_identity_observed(environment: Any) -> dict[str, Any]:
+    if not isinstance(environment, dict):
+        return {}
+    return {
+        "version": environment.get("version"),
+        "module_file": environment.get("module_file"),
+    }
 
 
 def _step_trace_summary(step: dict[str, Any]) -> dict[str, Any]:

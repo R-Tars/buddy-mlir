@@ -2730,6 +2730,7 @@ class ValidateDirectTest(unittest.TestCase):
                 "profile_decode_step.section_latency_ms",
                 acceptance_check_names,
             )
+
             self.assertIn(
                 "profile_decode_step.layer_profile_count",
                 acceptance_check_names,
@@ -4211,6 +4212,87 @@ class ValidateDirectTest(unittest.TestCase):
                     "best_candidate_summary"
                 ]["reference_status"],
                 "passed",
+            )
+
+    def test_validate_real_decode_accepts_source_ttnn_without_version(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn()
+            delattr(fake_ttnn, "__version__")
+            fake_ttnn.__file__ = "/fake/ttnn/__init__.py"
+            with _fake_torch_and_safetensors():
+                report = validate_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out_dir=out_dir,
+                    layers=1,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    skip_autotune=True,
+                    min_tokens_per_second_per_user=0.0,
+                    ttnn_module=fake_ttnn,
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "pass")
+            version_checks = {
+                check["name"]: check
+                for check in report["acceptance"]["checks"]
+                if check["name"].endswith(".ttnn_version")
+            }
+            self.assertEqual(
+                sorted(version_checks),
+                [
+                    "attention_layer.ttnn_version",
+                    "attention_primitives.ttnn_version",
+                    "profile_decode_step.ttnn_version",
+                    "single_layer_decode.ttnn_version",
+                    "smoke_decode_step.ttnn_version",
+                ],
+            )
+            for check in version_checks.values():
+                self.assertTrue(check["passed"])
+                self.assertEqual(check["observed"]["version"], None)
+                self.assertEqual(
+                    check["observed"]["module_file"],
+                    "/fake/ttnn/__init__.py",
+                )
+                self.assertEqual(
+                    check["expected"],
+                    "non-empty version or importable source module path",
+                )
+            self.assertEqual(
+                [
+                    check["name"]
+                    for check in report["acceptance"]["checks"]
+                    if not check["passed"]
+                ],
+                [],
             )
 
     def test_validate_real_decode_uses_prompt_runtime_token_ids(self) -> None:
