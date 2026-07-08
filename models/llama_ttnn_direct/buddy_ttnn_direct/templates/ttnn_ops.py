@@ -49,6 +49,34 @@ def nlp_create_qkv_heads_decode(
     return op(fused_qkv, **kwargs)
 
 
+def split_qkv_heads_prefill(
+    ttnn_module: Any,
+    fused_qkv: Any,
+    *,
+    num_heads: int,
+    num_kv_heads: int,
+    memory_config: Any | None = None,
+) -> tuple[Any, Any, Any]:
+    # Typical TTNN prefill paths split fused QKV into [B, H, S, D] heads
+    # before causal SDPA. Keep resolution explicit so API drift is visible.
+    op_name = "split_query_key_value_and_split_heads"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("transformer", op_name),
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        memory_config=memory_config,
+    )
+    return op(fused_qkv, **kwargs)
+
+
 def rotary_embedding_decode(
     ttnn_module: Any,
     query: Any,
@@ -76,6 +104,26 @@ def rotary_embedding_decode(
     return (
         op(query, cos_matrix, sin_matrix, transformation_matrix, **kwargs),
         op(key, cos_matrix, sin_matrix, transformation_matrix, **kwargs),
+    )
+
+
+def rotary_embedding_prefill(
+    ttnn_module: Any,
+    query: Any,
+    key: Any,
+    *,
+    cos_matrix: Any,
+    sin_matrix: Any,
+    transformation_matrix: Any,
+) -> tuple[Any, Any]:
+    return rotary_embedding_decode(
+        ttnn_module,
+        query,
+        key,
+        cos_matrix=cos_matrix,
+        sin_matrix=sin_matrix,
+        transformation_matrix=transformation_matrix,
+        is_decode_mode=False,
     )
 
 
@@ -153,6 +201,62 @@ def paged_sdpa_decode(
     return op(query, key_cache, value_cache, **kwargs)
 
 
+def scaled_dot_product_attention(
+    ttnn_module: Any,
+    query: Any,
+    key: Any,
+    value: Any,
+    *,
+    is_causal: bool = True,
+    scale: float | None = None,
+    memory_config: Any | None = None,
+    program_config: Any | None = None,
+    compute_kernel_config: Any | None = None,
+    attention_mask: Any | None = None,
+) -> Any:
+    op_name = "scaled_dot_product_attention"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("transformer", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(
+        is_causal=is_causal,
+        scale=scale,
+        memory_config=memory_config,
+        program_config=program_config,
+        compute_kernel_config=compute_kernel_config,
+        attention_mask=attention_mask,
+    )
+    return op(query, key, value, **kwargs)
+
+
+def fill_cache(
+    ttnn_module: Any,
+    cache_tensor: Any,
+    update_tensor: Any,
+    *,
+    user_id: int = 0,
+    page_table: Any | None = None,
+) -> Any:
+    op_name = "fill_cache"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("kv_cache", "fill_cache_for_user_"),
+            ("kv_cache", op_name),
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(user_id=user_id, page_table=page_table)
+    return op(cache_tensor, update_tensor, **kwargs)
+
+
 def nlp_concat_heads_decode(
     ttnn_module: Any,
     attention: Any,
@@ -180,6 +284,26 @@ def nlp_concat_heads_decode(
         ),
     )
     return op(attention, num_heads=num_heads)
+
+
+def concat_heads_prefill(
+    ttnn_module: Any,
+    attention: Any,
+    *,
+    memory_config: Any | None = None,
+) -> Any:
+    op_name = "concatenate_heads"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("transformer", op_name),
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(memory_config=memory_config)
+    return op(attention, **kwargs)
 
 
 def _resolve_op(

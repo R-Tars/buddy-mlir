@@ -52,6 +52,7 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
             "runner_modes": [
                 "inspect",
                 "smoke",
+                "prefill-smoke",
                 "profile",
                 "decode-loop",
                 "validate-real",
@@ -60,8 +61,8 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
             "real_weight_validation_supported": True,
             "notes": (
                 "buddy-cli runtime dispatch is intentionally not wired; use "
-                "run_decode.py for inspect, smoke, profile, prompt decode "
-                "loop, and real-weight validation flows."
+                "run_decode.py for inspect, smoke, prefill smoke, profile, "
+                "prompt decode loop, and real-weight validation flows."
             ),
         },
         "artifacts": {
@@ -129,6 +130,8 @@ Python runner can inspect and exercise the generated decode path:
 ```bash
 python run_decode.py
 python run_decode.py --mode smoke --dry-run --out /tmp/decode_step_smoke.json
+python run_decode.py --mode prefill-smoke --dry-run \\
+  --prefill-len 128 --out /tmp/prefill_smoke.json
 python run_decode.py --mode profile --dry-run --out /tmp/decode_step_profile.json
 python run_decode.py --mode decode-loop --dry-run \\
   --out /tmp/prompt_decode_loop.json

@@ -79,6 +79,7 @@ class PackageProgramTest(unittest.TestCase):
                 [
                     "inspect",
                     "smoke",
+                    "prefill-smoke",
                     "profile",
                     "decode-loop",
                     "validate-real",
@@ -92,6 +93,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(manifest["num_layers"], 2)
             package_readme = (package_dir / "PACKAGE_README.md").read_text()
             self.assertIn("python run_decode.py --mode smoke", package_readme)
+            self.assertIn("prefill-smoke", package_readme)
             self.assertIn("decode-loop", package_readme)
             self.assertIn("validate-real", package_readme)
             self.assertIn("--require-trace", package_readme)

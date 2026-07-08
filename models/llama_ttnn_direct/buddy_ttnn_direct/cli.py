@@ -56,6 +56,7 @@ from .smoke_single_layer_decode import (
     run_smoke_decode_step,
     run_smoke_single_layer_decode,
 )
+from .smoke_prefill import run_smoke_prefill
 from .templates.registry import (
     build_execution_plan,
     dump_execution_plan,
@@ -604,6 +605,57 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output generated single-layer decode smoke report JSON path.",
     )
     smoke_single_layer_decode.set_defaults(func=_cmd_smoke_single_layer_decode)
+
+    smoke_prefill = subparsers.add_parser(
+        "smoke-prefill",
+        help=(
+            "Run or dry-run generated prefill_prompt for a fixed prompt "
+            "length and report KV cache population evidence."
+        ),
+    )
+    smoke_prefill.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    smoke_prefill.add_argument(
+        "--layers",
+        type=int,
+        default=1,
+        help="Number of generated decoder layers to execute.",
+    )
+    smoke_prefill.add_argument(
+        "--prefill-len",
+        type=int,
+        default=None,
+        help="Prompt length to prefill. Defaults to generated config.",
+    )
+    smoke_prefill.add_argument(
+        "--device",
+        default="p150a",
+        help="Target device label recorded in the smoke report.",
+    )
+    smoke_prefill.add_argument("--device-id", type=int, default=0)
+    smoke_prefill.add_argument("--batch-size", type=int, default=None)
+    smoke_prefill.add_argument("--cache-len", type=int, default=None)
+    smoke_prefill.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    smoke_prefill.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write the prefill report schema without opening a device.",
+    )
+    smoke_prefill.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output generated prefill smoke report JSON path.",
+    )
+    smoke_prefill.set_defaults(func=_cmd_smoke_prefill)
 
     smoke_decode_step = subparsers.add_parser(
         "smoke-decode-step",
@@ -1713,6 +1765,26 @@ def _cmd_smoke_single_layer_decode(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote single-layer decode smoke report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_smoke_prefill(args: argparse.Namespace) -> int:
+    report = run_smoke_prefill(
+        out=args.out,
+        program_dir=args.program_dir,
+        layers=args.layers,
+        prefill_len=args.prefill_len,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+    )
+    print(f"wrote prefill smoke report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

@@ -1324,8 +1324,45 @@ demo. The report includes `generated_token_ids`, `generated_text`,
 runtime plumbing artifact rather than prompt-conditioned full LLM inference.
 The next milestone is to add prefill and change `kv_cache_source` to `prefill`.
 
-`validate-real-decode` runs this step automatically when `--prompt` is
-provided. Without a prompt it is marked skipped; with
+`smoke-prefill` starts that prefill bring-up path. It exercises the generated
+`prefill_prompt()` method for a fixed prompt length, runs official-style
+prefill attention (`qkv linear -> split heads -> rotary -> causal SDPA ->
+fill_cache -> concat heads -> o_proj`), and records per-layer KV cache
+population evidence:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-prefill \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 1 \
+  --prefill-len 128 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/prefill_smoke_report.json
+```
+
+For inspection without a TTNN device:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  smoke-prefill \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --layers 1 \
+  --prefill-len 128 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/prefill_smoke_report.json
+```
+
+The report sets `prefill_status`, `kv_cache_source=prefill`, and
+`cache_population[]` entries with expected and observed K/V cache shapes. This
+is still a prefill smoke test; the full `generate` path that consumes prefilled
+KV cache in decode-loop is the next step.
+
+`validate-real-decode` runs the prompt decode loop step automatically when
+`--prompt` is provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report
 `decode_loop_runtime_owned=true`. The `--preflight-only` path fails early for
 `--require-model-end-to-end` if no non-empty prompt is present, and the

@@ -108,6 +108,7 @@ def main(argv=None):
         choices=(
             "inspect",
             "smoke",
+            "prefill-smoke",
             "profile",
             "decode-loop",
             "validate-real",
@@ -115,9 +116,10 @@ def main(argv=None):
         default="inspect",
         help=(
             "inspect prints the planned op sequence; smoke/profile run the "
-            "generated decode_step path; decode-loop runs a multi-step "
-            "prompt-owned loop; validate-real chains real-weight "
-            "materialize/smoke/profile/autotune gates."
+            "generated decode_step path; prefill-smoke runs generated "
+            "prefill_prompt; decode-loop runs a multi-step prompt-owned "
+            "loop; validate-real chains real-weight materialize/smoke/"
+            "profile/autotune gates."
         ),
     )
     parser.add_argument(
@@ -125,8 +127,8 @@ def main(argv=None):
         action="store_true",
         help=(
             "For inspect, print the op sequence. For smoke/profile/"
-            "decode-loop/validate, write reports without opening a TTNN "
-            "device."
+            "prefill-smoke/decode-loop/validate, write reports without "
+            "opening a TTNN device."
         ),
     )
     parser.add_argument("--model-path", type=Path, default=None)
@@ -135,6 +137,7 @@ def main(argv=None):
     parser.add_argument("--layers", type=int, default=1)
     parser.add_argument("--decode-steps", type=int, default=2)
     parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument("--prefill-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--cache-len", type=int, default=None)
     parser.add_argument("--device", default="p150a")
@@ -228,6 +231,28 @@ def main(argv=None):
             trace_iterations=args.trace_iterations,
             prompt=args.prompt,
             tokenizer_path=args.tokenizer_path,
+            dry_run=args.dry_run,
+        )
+        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        return _report_exit_code(report)
+
+    if args.mode == "prefill-smoke":
+        _ensure_repo_import_path()
+        from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_prefill import (
+            run_smoke_prefill,
+        )
+
+        report_path = args.out or program_dir / "prefill_smoke_report.json"
+        report = run_smoke_prefill(
+            out=report_path,
+            program_dir=program_dir,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
             dry_run=args.dry_run,
         )
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -466,6 +491,14 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         ```bash
         python run_decode.py --mode smoke --layers 1 --device p150a \
           --out /tmp/decode_step_smoke_report.json
+        ```
+
+        Run the generated prefill smoke path:
+
+        ```bash
+        python run_decode.py --mode prefill-smoke --layers 1 \
+          --prefill-len 128 --device p150a \
+          --out /tmp/prefill_smoke_report.json
         ```
 
         Profile the generated decode path by section:

@@ -31,11 +31,16 @@ CUSTOM_FUSED_REGION_TEMPLATES = {
     CUSTOM_FUSED_LM_HEAD_TEMPLATE,
 }
 
+OFFICIAL_PREFILL_ATTENTION_TEMPLATE = "official_prefill_attention"
+OFFICIAL_GATED_MLP_PREFILL_TEMPLATE = "official_gated_mlp_prefill"
+
 ALLOWED_ATTENTION_TEMPLATES = {"official_paged_attention_decode"}
+ALLOWED_PREFILL_ATTENTION_TEMPLATES = {OFFICIAL_PREFILL_ATTENTION_TEMPLATE}
 ALLOWED_MLP_TEMPLATES = {
     "official_gated_mlp_decode",
     CUSTOM_FUSED_MLP_TEMPLATE,
 }
+ALLOWED_PREFILL_MLP_TEMPLATES = {OFFICIAL_GATED_MLP_PREFILL_TEMPLATE}
 ALLOWED_LM_HEAD_TEMPLATES = {
     "official_split_lm_head",
     CUSTOM_FUSED_LM_HEAD_TEMPLATE,
@@ -81,7 +86,19 @@ def validate_template_config(config: dict[str, Any]) -> None:
         ALLOWED_ATTENTION_TEMPLATES,
         errors,
     )
+    _check_allowed(
+        config,
+        "prefill_attention_template",
+        ALLOWED_PREFILL_ATTENTION_TEMPLATES,
+        errors,
+    )
     _check_allowed(config, "mlp_template", ALLOWED_MLP_TEMPLATES, errors)
+    _check_allowed(
+        config,
+        "prefill_mlp_template",
+        ALLOWED_PREFILL_MLP_TEMPLATES,
+        errors,
+    )
     _check_allowed(
         config,
         "lm_head_template",
@@ -115,20 +132,42 @@ def build_execution_plan(
     validate_template_config(config)
     _validate_graph_config_compatibility(graph, config)
 
-    layer_templates = [
-        {
-            "layer_id": layer.layer_id,
-            "templates": [
-                "rmsnorm",
-                config["attention_template"],
-                "residual_add",
-                "rmsnorm",
-                config["mlp_template"],
-                "residual_add",
-            ],
-        }
-        for layer in graph.layers
-    ]
+    if graph.mode == "prefill":
+        layer_templates = [
+            {
+                "layer_id": layer.layer_id,
+                "templates": [
+                    "rmsnorm",
+                    config.get(
+                        "prefill_attention_template",
+                        OFFICIAL_PREFILL_ATTENTION_TEMPLATE,
+                    ),
+                    "residual_add",
+                    "rmsnorm",
+                    config.get(
+                        "prefill_mlp_template",
+                        OFFICIAL_GATED_MLP_PREFILL_TEMPLATE,
+                    ),
+                    "residual_add",
+                ],
+            }
+            for layer in graph.layers
+        ]
+    else:
+        layer_templates = [
+            {
+                "layer_id": layer.layer_id,
+                "templates": [
+                    "rmsnorm",
+                    config["attention_template"],
+                    "residual_add",
+                    "rmsnorm",
+                    config["mlp_template"],
+                    "residual_add",
+                ],
+            }
+            for layer in graph.layers
+        ]
 
     return {
         "schema_version": 1,
@@ -150,6 +189,15 @@ def build_execution_plan(
             "dtype_recipe": config["dtype_recipe"],
             "kv_cache_template": config["kv_cache_template"],
             "lm_head_split_count": int(config["lm_head_split_count"]),
+            "prefill_seq_len": int(config["prefill_seq_len"]),
+            "prefill_attention_template": config.get(
+                "prefill_attention_template",
+                OFFICIAL_PREFILL_ATTENTION_TEMPLATE,
+            ),
+            "prefill_mlp_template": config.get(
+                "prefill_mlp_template",
+                OFFICIAL_GATED_MLP_PREFILL_TEMPLATE,
+            ),
         },
         "layers": layer_templates,
         "final": [
@@ -201,17 +249,25 @@ def _validate_graph_config_compatibility(
     graph: LlamaModelGraph, config: dict[str, Any]
 ) -> None:
     errors: list[str] = []
-    if graph.mode != "decode":
-        errors.append("Phase 2 template planning only supports decode graphs")
+    if graph.mode not in {"decode", "prefill"}:
+        errors.append("template planning only supports decode or prefill graphs")
     if graph.batch_size != int(config["batch_size"]):
         errors.append(
             "batch_size mismatch: "
             f"semantic={graph.batch_size}, config={config['batch_size']}"
         )
-    if graph.seq_len != int(config["decode_seq_len"]):
+    expected_seq_len = (
+        int(config["prefill_seq_len"])
+        if graph.mode == "prefill"
+        else int(config["decode_seq_len"])
+    )
+    seq_len_name = (
+        "prefill_seq_len" if graph.mode == "prefill" else "decode_seq_len"
+    )
+    if graph.seq_len != expected_seq_len:
         errors.append(
-            "decode_seq_len mismatch: "
-            f"semantic={graph.seq_len}, config={config['decode_seq_len']}"
+            f"{seq_len_name} mismatch: "
+            f"semantic={graph.seq_len}, config={expected_seq_len}"
         )
     if graph.max_cache_len != int(config["max_cache_len"]):
         errors.append(

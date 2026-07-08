@@ -165,6 +165,53 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             ],
         )
 
+    def test_prefill_wrappers_call_transformer_and_cache_apis(self) -> None:
+        fake = _fake_ttnn()
+
+        q, k, v = ttnn_ops.split_qkv_heads_prefill(
+            fake,
+            "fused_qkv",
+            num_heads=32,
+            num_kv_heads=8,
+            memory_config="heads_mem",
+        )
+        q, k = ttnn_ops.rotary_embedding_prefill(
+            fake,
+            q,
+            k,
+            cos_matrix="cos",
+            sin_matrix="sin",
+            transformation_matrix="trans",
+        )
+        attn = ttnn_ops.scaled_dot_product_attention(
+            fake,
+            q,
+            k,
+            v,
+            scale=0.125,
+            memory_config="sdpa_mem",
+        )
+        cache = ttnn_ops.fill_cache(fake, "cache", "key", user_id=0)
+        out = ttnn_ops.concat_heads_prefill(fake, attn)
+
+        self.assertEqual((q, k, v), ("rotary:q_prefill", "rotary:k_prefill", "v_prefill"))
+        self.assertEqual(cache, "filled:cache")
+        self.assertEqual(out, "concat_prefill:prefill_attn")
+        self.assertIn(
+            (
+                "scaled_dot_product_attention",
+                "rotary:q_prefill",
+                "rotary:k_prefill",
+                "v_prefill",
+                {
+                    "is_causal": True,
+                    "scale": 0.125,
+                    "memory_config": "sdpa_mem",
+                },
+            ),
+            fake.calls,
+        )
+
     def test_missing_api_raises_clear_unsupported_error(self) -> None:
         with self.assertRaises(UnsupportedTTNNOp) as ctx:
             ttnn_ops.paged_sdpa_decode(
@@ -258,6 +305,38 @@ def _fake_ttnn():
         )
         return f"sdpa:{query}"
 
+    def split_query_key_value_and_split_heads(fused_qkv, **kwargs):
+        module.calls.append(
+            (
+                "split_query_key_value_and_split_heads",
+                fused_qkv,
+                dict(kwargs),
+            )
+        )
+        return "q_prefill", "k_prefill", "v_prefill"
+
+    def scaled_dot_product_attention(query, key, value, **kwargs):
+        module.calls.append(
+            (
+                "scaled_dot_product_attention",
+                query,
+                key,
+                value,
+                dict(kwargs),
+            )
+        )
+        return "prefill_attn"
+
+    def fill_cache(cache_tensor, update_tensor, **kwargs):
+        module.calls.append(
+            ("fill_cache", cache_tensor, update_tensor, dict(kwargs))
+        )
+        return f"filled:{cache_tensor}"
+
+    def concatenate_heads(attention, **kwargs):
+        module.calls.append(("concatenate_heads", attention, dict(kwargs)))
+        return f"concat_prefill:{attention}"
+
     def to_memory_config(tensor, **kwargs):
         module.calls.append(("to_memory_config", tensor, dict(kwargs)))
         return f"mem:{tensor}"
@@ -277,8 +356,14 @@ def _fake_ttnn():
     module.transformer = types.SimpleNamespace(
         paged_scaled_dot_product_attention_decode=(
             paged_scaled_dot_product_attention_decode
-        )
+        ),
+        split_query_key_value_and_split_heads=(
+            split_query_key_value_and_split_heads
+        ),
+        scaled_dot_product_attention=scaled_dot_product_attention,
+        concatenate_heads=concatenate_heads,
     )
+    module.kv_cache = types.SimpleNamespace(fill_cache_for_user_=fill_cache)
     module.to_memory_config = to_memory_config
     return module
 

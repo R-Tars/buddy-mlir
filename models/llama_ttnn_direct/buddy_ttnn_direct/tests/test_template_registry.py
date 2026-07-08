@@ -45,6 +45,31 @@ def _fake_graph(num_layers: int = 3):
     )
 
 
+def _fake_prefill_graph(num_layers: int = 2):
+    config = {
+        "_name_or_path": "fake-llama-prefill-plan",
+        "model_type": "llama",
+        "num_hidden_layers": num_layers,
+        "hidden_size": 16,
+        "intermediate_size": 32,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "vocab_size": 128,
+        "rms_norm_eps": 1e-5,
+        "rope_theta": 500000.0,
+        "tie_word_embeddings": False,
+    }
+    return import_hf_llama(
+        "/tmp/fake-llama-prefill-plan",
+        config=config,
+        state_dict_metadata=[],
+        mode="prefill",
+        batch_size=32,
+        seq_len=128,
+        max_cache_len=1024,
+    )
+
+
 def _seed_config() -> dict[str, object]:
     return {
         "device": "p150a",
@@ -98,6 +123,27 @@ class TemplateRegistryTest(unittest.TestCase):
         )
         self.assertEqual(
             plan["template_config"]["lm_head_split_count"], 8
+        )
+
+    def test_build_execution_plan_supports_prefill_graph(self) -> None:
+        plan = build_execution_plan(_fake_prefill_graph(), _seed_config())
+
+        self.assertEqual(plan["mode"], "prefill")
+        self.assertEqual(plan["seq_len"], 128)
+        self.assertEqual(
+            plan["layers"][0]["templates"],
+            [
+                "rmsnorm",
+                "official_prefill_attention",
+                "residual_add",
+                "rmsnorm",
+                "official_gated_mlp_prefill",
+                "residual_add",
+            ],
+        )
+        self.assertEqual(
+            plan["template_config"]["prefill_attention_template"],
+            "official_prefill_attention",
         )
 
     def test_cli_plan_dumps_execution_plan(self) -> None:

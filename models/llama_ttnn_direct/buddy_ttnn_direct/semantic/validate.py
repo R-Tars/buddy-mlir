@@ -50,6 +50,18 @@ def validate_llama_graph(graph: LlamaModelGraph) -> None:
             errors.append(
                 f"attention layer id mismatch in layer {layer.layer_id}"
             )
+        attention_mask = getattr(layer.attention, "attention_mask", None)
+        if graph.mode == "prefill" and attention_mask != "causal":
+            errors.append(
+                f"prefill attention in layer {layer.layer_id} must use "
+                "causal attention_mask"
+            )
+        if graph.mode == "prefill" and not getattr(
+            layer.attention, "fills_kv_cache", False
+        ):
+            errors.append(
+                f"prefill attention in layer {layer.layer_id} must fill KV cache"
+            )
         if layer.mlp.layer_id != layer.layer_id:
             errors.append(f"mlp layer id mismatch in layer {layer.layer_id}")
         if layer.mlp.activation != "silu":

@@ -93,6 +93,9 @@ class BuildProgramTest(unittest.TestCase):
                 "ttnn_ops.paged_update_cache",
                 source,
             )
+            self.assertIn("def prefill_prompt", source)
+            self.assertIn("ttnn_ops.scaled_dot_product_attention", source)
+            self.assertIn("ttnn_ops.fill_cache", source)
 
     def test_generated_run_decode_dry_run_prints_per_layer_ops(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -164,6 +167,7 @@ class BuildProgramTest(unittest.TestCase):
             out_dir = root / "program"
             smoke_report = root / "decode_step_smoke_report.json"
             profile_report = root / "decode_step_profile_report.json"
+            prefill_report = root / "prefill_smoke_report.json"
             loop_report = root / "prompt_decode_loop_report.json"
             preflight_dir = root / "real_decode_preflight"
             validate_dir = root / "real_decode_validation"
@@ -200,6 +204,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
             self.assertIn("--metric tokens_per_second_per_user", program_readme)
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
+            self.assertIn("--mode prefill-smoke", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
             self.assertIn("--max-new-tokens 2", program_readme)
             self.assertIn("--require-model-end-to-end", program_readme)
@@ -262,6 +267,37 @@ class BuildProgramTest(unittest.TestCase):
                 json.loads(profile_report.read_text())["template"],
                 "generated_decode_step_profile",
             )
+
+            prefill = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "prefill-smoke",
+                    "--dry-run",
+                    "--layers",
+                    "1",
+                    "--prefill-len",
+                    "8",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--out",
+                    str(prefill_report),
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            prefill_summary = json.loads(prefill.stdout)
+            self.assertEqual(prefill_summary["status"], "dry_run")
+            self.assertEqual(prefill_summary["report"], str(prefill_report))
+            prefill_payload = json.loads(prefill_report.read_text())
+            self.assertEqual(prefill_payload["template"], "prefill_smoke")
+            self.assertEqual(prefill_payload["prefill_status"], "dry_run")
+            self.assertEqual(prefill_payload["kv_cache_source"], "prefill")
 
             loop = subprocess.run(
                 [

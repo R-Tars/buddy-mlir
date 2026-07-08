@@ -30,9 +30,9 @@ class LlamaModelGraph:
 class LlamaLayerNode:
     layer_id: int
     input_norm: "RMSNormNode"
-    attention: "AttentionDecodeNode"
+    attention: "AttentionDecodeNode | AttentionPrefillNode"
     post_attention_norm: "RMSNormNode"
-    mlp: "GatedMLPNode"
+    mlp: "GatedMLPNode | GatedMLPPrefillNode"
 
 
 @dataclass
@@ -49,12 +49,45 @@ class AttentionDecodeNode:
 
 
 @dataclass
+class AttentionPrefillNode:
+    layer_id: int
+    q_proj: str
+    k_proj: str
+    v_proj: str
+    o_proj: str
+    num_heads: int
+    num_kv_heads: int
+    head_dim: int
+    uses_paged_kv_cache: bool
+    fills_kv_cache: bool
+    attention_mask: str
+
+
+@dataclass
 class GatedMLPNode:
     layer_id: int
     gate_proj: str
     up_proj: str
     down_proj: str
     activation: str
+
+
+@dataclass
+class GatedMLPPrefillNode:
+    layer_id: int
+    gate_proj: str
+    up_proj: str
+    down_proj: str
+    activation: str
+
+
+@dataclass
+class PrefillRuntimeState:
+    batch_size: int
+    prompt_len: int
+    max_cache_len: int
+    kv_cache_source: str
+    cache_write_policy: str
 
 
 @dataclass
@@ -79,11 +112,11 @@ def graph_from_dict(data: dict[str, Any]) -> LlamaModelGraph:
         LlamaLayerNode(
             layer_id=layer["layer_id"],
             input_norm=RMSNormNode(**layer["input_norm"]),
-            attention=AttentionDecodeNode(**layer["attention"]),
+            attention=_attention_from_dict(layer["attention"]),
             post_attention_norm=RMSNormNode(
                 **layer["post_attention_norm"]
             ),
-            mlp=GatedMLPNode(**layer["mlp"]),
+            mlp=_mlp_from_dict(layer["mlp"], data.get("mode")),
         )
         for layer in data["layers"]
     ]
@@ -107,3 +140,20 @@ def graph_from_dict(data: dict[str, Any]) -> LlamaModelGraph:
         max_cache_len=data["max_cache_len"],
         generation_mode=data["generation_mode"],
     )
+
+
+def _attention_from_dict(
+    data: dict[str, Any],
+) -> AttentionDecodeNode | AttentionPrefillNode:
+    if "fills_kv_cache" in data or "attention_mask" in data:
+        return AttentionPrefillNode(**data)
+    return AttentionDecodeNode(**data)
+
+
+def _mlp_from_dict(
+    data: dict[str, Any],
+    mode: str | None,
+) -> GatedMLPNode | GatedMLPPrefillNode:
+    if mode == "prefill":
+        return GatedMLPPrefillNode(**data)
+    return GatedMLPNode(**data)

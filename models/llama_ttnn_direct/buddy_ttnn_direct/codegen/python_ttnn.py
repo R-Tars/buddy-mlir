@@ -15,6 +15,9 @@ from .artifacts import (
 from ..templates.attention_decode import (
     official_paged_attention_decode_op_sequence,
 )
+from ..templates.attention_prefill import (
+    official_prefill_attention_op_sequence,
+)
 from ..templates.lm_head import build_lm_head_split_ranges
 from ..templates.registry import find_custom_fused_templates
 
@@ -107,6 +110,34 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "template": "official_paged_attention_decode",
             "op_sequence": official_paged_attention_decode_op_sequence(),
             "scale": attention_scale,
+            "qkv_output_memory_config": None,
+            "qkv_program_config": None,
+            "qkv_compute_kernel_config": None,
+            "qkv_output_dtype": None,
+            "qkv_heads_memory_config": None,
+            "sdpa_output_memory_config": None,
+            "sdpa_program_config": None,
+            "sdpa_compute_kernel_config": None,
+            "concat_heads_output_memory_config": None,
+            "o_proj_output_memory_config": None,
+            "o_proj_program_config": None,
+            "o_proj_compute_kernel_config": None,
+            "o_proj_output_dtype": None,
+        },
+        "prefill": {
+            "template": template_config.get(
+                "prefill_attention_template",
+                "official_prefill_attention",
+            ),
+            "mlp_template": template_config.get(
+                "prefill_mlp_template",
+                "official_gated_mlp_prefill",
+            ),
+            "seq_len": int(template_config.get("prefill_seq_len", 128)),
+            "attention_op_sequence": official_prefill_attention_op_sequence(),
+            "attention_mask": "causal",
+            "cache_write_policy": "fill_cache",
+            "kv_cache_source": "prefill",
             "qkv_output_memory_config": None,
             "qkv_program_config": None,
             "qkv_compute_kernel_config": None,
@@ -373,6 +404,24 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         memory_config=memory_config,
                     )
 
+                def split_qkv_heads_prefill(
+                    self,
+                    qkv,
+                    *,
+                    num_heads,
+                    num_kv_heads,
+                    memory_config=None,
+                    op_name="split_query_key_value_heads_prefill",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.split_qkv_heads_prefill(
+                        self.ttnn,
+                        qkv,
+                        num_heads=num_heads,
+                        num_kv_heads=num_kv_heads,
+                        memory_config=memory_config,
+                    )
+
                 def rotary_embedding_decode(
                     self,
                     q,
@@ -393,6 +442,26 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         sin_matrix=sin_matrix,
                         transformation_matrix=transformation_matrix,
                         is_decode_mode=is_decode_mode,
+                    )
+
+                def rotary_embedding_prefill(
+                    self,
+                    q,
+                    k,
+                    *,
+                    cos_matrix,
+                    sin_matrix,
+                    transformation_matrix,
+                    op_name="rotary_embedding_prefill",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.rotary_embedding_prefill(
+                        self.ttnn,
+                        q,
+                        k,
+                        cos_matrix=cos_matrix,
+                        sin_matrix=sin_matrix,
+                        transformation_matrix=transformation_matrix,
                     )
 
                 def paged_update_cache(
@@ -443,6 +512,52 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         compute_kernel_config=compute_kernel_config,
                     )
 
+                def scaled_dot_product_attention(
+                    self,
+                    query,
+                    key,
+                    value,
+                    *,
+                    is_causal=True,
+                    scale=None,
+                    memory_config=None,
+                    program_config=None,
+                    compute_kernel_config=None,
+                    attention_mask=None,
+                    op_name="scaled_dot_product_attention",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.scaled_dot_product_attention(
+                        self.ttnn,
+                        query,
+                        key,
+                        value,
+                        is_causal=is_causal,
+                        scale=scale,
+                        memory_config=memory_config,
+                        program_config=program_config,
+                        compute_kernel_config=compute_kernel_config,
+                        attention_mask=attention_mask,
+                    )
+
+                def fill_cache(
+                    self,
+                    cache_tensor,
+                    update_tensor,
+                    *,
+                    user_id=0,
+                    page_table=None,
+                    op_name="fill_cache",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.fill_cache(
+                        self.ttnn,
+                        cache_tensor,
+                        update_tensor,
+                        user_id=user_id,
+                        page_table=page_table,
+                    )
+
                 def nlp_concat_heads_decode(
                     self,
                     attn,
@@ -456,6 +571,20 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         self.ttnn,
                         attn,
                         num_heads=num_heads,
+                        memory_config=memory_config,
+                    )
+
+                def concat_heads_prefill(
+                    self,
+                    attn,
+                    *,
+                    memory_config=None,
+                    op_name="concat_heads_prefill",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.concat_heads_prefill(
+                        self.ttnn,
+                        attn,
                         memory_config=memory_config,
                     )
 
@@ -484,6 +613,43 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self.parameters = parameters
                     self.config = config
                     self.ops = TTNNCompatOps(ttnn)
+
+                def prefill_prompt(self, token_ids, kv_cache):
+                    hidden = self.embed(token_ids)
+                    cache_reports = []
+                    for layer_id in range(self.config.num_layers):
+                        hidden, kv_cache, cache_report = self.prefill_layer(
+                            layer_id,
+                            hidden,
+                            kv_cache,
+                        )
+                        cache_reports.append(cache_report)
+                    hidden = self.final_norm(hidden)
+                    token = self.lm_head_argmax(hidden)
+                    return token, kv_cache, cache_reports
+
+                def prefill_layer(self, layer_id, hidden, kv_cache):
+                    residual = hidden
+                    hidden = self.rmsnorm(hidden, layer_id, kind="attn")
+                    hidden, kv_cache, cache_report = self.attention_prefill(
+                        layer_id,
+                        hidden,
+                        kv_cache,
+                    )
+                    hidden = self.ops.add(
+                        residual,
+                        hidden,
+                        op_name="residual_add.attn",
+                    )
+                    residual = hidden
+                    hidden = self.rmsnorm(hidden, layer_id, kind="mlp")
+                    hidden = self.mlp_decode(layer_id, hidden)
+                    hidden = self.ops.add(
+                        residual,
+                        hidden,
+                        op_name="residual_add.mlp",
+                    )
+                    return hidden, kv_cache, cache_report
 
                 def decode_step(self, token_ids, page_table, cache_position, kv_cache):
                     hidden = self.embed(token_ids)
@@ -575,6 +741,92 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         dtype=_optional_attr(rms_config, "output_dtype"),
                         op_name=op_name,
                     )
+
+                def attention_prefill(self, layer_id, hidden, kv_cache):
+                    layer_params = self.parameters.layers[layer_id].attention
+                    prefill_config = _optional_attr(
+                        self.config,
+                        "prefill",
+                        self.config.attention,
+                    )
+
+                    qkv = self.ops.linear(
+                        hidden,
+                        layer_params.wqkv_packed.weight,
+                        memory_config=_optional_attr(
+                            prefill_config, "qkv_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            prefill_config, "qkv_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            prefill_config, "qkv_compute_kernel_config"
+                        ),
+                        dtype=_optional_attr(
+                            prefill_config, "qkv_output_dtype"
+                        ),
+                        op_name="qkv_linear",
+                    )
+
+                    q, k, v = self.ops.split_qkv_heads_prefill(
+                        qkv,
+                        num_heads=self.config.num_attention_heads,
+                        num_kv_heads=self.config.num_key_value_heads,
+                        memory_config=_optional_attr(
+                            prefill_config, "qkv_heads_memory_config"
+                        ),
+                    )
+
+                    q, k = self.rotary_embedding_prefill(layer_id, q, k)
+                    attn = self.ops.scaled_dot_product_attention(
+                        q,
+                        k,
+                        v,
+                        is_causal=True,
+                        scale=_optional_attr(self.config.attention, "scale"),
+                        memory_config=_optional_attr(
+                            prefill_config, "sdpa_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            prefill_config, "sdpa_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            prefill_config, "sdpa_compute_kernel_config"
+                        ),
+                    )
+                    kv_cache, cache_report = self.fill_prefill_kv_cache(
+                        layer_id,
+                        k,
+                        v,
+                        kv_cache,
+                    )
+
+                    attn = self.ops.concat_heads_prefill(
+                        attn,
+                        memory_config=_optional_attr(
+                            prefill_config,
+                            "concat_heads_output_memory_config",
+                        ),
+                    )
+
+                    output = self.ops.linear(
+                        attn,
+                        layer_params.o_proj.weight,
+                        memory_config=_optional_attr(
+                            prefill_config, "o_proj_output_memory_config"
+                        ),
+                        program_config=_optional_attr(
+                            prefill_config, "o_proj_program_config"
+                        ),
+                        compute_kernel_config=_optional_attr(
+                            prefill_config, "o_proj_compute_kernel_config"
+                        ),
+                        dtype=_optional_attr(
+                            prefill_config, "o_proj_output_dtype"
+                        ),
+                        op_name="o_proj_linear",
+                    )
+                    return output, kv_cache, cache_report
 
                 def attention_decode(
                     self,
@@ -674,6 +926,31 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         op_name="o_proj_linear",
                     )
 
+                def rotary_embedding_prefill(self, layer_id, q, k):
+                    rotary_params = _optional_attr(
+                        self.parameters, "rotary", None
+                    )
+                    if rotary_params is None:
+                        layer_attention = self.parameters.layers[
+                            layer_id
+                        ].attention
+                        rotary_params = _optional_attr(
+                            layer_attention, "rotary", None
+                        )
+                    return self.ops.rotary_embedding_prefill(
+                        q,
+                        k,
+                        cos_matrix=_optional_attr(
+                            rotary_params, "cos_matrix", None
+                        ),
+                        sin_matrix=_optional_attr(
+                            rotary_params, "sin_matrix", None
+                        ),
+                        transformation_matrix=_optional_attr(
+                            rotary_params, "transformation_matrix", None
+                        ),
+                    )
+
                 def rotary_embedding_decode(self, layer_id, q, k, cache_position):
                     rotary_params = _optional_attr(
                         self.parameters, "rotary", None
@@ -703,6 +980,34 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         op_name="rotary_embedding_decode",
                     )
+
+                def fill_prefill_kv_cache(self, layer_id, k, v, kv_cache):
+                    layer_cache = kv_cache[layer_id]
+                    filled_k = self.ops.fill_cache(
+                        layer_cache.k,
+                        k,
+                        user_id=0,
+                        op_name="fill_cache.k",
+                    )
+                    if filled_k is not None:
+                        layer_cache.k = filled_k
+                    filled_v = self.ops.fill_cache(
+                        layer_cache.v,
+                        v,
+                        user_id=0,
+                        op_name="fill_cache.v",
+                    )
+                    if filled_v is not None:
+                        layer_cache.v = filled_v
+                    return kv_cache, {{
+                        "layer_id": layer_id,
+                        "key_cache_memory_config": _tensor_memory_config(
+                            layer_cache.k
+                        ),
+                        "value_cache_memory_config": _tensor_memory_config(
+                            layer_cache.v
+                        ),
+                    }}
 
                 def paged_update_kv_cache(
                     self,

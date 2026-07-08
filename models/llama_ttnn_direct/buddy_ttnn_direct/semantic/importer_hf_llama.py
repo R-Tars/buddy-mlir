@@ -8,7 +8,9 @@ from typing import Any
 
 from .graph import (
     AttentionDecodeNode,
+    AttentionPrefillNode,
     GatedMLPNode,
+    GatedMLPPrefillNode,
     LMHeadNode,
     LlamaLayerNode,
     LlamaModelGraph,
@@ -88,7 +90,7 @@ def import_hf_llama(
             num_attention_heads=num_attention_heads,
             num_key_value_heads=num_key_value_heads,
             head_dim=head_dim,
-            uses_paged_kv_cache=(mode == "decode"),
+            mode=mode,
         )
         for i in range(num_layers)
     ]
@@ -274,9 +276,62 @@ def _import_layer(
     num_attention_heads: int,
     num_key_value_heads: int,
     head_dim: int,
-    uses_paged_kv_cache: bool,
+    mode: str,
 ) -> LlamaLayerNode:
     prefix = f"model.layers.{layer_id}"
+    attention_kwargs = {
+        "layer_id": layer_id,
+        "q_proj": _choose_key(
+            [f"{prefix}.self_attn.q_proj.weight"], known_keys
+        ),
+        "k_proj": _choose_key(
+            [f"{prefix}.self_attn.k_proj.weight"], known_keys
+        ),
+        "v_proj": _choose_key(
+            [f"{prefix}.self_attn.v_proj.weight"], known_keys
+        ),
+        "o_proj": _choose_key(
+            [f"{prefix}.self_attn.o_proj.weight"], known_keys
+        ),
+        "num_heads": num_attention_heads,
+        "num_kv_heads": num_key_value_heads,
+        "head_dim": head_dim,
+        "uses_paged_kv_cache": True,
+    }
+    if mode == "prefill":
+        attention = AttentionPrefillNode(
+            **attention_kwargs,
+            fills_kv_cache=True,
+            attention_mask="causal",
+        )
+        mlp = GatedMLPPrefillNode(
+            layer_id=layer_id,
+            gate_proj=_choose_key(
+                [f"{prefix}.mlp.gate_proj.weight"], known_keys
+            ),
+            up_proj=_choose_key(
+                [f"{prefix}.mlp.up_proj.weight"], known_keys
+            ),
+            down_proj=_choose_key(
+                [f"{prefix}.mlp.down_proj.weight"], known_keys
+            ),
+            activation="silu",
+        )
+    else:
+        attention = AttentionDecodeNode(**attention_kwargs)
+        mlp = GatedMLPNode(
+            layer_id=layer_id,
+            gate_proj=_choose_key(
+                [f"{prefix}.mlp.gate_proj.weight"], known_keys
+            ),
+            up_proj=_choose_key(
+                [f"{prefix}.mlp.up_proj.weight"], known_keys
+            ),
+            down_proj=_choose_key(
+                [f"{prefix}.mlp.down_proj.weight"], known_keys
+            ),
+            activation="silu",
+        )
     return LlamaLayerNode(
         layer_id=layer_id,
         input_norm=RMSNormNode(
@@ -289,25 +344,7 @@ def _import_layer(
             ),
             eps=eps,
         ),
-        attention=AttentionDecodeNode(
-            layer_id=layer_id,
-            q_proj=_choose_key(
-                [f"{prefix}.self_attn.q_proj.weight"], known_keys
-            ),
-            k_proj=_choose_key(
-                [f"{prefix}.self_attn.k_proj.weight"], known_keys
-            ),
-            v_proj=_choose_key(
-                [f"{prefix}.self_attn.v_proj.weight"], known_keys
-            ),
-            o_proj=_choose_key(
-                [f"{prefix}.self_attn.o_proj.weight"], known_keys
-            ),
-            num_heads=num_attention_heads,
-            num_kv_heads=num_key_value_heads,
-            head_dim=head_dim,
-            uses_paged_kv_cache=uses_paged_kv_cache,
-        ),
+        attention=attention,
         post_attention_norm=RMSNormNode(
             weight=_choose_key(
                 [
@@ -318,19 +355,7 @@ def _import_layer(
             ),
             eps=eps,
         ),
-        mlp=GatedMLPNode(
-            layer_id=layer_id,
-            gate_proj=_choose_key(
-                [f"{prefix}.mlp.gate_proj.weight"], known_keys
-            ),
-            up_proj=_choose_key(
-                [f"{prefix}.mlp.up_proj.weight"], known_keys
-            ),
-            down_proj=_choose_key(
-                [f"{prefix}.mlp.down_proj.weight"], known_keys
-            ),
-            activation="silu",
-        ),
+        mlp=mlp,
     )
 
 

@@ -106,6 +106,25 @@ class LlamaSemanticImporterTest(unittest.TestCase):
         self.assertEqual(layer0.mlp.activation, "silu")
         self.assertTrue(layer0.attention.uses_paged_kv_cache)
 
+    def test_importer_builds_prefill_graph_from_fake_metadata(self) -> None:
+        graph = import_hf_llama(
+            "/tmp/fake-llama",
+            config=_fake_config(),
+            state_dict_metadata=_fake_weight_keys(),
+            mode="prefill",
+            batch_size=1,
+            seq_len=128,
+            max_cache_len=1024,
+        )
+
+        self.assertEqual(graph.mode, "prefill")
+        self.assertEqual(graph.seq_len, 128)
+        layer0 = graph.layers[0]
+        self.assertTrue(layer0.attention.uses_paged_kv_cache)
+        self.assertTrue(layer0.attention.fills_kv_cache)
+        self.assertEqual(layer0.attention.attention_mask, "causal")
+        self.assertEqual(layer0.mlp.activation, "silu")
+
     def test_cli_import_llama_dumps_json_from_fake_model_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir) / "tiny-llama"
