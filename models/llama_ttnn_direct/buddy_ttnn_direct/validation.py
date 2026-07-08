@@ -34,6 +34,7 @@ from .codegen.ttnn_tensorizer import (
 from .runtime_environment import (
     collect_tenstorrent_device_environment,
     collect_tenstorrent_process_environment,
+    collect_tenstorrent_setup_environment,
     collect_ttnn_runtime_health,
     collect_ttnn_environment,
 )
@@ -1653,6 +1654,35 @@ def preflight_real_decode(
         observed=ttnn_environment.get("tt_metal_git_commit"),
         expected="non-empty tt-metal commit",
     )
+    tenstorrent_setup_environment = collect_tenstorrent_setup_environment()
+    add(
+        "tenstorrent.environment_doc_available",
+        tenstorrent_setup_environment.get("reference_doc_available") is True,
+        observed=tenstorrent_setup_environment.get("reference_doc"),
+        expected="docs/TenstorrentEnvironment.md exists",
+        required=False,
+    )
+    add(
+        "tenstorrent.ttrt_module_available",
+        tenstorrent_setup_environment.get("ttrt_module_available") is True,
+        observed={
+            "python_executable": tenstorrent_setup_environment.get(
+                "python_executable"
+            ),
+            "recommended_probe_commands": (
+                tenstorrent_setup_environment.get(
+                    "recommended_probe_commands",
+                    [],
+                )
+            ),
+        },
+        expected="importable ttrt module in the active runtime env",
+        required=False,
+        message=(
+            "TenstorrentEnvironment.md uses python -m ttrt query as the "
+            "runtime smoke probe; this is advisory for preflight diagnosis"
+        ),
+    )
     tenstorrent_device_environment = (
         device_environment
         if device_environment is not None
@@ -1710,6 +1740,16 @@ def preflight_real_decode(
                 "--guard-device-busy is set"
             ),
         )
+
+    device_preflight_diagnostics = _tenstorrent_device_preflight_diagnostics(
+        ttnn_environment=ttnn_environment,
+        setup_environment=tenstorrent_setup_environment,
+        device_environment=tenstorrent_device_environment,
+        process_environment=tenstorrent_process_environment,
+        runtime_health=None,
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
+    )
 
     failed_checks = [
         check
@@ -1863,10 +1903,12 @@ def preflight_real_decode(
         "official_config_diff": official_config_diff_summary,
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
+        "tenstorrent_setup_environment": tenstorrent_setup_environment,
         "tenstorrent_device_environment": tenstorrent_device_environment,
         "tenstorrent_process_environment": (
             tenstorrent_process_environment
         ),
+        "device_preflight_diagnostics": device_preflight_diagnostics,
         "guard_device_busy": guard_device_busy,
         "guard_device_health": guard_device_health,
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
@@ -2277,6 +2319,17 @@ def validate_real_decode(
         if device_health_environment is not None
         else {"status": "not_checked", "device_id": device_id}
     )
+    tenstorrent_setup_environment = collect_tenstorrent_setup_environment()
+    tenstorrent_device_environment = collect_tenstorrent_device_environment()
+    device_preflight_diagnostics = _tenstorrent_device_preflight_diagnostics(
+        ttnn_environment={"module_available": ttnn_module is not None},
+        setup_environment=tenstorrent_setup_environment,
+        device_environment=tenstorrent_device_environment,
+        process_environment=tenstorrent_process_environment,
+        runtime_health=tenstorrent_runtime_health,
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
+    )
     report: dict[str, Any] = {
         "schema_version": 1,
         "command": "validate-real-decode",
@@ -2341,8 +2394,11 @@ def validate_real_decode(
         ),
         "guard_device_busy": guard_device_busy,
         "guard_device_health": guard_device_health,
+        "tenstorrent_setup_environment": tenstorrent_setup_environment,
+        "tenstorrent_device_environment": tenstorrent_device_environment,
         "tenstorrent_process_environment": tenstorrent_process_environment,
         "tenstorrent_runtime_health": tenstorrent_runtime_health,
+        "device_preflight_diagnostics": device_preflight_diagnostics,
         "prompt_runtime_requested": prompt is not None,
         "tokenizer_path": str(tokenizer_path) if tokenizer_path else None,
         "results": {
@@ -2387,6 +2443,9 @@ def validate_real_decode(
         _write_json(report_path, report)
 
     def write_evidence_summary() -> dict[str, Any]:
+        report["device_preflight_diagnostics"] = (
+            _tenstorrent_device_preflight_diagnostics_from_report(report)
+        )
         report["runtime_diagnostics"] = _real_decode_runtime_diagnostics(
             report
         )
@@ -5570,6 +5629,21 @@ def _real_decode_evidence_manifest(
             if name != "evidence_manifest"
         ],
         "device_evidence": {
+            "device_preflight_diagnostics": report.get(
+                "device_preflight_diagnostics"
+            ),
+            "tenstorrent_setup_environment": report.get(
+                "tenstorrent_setup_environment"
+            ),
+            "tenstorrent_device_environment": report.get(
+                "tenstorrent_device_environment"
+            ),
+            "tenstorrent_process_environment": report.get(
+                "tenstorrent_process_environment"
+            ),
+            "tenstorrent_runtime_health": report.get(
+                "tenstorrent_runtime_health"
+            ),
             "attention_primitives_ttnn_environment": (
                 attention_primitives.get("ttnn_environment")
             ),
@@ -6429,6 +6503,187 @@ def _real_decode_runtime_diagnostics(
             else None
         ),
     }
+
+
+def _tenstorrent_device_preflight_diagnostics_from_report(
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    return _tenstorrent_device_preflight_diagnostics(
+        ttnn_environment=report.get("ttnn_environment"),
+        setup_environment=report.get("tenstorrent_setup_environment"),
+        device_environment=report.get("tenstorrent_device_environment"),
+        process_environment=report.get("tenstorrent_process_environment"),
+        runtime_health=report.get("tenstorrent_runtime_health"),
+        guard_device_busy=bool(report.get("guard_device_busy")),
+        guard_device_health=bool(report.get("guard_device_health")),
+    )
+
+
+def _tenstorrent_device_preflight_diagnostics(
+    *,
+    ttnn_environment: dict[str, Any] | None,
+    setup_environment: dict[str, Any] | None,
+    device_environment: dict[str, Any] | None,
+    process_environment: dict[str, Any] | None,
+    runtime_health: dict[str, Any] | None,
+    guard_device_busy: bool,
+    guard_device_health: bool,
+) -> dict[str, Any]:
+    ttnn_environment = ttnn_environment or {}
+    setup_environment = setup_environment or {}
+    device_environment = device_environment or {}
+    process_environment = process_environment or {}
+    runtime_health = runtime_health or {}
+    findings: list[dict[str, Any]] = []
+
+    setup_ttnn_available = setup_environment.get("ttnn_module_available")
+    ttnn_available = (
+        ttnn_environment.get("module_available") is True
+        or setup_ttnn_available is True
+    )
+    if not ttnn_available:
+        findings.append(
+            {
+                "kind": "ttnn_module_unavailable",
+                "module_file": ttnn_environment.get("module_file"),
+                "python_executable": setup_environment.get(
+                    "python_executable"
+                ),
+            }
+        )
+
+    if setup_environment.get("reference_doc_available") is not True:
+        findings.append(
+            {
+                "kind": "tenstorrent_environment_doc_missing",
+                "reference_doc": setup_environment.get("reference_doc"),
+            }
+        )
+
+    if device_environment.get("device_available") is not True:
+        findings.append(
+            {
+                "kind": "tenstorrent_device_not_visible",
+                "device_nodes": device_environment.get("device_nodes", []),
+                "filesystem_entries": device_environment.get(
+                    "filesystem_entries",
+                    [],
+                ),
+                "driver_loaded": device_environment.get("driver_loaded"),
+                "tt_smi": device_environment.get("tt_smi"),
+            }
+        )
+
+    if guard_device_busy and process_environment.get("status") == "busy":
+        findings.append(
+            {
+                "kind": "tenstorrent_device_busy",
+                "conflict_count": process_environment.get(
+                    "conflict_count",
+                    0,
+                ),
+                "reset_in_progress": process_environment.get(
+                    "reset_in_progress"
+                ),
+                "conflicts": process_environment.get("conflicts", []),
+            }
+        )
+
+    if (
+        guard_device_health
+        and runtime_health.get("status") in {"fail", "timeout", "error"}
+    ):
+        findings.append(
+            {
+                "kind": "tenstorrent_runtime_health_failed",
+                "health_status": runtime_health.get("status"),
+                "device_id": runtime_health.get("device_id"),
+                "returncode": runtime_health.get("returncode"),
+                "timeout_seconds": runtime_health.get("timeout_seconds"),
+                "stdout": runtime_health.get("stdout"),
+                "stderr": runtime_health.get("stderr"),
+                "error": runtime_health.get("error"),
+            }
+        )
+
+    status = "ready"
+    if any(
+        finding["kind"] == "tenstorrent_runtime_health_failed"
+        for finding in findings
+    ):
+        status = "device_unhealthy"
+    elif any(
+        finding["kind"] == "tenstorrent_device_busy"
+        for finding in findings
+    ):
+        status = "device_busy"
+    elif any(
+        finding["kind"] == "tenstorrent_device_not_visible"
+        for finding in findings
+    ):
+        status = "device_not_visible"
+    elif any(
+        finding["kind"] == "ttnn_module_unavailable"
+        for finding in findings
+    ):
+        status = "environment_incomplete"
+
+    return {
+        "status": status,
+        "ready": status == "ready",
+        "device_available": device_environment.get("device_available"),
+        "device_node_count": device_environment.get("device_node_count"),
+        "device_nodes": device_environment.get("device_nodes", []),
+        "driver_loaded": device_environment.get("driver_loaded"),
+        "process_status": process_environment.get("status"),
+        "process_conflict_count": process_environment.get("conflict_count"),
+        "runtime_health_status": runtime_health.get("status", "not_checked"),
+        "guard_device_busy": guard_device_busy,
+        "guard_device_health": guard_device_health,
+        "reference_doc": setup_environment.get("reference_doc"),
+        "reference_doc_available": setup_environment.get(
+            "reference_doc_available"
+        ),
+        "recommended_probe_commands": setup_environment.get(
+            "recommended_probe_commands",
+            [],
+        ),
+        "recommended_action": _tenstorrent_preflight_recommended_action(
+            status
+        ),
+        "findings": findings,
+    }
+
+
+def _tenstorrent_preflight_recommended_action(status: str) -> str:
+    if status == "ready":
+        return (
+            "Run validate-real-decode during an exclusive P150A window; keep "
+            "--guard-device-busy and --guard-device-health enabled for "
+            "bring-up evidence."
+        )
+    if status == "device_busy":
+        return (
+            "Wait for the current Tenstorrent workload/reset to finish, then "
+            "rerun preflight and validate-real-decode in an exclusive board "
+            "window."
+        )
+    if status == "device_unhealthy":
+        return (
+            "Confirm the board is idle, run the Tenstorrent environment smoke "
+            "probes including python -m ttrt query, reset the target device if "
+            "needed, then rerun validate-real-decode."
+        )
+    if status == "device_not_visible":
+        return (
+            "Reactivate the Tenstorrent environment from "
+            "docs/TenstorrentEnvironment.md, verify /dev/tenstorrent* nodes "
+            "and python -m ttrt query, then rerun preflight."
+        )
+    return (
+        "Reactivate the Tenstorrent Python/runtime environment from "
+        "docs/TenstorrentEnvironment.md before running real decode."
+    )
 
 
 def _runtime_error_findings(value: Any) -> list[dict[str, Any]]:

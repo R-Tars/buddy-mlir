@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import tempfile
 import types
 import subprocess
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment import (
     collect_tenstorrent_device_environment,
     collect_tenstorrent_process_environment,
+    collect_tenstorrent_setup_environment,
     collect_ttnn_runtime_health,
     collect_ttnn_environment,
 )
@@ -107,6 +110,51 @@ class RuntimeEnvironmentTest(unittest.TestCase):
         self.assertEqual(environment["device_nodes"], [])
         self.assertIsNone(environment["tt_smi_path"])
         self.assertIsNone(environment["tt_smi"])
+
+    def test_collect_tenstorrent_setup_environment_reports_probe_commands(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            (root / "docs").mkdir()
+            (root / "docs" / "TenstorrentEnvironment.md").write_text(
+                "env docs\n"
+            )
+            toolchain = root / "toolchain"
+            toolchain_python = toolchain / "venv" / "bin" / "python"
+            toolchain_python.parent.mkdir(parents=True)
+            toolchain_python.write_text("#!/usr/bin/env python\n")
+
+            def fake_find_spec(name: str):
+                return object() if name == "ttrt" else None
+
+            with patch.dict(
+                "os.environ",
+                {
+                    "BUDDY_REPO_ROOT": str(root),
+                    "BUDDY_LLVM_BUILD": str(root / "llvm" / "build"),
+                    "TTMLIR_TOOLCHAIN_DIR": str(toolchain),
+                    "TTMLIR_ENV_BUILD": str(root / "env-build"),
+                    "TTMLIR_BUILD": str(root / "ttmlir-build"),
+                    "BUDDY_BUILD": str(root / "buddy-build"),
+                },
+                clear=True,
+            ), patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct."
+                "runtime_environment.importlib.util.find_spec",
+                side_effect=fake_find_spec,
+            ):
+                environment = collect_tenstorrent_setup_environment(root)
+
+        self.assertTrue(environment["reference_doc_available"])
+        self.assertEqual(environment["env_missing"], [])
+        self.assertTrue(environment["ttmlir_toolchain_python_exists"])
+        self.assertTrue(environment["ttrt_module_available"])
+        self.assertFalse(environment["ttnn_module_available"])
+        self.assertIn(
+            "-m ttrt query",
+            environment["recommended_probe_commands"][1],
+        )
 
     def test_collect_tenstorrent_process_environment_detects_reset(
         self,

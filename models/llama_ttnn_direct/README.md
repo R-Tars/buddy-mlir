@@ -608,6 +608,14 @@ throughput, baseline-ratio, and decode-shell PCC thresholds that the final
 validation command will use. It also records a `final_acceptance_plan` block
 that names the requested acceptance scope, effective requirement flags, final
 gate names, thresholds, and baseline source before runtime execution starts:
+The preflight and real validation reports also include
+`device_preflight_diagnostics`, which summarizes the active environment from
+`docs/TenstorrentEnvironment.md`, the recommended `ttrt query`/`ttnn` probe
+commands, visible `/dev/tenstorrent*` nodes, busy-process guards, and runtime
+health-probe status. When a shared P150A board is occupied or not visible, this
+field distinguishes `device_busy`, `device_not_visible`,
+`environment_incomplete`, and `device_unhealthy` before the heavier runtime
+gates run.
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \

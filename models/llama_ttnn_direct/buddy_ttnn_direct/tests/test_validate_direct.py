@@ -359,6 +359,13 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["status"], "pass")
             self.assertTrue(report["ready_to_run"])
             self.assertTrue(report_json.is_file())
+            self.assertEqual(
+                report["device_preflight_diagnostics"]["status"],
+                "ready",
+            )
+            self.assertTrue(
+                report["device_preflight_diagnostics"]["ready"]
+            )
             self.assertTrue(
                 report["requirements"]["require_full_decode_step"]
             )
@@ -655,6 +662,18 @@ class ValidateDirectTest(unittest.TestCase):
                 report["tenstorrent_device_environment"]["device_nodes"],
                 [],
             )
+            diagnostics = report["device_preflight_diagnostics"]
+            self.assertEqual(diagnostics["status"], "device_not_visible")
+            self.assertFalse(diagnostics["ready"])
+            self.assertIn(
+                "python -m ttrt query",
+                diagnostics["recommended_action"],
+            )
+            self.assertIn(
+                "tenstorrent_device_not_visible",
+                [finding["kind"] for finding in diagnostics["findings"]],
+            )
+            self.assertTrue(diagnostics["recommended_probe_commands"])
 
     def test_preflight_rejects_generated_config_as_official_reference(
         self,
@@ -6213,6 +6232,18 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_diagnostics"]["status"],
                 "device_busy",
             )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "device_preflight_diagnostics"
+                ]["status"],
+                "device_busy",
+            )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "tenstorrent_process_environment"
+                ]["conflict_count"],
+                1,
+            )
 
     def test_validate_real_decode_guard_reports_device_unhealthy(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6292,6 +6323,18 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["runtime_diagnostics"]["status"],
                 "device_unhealthy",
+            )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "device_preflight_diagnostics"
+                ]["status"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                evidence["device_evidence"][
+                    "tenstorrent_runtime_health"
+                ]["status"],
+                "fail",
             )
 
     def test_recover_real_decode_process_failure_writes_evidence(self) -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -39,6 +41,71 @@ def collect_tenstorrent_device_environment() -> dict[str, Any]:
         "driver_loaded": _kernel_module_loaded("tenstorrent"),
         "tt_smi_path": tt_smi_path,
         "tt_smi": _probe_command([tt_smi_path]) if tt_smi_path else None,
+    }
+
+
+def collect_tenstorrent_setup_environment(
+    repo_root: str | Path | None = None,
+) -> dict[str, Any]:
+    root = Path(repo_root) if repo_root is not None else _default_repo_root()
+    env_keys = [
+        "BUDDY_REPO_ROOT",
+        "BUDDY_LLVM_BUILD",
+        "TTMLIR_TOOLCHAIN_DIR",
+        "TTMLIR_ENV_BUILD",
+        "TTMLIR_BUILD",
+        "BUDDY_BUILD",
+        "PYTHONPATH",
+        "LD_LIBRARY_PATH",
+        "TT_METAL_HOME",
+        "TT_METAL_ROOT",
+    ]
+    env = {key: os.environ.get(key) for key in env_keys}
+    toolchain_python = _ttmlir_toolchain_python(
+        env.get("TTMLIR_TOOLCHAIN_DIR")
+    )
+    probe_python = toolchain_python or Path(sys.executable)
+    doc_path = root / "docs" / "TenstorrentEnvironment.md"
+    return {
+        "reference_doc": str(doc_path),
+        "reference_doc_available": doc_path.is_file(),
+        "repo_root": str(root),
+        "python_executable": sys.executable,
+        "environment": env,
+        "env_missing": [
+            key
+            for key in env_keys[:6]
+            if not _non_empty_string(env.get(key))
+        ],
+        "ttmlir_toolchain_python": (
+            str(toolchain_python) if toolchain_python is not None else None
+        ),
+        "ttmlir_toolchain_python_exists": (
+            toolchain_python.is_file()
+            if toolchain_python is not None
+            else False
+        ),
+        "ttrt_module_available": importlib.util.find_spec("ttrt")
+        is not None,
+        "ttnn_module_available": importlib.util.find_spec("ttnn")
+        is not None,
+        "recommended_probe_commands": [
+            shlex.join(
+                [
+                    str(probe_python),
+                    "-c",
+                    "import ttrt, ttrt.runtime; print('ttrt ok')",
+                ]
+            ),
+            shlex.join([str(probe_python), "-m", "ttrt", "query"]),
+            shlex.join(
+                [
+                    sys.executable,
+                    "-c",
+                    "import ttnn; print('ttnn ok')",
+                ]
+            ),
+        ],
     }
 
 
@@ -193,6 +260,16 @@ def _tenstorrent_device_entries() -> list[str]:
     return sorted(paths)
 
 
+def _default_repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _ttmlir_toolchain_python(value: str | None) -> Path | None:
+    if not _non_empty_string(value):
+        return None
+    return Path(value) / "venv" / "bin" / "python"
+
+
 def _is_character_device(path: Path) -> bool:
     try:
         return stat.S_ISCHR(path.stat().st_mode)
@@ -294,6 +371,10 @@ def _string_attr(obj: Any | None, name: str) -> str | None:
 def _env_path(name: str) -> str | None:
     value = os.environ.get(name)
     return value if value else None
+
+
+def _non_empty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _git_commit(path: Path) -> str | None:
