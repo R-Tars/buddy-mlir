@@ -1268,6 +1268,18 @@ def _make_fake_ttnn(
         )
         return FakeTensor(cache.name, cache.shape)
 
+    def paged_fill_cache(cache, update, page_table, **kwargs):
+        module.calls.append(
+            {
+                "op": "paged_fill_cache",
+                "cache": cache.name,
+                "update": update.name,
+                "page_table": page_table.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor(cache.name, cache.shape)
+
     def slice_tensor(tensor, starts, ends, steps=None):
         output_shape = [int(end) - int(start) for start, end in zip(starts, ends)]
         module.calls.append(
@@ -1454,6 +1466,7 @@ def _make_fake_ttnn(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         rotary_embedding_llama=rotary_embedding_llama,
         paged_update_cache=paged_update_cache,
+        paged_fill_cache=paged_fill_cache,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )
     if with_transformer:

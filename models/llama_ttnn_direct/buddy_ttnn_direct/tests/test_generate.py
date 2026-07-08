@@ -200,7 +200,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["prefill"]["cache_population"][0]["status"], "filled")
             self.assertEqual(
                 report["prefill"]["cache_population"][0]["write_policy"],
-                "fill_cache_per_user",
+                "paged_fill_cache_per_user",
             )
             self.assertEqual(
                 report["prefill"]["cache_population"][0]["filled_user_count"],
@@ -209,6 +209,10 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["runtime_context"]["status"], "built")
             self.assertTrue(report["runtime_context"]["generated_model_initialized"])
+            self.assertEqual(
+                report["runtime_context"]["prefill_page_table_shape"],
+                [2, 1],
+            )
             self.assertEqual(
                 report["runtime_context"]["parameter_tensorization_count_per_generate"],
                 1,
@@ -308,10 +312,22 @@ class GenerateTest(unittest.TestCase):
                 report["parameter_setup"]["synthetic_kv_cache_tensor_count"],
                 0,
             )
+            self.assertEqual(
+                report["parameter_setup"][
+                    "prefill_page_table_runtime_input_tensor_count"
+                ],
+                1,
+            )
             contract = report["end_to_end_contract"]
             self.assertEqual(contract["status"], "passed")
             self.assertTrue(contract["passed"])
             self.assertEqual(contract["failed_checks"], [])
+            self.assertEqual(
+                contract["runtime_input_summary"][
+                    "prefill_page_table_runtime_input_tensor_count"
+                ],
+                1,
+            )
             self.assertEqual(
                 contract["runtime_input_summary"][
                     "synthetic_runtime_input_tensor_count"
@@ -348,8 +364,8 @@ class GenerateTest(unittest.TestCase):
             )
             ops = [call["op"] for call in fake_ttnn.calls]
             self.assertIn("scaled_dot_product_attention", ops)
-            self.assertIn("fill_cache", ops)
-            self.assertEqual(ops.count("fill_cache"), 4)
+            self.assertIn("paged_fill_cache", ops)
+            self.assertEqual(ops.count("paged_fill_cache"), 4)
             self.assertIn("paged_scaled_dot_product_attention_decode", ops)
             self.assertEqual(json.loads(report_json.read_text()), report)
 
@@ -426,6 +442,7 @@ def _make_generate_fake_ttnn():
     module.experimental = types.SimpleNamespace(
         rotary_embedding_llama=module.experimental.rotary_embedding_llama,
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
+        paged_fill_cache=module.experimental.paged_fill_cache,
         paged_update_cache=paged_update_cache,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )

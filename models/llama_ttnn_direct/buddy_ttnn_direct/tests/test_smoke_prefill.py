@@ -318,6 +318,16 @@ def _make_fake_ttnn():
         module.calls.append({"op": "fill_cache", "kwargs": dict(kwargs)})
         return FakeTensor(cache.name, cache.shape)
 
+    def paged_fill_cache(cache, update, page_table, **kwargs):
+        module.calls.append(
+            {
+                "op": "paged_fill_cache",
+                "page_table": page_table.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor(cache.name, cache.shape)
+
     def slice_tensor(tensor, starts, ends, steps=None):
         output_shape = [int(end) - int(start) for start, end in zip(starts, ends)]
         module.calls.append(
@@ -372,6 +382,7 @@ def _make_fake_ttnn():
     module.slice = slice_tensor
     module.experimental = types.SimpleNamespace(
         rotary_embedding_llama=rotary_embedding_llama,
+        paged_fill_cache=paged_fill_cache,
     )
     module.transformer = types.SimpleNamespace(
         split_query_key_value_and_split_heads=(

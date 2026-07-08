@@ -192,10 +192,18 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             memory_config="sdpa_mem",
         )
         cache = ttnn_ops.fill_cache(fake, "cache", "key", user_id=0)
+        paged_cache = ttnn_ops.paged_fill_cache(
+            fake,
+            "paged_cache",
+            "paged_key",
+            "page_table",
+            batch_idx=3,
+        )
         out = ttnn_ops.concat_heads_prefill(fake, attn)
 
         self.assertEqual((q, k, v), ("rotary:q_prefill", "rotary:k_prefill", "v_prefill"))
         self.assertEqual(cache, "filled:cache")
+        self.assertEqual(paged_cache, "paged_filled:paged_cache")
         self.assertEqual(out, "concat_prefill:prefill_attn")
         self.assertIn(
             (
@@ -351,6 +359,18 @@ def _fake_ttnn():
         )
         return f"filled:{cache_tensor}"
 
+    def paged_fill_cache(cache_tensor, update_tensor, page_table, **kwargs):
+        module.calls.append(
+            (
+                "paged_fill_cache",
+                cache_tensor,
+                update_tensor,
+                page_table,
+                dict(kwargs),
+            )
+        )
+        return f"paged_filled:{cache_tensor}"
+
     def concatenate_heads(attention, **kwargs):
         module.calls.append(("concatenate_heads", attention, dict(kwargs)))
         return f"concat_prefill:{attention}"
@@ -369,6 +389,7 @@ def _fake_ttnn():
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         rotary_embedding_llama=rotary_embedding_llama,
         paged_update_cache=paged_update_cache,
+        paged_fill_cache=paged_fill_cache,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )
     module.transformer = types.SimpleNamespace(

@@ -19,6 +19,7 @@ from .codegen.ttnn_tensorizer import (
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import (
     PromptTokenizationError,
+    build_decode_runtime_state,
     detokenize_generated_token_ids,
     tokenize_prompt_for_prefill,
 )
@@ -71,13 +72,16 @@ class TTNNDirectRuntimeContext:
         *,
         parameters: Any,
         prefill_token_ids: Any,
+        prefill_page_table: Any,
         kv_cache: Any,
         tensor_conversion_count: int,
         parameter_source: str,
         input_source: str,
         prefill_tokenization: dict[str, Any],
+        prefill_page_table_runtime_state: dict[str, Any],
         kv_cache_runtime_state: dict[str, Any],
         prefill_prompt_runtime_input_tensor_count: int,
+        prefill_page_table_runtime_input_tensor_count: int,
         prefill_rotary_runtime_input_tensor_count: int,
         parameter_setup: dict[str, Any],
         tokenizer_path: str | Path,
@@ -85,6 +89,7 @@ class TTNNDirectRuntimeContext:
     ) -> None:
         self.parameters = parameters
         self.prefill_token_ids = prefill_token_ids
+        self.prefill_page_table = prefill_page_table
         self.kv_cache = kv_cache
         self.token_ids = None
         self.page_table = None
@@ -97,9 +102,13 @@ class TTNNDirectRuntimeContext:
         self.parameter_source = parameter_source
         self.input_source = input_source
         self.prefill_tokenization = prefill_tokenization
+        self.prefill_page_table_runtime_state = prefill_page_table_runtime_state
         self.kv_cache_runtime_state = kv_cache_runtime_state
         self.prefill_prompt_runtime_input_tensor_count = int(
             prefill_prompt_runtime_input_tensor_count
+        )
+        self.prefill_page_table_runtime_input_tensor_count = int(
+            prefill_page_table_runtime_input_tensor_count
         )
         self.prefill_rotary_runtime_input_tensor_count = int(
             prefill_rotary_runtime_input_tensor_count
@@ -181,6 +190,10 @@ class TTNNDirectRuntimeContext:
             "rotary_state_update_count": self.rotary_state_update_count,
             "decode_token_update_count": self.decode_token_update_count,
             "current_kv_cache_layers": len(self.kv_cache or []),
+            "prefill_page_table_shape": _shape(self.prefill_page_table),
+            "prefill_page_table_runtime_state": (
+                self.prefill_page_table_runtime_state
+            ),
             "current_page_table_shape": _shape(self.page_table),
             "current_cache_position_shape": _shape(self.cache_position),
             "current_rotary_state": self.rotary_state,
@@ -677,6 +690,7 @@ def run_generate(
                 context.generated_model.prefill_prompt(
                     context.prefill_token_ids,
                     context.kv_cache,
+                    context.prefill_page_table,
                 )
             )
             context.update_kv_cache(kv_cache)
@@ -1268,6 +1282,15 @@ def _build_generate_state(
         device=device,
         token_ids=prefill_tokenization.token_ids,
     )
+    prefill_page_table = _build_prefill_page_table_tensor(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        batch_size=int(prefill_plan["batch_size"]),
+        cache_len=int(prefill_plan["cache_len"]),
+        page_block_size=int(prefill_plan["kv_cache"]["page_block_size"]),
+        prompt_token_count=int(prefill_tokenization.effective_token_count),
+    )
     kv_runtime = _build_prompt_decode_kv_cache_tensors(
         ttnn=ttnn,
         torch=torch,
@@ -1292,19 +1315,27 @@ def _build_generate_state(
     tensor_conversion_count = (
         tensorization_count
         + 1
+        + int(prefill_page_table.tensor_conversion_count)
         + int(kv_runtime.tensor_conversion_count)
         + int(prefill_rotary.tensor_conversion_count)
     )
     return TTNNDirectRuntimeContext(
         parameters=result.parameters,
         prefill_token_ids=prefill_token_ids,
+        prefill_page_table=prefill_page_table.page_table,
         kv_cache=kv_runtime.kv_cache,
         tensor_conversion_count=tensor_conversion_count,
         parameter_source="hf_model",
         input_source="prompt_prefill",
         prefill_tokenization=prefill_tokenization.to_report(),
+        prefill_page_table_runtime_state=(
+            prefill_page_table.prefill_page_table_runtime_state
+        ),
         kv_cache_runtime_state=kv_runtime.kv_cache_runtime_state,
         prefill_prompt_runtime_input_tensor_count=1,
+        prefill_page_table_runtime_input_tensor_count=(
+            prefill_page_table.tensor_conversion_count
+        ),
         prefill_rotary_runtime_input_tensor_count=(
             prefill_rotary.tensor_conversion_count
         ),
@@ -1315,6 +1346,12 @@ def _build_generate_state(
             "synthetic_rotary_tensor_count": 0,
             "synthetic_kv_cache_tensor_count": 0,
             "prefill_prompt_runtime_input_tensor_count": 1,
+            "prefill_page_table_runtime_input_tensor_count": (
+                prefill_page_table.tensor_conversion_count
+            ),
+            "prefill_page_table_runtime_state": (
+                prefill_page_table.prefill_page_table_runtime_state
+            ),
             "prefill_rotary_runtime_input_tensor_count": (
                 prefill_rotary.tensor_conversion_count
             ),
@@ -1325,6 +1362,50 @@ def _build_generate_state(
         },
         tokenizer_path=tokenizer_path,
         tokenizer_module=tokenizer_module,
+    )
+
+
+def _build_prefill_page_table_tensor(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    batch_size: int,
+    cache_len: int,
+    page_block_size: int,
+    prompt_token_count: int,
+) -> SimpleNamespace:
+    runtime_state = build_decode_runtime_state(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        page_block_size=page_block_size,
+        prompt_token_count=prompt_token_count,
+    )
+    kwargs = {"device": device}
+    dtype = getattr(
+        ttnn,
+        "int32",
+        getattr(ttnn, "uint32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    page_table = ttnn.from_torch(
+        _runtime_int_tensor(
+            torch,
+            runtime_state.page_table,
+            name="prefill_page_table",
+        ),
+        **kwargs,
+    )
+    report = runtime_state.to_report()
+    report["source"] = "prefill_page_table_runtime_state"
+    return SimpleNamespace(
+        page_table=page_table,
+        tensor_conversion_count=1,
+        prefill_page_table_runtime_state=report,
     )
 
 
@@ -1684,9 +1765,13 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(cache_population, list):
         cache_population = []
     expected_user_count = _optional_int(report.get("batch_size"))
+    accepted_cache_write_policies = {
+        "fill_cache_per_user",
+        "paged_fill_cache_per_user",
+    }
     cache_write_policy_ok = bool(cache_population) and all(
         isinstance(entry, dict)
-        and entry.get("write_policy") == "fill_cache_per_user"
+        and entry.get("write_policy") in accepted_cache_write_policies
         for entry in cache_population
     )
     cache_user_count_ok = bool(cache_population)
@@ -1752,7 +1837,7 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
                 for entry in cache_population
                 if isinstance(entry, dict)
             ],
-            "expected": "fill_cache_per_user",
+            "expected": sorted(accepted_cache_write_policies),
         },
         {
             "name": "generate.prefill_kv_cache_user_count",
@@ -1856,6 +1941,9 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
         "runtime_input_summary": {
             "prefill_prompt_runtime_input_tensor_count": value_or_setup(
                 "prefill_prompt_runtime_input_tensor_count"
+            ),
+            "prefill_page_table_runtime_input_tensor_count": value_or_setup(
+                "prefill_page_table_runtime_input_tensor_count"
             ),
             "prefill_rotary_runtime_input_tensor_count": value_or_setup(
                 "prefill_rotary_runtime_input_tensor_count"

@@ -682,6 +682,28 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         page_table=page_table,
                     )
 
+                def paged_fill_cache(
+                    self,
+                    cache_tensor,
+                    update_tensor,
+                    page_table,
+                    *,
+                    batch_idx=0,
+                    batch_idx_tensor=None,
+                    compute_kernel_config=None,
+                    op_name="paged_fill_cache",
+                ):
+                    self._record(op_name)
+                    return ttnn_ops.paged_fill_cache(
+                        self.ttnn,
+                        cache_tensor,
+                        update_tensor,
+                        page_table,
+                        batch_idx=batch_idx,
+                        batch_idx_tensor=batch_idx_tensor,
+                        compute_kernel_config=compute_kernel_config,
+                    )
+
                 def nlp_concat_heads_decode(
                     self,
                     attn,
@@ -862,7 +884,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     except TypeError:
                         return core_grid_type(grid_y, grid_x)
 
-                def prefill_prompt(self, token_ids, kv_cache):
+                def prefill_prompt(self, token_ids, kv_cache, page_table=None):
                     hidden = self.embed(token_ids)
                     cache_reports = []
                     for layer_id in range(self.config.num_layers):
@@ -870,19 +892,21 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                             layer_id,
                             hidden,
                             kv_cache,
+                            page_table,
                         )
                         cache_reports.append(cache_report)
                     hidden = self.final_norm(hidden)
                     token = self.lm_head_argmax(hidden)
                     return token, kv_cache, cache_reports
 
-                def prefill_layer(self, layer_id, hidden, kv_cache):
+                def prefill_layer(self, layer_id, hidden, kv_cache, page_table=None):
                     residual = hidden
                     hidden = self.rmsnorm(hidden, layer_id, kind="attn")
                     hidden, kv_cache, cache_report = self.attention_prefill(
                         layer_id,
                         hidden,
                         kv_cache,
+                        page_table,
                     )
                     hidden = self.ops.add(
                         residual,
@@ -990,7 +1014,13 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         op_name=op_name,
                     )
 
-                def attention_prefill(self, layer_id, hidden, kv_cache):
+                def attention_prefill(
+                    self,
+                    layer_id,
+                    hidden,
+                    kv_cache,
+                    page_table=None,
+                ):
                     layer_params = self.parameters.layers[layer_id].attention
                     prefill_config = _optional_attr(
                         self.config,
@@ -1051,6 +1081,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         k,
                         v,
                         kv_cache,
+                        page_table=page_table,
                     )
 
                     attn = self.ops.concat_heads_prefill(
@@ -1245,7 +1276,14 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         op_name="rotary_embedding_decode",
                     )
 
-                def fill_prefill_kv_cache(self, layer_id, k, v, kv_cache):
+                def fill_prefill_kv_cache(
+                    self,
+                    layer_id,
+                    k,
+                    v,
+                    kv_cache,
+                    page_table=None,
+                ):
                     layer_cache = kv_cache[layer_id]
                     key_shape = _tensor_shape(k)
                     value_shape = _tensor_shape(v)
@@ -1279,6 +1317,12 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                             user_k,
                             user_id=user_id,
                             op_name="fill_cache.k",
+                        ) if page_table is None else self.ops.paged_fill_cache(
+                            layer_cache.k,
+                            user_k,
+                            page_table,
+                            batch_idx=user_id,
+                            op_name="fill_cache.k",
                         )
                         if filled_k is not None:
                             layer_cache.k = filled_k
@@ -1286,6 +1330,12 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                             layer_cache.v,
                             user_v,
                             user_id=user_id,
+                            op_name="fill_cache.v",
+                        ) if page_table is None else self.ops.paged_fill_cache(
+                            layer_cache.v,
+                            user_v,
+                            page_table,
+                            batch_idx=user_id,
                             op_name="fill_cache.v",
                         )
                         if filled_v is not None:
@@ -1305,7 +1355,12 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         )
                     return kv_cache, {{
                         "layer_id": layer_id,
-                        "write_policy": "fill_cache_per_user",
+                        "write_policy": (
+                            "fill_cache_per_user"
+                            if page_table is None
+                            else "paged_fill_cache_per_user"
+                        ),
+                        "page_table_shape": _tensor_shape(page_table),
                         "filled_user_count": batch_user_count,
                         "key_update_shape": key_shape,
                         "value_update_shape": value_shape,

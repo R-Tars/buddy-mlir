@@ -265,6 +265,33 @@ def fill_cache(
             raise err
 
 
+def paged_fill_cache(
+    ttnn_module: Any,
+    cache_tensor: Any,
+    update_tensor: Any,
+    page_table: Any,
+    *,
+    batch_idx: int = 0,
+    batch_idx_tensor: Any | None = None,
+    compute_kernel_config: Any | None = None,
+) -> Any:
+    op_name = "paged_fill_cache"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(
+        batch_idx=batch_idx,
+        batch_idx_tensor=batch_idx_tensor,
+        compute_kernel_config=compute_kernel_config,
+    )
+    return op(cache_tensor, update_tensor, page_table, **kwargs)
+
+
 def nlp_concat_heads_decode(
     ttnn_module: Any,
     attention: Any,

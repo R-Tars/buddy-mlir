@@ -660,6 +660,72 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 [0, 0, 1, 1],
             )
 
+    def test_generated_prefill_cache_fill_uses_paged_cache_with_page_table(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            model = generated.BuddyLlama31TTNN(
+                device=None,
+                parameters=_ns(),
+                config=_ns(batch_size=2),
+            )
+            kv_cache = [
+                _ns(
+                    k=_FakeTensor("key_cache", shape=(4, 2, 32, 4)),
+                    v=_FakeTensor("value_cache", shape=(4, 2, 32, 4)),
+                )
+            ]
+
+            _, report = model.fill_prefill_kv_cache(
+                0,
+                _FakeTensor("key_update", shape=(2, 2, 128, 4)),
+                _FakeTensor("value_update", shape=(2, 2, 128, 4)),
+                kv_cache,
+                page_table=_FakeTensor("page_table", shape=(2, 2)),
+            )
+
+            self.assertEqual(report["write_policy"], "paged_fill_cache_per_user")
+            self.assertEqual(report["page_table_shape"], [2, 2])
+            self.assertEqual(report["filled_user_count"], 2)
+            paged_calls = [
+                call
+                for call in fake_ttnn.calls
+                if call["op"] == "paged_fill_cache"
+            ]
+            self.assertEqual(len(paged_calls), 4)
+            self.assertEqual(
+                [call["kwargs"].get("batch_idx") for call in paged_calls],
+                [0, 0, 1, 1],
+            )
+            self.assertNotIn(
+                "fill_cache",
+                [call["op"] for call in fake_ttnn.calls],
+            )
+
     def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
         self,
     ) -> None:
@@ -966,6 +1032,22 @@ def _make_fake_ttnn_module():
             shape=getattr(cache, "shape", None),
         )
 
+    def paged_fill_cache(cache, update, page_table, **kwargs):
+        module.calls.append(
+            {
+                "op": "paged_fill_cache",
+                "cache": getattr(cache, "name", cache),
+                "update": getattr(update, "name", update),
+                "page_table": getattr(page_table, "name", page_table),
+                "kwargs": dict(kwargs),
+            }
+        )
+        return _FakeTensor(
+            getattr(cache, "name", "cache"),
+            getattr(cache, "_mem_config", None),
+            shape=getattr(cache, "shape", None),
+        )
+
     def nlp_create_qkv_heads_decode(qkv, **kwargs):
         module.calls.append(
             {
@@ -1025,6 +1107,7 @@ def _make_fake_ttnn_module():
     module.experimental = _ns(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
+        paged_fill_cache=paged_fill_cache,
     )
     module.kv_cache = _ns(fill_cache_for_user_=fill_cache)
     module.transformer = _ns(
