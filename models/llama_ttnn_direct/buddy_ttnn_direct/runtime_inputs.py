@@ -162,6 +162,50 @@ def tokenize_prompt_for_decode(
     )
 
 
+def detokenize_generated_token_ids(
+    *,
+    token_ids_by_user: list[list[int]],
+    tokenizer_path: str | Path,
+    tokenizer_module: Any | None = None,
+) -> dict[str, Any]:
+    if not token_ids_by_user:
+        return {
+            "status": "empty",
+            "source": "no_generated_tokens",
+            "generated_text_by_user": [],
+            "generated_text": "",
+        }
+
+    if any(token_id < 0 for row in token_ids_by_user for token_id in row):
+        text_by_user = [_fallback_decode(row) for row in token_ids_by_user]
+        return {
+            "status": "placeholder",
+            "source": "unmaterialized_token_placeholder",
+            "generated_text_by_user": text_by_user,
+            "generated_text": text_by_user[0] if text_by_user else "",
+        }
+
+    try:
+        tokenizer = _load_tokenizer(Path(tokenizer_path), tokenizer_module)
+        text_by_user = _decode_with_tokenizer(tokenizer, token_ids_by_user)
+    except Exception as err:
+        text_by_user = [_fallback_decode(row) for row in token_ids_by_user]
+        return {
+            "status": "fallback",
+            "source": "token_id_fallback",
+            "fallback_reason": f"{type(err).__name__}: {err}",
+            "generated_text_by_user": text_by_user,
+            "generated_text": text_by_user[0] if text_by_user else "",
+        }
+
+    return {
+        "status": "decoded",
+        "source": "tokenizer_decode",
+        "generated_text_by_user": text_by_user,
+        "generated_text": text_by_user[0] if text_by_user else "",
+    }
+
+
 def build_decode_runtime_state(
     *,
     batch_size: int,
@@ -327,3 +371,38 @@ def _extract_input_ids(encoded: Any) -> list[int]:
             item = item.item()
         ids.append(int(item))
     return ids
+
+
+def _decode_with_tokenizer(
+    tokenizer: Any,
+    token_ids_by_user: list[list[int]],
+) -> list[str]:
+    batch_decode = getattr(tokenizer, "batch_decode", None)
+    if callable(batch_decode):
+        try:
+            decoded = batch_decode(token_ids_by_user, skip_special_tokens=True)
+        except TypeError:
+            decoded = batch_decode(token_ids_by_user)
+        if isinstance(decoded, list):
+            return [str(text) for text in decoded]
+
+    decode = getattr(tokenizer, "decode", None)
+    if callable(decode):
+        texts = []
+        for row in token_ids_by_user:
+            try:
+                texts.append(str(decode(row, skip_special_tokens=True)))
+            except TypeError:
+                texts.append(str(decode(row)))
+        return texts
+
+    raise PromptTokenizationError("tokenizer does not provide decode")
+
+
+def _fallback_decode(token_ids: list[int]) -> str:
+    if not token_ids:
+        return ""
+    return " ".join(
+        "<unmaterialized-token>" if token_id < 0 else f"<tok:{token_id}>"
+        for token_id in token_ids
+    )

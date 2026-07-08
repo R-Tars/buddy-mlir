@@ -134,6 +134,7 @@ def main(argv=None):
     parser.add_argument("--tokenizer-path", type=Path, default=None)
     parser.add_argument("--layers", type=int, default=1)
     parser.add_argument("--decode-steps", type=int, default=2)
+    parser.add_argument("--max-new-tokens", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--cache-len", type=int, default=None)
     parser.add_argument("--device", default="p150a")
@@ -271,7 +272,11 @@ def main(argv=None):
             model_path=args.model_path,
             prompt=args.prompt,
             tokenizer_path=args.tokenizer_path,
-            decode_steps=args.decode_steps,
+            decode_steps=(
+                args.max_new_tokens
+                if args.max_new_tokens is not None
+                else args.decode_steps
+            ),
             layers=args.layers,
             device=args.device,
             device_id=args.device_id,
@@ -476,7 +481,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         python run_decode.py --mode decode-loop \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
-          --decode-steps 2 \
+          --max-new-tokens 2 \
           --layers 1 \
           --device p150a \
           --out /tmp/prompt_decode_loop_report.json

@@ -201,6 +201,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("--metric tokens_per_second_per_user", program_readme)
             self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
             self.assertIn("--mode decode-loop", program_readme)
+            self.assertIn("--max-new-tokens 2", program_readme)
             self.assertIn("--require-model-end-to-end", program_readme)
             self.assertIn('--prompt "Hello from TTNN Direct"', program_readme)
 
@@ -269,8 +270,8 @@ class BuildProgramTest(unittest.TestCase):
                     "--mode",
                     "decode-loop",
                     "--dry-run",
-                    "--decode-steps",
-                    "2",
+                    "--max-new-tokens",
+                    "3",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -292,6 +293,15 @@ class BuildProgramTest(unittest.TestCase):
                 json.loads(loop_report.read_text())["template"],
                 "prompt_decode_loop",
             )
+            loop_payload = json.loads(loop_report.read_text())
+            self.assertEqual(loop_payload["decode_steps"], 3)
+            self.assertEqual(loop_payload["max_new_tokens"], 3)
+            self.assertEqual(loop_payload["prefill_status"], "not_run")
+            self.assertEqual(
+                loop_payload["kv_cache_source"],
+                "empty_initialized",
+            )
+            self.assertEqual(loop_payload["generated_text_status"], "not_run")
 
             preflight = subprocess.run(
                 [

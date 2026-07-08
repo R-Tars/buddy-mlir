@@ -10,6 +10,7 @@ from .codegen.parameters import ParameterMaterializationError
 from .codegen.ttnn_tensorizer import TTNNTensorizationError
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import PromptTokenizationError
+from .runtime_inputs import detokenize_generated_token_ids
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .smoke_single_layer_decode import (
     _attach_runtime_rotary_parameters,
@@ -99,6 +100,20 @@ def run_prompt_decode_loop(
                 "runtime_owner": "prompt_decode_loop",
                 "latency_ms": 0.0,
                 "step_reports": [],
+                "per_step_token_metadata": [],
+                "generated_token_ids": [],
+                "generated_token_id_source": "dry_run",
+                "token_materialization_status": "not_run",
+                "generated_text": "",
+                "generated_text_by_user": [],
+                "generated_text_status": "not_run",
+                "generated_text_source": "dry_run",
+                "generated_text_report": {
+                    "status": "not_run",
+                    "source": "dry_run",
+                    "generated_text_by_user": [],
+                    "generated_text": "",
+                },
                 "output_shapes": None,
                 "tensor_conversion_count": plan["tensor_conversion_count"],
                 "synthetic_runtime_input_tensor_count": 0,
@@ -267,6 +282,8 @@ def run_prompt_decode_loop(
                 state.parameter_setup["kv_cache_runtime_input_tensor_count"]
             )
             step_reports = []
+            generated_token_ids_by_user = [[] for _ in range(batch_size)]
+            per_step_token_metadata = []
             total_start = time.perf_counter()
 
             for step_index in range(step_count):
@@ -296,6 +313,35 @@ def run_prompt_decode_loop(
                     "dtype": _dtype(token),
                     "repr": repr(token),
                 }
+                token_materialization = _loop_generated_token_ids(
+                    token=token,
+                    ttnn=ttnn,
+                    batch_size=batch_size,
+                )
+                step_token_ids = token_materialization["token_ids_by_user"]
+                for user_index, row in enumerate(step_token_ids):
+                    if user_index < len(generated_token_ids_by_user):
+                        generated_token_ids_by_user[user_index].extend(row)
+                token_metadata = {
+                    "step_index": step_index,
+                    "token_ids_by_user": step_token_ids,
+                    "token_materialization_status": (
+                        token_materialization["status"]
+                    ),
+                    "token_materialization_source": (
+                        token_materialization["source"]
+                    ),
+                    "cache_position_value": (
+                        None
+                        if decode_runtime_state is None
+                        else decode_runtime_state.get(
+                            "cache_position_value"
+                        )
+                    ),
+                    "page_table_shape": input_shapes.get("page_table"),
+                    "token_shape": _shape(token),
+                }
+                per_step_token_metadata.append(token_metadata)
                 reference = _decode_step_reference(
                     plan=plan,
                     layer_count=layer_count,
@@ -325,6 +371,8 @@ def run_prompt_decode_loop(
                         "rotary_runtime_state": rotary_runtime_state,
                         "output_shapes": output_shapes,
                         "output": output,
+                        "generated_token_ids": step_token_ids,
+                        "token_materialization": token_materialization,
                         "reference": reference,
                     }
                 )
@@ -374,6 +422,11 @@ def run_prompt_decode_loop(
 
             latency_ms = (time.perf_counter() - total_start) * 1000.0
             passed = all(step["passed"] for step in step_reports)
+            text_report = detokenize_generated_token_ids(
+                token_ids_by_user=generated_token_ids_by_user,
+                tokenizer_path=tokenizer_path or model_path,
+                tokenizer_module=tokenizer_module,
+            )
             parameter_setup = dict(state.parameter_setup)
             parameter_setup.update(
                 {
@@ -435,6 +488,23 @@ def run_prompt_decode_loop(
                     "tensor_conversion_count": tensor_conversion_count,
                     "latency_ms": latency_ms,
                     "step_reports": step_reports,
+                    "per_step_token_metadata": per_step_token_metadata,
+                    "generated_token_ids": generated_token_ids_by_user,
+                    "generated_token_id_source": _generated_token_id_source(
+                        per_step_token_metadata
+                    ),
+                    "token_materialization_status": (
+                        _generated_token_materialization_status(
+                            per_step_token_metadata
+                        )
+                    ),
+                    "generated_text": text_report["generated_text"],
+                    "generated_text_by_user": (
+                        text_report["generated_text_by_user"]
+                    ),
+                    "generated_text_status": text_report["status"],
+                    "generated_text_source": text_report["source"],
+                    "generated_text_report": text_report,
                     "output_shapes": (
                         step_reports[-1]["output_shapes"]
                         if step_reports
@@ -559,6 +629,14 @@ def _loop_base_report(
             "command": "prompt-decode-loop",
             "template": "prompt_decode_loop",
             "decode_steps": decode_steps,
+            "max_new_tokens": decode_steps,
+            "prefill_status": "not_run",
+            "kv_cache_source": "empty_initialized",
+            "model_semantics": "decode_only_empty_or_uninitialized_kv",
+            "semantic_disclaimer": (
+                "This decode-only loop does not run prefill and therefore "
+                "does not prove prompt-conditioned full LLM inference."
+            ),
             "trace_enabled": False,
             "trace_iterations": 0,
         }
@@ -578,8 +656,30 @@ def _loop_no_device_report(**kwargs: Any) -> dict[str, Any]:
             "command": "prompt-decode-loop",
             "template": "prompt_decode_loop",
             "decode_steps": decode_steps,
+            "max_new_tokens": decode_steps,
+            "prefill_status": "not_run",
+            "kv_cache_source": "empty_initialized",
+            "model_semantics": "decode_only_empty_or_uninitialized_kv",
+            "semantic_disclaimer": (
+                "This decode-only loop does not run prefill and therefore "
+                "does not prove prompt-conditioned full LLM inference."
+            ),
             "decode_loop_runtime_owned": False,
             "runtime_owner": "prompt_decode_loop",
+            "per_step_token_metadata": [],
+            "generated_token_ids": [],
+            "generated_token_id_source": "no_device",
+            "token_materialization_status": "not_run",
+            "generated_text": "",
+            "generated_text_by_user": [],
+            "generated_text_status": "not_run",
+            "generated_text_source": "no_device",
+            "generated_text_report": {
+                "status": "not_run",
+                "source": "no_device",
+                "generated_text_by_user": [],
+                "generated_text": "",
+            },
             "trace_enabled": False,
             "trace_iterations": 0,
             "trace": _trace_report(requested=False, status="disabled"),
@@ -603,8 +703,30 @@ def _loop_failed_report(
             "command": "prompt-decode-loop",
             "template": "prompt_decode_loop",
             "decode_steps": decode_steps,
+            "max_new_tokens": decode_steps,
+            "prefill_status": "not_run",
+            "kv_cache_source": "empty_initialized",
+            "model_semantics": "decode_only_empty_or_uninitialized_kv",
+            "semantic_disclaimer": (
+                "This decode-only loop does not run prefill and therefore "
+                "does not prove prompt-conditioned full LLM inference."
+            ),
             "decode_loop_runtime_owned": False,
             "runtime_owner": "prompt_decode_loop",
+            "per_step_token_metadata": [],
+            "generated_token_ids": [],
+            "generated_token_id_source": "error",
+            "token_materialization_status": "not_run",
+            "generated_text": "",
+            "generated_text_by_user": [],
+            "generated_text_status": "not_run",
+            "generated_text_source": "error",
+            "generated_text_report": {
+                "status": "not_run",
+                "source": "error",
+                "generated_text_by_user": [],
+                "generated_text": "",
+            },
             "trace_enabled": False,
             "trace_iterations": 0,
             "trace": _trace_report(requested=False, status="disabled"),
@@ -648,6 +770,157 @@ def _loop_output_shapes(
             for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
         ],
     }
+
+
+def _loop_generated_token_ids(
+    *,
+    token: Any,
+    ttnn: Any,
+    batch_size: int,
+) -> dict[str, Any]:
+    materialized = _materialize_token_ids(token, ttnn=ttnn, batch_size=batch_size)
+    if materialized is not None:
+        return {
+            "status": "materialized",
+            "source": materialized["source"],
+            "token_ids_by_user": materialized["token_ids_by_user"],
+        }
+    return {
+        "status": "unavailable",
+        "source": "placeholder_unmaterialized",
+        "token_ids_by_user": [[-1] for _ in range(batch_size)],
+        "message": "Token ids could not be materialized from the TTNN output.",
+    }
+
+
+def _materialize_token_ids(
+    token: Any,
+    *,
+    ttnn: Any,
+    batch_size: int,
+) -> dict[str, Any] | None:
+    direct = _normalize_token_ids(token, batch_size=batch_size)
+    if direct is not None:
+        return {"source": "tensor_value", "token_ids_by_user": direct}
+
+    to_torch = getattr(ttnn, "to_torch", None)
+    if callable(to_torch):
+        try:
+            host = to_torch(token)
+        except Exception:
+            host = None
+        normalized = _normalize_token_ids(host, batch_size=batch_size)
+        if normalized is not None:
+            return {
+                "source": "ttnn.to_torch",
+                "token_ids_by_user": normalized,
+            }
+    return None
+
+
+def _normalize_token_ids(
+    value: Any,
+    *,
+    batch_size: int,
+) -> list[list[int]] | None:
+    if value is None:
+        return None
+    for attr in ("tolist",):
+        method = getattr(value, attr, None)
+        if callable(method):
+            try:
+                value = method()
+            except Exception:
+                return None
+            break
+    for attr in ("data", "values", "value"):
+        if not isinstance(value, (list, tuple)) and hasattr(value, attr):
+            value = getattr(value, attr)
+            if hasattr(value, "tolist"):
+                value = value.tolist()
+            break
+    if not isinstance(value, (list, tuple)):
+        if batch_size == 1:
+            try:
+                return [[_as_int(value)]]
+            except Exception:
+                return None
+        return None
+    if not value:
+        return None
+
+    rows: list[list[int]] = []
+    if isinstance(value[0], (list, tuple)) and len(value) == batch_size:
+        for row in value:
+            if not isinstance(row, (list, tuple)) or not row:
+                return None
+            rows.append([_last_token_value(row)])
+    elif len(value) == batch_size:
+        rows = [[_as_int(item)] for item in value]
+    elif batch_size == 1:
+        rows = [[_last_token_value(value)]]
+    else:
+        flat = _flatten_token_values(value)
+        if len(flat) != batch_size:
+            return None
+        rows = [[item] for item in flat]
+
+    if len(rows) != batch_size:
+        return None
+    return rows
+
+
+def _last_token_value(value: Any) -> int:
+    if isinstance(value, (list, tuple)):
+        if not value:
+            raise ValueError("empty token value")
+        return _last_token_value(value[-1])
+    return _as_int(value)
+
+
+def _flatten_token_values(value: Any) -> list[int]:
+    if isinstance(value, (list, tuple)):
+        values: list[int] = []
+        for item in value:
+            values.extend(_flatten_token_values(item))
+        return values
+    return [_as_int(value)]
+
+
+def _as_int(value: Any) -> int:
+    if hasattr(value, "item"):
+        value = value.item()
+    return int(value)
+
+
+def _generated_token_id_source(
+    per_step_token_metadata: list[dict[str, Any]],
+) -> str:
+    sources = {
+        str(step.get("token_materialization_source"))
+        for step in per_step_token_metadata
+    }
+    if not sources:
+        return "none"
+    if len(sources) == 1:
+        return next(iter(sources))
+    return "mixed"
+
+
+def _generated_token_materialization_status(
+    per_step_token_metadata: list[dict[str, Any]],
+) -> str:
+    statuses = {
+        str(step.get("token_materialization_status"))
+        for step in per_step_token_metadata
+    }
+    if not statuses:
+        return "not_run"
+    if statuses == {"materialized"}:
+        return "materialized"
+    if statuses == {"unavailable"}:
+        return "unavailable"
+    return "partial"
 
 
 def _loop_reference_summary(

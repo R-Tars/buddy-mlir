@@ -1307,13 +1307,22 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --program-dir /tmp/llama31_ttnn_direct_program \
   --model-path /path/to/Llama-3.1-8B-Instruct \
   --prompt "Hello from TTNN Direct" \
-  --decode-steps 2 \
+  --max-new-tokens 2 \
   --layers 1 \
   --batch-size 32 \
   --cache-len 1024 \
   --device p150a \
   --out /tmp/prompt_decode_loop_report.json
 ```
+
+`--max-new-tokens` is an alias for `--decode-steps` for this decode-only
+demo. The report includes `generated_token_ids`, `generated_text`,
+`generated_text_by_user`, `per_step_token_metadata`, `prefill_status`,
+`kv_cache_source`, `model_semantics`, and `semantic_disclaimer`. For this path
+`prefill_status=not_run`, `kv_cache_source=empty_initialized`, and
+`model_semantics=decode_only_empty_or_uninitialized_kv`, so generated text is a
+runtime plumbing artifact rather than prompt-conditioned full LLM inference.
+The next milestone is to add prefill and change `kv_cache_source` to `prefill`.
 
 `validate-real-decode` runs this step automatically when `--prompt` is
 provided. Without a prompt it is marked skipped; with

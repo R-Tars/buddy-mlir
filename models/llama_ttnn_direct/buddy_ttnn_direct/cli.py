@@ -787,6 +787,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of generated decode steps to run in the loop.",
     )
     prompt_decode_loop.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=None,
+        help="Alias for --decode-steps used by decode-loop demos.",
+    )
+    prompt_decode_loop.add_argument(
         "--layers",
         type=int,
         default=1,
@@ -1768,7 +1774,11 @@ def _cmd_prompt_decode_loop(args: argparse.Namespace) -> int:
         model_path=args.model_path,
         prompt=args.prompt,
         tokenizer_path=args.tokenizer_path,
-        decode_steps=args.decode_steps,
+        decode_steps=(
+            args.max_new_tokens
+            if args.max_new_tokens is not None
+            else args.decode_steps
+        ),
         layers=args.layers,
         device=args.device,
         device_id=args.device_id,
