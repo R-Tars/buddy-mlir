@@ -126,6 +126,15 @@ class GenerateTest(unittest.TestCase):
                 ],
                 0,
             )
+            check_names = {check["name"] for check in contract["checks"]}
+            self.assertIn(
+                "generate.prefill_kv_cache_write_policy",
+                check_names,
+            )
+            self.assertIn(
+                "generate.prefill_kv_cache_user_count",
+                check_names,
+            )
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -313,6 +322,30 @@ class GenerateTest(unittest.TestCase):
             self.assertIn("generate.prefill_status", check_names)
             self.assertIn("generate.generated_text_available", check_names)
             self.assertIn("generate.synthetic_kv_cache_inputs", check_names)
+            self.assertIn(
+                "generate.prefill_kv_cache_write_policy",
+                check_names,
+            )
+            self.assertIn(
+                "generate.prefill_kv_cache_user_count",
+                check_names,
+            )
+            cache_user_count = next(
+                check
+                for check in contract["checks"]
+                if check["name"] == "generate.prefill_kv_cache_user_count"
+            )
+            self.assertEqual(
+                cache_user_count["observed"],
+                [
+                    {
+                        "layer_id": 0,
+                        "planned_user_count": 2,
+                        "filled_user_count": 2,
+                        "user_report_count": 2,
+                    }
+                ],
+            )
             ops = [call["op"] for call in fake_ttnn.calls]
             self.assertIn("scaled_dot_product_attention", ops)
             self.assertIn("fill_cache", ops)

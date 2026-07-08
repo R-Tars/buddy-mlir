@@ -1677,6 +1677,40 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
         if dry_run
         else report.get("prefill_status") == "passed"
     )
+    prefill = report.get("prefill")
+    if not isinstance(prefill, dict):
+        prefill = {}
+    cache_population = prefill.get("cache_population")
+    if not isinstance(cache_population, list):
+        cache_population = []
+    expected_user_count = _optional_int(report.get("batch_size"))
+    cache_write_policy_ok = bool(cache_population) and all(
+        isinstance(entry, dict)
+        and entry.get("write_policy") == "fill_cache_per_user"
+        for entry in cache_population
+    )
+    cache_user_count_ok = bool(cache_population)
+    for entry in cache_population:
+        if not isinstance(entry, dict):
+            cache_user_count_ok = False
+            continue
+        observed_user_count = (
+            entry.get("planned_user_count")
+            if dry_run
+            else entry.get("filled_user_count")
+        )
+        users = entry.get("users", [])
+        if (
+            expected_user_count is not None
+            and observed_user_count != expected_user_count
+        ):
+            cache_user_count_ok = False
+        if (
+            not dry_run
+            and expected_user_count is not None
+            and len(users) != expected_user_count
+        ):
+            cache_user_count_ok = False
     runtime_context_ready = (
         runtime_context.get("status") == "planned"
         if dry_run
@@ -1709,6 +1743,31 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
             "passed": report.get("kv_cache_source") == "prefill",
             "observed": report.get("kv_cache_source"),
             "expected": "prefill",
+        },
+        {
+            "name": "generate.prefill_kv_cache_write_policy",
+            "passed": cache_write_policy_ok,
+            "observed": [
+                entry.get("write_policy")
+                for entry in cache_population
+                if isinstance(entry, dict)
+            ],
+            "expected": "fill_cache_per_user",
+        },
+        {
+            "name": "generate.prefill_kv_cache_user_count",
+            "passed": cache_user_count_ok,
+            "observed": [
+                {
+                    "layer_id": entry.get("layer_id"),
+                    "planned_user_count": entry.get("planned_user_count"),
+                    "filled_user_count": entry.get("filled_user_count"),
+                    "user_report_count": len(entry.get("users", [])),
+                }
+                for entry in cache_population
+                if isinstance(entry, dict)
+            ],
+            "expected": expected_user_count,
         },
         {
             "name": "generate.input_source",
@@ -1822,6 +1881,13 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
         },
         "semantic_disclaimer": report.get("semantic_disclaimer"),
     }
+
+
+def _optional_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _generate_reference_summary(
