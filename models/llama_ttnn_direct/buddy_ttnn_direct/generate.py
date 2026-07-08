@@ -2204,6 +2204,7 @@ def _profile_generate_from_generate_report(
         "parameter_source": generate.get("parameter_source"),
         "input_source": generate.get("input_source"),
         "runtime_owner": generate.get("runtime_owner"),
+        "model_semantics": generate.get("model_semantics"),
         "generate_runtime_owned": generate.get("generate_runtime_owned"),
         "decode_loop_runtime_owned": generate.get("decode_loop_runtime_owned"),
         "runtime_context": generate.get("runtime_context"),

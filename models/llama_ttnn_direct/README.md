@@ -1460,10 +1460,14 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 ```
 
 The summary report records `records[]` with each depth's generate report path,
-`prefill_status`, `kv_cache_source`, `decode_loop_runtime_owned`,
-`generated_text_status`, and `generated_text`. By default full-depth is
-reported when requested but not required to pass; use `--require-full-depth`
-when the full generated layer depth should be an acceptance gate.
+`model_semantics`, `prefill_status`, `kv_cache_source`,
+`decode_loop_runtime_owned`, `generated_text_status`, and `generated_text`.
+It also reports `model_semantics_counts` and `failed_depth_diagnostics`; failed
+depth diagnostics summarize the first failing decode step's shapes, reference
+op checks, error, and the prefill cache write shape/layout evidence. By default
+full-depth is reported when requested but not required to pass; use
+`--require-full-depth` when the full generated layer depth should be an
+acceptance gate.
 
 `generate` now builds a `TTNNDirectRuntimeContext` for the whole run. The
 context owns the generated model instance, tensorized parameters, prefilled KV
@@ -1504,7 +1508,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
 
 The report includes `prefill_ms`, `decode_step_ms_mean`,
 `tokens_per_second_per_user`, `aggregate_tokens_per_second`, `sections`, and
-`per_layer`. Section-level timers such as `embedding_ms`, `attention_ms`,
+`per_layer`, and carries
+`model_semantics=prompt_conditioned_prefill_decode` from the underlying
+generate report. Section-level timers such as `embedding_ms`, `attention_ms`,
 `mlp_ms`, `lm_head_ms`, and `argmax_ms` are explicitly marked unavailable until
 the generated model records finer-grained timers. The acceptance block only
 requires that the generated model can run and reports positive tokens/s/user in

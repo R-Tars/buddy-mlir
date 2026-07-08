@@ -55,13 +55,19 @@ def run_generate_depth_sweep(
     for depth in resolved_depths:
         report_path = report_root / f"generate_depth_{depth}.json"
         if stop_after_failure:
+            reason = "blocked by an earlier depth failure"
             records.append(
                 {
                     "depth": depth,
                     "status": "skipped",
                     "passed": False,
                     "generate_report": str(report_path),
-                    "reason": "blocked by an earlier depth failure",
+                    "reason": reason,
+                    "failure_diagnostics": {
+                        "depth": depth,
+                        "status": "skipped",
+                        "reason": reason,
+                    },
                 }
             )
             continue
@@ -105,6 +111,14 @@ def run_generate_depth_sweep(
                     "message": str(exc),
                     "traceback": traceback.format_exc(),
                 },
+                "failure_diagnostics": {
+                    "depth": depth,
+                    "status": "exception",
+                    "error": {
+                        "type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                },
             }
             stop_after_failure = True
         records.append(record)
@@ -112,6 +126,7 @@ def run_generate_depth_sweep(
     status_counts = _field_counts(records, "status")
     prefill_status_counts = _field_counts(records, "prefill_status")
     text_status_counts = _field_counts(records, "generated_text_status")
+    model_semantics_counts = _field_counts(records, "model_semantics")
     acceptance = _generate_depth_acceptance(
         records,
         depths=resolved_depths,
@@ -157,6 +172,7 @@ def run_generate_depth_sweep(
         "status_counts": status_counts,
         "prefill_status_counts": prefill_status_counts,
         "generated_text_status_counts": text_status_counts,
+        "model_semantics_counts": model_semantics_counts,
         "passed_depth_count": sum(
             1 for record in records if record.get("passed") is True
         ),
@@ -165,6 +181,13 @@ def run_generate_depth_sweep(
             for record in records
             if record.get("passed") is False
             and record.get("status") != "skipped"
+        ],
+        "failed_depth_diagnostics": [
+            record["failure_diagnostics"]
+            for record in records
+            if record.get("passed") is False
+            and record.get("status") != "skipped"
+            and record.get("failure_diagnostics") is not None
         ],
         "records": records,
         "acceptance": acceptance,
@@ -182,6 +205,9 @@ def _generate_record(
     prefill = generate.get("prefill") or {}
     throughput = generate.get("throughput_summary") or {}
     generated_token_ids = generate.get("generated_token_ids") or []
+    end_to_end_contract = generate.get("end_to_end_contract")
+    if not isinstance(end_to_end_contract, dict):
+        end_to_end_contract = {}
     token_counts = [
         len(row)
         for row in generated_token_ids
@@ -201,10 +227,16 @@ def _generate_record(
         "parameter_source": generate.get("parameter_source"),
         "input_source": generate.get("input_source"),
         "runtime_owner": generate.get("runtime_owner"),
+        "model_semantics": generate.get("model_semantics"),
         "prefill_status": generate.get("prefill_status"),
         "kv_cache_source": generate.get("kv_cache_source"),
         "decode_loop_runtime_owned": generate.get("decode_loop_runtime_owned"),
         "generate_runtime_owned": generate.get("generate_runtime_owned"),
+        "end_to_end_contract_status": end_to_end_contract.get("status"),
+        "end_to_end_failed_checks": end_to_end_contract.get(
+            "failed_checks",
+            [],
+        ),
         "generated_text_status": generate.get("generated_text_status"),
         "generated_text_source": generate.get("generated_text_source"),
         "generated_text": generate.get("generated_text"),
@@ -229,6 +261,108 @@ def _generate_record(
             "aggregate_tokens_per_second"
         ),
         "error": generate.get("error"),
+        "failure_diagnostics": _generate_failure_diagnostics(
+            depth=depth,
+            generate=generate,
+        ),
+    }
+
+
+def _generate_failure_diagnostics(
+    *,
+    depth: int,
+    generate: dict[str, Any],
+) -> dict[str, Any] | None:
+    if bool(generate.get("passed")):
+        return None
+    prefill = generate.get("prefill")
+    if not isinstance(prefill, dict):
+        prefill = {}
+    contract = generate.get("end_to_end_contract")
+    if not isinstance(contract, dict):
+        contract = {}
+    step_reports = generate.get("step_reports")
+    if not isinstance(step_reports, list):
+        step_reports = []
+    failed_step = next(
+        (
+            step
+            for step in step_reports
+            if isinstance(step, dict) and not bool(step.get("passed"))
+        ),
+        None,
+    )
+    return {
+        "depth": depth,
+        "status": generate.get("status"),
+        "error": generate.get("error"),
+        "model_semantics": generate.get("model_semantics"),
+        "layers": generate.get("layers"),
+        "layout": generate.get("layout"),
+        "end_to_end_contract": {
+            "status": contract.get("status"),
+            "failed_checks": contract.get("failed_checks", []),
+        },
+        "prefill": {
+            "status": generate.get("prefill_status"),
+            "cache_population": _cache_population_diagnostics(
+                prefill.get("cache_population", [])
+            ),
+        },
+        "decode": {
+            "decode_loop_runtime_owned": generate.get(
+                "decode_loop_runtime_owned"
+            ),
+            "step_count": len(step_reports),
+            "failed_step": _failed_step_diagnostics(failed_step),
+        },
+    }
+
+
+def _cache_population_diagnostics(cache_population: Any) -> list[dict[str, Any]]:
+    if not isinstance(cache_population, list):
+        return []
+    diagnostics = []
+    for entry in cache_population:
+        if not isinstance(entry, dict):
+            continue
+        diagnostics.append(
+            {
+                "layer_id": entry.get("layer_id"),
+                "status": entry.get("status"),
+                "write_policy": entry.get("write_policy"),
+                "update_shape_layout": entry.get("update_shape_layout"),
+                "key_update_shape": entry.get("key_update_shape"),
+                "value_update_shape": entry.get("value_update_shape"),
+                "key_cache_shape": entry.get("key_cache_shape"),
+                "value_cache_shape": entry.get("value_cache_shape"),
+                "page_table_shape": entry.get("page_table_shape"),
+                "planned_user_count": entry.get("planned_user_count"),
+                "filled_user_count": entry.get("filled_user_count"),
+            }
+        )
+    return diagnostics
+
+
+def _failed_step_diagnostics(step: Any) -> dict[str, Any] | None:
+    if not isinstance(step, dict):
+        return None
+    reference = step.get("reference")
+    if not isinstance(reference, dict):
+        reference = {}
+    return {
+        "step_index": step.get("step_index"),
+        "status": step.get("status"),
+        "cache_position_value": step.get("cache_position_value"),
+        "input_shapes": step.get("input_shapes"),
+        "output_shapes": step.get("output_shapes"),
+        "decode_runtime_state": step.get("decode_runtime_state"),
+        "rotary_runtime_state": step.get("rotary_runtime_state"),
+        "reference_status": reference.get("status"),
+        "reference_failed_checks": reference.get("failed_checks", []),
+        "observed_ops": reference.get("observed_ops"),
+        "expected_ops": reference.get("expected_ops"),
+        "error": step.get("error"),
     }
 
 
@@ -308,6 +442,32 @@ def _generate_depth_acceptance(
                 and record.get("kv_cache_reinitialized_per_step") is False
                 for record in evidence_records
             ),
+        }
+    )
+    failed_evidence_records = [
+        record
+        for record in records
+        if record.get("status") != "skipped"
+        and record.get("passed") is False
+    ]
+    checks.append(
+        {
+            "name": "generate_depth_sweep.failure_diagnostics",
+            "passed": all(
+                isinstance(record.get("failure_diagnostics"), dict)
+                for record in failed_evidence_records
+            ),
+            "observed": [
+                {
+                    "depth": record.get("depth"),
+                    "status": record.get("status"),
+                    "has_failure_diagnostics": isinstance(
+                        record.get("failure_diagnostics"),
+                        dict,
+                    ),
+                }
+                for record in failed_evidence_records
+            ],
         }
     )
     if dry_run:

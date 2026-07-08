@@ -150,6 +150,10 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(report["generate_status"], "passed")
             self.assertEqual(report["prefill_status"], "passed")
             self.assertEqual(report["kv_cache_source"], "prefill")
+            self.assertEqual(
+                report["model_semantics"],
+                "prompt_conditioned_prefill_decode",
+            )
             self.assertEqual(report["parameter_source"], "hf_model")
             self.assertEqual(report["input_source"], "prompt_prefill")
             self.assertTrue(report["generate_runtime_owned"])

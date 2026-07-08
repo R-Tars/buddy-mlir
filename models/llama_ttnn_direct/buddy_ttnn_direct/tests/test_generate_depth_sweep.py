@@ -7,6 +7,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.generate_depth_sweep import (
+    _generate_record,
     run_generate_depth_sweep,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate import (
@@ -93,7 +94,12 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 report["generated_text_status_counts"],
                 {"not_run": 2},
             )
+            self.assertEqual(
+                report["model_semantics_counts"],
+                {"prompt_conditioned_prefill_decode": 2},
+            )
             self.assertEqual(report["failed_depths"], [])
+            self.assertEqual(report["failed_depth_diagnostics"], [])
             self.assertTrue(report["acceptance"]["passed"])
             self.assertEqual(report["acceptance"]["required_depths"], [1, 2])
             self.assertFalse(report["acceptance"]["require_full_depth"])
@@ -103,6 +109,10 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 payload = json.loads(path.read_text())
                 self.assertEqual(payload["mode"], "generate")
                 self.assertEqual(payload["status"], "dry_run")
+                self.assertEqual(
+                    payload["model_semantics"],
+                    "prompt_conditioned_prefill_decode",
+                )
                 self.assertEqual(payload["parameter_tensorization_count_per_generate"], 1)
                 self.assertEqual(payload["parameter_tensorization_count_per_decode_step"], 0)
                 self.assertFalse(payload["kv_cache_reinitialized_per_step"])
@@ -159,9 +169,20 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 report["generated_text_status_counts"],
                 {"fallback": 2},
             )
+            self.assertEqual(
+                report["model_semantics_counts"],
+                {"prompt_conditioned_prefill_decode": 2},
+            )
             self.assertEqual(report["failed_depths"], [])
+            self.assertEqual(report["failed_depth_diagnostics"], [])
             self.assertEqual(report["acceptance"]["failed_checks"], [])
             depth_one, depth_two = report["records"]
+            self.assertEqual(
+                depth_one["model_semantics"],
+                "prompt_conditioned_prefill_decode",
+            )
+            self.assertEqual(depth_one["end_to_end_failed_checks"], [])
+            self.assertIsNone(depth_one["failure_diagnostics"])
             self.assertEqual(depth_one["generated_token_count_by_user"], [3, 3])
             self.assertEqual(depth_two["generated_token_count_by_user"], [3, 3])
             self.assertEqual(
@@ -191,6 +212,112 @@ class GenerateDepthSweepTest(unittest.TestCase):
             self.assertEqual(len(depth_two["prefill_cache_population"]), 2)
             self.assertTrue(Path(depth_two["generate_report"]).is_file())
             self.assertEqual(json.loads(report_json.read_text()), report)
+
+    def test_generate_record_reports_failure_diagnostics(self) -> None:
+        generate = {
+            "status": "reference_mismatch",
+            "passed": False,
+            "layers": 2,
+            "batch_size": 2,
+            "cache_len": 16,
+            "prefill_len": 8,
+            "max_new_tokens": 3,
+            "layout": "tile",
+            "model_semantics": "prompt_conditioned_prefill_decode",
+            "prefill_status": "passed",
+            "kv_cache_source": "prefill",
+            "decode_loop_runtime_owned": False,
+            "generate_runtime_owned": False,
+            "generated_text_status": "not_run",
+            "generated_token_ids": [],
+            "throughput_summary": {},
+            "end_to_end_contract": {
+                "status": "failed",
+                "failed_checks": ["generate.decode_loop_runtime_owned"],
+            },
+            "prefill": {
+                "cache_population": [
+                    {
+                        "layer_id": 1,
+                        "status": "filled",
+                        "write_policy": "paged_fill_cache_per_user",
+                        "update_shape_layout": "batch_heads_seq_head_dim",
+                        "key_update_shape": [1, 2, 8, 4],
+                        "value_update_shape": [1, 2, 8, 4],
+                        "key_cache_shape": [2, 2, 16, 4],
+                        "value_cache_shape": [2, 2, 16, 4],
+                        "page_table_shape": [2, 1],
+                        "planned_user_count": 2,
+                        "filled_user_count": 2,
+                    }
+                ],
+            },
+            "step_reports": [
+                {
+                    "step_index": 0,
+                    "status": "reference_mismatch",
+                    "passed": False,
+                    "cache_position_value": 8,
+                    "input_shapes": {
+                        "token_ids": [2, 1],
+                        "page_table": [2, 1],
+                    },
+                    "output_shapes": {"token": [2, 1]},
+                    "decode_runtime_state": {"cache_position_value": 8},
+                    "rotary_runtime_state": {"cos_shape": [2, 1, 64]},
+                    "reference": {
+                        "status": "failed",
+                        "failed_checks": ["decode.output_shape"],
+                        "observed_ops": ["paged_scaled_dot_product_attention_decode"],
+                        "expected_ops": ["paged_scaled_dot_product_attention_decode"],
+                    },
+                    "error": "decode output shape mismatch",
+                }
+            ],
+            "error": "generate reference mismatch",
+        }
+
+        record = _generate_record(
+            depth=2,
+            generate=generate,
+            report_path=Path("/tmp/generate_depth_2.json"),
+        )
+
+        self.assertFalse(record["passed"])
+        self.assertEqual(
+            record["model_semantics"],
+            "prompt_conditioned_prefill_decode",
+        )
+        self.assertEqual(
+            record["end_to_end_failed_checks"],
+            ["generate.decode_loop_runtime_owned"],
+        )
+        diagnostics = record["failure_diagnostics"]
+        self.assertEqual(diagnostics["depth"], 2)
+        self.assertEqual(diagnostics["error"], "generate reference mismatch")
+        self.assertEqual(
+            diagnostics["prefill"]["cache_population"][0][
+                "update_shape_layout"
+            ],
+            "batch_heads_seq_head_dim",
+        )
+        self.assertEqual(
+            diagnostics["prefill"]["cache_population"][0]["key_update_shape"],
+            [1, 2, 8, 4],
+        )
+        failed_step = diagnostics["decode"]["failed_step"]
+        self.assertEqual(failed_step["step_index"], 0)
+        self.assertEqual(failed_step["input_shapes"]["token_ids"], [2, 1])
+        self.assertEqual(failed_step["output_shapes"]["token"], [2, 1])
+        self.assertEqual(
+            failed_step["reference_failed_checks"],
+            ["decode.output_shape"],
+        )
+        self.assertEqual(
+            failed_step["observed_ops"],
+            ["paged_scaled_dot_product_attention_decode"],
+        )
+        self.assertEqual(failed_step["error"], "decode output shape mismatch")
 
 
 if __name__ == "__main__":
