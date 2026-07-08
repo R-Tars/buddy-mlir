@@ -692,8 +692,11 @@ with `--skip-profile-decode-step` and never claims official performance parity.
 When it runs, the top-level real-decode acceptance matrix also records
 `profile_generate.full_generated_model_can_run`,
 `profile_generate.tokens_per_second_per_user_positive`, and
-`profile_generate.no_official_parity_claim`, so early performance evidence is
-visible without turning it into an official parity gate.
+`profile_generate.no_official_parity_claim`, plus
+`profile_generate.performance_milestones`, so early performance evidence is
+visible without turning it into an official parity gate. The evidence manifest
+also includes `performance_evidence.generate_milestones`, which combines the
+profile report with generate-depth-sweep full-depth evidence for M1.
 The integrated decode-depth sweep reuses `profile-decode-step` for the
 review ladder. By default it covers `1`, `2`, and `4` where those depths are
 not greater than the requested `--layers`, and always includes the requested
@@ -713,7 +716,8 @@ diagnostics, host-copy/section profiles, and a compact failure diagnostic with
 the first failing decode step's shapes, reference op checks, and error. Its
 `runtime_evidence.profile_generate` and
 `performance_evidence.profile_generate` sections mirror the generate profile
-latency/throughput fields and `official_performance_parity_claimed=false`.
+latency/throughput fields, `performance_milestones`, and
+`official_performance_parity_claimed=false`.
 Its
 `runtime_evidence.generate_depth_sweep` section records depth records,
 `model_semantics_counts`, and `failed_depth_diagnostics` for prefill+decode
@@ -1539,7 +1543,20 @@ generate report. Section-level timers such as `embedding_ms`, `attention_ms`,
 `mlp_ms`, `lm_head_ms`, and `argmax_ms` are explicitly marked unavailable until
 the generated model records finer-grained timers. The acceptance block only
 requires that the generated model can run and reports positive tokens/s/user in
-non-dry-run mode; `official_performance_parity_claimed=false`.
+non-dry-run mode; `official_performance_parity_claimed=false`. It also writes
+`performance_milestones`, a PR-7 milestone ladder for M0-M6:
+
+```text
+M0: 1-layer generate works
+M1: full-depth generate works, any speed
+M2: batch32 decode t/s/u > 1
+M3: >10% official 33.1 t/s/u
+M4: >30% official
+M5: >60% official
+M6: >90% official
+```
+
+Dry-run reports preserve the schema without marking any milestone passed.
 
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with

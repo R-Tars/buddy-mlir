@@ -99,6 +99,21 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertFalse(report["official_performance_parity_claimed"])
             self.assertTrue(report["acceptance"]["passed"])
             self.assertEqual(report["acceptance"]["failed_checks"], [])
+            milestones = report["performance_milestones"]
+            self.assertTrue(milestones["dry_run"])
+            self.assertEqual(
+                milestones["official_reference"][
+                    "tokens_per_second_per_user"
+                ],
+                33.1,
+            )
+            self.assertEqual(
+                [entry["id"] for entry in milestones["milestones"]],
+                ["M0", "M1", "M2", "M3", "M4", "M5", "M6"],
+            )
+            self.assertFalse(
+                any(entry["passed"] for entry in milestones["milestones"])
+            )
 
     def test_profile_generate_runs_fake_generate_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -149,6 +164,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["generate_status"], "passed")
             self.assertEqual(report["prefill_status"], "passed")
+            self.assertEqual(report["program_num_layers"], 2)
             self.assertEqual(report["kv_cache_source"], "prefill")
             self.assertEqual(
                 report["model_semantics"],
@@ -216,6 +232,19 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(report["per_layer"]["status"], "measured")
             self.assertEqual(len(report["per_layer"]["prefill"]), 1)
             self.assertEqual(len(report["per_layer"]["decode"]), 1)
+            milestones = report["performance_milestones"]
+            by_id = {entry["id"]: entry for entry in milestones["milestones"]}
+            self.assertFalse(milestones["dry_run"])
+            self.assertEqual(
+                [entry["id"] for entry in milestones["milestones"]],
+                ["M0", "M1", "M2", "M3", "M4", "M5", "M6"],
+            )
+            self.assertTrue(by_id["M0"]["passed"])
+            self.assertFalse(by_id["M1"]["passed"])
+            self.assertEqual(by_id["M1"]["reason"], "not_full_depth_profile")
+            self.assertFalse(by_id["M2"]["passed"])
+            self.assertEqual(by_id["M2"]["reason"], "requires_batch32_profile")
+            self.assertEqual(milestones["highest_passed"], "M0")
             self.assertTrue(generate_report_json.is_file())
             self.assertEqual(json.loads(report_json.read_text()), report)
 

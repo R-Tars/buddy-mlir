@@ -67,6 +67,10 @@ from .templates.ttnn_ops import UnsupportedTTNNOp
 PROMPT_CONDITIONED_GENERATE_SEMANTICS = (
     "prompt_conditioned_prefill_decode"
 )
+PROFILE_GENERATE_OFFICIAL_BASELINE_ID = "tt_metal_official_llama31_8b_b32"
+PROFILE_GENERATE_OFFICIAL_TPS_PER_USER = 33.1
+PROFILE_GENERATE_OFFICIAL_BATCH_SIZE = 32
+PROFILE_GENERATE_MILESTONE_IDS = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
 
 
 class TTNNDirectRuntimeContext:
@@ -469,6 +473,7 @@ def run_generate(
     if dry_run:
         report = _generate_base_report(
             program_dir=program_root,
+            program_num_layers=num_layers,
             layers=layer_count,
             max_new_tokens=token_count,
             decode_steps=decode_step_count,
@@ -969,6 +974,7 @@ def run_generate(
             )
             report = _generate_base_report(
                 program_dir=program_root,
+                program_num_layers=num_layers,
                 layers=layer_count,
                 max_new_tokens=token_count,
                 decode_steps=decode_step_count,
@@ -1569,6 +1575,7 @@ def _build_decode_runtime_for_position(
 def _generate_base_report(
     *,
     program_dir: Path,
+    program_num_layers: int,
     layers: int,
     max_new_tokens: int,
     decode_steps: int,
@@ -1592,6 +1599,7 @@ def _generate_base_report(
         "mode": "generate",
         "template": "prefill_then_decode_generate",
         "program_dir": str(program_dir),
+        "program_num_layers": program_num_layers,
         "layers": layers,
         "device": device,
         "device_id": device_id,
@@ -1680,6 +1688,7 @@ def _generate_failed_report(
 ) -> dict[str, Any]:
     report = _generate_base_report(
         program_dir=program_dir,
+        program_num_layers=layers,
         layers=layers,
         max_new_tokens=max_new_tokens,
         decode_steps=decode_steps,
@@ -2168,10 +2177,15 @@ def _profile_generate_from_generate_report(
         tokens_per_second_per_user is not None
         and tokens_per_second_per_user > 0.0
     )
+    performance_milestones = _profile_generate_performance_milestones(
+        generate,
+        tokens_per_second_per_user=tokens_per_second_per_user,
+    )
     acceptance = _profile_generate_acceptance(
         dry_run=dry_run,
         generate_ran=generate_ran,
         has_positive_throughput=has_positive_throughput,
+        performance_milestones=performance_milestones,
     )
     if dry_run:
         status = "dry_run"
@@ -2193,6 +2207,7 @@ def _profile_generate_from_generate_report(
         "profile_report": str(profile_path),
         "generate_status": generate.get("status"),
         "generate_passed": bool(generate.get("passed")),
+        "program_num_layers": generate.get("program_num_layers"),
         "layers": generate.get("layers"),
         "batch_size": generate.get("batch_size"),
         "prefill_len": generate.get("prefill_len"),
@@ -2265,6 +2280,7 @@ def _profile_generate_from_generate_report(
             section_profile=section_profile,
         ),
         "per_layer": _profile_generate_per_layer(generate),
+        "performance_milestones": performance_milestones,
         "acceptance": acceptance,
         "official_performance_parity_claimed": False,
         "message": (
@@ -2442,11 +2458,305 @@ def _profile_generate_per_layer(generate: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _profile_generate_performance_milestones(
+    generate: dict[str, Any],
+    *,
+    tokens_per_second_per_user: float | None,
+) -> dict[str, Any]:
+    official_reference = _profile_generate_official_reference()
+    official_tps = (
+        _float_or_none(official_reference.get("tokens_per_second_per_user"))
+        or PROFILE_GENERATE_OFFICIAL_TPS_PER_USER
+    )
+    official_batch_size = (
+        _int_or_none(official_reference.get("batch_size"))
+        or PROFILE_GENERATE_OFFICIAL_BATCH_SIZE
+    )
+    dry_run = generate.get("status") == "dry_run"
+    generate_passed = bool(generate.get("passed")) and not dry_run
+    layers = _int_or_none(generate.get("layers"))
+    program_num_layers = _int_or_none(generate.get("program_num_layers"))
+    batch_size = _int_or_none(generate.get("batch_size"))
+
+    def reason_for(
+        *,
+        batch32_required: bool = False,
+        throughput_required: bool = False,
+        full_depth_required: bool = False,
+    ) -> str | None:
+        if dry_run:
+            return "dry_run"
+        if not generate_passed:
+            return "generate_not_passed"
+        if full_depth_required:
+            if program_num_layers is None:
+                return "program_num_layers_unavailable"
+            if layers != program_num_layers:
+                return "not_full_depth_profile"
+        if batch32_required and batch_size != official_batch_size:
+            return "requires_batch32_profile"
+        if throughput_required and tokens_per_second_per_user is None:
+            return "tokens_per_second_per_user_unavailable"
+        return None
+
+    def entry(
+        milestone_id: str,
+        name: str,
+        *,
+        passed: bool,
+        observed: dict[str, Any],
+        expected: dict[str, Any],
+        threshold_tokens_per_second_per_user: float | None = None,
+        ratio_of_official: float | None = None,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "id": milestone_id,
+            "name": name,
+            "passed": bool(passed),
+            "status": "passed" if passed else "not_met",
+            "observed": observed,
+            "expected": expected,
+        }
+        if threshold_tokens_per_second_per_user is not None:
+            result["threshold_tokens_per_second_per_user"] = (
+                threshold_tokens_per_second_per_user
+            )
+        if ratio_of_official is not None:
+            result["ratio_of_official"] = ratio_of_official
+        if dry_run and not passed:
+            result["status"] = "dry_run"
+        if reason is not None and not passed:
+            result["reason"] = reason
+        return result
+
+    m0_reason = reason_for()
+    m0_passed = (
+        m0_reason is None and layers is not None and layers >= 1
+    )
+    m1_reason = reason_for(full_depth_required=True)
+    m1_passed = (
+        m1_reason is None
+        and layers is not None
+        and program_num_layers is not None
+        and layers == program_num_layers
+    )
+    m2_reason = reason_for(batch32_required=True, throughput_required=True)
+    m2_passed = (
+        m2_reason is None
+        and tokens_per_second_per_user is not None
+        and tokens_per_second_per_user > 1.0
+    )
+    milestones = [
+        entry(
+            "M0",
+            "1-layer generate works",
+            passed=m0_passed,
+            observed={
+                "generate_passed": generate_passed,
+                "layers": layers,
+            },
+            expected={"generate_passed": True, "layers_min": 1},
+            reason=m0_reason,
+        ),
+        entry(
+            "M1",
+            "full-depth generate works, any speed",
+            passed=m1_passed,
+            observed={
+                "generate_passed": generate_passed,
+                "layers": layers,
+                "program_num_layers": program_num_layers,
+            },
+            expected={
+                "generate_passed": True,
+                "layers": program_num_layers,
+            },
+            reason=m1_reason,
+        ),
+        entry(
+            "M2",
+            "batch32 decode t/s/u > 1",
+            passed=m2_passed,
+            observed={
+                "generate_passed": generate_passed,
+                "batch_size": batch_size,
+                "tokens_per_second_per_user": tokens_per_second_per_user,
+            },
+            expected={
+                "batch_size": official_batch_size,
+                "tokens_per_second_per_user": "> 1.0",
+            },
+            threshold_tokens_per_second_per_user=1.0,
+            reason=m2_reason,
+        ),
+    ]
+    for milestone_id, ratio, name in (
+        ("M3", 0.10, ">10% official 33.1 t/s/u"),
+        ("M4", 0.30, ">30% official"),
+        ("M5", 0.60, ">60% official"),
+        ("M6", 0.90, ">90% official"),
+    ):
+        threshold = official_tps * ratio
+        reason = reason_for(
+            batch32_required=True,
+            throughput_required=True,
+        )
+        passed = (
+            reason is None
+            and tokens_per_second_per_user is not None
+            and tokens_per_second_per_user > threshold
+        )
+        milestones.append(
+            entry(
+                milestone_id,
+                name,
+                passed=passed,
+                observed={
+                    "generate_passed": generate_passed,
+                    "batch_size": batch_size,
+                    "tokens_per_second_per_user": (
+                        tokens_per_second_per_user
+                    ),
+                },
+                expected={
+                    "batch_size": official_batch_size,
+                    "tokens_per_second_per_user": f"> {threshold:.4f}",
+                },
+                threshold_tokens_per_second_per_user=threshold,
+                ratio_of_official=ratio,
+                reason=reason,
+            )
+        )
+
+    highest_passed = None
+    for milestone in milestones:
+        if milestone["passed"]:
+            highest_passed = milestone["id"]
+    next_milestone = next(
+        (
+            {
+                "id": milestone["id"],
+                "name": milestone["name"],
+                "reason": milestone.get("reason"),
+            }
+            for milestone in milestones
+            if not milestone["passed"]
+        ),
+        None,
+    )
+    return {
+        "schema_version": 1,
+        "basis": "PR-7 generate performance milestone ladder",
+        "dry_run": dry_run,
+        "official_reference": official_reference,
+        "observed": {
+            "status": generate.get("status"),
+            "passed": bool(generate.get("passed")),
+            "program_num_layers": program_num_layers,
+            "layers": layers,
+            "batch_size": batch_size,
+            "tokens_per_second_per_user": tokens_per_second_per_user,
+            "aggregate_tokens_per_second": (
+                _float_or_none(
+                    (generate.get("throughput_summary") or {}).get(
+                        "aggregate_tokens_per_second"
+                    )
+                )
+            ),
+            "model_semantics": generate.get("model_semantics"),
+            "prefill_status": generate.get("prefill_status"),
+            "kv_cache_source": generate.get("kv_cache_source"),
+        },
+        "milestones": milestones,
+        "highest_passed": highest_passed,
+        "next_milestone": next_milestone,
+        "official_performance_parity_claimed": False,
+    }
+
+
+def _profile_generate_official_reference() -> dict[str, Any]:
+    baseline_path = (
+        Path(__file__).resolve().parent
+        / "reference"
+        / "performance_baselines.json"
+    )
+    fallback = {
+        "id": PROFILE_GENERATE_OFFICIAL_BASELINE_ID,
+        "role": "official_8b_target",
+        "metric": "decode_tokens_per_second_per_user",
+        "model": "Llama 3.1 8B",
+        "batch_size": PROFILE_GENERATE_OFFICIAL_BATCH_SIZE,
+        "tokens_per_second_per_user": (
+            PROFILE_GENERATE_OFFICIAL_TPS_PER_USER
+        ),
+        "aggregate_tokens_per_second": (
+            PROFILE_GENERATE_OFFICIAL_TPS_PER_USER
+            * PROFILE_GENERATE_OFFICIAL_BATCH_SIZE
+        ),
+        "source": "reference/performance_baselines.json",
+        "baseline_file": "reference/performance_baselines.json",
+        "resolved": False,
+    }
+    try:
+        payload = json.loads(baseline_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return fallback
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        return fallback
+    for entry in entries:
+        if (
+            isinstance(entry, dict)
+            and entry.get("id") == PROFILE_GENERATE_OFFICIAL_BASELINE_ID
+        ):
+            return {
+                "id": entry.get("id"),
+                "role": entry.get("role"),
+                "metric": payload.get("metric"),
+                "implementation": entry.get("implementation"),
+                "frontend": entry.get("frontend"),
+                "model": entry.get("model"),
+                "batch_size": entry.get("batch_size"),
+                "tokens_per_second_per_user": entry.get(
+                    "decode_tokens_per_second_per_user"
+                ),
+                "aggregate_tokens_per_second": entry.get(
+                    "aggregate_tokens_per_second"
+                ),
+                "source": entry.get("source"),
+                "notes": entry.get("notes"),
+                "baseline_file": "reference/performance_baselines.json",
+                "resolved": True,
+            }
+    return fallback
+
+
+def _profile_generate_milestones_complete(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    milestones = value.get("milestones")
+    if not isinstance(milestones, list):
+        return False
+    ids = [
+        milestone.get("id")
+        for milestone in milestones
+        if isinstance(milestone, dict)
+    ]
+    if ids != list(PROFILE_GENERATE_MILESTONE_IDS):
+        return False
+    return isinstance(value.get("official_reference"), dict) and isinstance(
+        value.get("observed"),
+        dict,
+    )
+
+
 def _profile_generate_acceptance(
     *,
     dry_run: bool,
     generate_ran: bool,
     has_positive_throughput: bool,
+    performance_milestones: dict[str, Any],
 ) -> dict[str, Any]:
     checks = [
         {
@@ -2462,6 +2772,21 @@ def _profile_generate_acceptance(
         {
             "name": "profile_generate.no_official_parity_claim",
             "passed": True,
+        },
+        {
+            "name": "profile_generate.performance_milestones",
+            "passed": _profile_generate_milestones_complete(
+                performance_milestones
+            ),
+            "observed": [
+                milestone.get("id")
+                for milestone in performance_milestones.get(
+                    "milestones",
+                    [],
+                )
+                if isinstance(milestone, dict)
+            ],
+            "expected": list(PROFILE_GENERATE_MILESTONE_IDS),
         },
     ]
     return {
@@ -2490,6 +2815,15 @@ def _float_or_none(value: Any) -> float | None:
         return None
     try:
         return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None
 

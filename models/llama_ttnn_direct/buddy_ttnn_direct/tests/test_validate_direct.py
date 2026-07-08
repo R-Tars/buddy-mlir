@@ -4338,6 +4338,21 @@ class ValidateDirectTest(unittest.TestCase):
                 profile_generate["tokens_per_second_per_user"],
                 0.0,
             )
+            profile_milestones = profile_generate["performance_milestones"]
+            milestone_by_id = {
+                entry["id"]: entry
+                for entry in profile_milestones["milestones"]
+            }
+            self.assertEqual(
+                list(milestone_by_id),
+                ["M0", "M1", "M2", "M3", "M4", "M5", "M6"],
+            )
+            self.assertTrue(milestone_by_id["M0"]["passed"])
+            self.assertFalse(milestone_by_id["M2"]["passed"])
+            self.assertEqual(
+                milestone_by_id["M2"]["reason"],
+                "requires_batch32_profile",
+            )
             self.assertFalse(
                 profile_generate["official_performance_parity_claimed"]
             )
@@ -4358,6 +4373,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertIn(
                 "profile_generate.profile_fields",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_generate.performance_milestones",
                 acceptance_check_names,
             )
 
@@ -4544,6 +4563,26 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(scope["synthetic_runtime_input_steps"], [])
             self.assertEqual(scope["depth_sweep_synthetic_record_count"], 0)
+            evidence_profile_milestones = evidence["performance_evidence"][
+                "profile_generate"
+            ]["performance_milestones"]
+            self.assertEqual(
+                [
+                    entry["id"]
+                    for entry in evidence_profile_milestones["milestones"]
+                ],
+                ["M0", "M1", "M2", "M3", "M4", "M5", "M6"],
+            )
+            generate_milestones = evidence["performance_evidence"][
+                "generate_milestones"
+            ]
+            self.assertEqual(generate_milestones["highest_passed"], "M0")
+            self.assertEqual(
+                generate_milestones["observed"]["generate_depth_sweep"][
+                    "covered_full_depth"
+                ],
+                False,
+            )
             self.assertNotIn(
                 "decode loop that owns prompt token ids, page table, cache "
                 "position, rotary tensors, and KV cache beyond "
@@ -4664,6 +4703,40 @@ class ValidateDirectTest(unittest.TestCase):
                         "status": "measured",
                         "tokens_per_second_per_user": 1.0,
                         "aggregate_tokens_per_second": 2.0,
+                    },
+                    "performance_milestones": {
+                        "schema_version": 1,
+                        "basis": "PR-7 generate performance milestone ladder",
+                        "dry_run": False,
+                        "official_reference": {
+                            "id": "tt_metal_official_llama31_8b_b32",
+                            "tokens_per_second_per_user": 33.1,
+                            "batch_size": 32,
+                        },
+                        "observed": {
+                            "layers": 1,
+                            "program_num_layers": 2,
+                            "batch_size": 2,
+                            "tokens_per_second_per_user": 1.0,
+                        },
+                        "milestones": [
+                            {
+                                "id": milestone_id,
+                                "name": milestone_id,
+                                "passed": milestone_id == "M0",
+                            }
+                            for milestone_id in (
+                                "M0",
+                                "M1",
+                                "M2",
+                                "M3",
+                                "M4",
+                                "M5",
+                                "M6",
+                            )
+                        ],
+                        "highest_passed": "M0",
+                        "next_milestone": {"id": "M1", "name": "M1"},
                     },
                     "acceptance": {
                         "passed": True,
