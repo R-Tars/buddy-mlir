@@ -187,6 +187,208 @@ class TTNNDirectRuntimeContext:
         }
 
 
+class GenerateSectionProfiler:
+    """Records first-pass generate section timings from generated model calls."""
+
+    def __init__(self, *, ttnn: Any, device: Any) -> None:
+        self.ttnn = ttnn
+        self.device = device
+        self.phase_stack: list[str] = []
+        self.section_latency_ms = {
+            "embedding_ms": 0.0,
+            "prefill_attention_ms": 0.0,
+            "decode_attention_ms": 0.0,
+            "mlp_ms": 0.0,
+            "prefill_mlp_ms": 0.0,
+            "decode_mlp_ms": 0.0,
+            "final_norm_ms": 0.0,
+            "lm_head_ms": 0.0,
+            "argmax_ms": 0.0,
+        }
+        self.prefill_layer_profiles: dict[int, dict[str, Any]] = {}
+        self.decode_layer_profiles: dict[int, dict[str, Any]] = {}
+        self.lm_head_argmax_total_ms = 0.0
+        self.argmax_total_ms = 0.0
+
+    def install(self, model: Any) -> None:
+        if getattr(model, "_buddy_generate_section_profiler", None) is self:
+            return
+        setattr(model, "_buddy_generate_section_profiler", self)
+        self._wrap_phase(model, "prefill_prompt", "prefill")
+        self._wrap_phase(model, "decode_step", "decode")
+        self._wrap_method(model, "embed", self._record_embedding)
+        self._wrap_method(model, "attention_prefill", self._record_prefill_attention)
+        self._wrap_method(model, "attention_decode", self._record_decode_attention)
+        self._wrap_method(model, "mlp_decode", self._record_mlp)
+        self._wrap_method(model, "final_norm", self._record_final_norm)
+        self._wrap_method(model, "lm_head_argmax", self._record_lm_head_argmax)
+        self._wrap_ops_method(model, "argmax", self._record_argmax)
+
+    def to_report(
+        self,
+        *,
+        host_copy_profile: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        host_copy_ms = _float_or_none((host_copy_profile or {}).get("total_ms"))
+        sections = dict(self.section_latency_ms)
+        sections["host_copy_ms"] = host_copy_ms
+        return {
+            "status": "measured",
+            "basis": "generated model method wrappers",
+            "sections_ms": sections,
+            "prefill_layer_profiles": self._ordered_layer_profiles(
+                self.prefill_layer_profiles
+            ),
+            "decode_layer_profiles": self._ordered_layer_profiles(
+                self.decode_layer_profiles
+            ),
+            "lm_head_argmax_total_ms": self.lm_head_argmax_total_ms,
+            "host_copy_ms": host_copy_ms,
+        }
+
+    def _wrap_phase(self, model: Any, name: str, phase: str) -> None:
+        original = getattr(model, name, None)
+        if not callable(original):
+            return
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            self.phase_stack.append(phase)
+            try:
+                return original(*args, **kwargs)
+            finally:
+                self.phase_stack.pop()
+
+        setattr(model, name, wrapped)
+
+    def _wrap_method(self, model: Any, name: str, recorder: Any) -> None:
+        original = getattr(model, name, None)
+        if not callable(original):
+            return
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            start = time.perf_counter()
+            output = original(*args, **kwargs)
+            _synchronize_ttnn(self.ttnn, self.device)
+            recorder((time.perf_counter() - start) * 1000.0, args, kwargs)
+            return output
+
+        setattr(model, name, wrapped)
+
+    def _wrap_ops_method(self, model: Any, name: str, recorder: Any) -> None:
+        ops = getattr(model, "ops", None)
+        if ops is None:
+            return
+        original = getattr(ops, name, None)
+        if not callable(original):
+            return
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            start = time.perf_counter()
+            output = original(*args, **kwargs)
+            _synchronize_ttnn(self.ttnn, self.device)
+            recorder((time.perf_counter() - start) * 1000.0, args, kwargs)
+            return output
+
+        setattr(ops, name, wrapped)
+
+    def _record_embedding(
+        self,
+        latency_ms: float,
+        _args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.section_latency_ms["embedding_ms"] += latency_ms
+
+    def _record_prefill_attention(
+        self,
+        latency_ms: float,
+        args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.section_latency_ms["prefill_attention_ms"] += latency_ms
+        profile = self._layer_profile(self.prefill_layer_profiles, args)
+        profile["attention_ms"] += latency_ms
+
+    def _record_decode_attention(
+        self,
+        latency_ms: float,
+        args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.section_latency_ms["decode_attention_ms"] += latency_ms
+        profile = self._layer_profile(self.decode_layer_profiles, args)
+        profile["attention_ms"] += latency_ms
+
+    def _record_mlp(
+        self,
+        latency_ms: float,
+        args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        phase = self.phase_stack[-1] if self.phase_stack else "unknown"
+        section = f"{phase}_mlp_ms"
+        if section in self.section_latency_ms:
+            self.section_latency_ms[section] += latency_ms
+        self.section_latency_ms["mlp_ms"] += latency_ms
+        target = (
+            self.prefill_layer_profiles
+            if phase == "prefill"
+            else self.decode_layer_profiles
+        )
+        self._layer_profile(target, args)["mlp_ms"] += latency_ms
+
+    def _record_final_norm(
+        self,
+        latency_ms: float,
+        _args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.section_latency_ms["final_norm_ms"] += latency_ms
+
+    def _record_lm_head_argmax(
+        self,
+        latency_ms: float,
+        _args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.lm_head_argmax_total_ms += latency_ms
+        self.section_latency_ms["lm_head_ms"] = max(
+            0.0,
+            self.lm_head_argmax_total_ms - self.argmax_total_ms,
+        )
+
+    def _record_argmax(
+        self,
+        latency_ms: float,
+        _args: tuple[Any, ...],
+        _kwargs: dict[str, Any],
+    ) -> None:
+        self.argmax_total_ms += latency_ms
+        self.section_latency_ms["argmax_ms"] = self.argmax_total_ms
+
+    def _layer_profile(
+        self,
+        profiles: dict[int, dict[str, Any]],
+        args: tuple[Any, ...],
+    ) -> dict[str, Any]:
+        layer_id = int(args[0]) if args else -1
+        profile = profiles.setdefault(
+            layer_id,
+            {
+                "layer_id": layer_id,
+                "attention_ms": 0.0,
+                "mlp_ms": 0.0,
+            },
+        )
+        return profile
+
+    @staticmethod
+    def _ordered_layer_profiles(
+        profiles: dict[int, dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        return [profiles[layer_id] for layer_id in sorted(profiles)]
+
+
 def run_generate(
     *,
     out: str | Path,
@@ -311,6 +513,7 @@ def run_generate(
                 "synthetic_rotary_tensor_count": 0,
                 "synthetic_kv_cache_tensor_count": 0,
                 "host_copy_profile": _host_copy_not_run_profile("dry_run"),
+                "section_profile": _section_profile_not_run("dry_run"),
                 "trace": _trace_report(requested=False, status="disabled"),
                 "reference": _dry_run_reference("generate"),
                 "error": None,
@@ -457,6 +660,11 @@ def run_generate(
                 parameters=context.parameters,
                 config=_to_namespace(generate_config),
             )
+            section_profiler = GenerateSectionProfiler(
+                ttnn=ttnn,
+                device=ttnn_device,
+            )
+            section_profiler.install(model)
             context.install_generated_model(
                 generated_module=generated,
                 generated_model=model,
@@ -464,9 +672,11 @@ def run_generate(
 
             total_start = time.perf_counter()
             prefill_start = time.perf_counter()
-            prefill_token, kv_cache, cache_reports = context.generated_model.prefill_prompt(
-                context.prefill_token_ids,
-                context.kv_cache,
+            prefill_token, kv_cache, cache_reports = (
+                context.generated_model.prefill_prompt(
+                    context.prefill_token_ids,
+                    context.kv_cache,
+                )
             )
             context.update_kv_cache(kv_cache)
             synchronize = getattr(ttnn, "synchronize_device", None)
@@ -689,6 +899,12 @@ def run_generate(
                 tokenizer_path=tokenizer_path or model_path,
                 tokenizer_module=tokenizer_module,
             )
+            host_copy_profile = _host_copy_profile(
+                first_token_materialization_ms=(
+                    first_token_materialization_ms
+                ),
+                step_reports=step_reports,
+            )
             decode_passed = all(step["passed"] for step in step_reports)
             passed = bool(prefill_reference["passed"] and decode_passed)
             parameter_setup = dict(context.parameter_setup)
@@ -843,11 +1059,9 @@ def run_generate(
                     "synthetic_runtime_input_tensor_count": 0,
                     "synthetic_rotary_tensor_count": 0,
                     "synthetic_kv_cache_tensor_count": 0,
-                    "host_copy_profile": _host_copy_profile(
-                        first_token_materialization_ms=(
-                            first_token_materialization_ms
-                        ),
-                        step_reports=step_reports,
+                    "host_copy_profile": host_copy_profile,
+                    "section_profile": section_profiler.to_report(
+                        host_copy_profile=host_copy_profile,
                     ),
                     "latency_ms": latency_ms,
                     "throughput_summary": _generate_throughput_summary(
@@ -1413,6 +1627,7 @@ def _generate_failed_report(
             "synthetic_rotary_tensor_count": 0,
             "synthetic_kv_cache_tensor_count": 0,
             "host_copy_profile": _host_copy_not_run_profile(status),
+            "section_profile": _section_profile_not_run(status),
             "latency_ms": None,
             "trace": _trace_report(requested=False, status="disabled"),
             "reference": {
@@ -1502,6 +1717,31 @@ def _host_copy_not_run_profile(status: str) -> dict[str, Any]:
     }
 
 
+def _section_profile_not_run(status: str) -> dict[str, Any]:
+    section_names = (
+        "embedding_ms",
+        "prefill_attention_ms",
+        "decode_attention_ms",
+        "mlp_ms",
+        "prefill_mlp_ms",
+        "decode_mlp_ms",
+        "final_norm_ms",
+        "lm_head_ms",
+        "argmax_ms",
+        "host_copy_ms",
+    )
+    return {
+        "status": "not_run",
+        "reason": status,
+        "basis": "generated model method wrappers",
+        "sections_ms": {name: None for name in section_names},
+        "prefill_layer_profiles": [],
+        "decode_layer_profiles": [],
+        "lm_head_argmax_total_ms": None,
+        "host_copy_ms": None,
+    }
+
+
 def _host_copy_profile(
     *,
     first_token_materialization_ms: float,
@@ -1563,6 +1803,7 @@ def _profile_generate_from_generate_report(
         throughput.get("aggregate_tokens_per_second")
     )
     host_copy = generate.get("host_copy_profile") or {}
+    section_profile = generate.get("section_profile") or {}
     host_copy_ms = _float_or_none(host_copy.get("total_ms"))
     decode_token_materialization_samples = [
         latency
@@ -1654,6 +1895,7 @@ def _profile_generate_from_generate_report(
         "decode_step_ms_samples": step_latencies,
         "host_copy_ms": host_copy_ms,
         "host_copy_profile": host_copy,
+        "section_profile": section_profile,
         "prefill_first_token_materialization_ms": _float_or_none(
             host_copy.get("prefill_first_token_ms")
         ),
@@ -1671,6 +1913,7 @@ def _profile_generate_from_generate_report(
             decode_total_ms=decode_total_ms,
             decode_step_ms_mean=decode_step_ms_mean,
             host_copy_profile=host_copy,
+            section_profile=section_profile,
         ),
         "per_layer": _profile_generate_per_layer(generate),
         "acceptance": acceptance,
@@ -1690,12 +1933,16 @@ def _profile_generate_sections(
     decode_total_ms: float | None,
     decode_step_ms_mean: float | None,
     host_copy_profile: dict[str, Any],
+    section_profile: dict[str, Any],
 ) -> dict[str, Any]:
     unavailable = {
         "status": "unavailable",
         "value_ms": None,
         "reason": "generate path does not yet collect section-level timers",
     }
+    measured_sections = section_profile.get("sections_ms")
+    if not isinstance(measured_sections, dict):
+        measured_sections = {}
     host_copy_ms = _float_or_none(host_copy_profile.get("total_ms"))
     host_copy_status = host_copy_profile.get("status") or "unavailable"
     if host_copy_ms is None:
@@ -1734,17 +1981,106 @@ def _profile_generate_sections(
         "prefill_ms": prefill_ms,
         "decode_total_ms": decode_total_ms,
         "decode_step_ms_mean": decode_step_ms_mean,
-        "embedding_ms": dict(unavailable),
-        "prefill_attention_ms": dict(unavailable),
-        "decode_attention_ms": dict(unavailable),
-        "mlp_ms": dict(unavailable),
-        "lm_head_ms": dict(unavailable),
-        "argmax_ms": dict(unavailable),
+        "embedding_ms": _profile_section(
+            measured_sections,
+            "embedding_ms",
+            unavailable,
+        ),
+        "prefill_attention_ms": _profile_section(
+            measured_sections,
+            "prefill_attention_ms",
+            unavailable,
+        ),
+        "decode_attention_ms": _profile_section(
+            measured_sections,
+            "decode_attention_ms",
+            unavailable,
+        ),
+        "mlp_ms": _profile_section(measured_sections, "mlp_ms", unavailable),
+        "prefill_mlp_ms": _profile_section(
+            measured_sections,
+            "prefill_mlp_ms",
+            unavailable,
+        ),
+        "decode_mlp_ms": _profile_section(
+            measured_sections,
+            "decode_mlp_ms",
+            unavailable,
+        ),
+        "final_norm_ms": _profile_section(
+            measured_sections,
+            "final_norm_ms",
+            unavailable,
+        ),
+        "lm_head_ms": _profile_section(
+            measured_sections,
+            "lm_head_ms",
+            unavailable,
+        ),
+        "argmax_ms": _profile_section(
+            measured_sections,
+            "argmax_ms",
+            unavailable,
+        ),
         "host_copy_ms": host_copy_section,
     }
 
 
+def _profile_section(
+    sections: dict[str, Any],
+    name: str,
+    unavailable: dict[str, Any],
+) -> dict[str, Any]:
+    value = _float_or_none(sections.get(name))
+    if value is None:
+        return dict(unavailable)
+    return {
+        "status": "measured",
+        "value_ms": value,
+        "basis": "generated model method wrappers",
+    }
+
+
 def _profile_generate_per_layer(generate: dict[str, Any]) -> dict[str, Any]:
+    section_profile = generate.get("section_profile")
+    if (
+        isinstance(section_profile, dict)
+        and section_profile.get("status") == "measured"
+    ):
+        return {
+            "status": "measured",
+            "layers": generate.get("layers"),
+            "prefill": section_profile.get("prefill_layer_profiles", []),
+            "decode": section_profile.get("decode_layer_profiles", []),
+            "attention_ms": {
+                "prefill": sum(
+                    _float_or_none(layer.get("attention_ms")) or 0.0
+                    for layer in section_profile.get(
+                        "prefill_layer_profiles", []
+                    )
+                ),
+                "decode": sum(
+                    _float_or_none(layer.get("attention_ms")) or 0.0
+                    for layer in section_profile.get(
+                        "decode_layer_profiles", []
+                    )
+                ),
+            },
+            "mlp_ms": {
+                "prefill": sum(
+                    _float_or_none(layer.get("mlp_ms")) or 0.0
+                    for layer in section_profile.get(
+                        "prefill_layer_profiles", []
+                    )
+                ),
+                "decode": sum(
+                    _float_or_none(layer.get("mlp_ms")) or 0.0
+                    for layer in section_profile.get(
+                        "decode_layer_profiles", []
+                    )
+                ),
+            },
+        }
     return {
         "status": "unavailable",
         "layers": generate.get("layers"),
@@ -1807,6 +2143,12 @@ def _float_or_none(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _synchronize_ttnn(ttnn: Any, device: Any) -> None:
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
 
 
 def _default_generate_report_path(out: Path) -> Path:

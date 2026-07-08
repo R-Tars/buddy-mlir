@@ -94,6 +94,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertIsNone(report["decode_step_ms_mean"])
             self.assertIsNone(report["host_copy_ms"])
             self.assertEqual(report["host_copy_profile"]["status"], "not_run")
+            self.assertEqual(report["section_profile"]["status"], "not_run")
             self.assertIsNone(report["tokens_per_second_per_user"])
             self.assertFalse(report["official_performance_parity_claimed"])
             self.assertTrue(report["acceptance"]["passed"])
@@ -179,13 +180,30 @@ class ProfileGenerateTest(unittest.TestCase):
             )
             self.assertGreaterEqual(report["sections"]["host_copy_ms"]["value_ms"], 0.0)
             self.assertEqual(report["host_copy_profile"]["status"], "measured")
+            self.assertEqual(report["section_profile"]["status"], "measured")
             self.assertGreaterEqual(report["host_copy_ms"], 0.0)
             self.assertGreaterEqual(
                 report["prefill_first_token_materialization_ms"],
                 0.0,
             )
             self.assertEqual(len(report["decode_token_materialization_ms_samples"]), 2)
-            self.assertEqual(report["per_layer"]["status"], "unavailable")
+            for name in (
+                "embedding_ms",
+                "prefill_attention_ms",
+                "decode_attention_ms",
+                "mlp_ms",
+                "lm_head_ms",
+                "argmax_ms",
+                "host_copy_ms",
+            ):
+                self.assertEqual(report["sections"][name]["status"], "measured")
+                self.assertGreaterEqual(
+                    report["sections"][name]["value_ms"],
+                    0.0,
+                )
+            self.assertEqual(report["per_layer"]["status"], "measured")
+            self.assertEqual(len(report["per_layer"]["prefill"]), 1)
+            self.assertEqual(len(report["per_layer"]["decode"]), 1)
             self.assertTrue(generate_report_json.is_file())
             self.assertEqual(json.loads(report_json.read_text()), report)
 

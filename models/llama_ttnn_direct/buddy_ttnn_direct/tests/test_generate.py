@@ -115,6 +115,7 @@ class GenerateTest(unittest.TestCase):
             self.assertFalse(
                 report["host_copy_profile"]["host_roundtrip_present"]
             )
+            self.assertEqual(report["section_profile"]["status"], "not_run")
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -230,6 +231,27 @@ class GenerateTest(unittest.TestCase):
                     ]
                 ),
                 2,
+            )
+            self.assertEqual(report["section_profile"]["status"], "measured")
+            sections = report["section_profile"]["sections_ms"]
+            for name in (
+                "embedding_ms",
+                "prefill_attention_ms",
+                "decode_attention_ms",
+                "mlp_ms",
+                "lm_head_ms",
+                "argmax_ms",
+                "host_copy_ms",
+            ):
+                self.assertIn(name, sections)
+                self.assertIsNotNone(sections[name])
+            self.assertEqual(
+                len(report["section_profile"]["prefill_layer_profiles"]),
+                1,
+            )
+            self.assertEqual(
+                len(report["section_profile"]["decode_layer_profiles"]),
+                1,
             )
             self.assertEqual(report["generated_token_ids"], [[17, 23, 23], [17, 23, 23]])
             self.assertEqual(report["generated_text_status"], "fallback")
