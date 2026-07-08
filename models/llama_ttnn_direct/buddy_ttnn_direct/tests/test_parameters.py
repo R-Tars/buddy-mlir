@@ -142,6 +142,43 @@ class ParameterMaterializerTest(unittest.TestCase):
                 [16, 16],
             )
 
+    def test_safetensors_loader_reuses_safe_open_handles_per_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                load_llama_parameters_from_manifests(
+                    model_path=model_dir,
+                    weights_manifest=program_dir / "weights_manifest.json",
+                    config=program_dir / "config.json",
+                    tensor_backend="torch",
+                    layers=[0],
+                )
+                open_counts = dict(FakeSafeOpen.open_counts)
+
+            shard = str(model_dir / "model-00001-of-00001.safetensors")
+            self.assertEqual(open_counts, {shard: 1})
+
     def test_cli_materialize_parameters_writes_shape_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -801,8 +838,12 @@ class FakeSafeSlice:
 
 
 class FakeSafeOpen:
+    open_counts: dict[str, int] = {}
+
     def __init__(self, path: str, *_args: Any, **_kwargs: Any):
         self.path = Path(path)
+        key = str(self.path)
+        self.open_counts[key] = self.open_counts.get(key, 0) + 1
         self.header = _read_fake_safetensors_header(self.path)
 
     def __enter__(self) -> "FakeSafeOpen":
@@ -838,6 +879,7 @@ def _fake_torch_and_safetensors():
     torch_module = types.ModuleType("torch")
     torch_module.cat = fake_cat
     safetensors_module = types.ModuleType("safetensors")
+    FakeSafeOpen.open_counts = {}
     safetensors_module.safe_open = FakeSafeOpen
     safetensors_torch_module = types.ModuleType("safetensors.torch")
     safetensors_torch_module.load_file = None

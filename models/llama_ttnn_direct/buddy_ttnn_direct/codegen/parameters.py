@@ -74,6 +74,7 @@ def load_llama_parameters_from_manifests(
             "weights_manifest must contain a weights object"
         )
 
+    owns_loader = tensor_loader is None
     loader = tensor_loader or TorchSafetensorsTensorLoader(model_path)
     num_layers = int(config_dict["num_layers"])
     selected_layers = _normalize_layers(layers, num_layers)
@@ -189,13 +190,18 @@ def load_llama_parameters_from_manifests(
         "tensor_count": len(tensor_records),
         "tensors": tensor_records,
     }
-    return SimpleNamespace(
+    params = SimpleNamespace(
         embedding=embedding,
         layers=materialized_layers,
         final_norm=final_norm,
         lm_head=lm_head,
         metadata=metadata,
     )
+    if owns_loader:
+        close = getattr(loader, "close", None)
+        if callable(close):
+            close()
+    return params
 
 
 def materialize_parameters_from_program(
@@ -292,6 +298,7 @@ class TorchSafetensorsTensorLoader:
             ).load_file
         except ModuleNotFoundError:
             self._load_file = None
+        self._safe_open_handles: dict[Path, tuple[Any, Any]] = {}
 
     def load_tensor(self, key: str, entry: Mapping[str, Any]) -> Any:
         filename = entry.get("filename")
@@ -300,10 +307,9 @@ class TorchSafetensorsTensorLoader:
                 f"weight {key!r} has no safetensors filename in manifest"
             )
         path = self.root / str(filename)
-        safe_open = getattr(self.safetensors, "safe_open", None)
-        if safe_open is not None:
-            with safe_open(str(path), framework="pt", device="cpu") as handle:
-                return handle.get_tensor(key)
+        handle = self._safe_open_handle(path)
+        if handle is not None:
+            return handle.get_tensor(key)
         if self._load_file is None:
             raise ParameterMaterializationError(
                 "safetensors.safe_open or safetensors.torch.load_file is required"
@@ -341,20 +347,46 @@ class TorchSafetensorsTensorLoader:
                 f"weight {key!r} has no safetensors filename in manifest"
             )
         path = self.root / str(filename)
-        safe_open = getattr(self.safetensors, "safe_open", None)
-        if safe_open is not None:
-            with safe_open(str(path), framework="pt", device="cpu") as handle:
-                get_slice = getattr(handle, "get_slice", None)
-                if callable(get_slice):
-                    return get_slice(key)[start:end, :]
-                raise ParameterMaterializationError(
-                    "safetensors.safe_open handle must provide get_slice "
-                    "for sliced LM-head materialization"
-                )
+        handle = self._safe_open_handle(path)
+        if handle is not None:
+            get_slice = getattr(handle, "get_slice", None)
+            if callable(get_slice):
+                return get_slice(key)[start:end, :]
+            raise ParameterMaterializationError(
+                "safetensors.safe_open handle must provide get_slice "
+                "for sliced LM-head materialization"
+            )
         return self.slice_vocab(self.load_tensor(key, entry), start, end)
 
     def slice_vocab(self, tensor: Any, start: int, end: int) -> Any:
         return tensor[start:end, :]
+
+    def close(self) -> None:
+        for manager, _handle in reversed(list(self._safe_open_handles.values())):
+            exit_context = getattr(manager, "__exit__", None)
+            if callable(exit_context):
+                exit_context(None, None, None)
+        self._safe_open_handles.clear()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _safe_open_handle(self, path: Path) -> Any | None:
+        safe_open = getattr(self.safetensors, "safe_open", None)
+        if safe_open is None:
+            return None
+        path = Path(path)
+        cached = self._safe_open_handles.get(path)
+        if cached is not None:
+            return cached[1]
+        manager = safe_open(str(path), framework="pt", device="cpu")
+        enter_context = getattr(manager, "__enter__", None)
+        handle = enter_context() if callable(enter_context) else manager
+        self._safe_open_handles[path] = (manager, handle)
+        return handle
 
 
 def _materialize_lm_head(
