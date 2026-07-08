@@ -1605,6 +1605,7 @@ class ValidateDirectTest(unittest.TestCase):
                 report["results"]["generate_prefill_decode"],
                 "dry_run",
             )
+            self.assertEqual(report["results"]["generate_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertIn("official_config", report)
@@ -1699,6 +1700,31 @@ class ValidateDirectTest(unittest.TestCase):
                 [1],
             )
             self.assertEqual(
+                report["steps"]["generate_depth_sweep"]["depths"],
+                [1],
+            )
+            self.assertEqual(
+                report["steps"]["generate_depth_sweep"]["status_counts"],
+                {"dry_run": 1},
+            )
+            self.assertEqual(
+                report["steps"]["generate_depth_sweep"][
+                    "model_semantics_counts"
+                ],
+                {"prompt_conditioned_prefill_decode": 1},
+            )
+            self.assertTrue(
+                report["steps"]["generate_depth_sweep"]["acceptance"][
+                    "passed"
+                ]
+            )
+            self.assertEqual(
+                report["steps"]["generate_depth_sweep"][
+                    "failed_depth_diagnostics"
+                ],
+                [],
+            )
+            self.assertEqual(
                 report["steps"]["decode_depth_sweep"]["status_counts"],
                 {"dry_run": 1},
             )
@@ -1713,6 +1739,8 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
+            self.assertTrue((out_dir / "generate_depth_sweep_report.json").is_file())
+            self.assertTrue((out_dir / "generate_depth_reports").is_dir())
             self.assertTrue((out_dir / "decode_depth_sweep_report.json").is_file())
             self.assertTrue((out_dir / "decode_depth_profiles").is_dir())
             evidence = json.loads(
@@ -1771,6 +1799,22 @@ class ValidateDirectTest(unittest.TestCase):
                 [1],
             )
             self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"]["depths"],
+                [1],
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"][
+                    "model_semantics_counts"
+                ],
+                {"prompt_conditioned_prefill_decode": 1},
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"][
+                    "failed_depth_diagnostics"
+                ],
+                [],
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["decode_depth_sweep"][
                     "status_counts"
                 ],
@@ -1801,6 +1845,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(artifact_names["attention_layer_report"]["exists"])
             self.assertTrue(artifact_names["single_layer_decode_report"]["exists"])
             self.assertTrue(artifact_names["smoke_report"]["exists"])
+            self.assertTrue(
+                artifact_names["generate_depth_sweep_report"]["exists"]
+            )
+            self.assertTrue(
+                artifact_names["generate_depth_reports_dir"]["exists"]
+            )
             self.assertTrue(
                 artifact_names["decode_depth_sweep_report"]["exists"]
             )
@@ -1968,6 +2018,7 @@ class ValidateDirectTest(unittest.TestCase):
             }
             expected_results["prompt_decode_loop"] = "skipped"
             expected_results["generate_prefill_decode"] = "skipped"
+            expected_results["generate_depth_sweep"] = "skipped"
             self.assertEqual(report["results"], expected_results)
             self.assertEqual(
                 report["steps"]["materialize_parameters"]["tensor_count"],
@@ -5758,6 +5809,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step",
                     "prompt_decode_loop",
                     "generate_prefill_decode",
+                    "generate_depth_sweep",
                     "decode_depth_sweep",
                     "decode_step_autotune",
                 ],
@@ -6614,10 +6666,72 @@ class ValidateDirectTest(unittest.TestCase):
                 out.write_text(json.dumps(generate_report, indent=2) + "\n")
                 return generate_report
 
+            def fake_generate_depth_sweep(*args, **kwargs):
+                out = Path(kwargs["out"])
+                reports_dir = Path(kwargs["reports_dir"])
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                depth_report = reports_dir / "generate_depth_1.json"
+                depth_report.write_text(
+                    json.dumps(
+                        {
+                            "status": "passed",
+                            "passed": True,
+                            "model_semantics": (
+                                "prompt_conditioned_prefill_decode"
+                            ),
+                        },
+                        indent=2,
+                    )
+                    + "\n"
+                )
+                sweep_report = {
+                    "schema_version": 1,
+                    "command": "generate-depth-sweep",
+                    "status": "pass",
+                    "passed": True,
+                    "dry_run": False,
+                    "depths": [1],
+                    "depth_count": 1,
+                    "max_depth": 1,
+                    "covered_full_depth": False,
+                    "require_full_depth": False,
+                    "status_counts": {"passed": 1},
+                    "prefill_status_counts": {"passed": 1},
+                    "generated_text_status_counts": {"fallback": 1},
+                    "model_semantics_counts": {
+                        "prompt_conditioned_prefill_decode": 1,
+                    },
+                    "passed_depth_count": 1,
+                    "failed_depths": [],
+                    "failed_depth_diagnostics": [],
+                    "records": [
+                        {
+                            "depth": 1,
+                            "status": "passed",
+                            "passed": True,
+                            "generate_report": str(depth_report),
+                            "model_semantics": (
+                                "prompt_conditioned_prefill_decode"
+                            ),
+                        }
+                    ],
+                    "acceptance": {
+                        "status": "passed",
+                        "passed": True,
+                        "failed_checks": [],
+                    },
+                }
+                out.write_text(json.dumps(sweep_report, indent=2) + "\n")
+                return sweep_report
+
             with patch.object(
                 validation_module,
                 "run_generate",
                 side_effect=fake_generate,
+            ), patch.object(
+                validation_module,
+                "run_generate_depth_sweep",
+                side_effect=fake_generate_depth_sweep,
             ):
                 with _fake_torch_and_safetensors():
                     report = validate_real_decode(
@@ -6646,6 +6760,10 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["results"]["generate_prefill_decode"],
+                "pass",
+            )
+            self.assertEqual(
+                report["results"]["generate_depth_sweep"],
                 "pass",
             )
             self.assertEqual(
@@ -6681,7 +6799,18 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step",
                     "prompt_decode_loop",
                     "generate_prefill_decode",
+                    "generate_depth_sweep",
                 ],
+            )
+            self.assertEqual(
+                report["steps"]["generate_depth_sweep"]["status_counts"],
+                {"passed": 1},
+            )
+            self.assertEqual(
+                report["steps"]["generate_depth_sweep"][
+                    "model_semantics_counts"
+                ],
+                {"prompt_conditioned_prefill_decode": 1},
             )
             profile_stub = json.loads(
                 (out_dir / "decode_step_profile_report.json").read_text()
@@ -6702,6 +6831,24 @@ class ValidateDirectTest(unittest.TestCase):
                     "prefill_status"
                 ],
                 "passed",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"][
+                    "status"
+                ],
+                "pass",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"][
+                    "model_semantics_counts"
+                ],
+                {"prompt_conditioned_prefill_decode": 1},
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_depth_sweep"][
+                    "failed_depth_diagnostics"
+                ],
+                [],
             )
             generate_evidence = evidence["runtime_evidence"][
                 "generate_prefill_decode"

@@ -43,6 +43,7 @@ from .search.decode_step_autotune import (
     run_decode_step_autotune,
 )
 from .search.decode_depth_sweep import run_decode_depth_sweep
+from .search.generate_depth_sweep import run_generate_depth_sweep
 from .search.report import dump_search_report
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
@@ -107,6 +108,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "profile_decode_step",
     "prompt_decode_loop",
     "generate_prefill_decode",
+    "generate_depth_sweep",
     "decode_depth_sweep",
     "decode_step_autotune",
 )
@@ -2144,6 +2146,8 @@ def validate_real_decode(
         "profile_report": root / "decode_step_profile_report.json",
         "prompt_decode_loop_report": root / "prompt_decode_loop_report.json",
         "generate_report": root / "generate_prefill_decode_report.json",
+        "generate_depth_sweep_report": root / "generate_depth_sweep_report.json",
+        "generate_depth_reports_dir": root / "generate_depth_reports",
         "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
         "decode_depth_profiles_dir": root / "decode_depth_profiles",
         "autotune_report": root / "decode_step_autotune_report.json",
@@ -3353,6 +3357,103 @@ def validate_real_decode(
             **_reference_summary(generate_report),
         }
 
+    def generate_depth_sweep_step() -> dict[str, Any]:
+        if not dry_run and prompt is None:
+            sweep_report = {
+                "schema_version": 1,
+                "command": "generate-depth-sweep",
+                "status": "skipped",
+                "reason": (
+                    "prompt is required for prefill+decode generate depth "
+                    "sweep evidence"
+                ),
+                "dry_run": dry_run,
+                "depths": [],
+                "depth_count": 0,
+                "records": [],
+            }
+            _write_json(paths["generate_depth_sweep_report"], sweep_report)
+            return {
+                "status": "skipped",
+                "generate_depth_sweep_report": str(
+                    paths["generate_depth_sweep_report"]
+                ),
+                "reports_dir": str(paths["generate_depth_reports_dir"]),
+                "reason": sweep_report["reason"],
+                "depths": [],
+                "depth_count": 0,
+                "status_counts": {"skipped": 1},
+                "records": [],
+                "acceptance": {
+                    "status": "skipped",
+                    "passed": False,
+                    "failed_checks": ["generate_depth_sweep.prompt_required"],
+                },
+            }
+
+        sweep_depths = _validation_depth_sweep_targets(
+            layer_count=layer_count,
+            program_num_layers=program_num_layers,
+            require_full_depth=require_full_depth,
+        )
+        sweep_report = run_generate_depth_sweep(
+            program_dir=program_dir,
+            out=paths["generate_depth_sweep_report"],
+            depths=sweep_depths,
+            model_path=None if dry_run else model_path,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            reports_dir=paths["generate_depth_reports_dir"],
+            max_new_tokens=max_new_token_count,
+            prefill_len=prefill_token_count,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            device=device,
+            device_id=device_id,
+            dtype_seed=dtype_seed,
+            dry_run=dry_run,
+            require_full_depth=require_full_depth,
+            tokenizer_module=tokenizer_module,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+        )
+        return {
+            "status": _generate_depth_sweep_step_status(
+                sweep_report,
+                dry_run=dry_run,
+            ),
+            "generate_depth_sweep_report": str(
+                paths["generate_depth_sweep_report"]
+            ),
+            "reports_dir": str(paths["generate_depth_reports_dir"]),
+            "depths": sweep_report.get("depths"),
+            "depth_count": sweep_report.get("depth_count"),
+            "max_depth": sweep_report.get("max_depth"),
+            "covered_full_depth": sweep_report.get("covered_full_depth"),
+            "require_full_depth": sweep_report.get("require_full_depth"),
+            "status_counts": sweep_report.get("status_counts", {}),
+            "prefill_status_counts": sweep_report.get(
+                "prefill_status_counts",
+                {},
+            ),
+            "generated_text_status_counts": sweep_report.get(
+                "generated_text_status_counts",
+                {},
+            ),
+            "model_semantics_counts": sweep_report.get(
+                "model_semantics_counts",
+                {},
+            ),
+            "passed_depth_count": sweep_report.get("passed_depth_count"),
+            "failed_depths": sweep_report.get("failed_depths", []),
+            "failed_depth_diagnostics": sweep_report.get(
+                "failed_depth_diagnostics",
+                [],
+            ),
+            "records": sweep_report.get("records", []),
+            "acceptance": sweep_report.get("acceptance"),
+        }
+
     def decode_depth_sweep_step() -> dict[str, Any]:
         if skip_profile_decode_step:
             sweep_report = {
@@ -3565,6 +3666,7 @@ def validate_real_decode(
         "profile_decode_step": profile_step,
         "prompt_decode_loop": prompt_decode_loop_step,
         "generate_prefill_decode": generate_prefill_decode_step,
+        "generate_depth_sweep": generate_depth_sweep_step,
         "decode_depth_sweep": decode_depth_sweep_step,
         "decode_step_autotune": autotune_step,
     }
@@ -3884,6 +3986,18 @@ def _runtime_step_status(
 
 
 def _decode_depth_sweep_step_status(
+    sweep_report: dict[str, Any],
+    *,
+    dry_run: bool,
+) -> str:
+    if dry_run:
+        return "dry_run"
+    if sweep_report.get("passed"):
+        return "pass"
+    return str(sweep_report.get("status", "fail"))
+
+
+def _generate_depth_sweep_step_status(
     sweep_report: dict[str, Any],
     *,
     dry_run: bool,
@@ -5051,6 +5165,7 @@ def _real_decode_evidence_manifest(
     profile = steps.get("profile_decode_step", {})
     prompt_loop = steps.get("prompt_decode_loop", {})
     generate_step = steps.get("generate_prefill_decode", {})
+    generate_depth_sweep = steps.get("generate_depth_sweep", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
@@ -5231,6 +5346,9 @@ def _real_decode_evidence_manifest(
             ),
             "generate_prefill_decode_ttnn_environment": generate_step.get(
                 "ttnn_environment"
+            ),
+            "generate_depth_sweep_ttnn_environment": (
+                generate_depth_sweep.get("ttnn_environment")
             ),
         },
         "performance_evidence": {
@@ -5684,6 +5802,51 @@ def _real_decode_evidence_manifest(
                 "failure_diagnostics": generate_step.get(
                     "failure_diagnostics"
                 ),
+            },
+            "generate_depth_sweep": {
+                "status": generate_depth_sweep.get("status"),
+                "generate_depth_sweep_report": generate_depth_sweep.get(
+                    "generate_depth_sweep_report"
+                ),
+                "reports_dir": generate_depth_sweep.get("reports_dir"),
+                "depths": generate_depth_sweep.get("depths"),
+                "depth_count": generate_depth_sweep.get("depth_count"),
+                "max_depth": generate_depth_sweep.get("max_depth"),
+                "covered_full_depth": generate_depth_sweep.get(
+                    "covered_full_depth"
+                ),
+                "require_full_depth": generate_depth_sweep.get(
+                    "require_full_depth"
+                ),
+                "status_counts": generate_depth_sweep.get(
+                    "status_counts",
+                    {},
+                ),
+                "prefill_status_counts": generate_depth_sweep.get(
+                    "prefill_status_counts",
+                    {},
+                ),
+                "generated_text_status_counts": generate_depth_sweep.get(
+                    "generated_text_status_counts",
+                    {},
+                ),
+                "model_semantics_counts": generate_depth_sweep.get(
+                    "model_semantics_counts",
+                    {},
+                ),
+                "passed_depth_count": generate_depth_sweep.get(
+                    "passed_depth_count"
+                ),
+                "failed_depths": generate_depth_sweep.get(
+                    "failed_depths",
+                    [],
+                ),
+                "failed_depth_diagnostics": generate_depth_sweep.get(
+                    "failed_depth_diagnostics",
+                    [],
+                ),
+                "acceptance": generate_depth_sweep.get("acceptance"),
+                "records": generate_depth_sweep.get("records", []),
             },
             "decode_depth_sweep": {
                 "status": depth_sweep.get("status"),

@@ -596,8 +596,8 @@ attention-disabled decode shell, an independent attention primitive sweep, an
 independent single-layer attention decode smoke, a real-weight single-layer
 generated decode smoke, real-weight
 `smoke-decode-step`, `profile-decode-step`, a prompt decode loop,
-prefill+decode `generate_prefill_decode`, an integrated decode-depth sweep, and
-optionally
+prefill+decode `generate_prefill_decode`, an integrated prefill+decode
+generate-depth sweep, an integrated decode-depth sweep, and optionally
 `autotune-decode-step` against the existing generated program:
 
 Preflight the exact final-acceptance arguments first. This writes a
@@ -661,8 +661,8 @@ The report at
 `/tmp/validate_ttnn_direct_real/real_decode_validation_report.json` links the
 official config diff, materialization, attention-disabled decode shell,
 standalone attention primitive sweep, standalone attention layer, single-layer
-generated decode, full decode-step smoke/profile, decode-depth sweep, and
-autotune subreports. The
+generated decode, full decode-step smoke/profile, generate-depth sweep,
+decode-depth sweep, and autotune subreports. The
 decode shell gate runs before full attention, then the primitive sweep records
 one report per official attention decode wrapper with status, error,
 input/output shapes, expected output shapes, dtype/layout/memory config,
@@ -678,6 +678,11 @@ validation also runs a prefill+decode `generate_prefill_decode` gate and writes
 runtime context that owns parameters, prefilled KV cache, page table, rotary
 state, tokenizer, and generated model. When a torch reference can run,
 `--decode-shell-pcc-threshold` gates the shell final-hidden PCC.
+The integrated generate-depth sweep runs the same prefill+decode path across
+the review depth ladder and writes `generate_depth_sweep_report.json` plus one
+generate report per depth under `generate_depth_reports/`. This step is
+independent of `profile-decode-step`, so `--skip-profile-decode-step` can still
+collect prompt-conditioned generate depth evidence during early bring-up.
 The integrated decode-depth sweep reuses `profile-decode-step` for the
 review ladder. By default it covers `1`, `2`, and `4` where those depths are
 not greater than the requested `--layers`, and always includes the requested
@@ -694,8 +699,10 @@ autotune status, failed runtime steps, skipped follow-up steps, and failed
 acceptance checks. Its `runtime_evidence.generate_prefill_decode` section also
 mirrors the generate end-to-end contract, prefill cache write shape/layout
 diagnostics, host-copy/section profiles, and a compact failure diagnostic with
-the first failing decode step's shapes, reference op checks, and error. If a
-runtime gate stops early, the manifest is still written with
+the first failing decode step's shapes, reference op checks, and error. Its
+`runtime_evidence.generate_depth_sweep` section records depth records,
+`model_semantics_counts`, and `failed_depth_diagnostics` for prefill+decode
+depth bring-up. If a runtime gate stops early, the manifest is still written with
 `status=incomplete` so the failed bring-up attempt has an inspectable evidence
 bundle. Use this manifest as the primary attachment for P150A acceptance runs.
 The validation report and evidence manifest also include a `reproducibility`
