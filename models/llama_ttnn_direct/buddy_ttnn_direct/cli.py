@@ -41,6 +41,7 @@ from .profile_template import profile_template
 from .search.report import dump_search_report
 from .search.decode_step_autotune import run_decode_step_autotune
 from .search.decode_depth_sweep import run_decode_depth_sweep
+from .search.generate_depth_sweep import run_generate_depth_sweep
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .decode_loop import run_prompt_decode_loop
@@ -1023,6 +1024,76 @@ def build_parser() -> argparse.ArgumentParser:
     )
     decode_depth_sweep.set_defaults(func=_cmd_decode_depth_sweep)
 
+    generate_depth_sweep = subparsers.add_parser(
+        "generate-depth-sweep",
+        help=(
+            "Run generate across increasing decoder depths while preserving "
+            "per-depth prefill and generated text evidence."
+        ),
+    )
+    generate_depth_sweep.add_argument(
+        "--program-dir",
+        type=Path,
+        required=True,
+        help="Input directory from build-program.",
+    )
+    generate_depth_sweep.add_argument(
+        "--model-path",
+        type=Path,
+        default=None,
+        help="Local HF model directory. Required for non-dry-run execution.",
+    )
+    add_prompt_runtime_args(generate_depth_sweep)
+    generate_depth_sweep.add_argument(
+        "--depths",
+        default=None,
+        help="Comma-separated depths such as 1,2,4,8,full.",
+    )
+    generate_depth_sweep.add_argument(
+        "--reports-dir",
+        type=Path,
+        default=None,
+        help="Directory for per-depth generate reports.",
+    )
+    generate_depth_sweep.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=4,
+        help="Total generated tokens per depth.",
+    )
+    generate_depth_sweep.add_argument(
+        "--prefill-len",
+        type=int,
+        default=None,
+        help="Fixed prompt length for prefill. Defaults to generated config.",
+    )
+    generate_depth_sweep.add_argument("--batch-size", type=int, default=None)
+    generate_depth_sweep.add_argument("--cache-len", type=int, default=None)
+    generate_depth_sweep.add_argument("--device", default="p150a")
+    generate_depth_sweep.add_argument("--device-id", type=int, default=0)
+    generate_depth_sweep.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    generate_depth_sweep.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write reports without opening a TTNN device.",
+    )
+    generate_depth_sweep.add_argument(
+        "--require-full-depth",
+        action="store_true",
+        help="Require the full generated layer depth to pass.",
+    )
+    generate_depth_sweep.add_argument(
+        "--out",
+        type=Path,
+        required=True,
+        help="Output generate depth sweep summary report JSON.",
+    )
+    generate_depth_sweep.set_defaults(func=_cmd_generate_depth_sweep)
+
     profile = subparsers.add_parser(
         "profile-template",
         help="Profile or dry-run a generated TTNN template.",
@@ -1977,6 +2048,32 @@ def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     print(f"wrote decode depth sweep report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _cmd_generate_depth_sweep(args: argparse.Namespace) -> int:
+    report = run_generate_depth_sweep(
+        out=args.out,
+        program_dir=args.program_dir,
+        depths=args.depths,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        reports_dir=args.reports_dir,
+        max_new_tokens=args.max_new_tokens,
+        prefill_len=args.prefill_len,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        device=args.device,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+        dry_run=args.dry_run,
+        require_full_depth=args.require_full_depth,
+    )
+    print(f"wrote generate depth sweep report: {args.out}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2

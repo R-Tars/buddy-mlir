@@ -1402,6 +1402,46 @@ is a functional bring-up path, not a performance-parity result: the first
 version intentionally uses host-side token materialization between prefill and
 decode so the next optimization phase can remove that round trip explicitly.
 
+`generate-depth-sweep` runs the same prefill+decode generate path across a
+depth ladder and preserves one generate report per depth:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  generate-depth-sweep \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --model-path /path/to/Llama-3.1-8B-Instruct \
+  --prompt "Hello from TTNN Direct" \
+  --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
+  --depths 1,2,4,8,16,full \
+  --prefill-len 128 \
+  --max-new-tokens 4 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --device p150a \
+  --out /tmp/generate_depth_sweep_report.json
+```
+
+Dry-run inspection:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
+  generate-depth-sweep \
+  --program-dir /tmp/llama31_ttnn_direct_program \
+  --depths 1,2,4,full \
+  --prefill-len 128 \
+  --max-new-tokens 4 \
+  --batch-size 32 \
+  --cache-len 1024 \
+  --dry-run \
+  --out /tmp/generate_depth_sweep_report.json
+```
+
+The summary report records `records[]` with each depth's generate report path,
+`prefill_status`, `kv_cache_source`, `decode_loop_runtime_owned`,
+`generated_text_status`, and `generated_text`. By default full-depth is
+reported when requested but not required to pass; use `--require-full-depth`
+when the full generated layer depth should be an acceptance gate.
+
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report
