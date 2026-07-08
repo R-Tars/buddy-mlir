@@ -338,6 +338,8 @@ class ValidateDirectTest(unittest.TestCase):
                 layers=2,
                 batch_size=32,
                 cache_len=1024,
+                max_new_tokens=3,
+                prefill_len=9,
                 trace_iterations=10,
                 metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
@@ -410,6 +412,8 @@ class ValidateDirectTest(unittest.TestCase):
                 layers=2,
                 batch_size=32,
                 cache_len=1024,
+                max_new_tokens=3,
+                prefill_len=9,
                 trace_iterations=10,
                 metric="tokens_per_second_per_user",
                 require_official_performance_parity=True,
@@ -445,6 +449,8 @@ class ValidateDirectTest(unittest.TestCase):
                 report["decode_step_contract"]["decode_seq_len"],
                 1,
             )
+            self.assertEqual(report["max_new_tokens"], 3)
+            self.assertEqual(report["prefill_len"], 9)
             self.assertEqual(
                 report["baseline_reference_entry"]["model"],
                 "Llama 3.1 8B",
@@ -539,6 +545,14 @@ class ValidateDirectTest(unittest.TestCase):
                 "tokens_per_second_per_user",
                 repro["final_validation_cli_args"],
             )
+            self.assertIn("--max-new-tokens", repro["preflight_cli_args"])
+            self.assertIn("3", repro["preflight_cli_args"])
+            self.assertIn("--prefill-len", repro["preflight_cli_args"])
+            self.assertIn("9", repro["preflight_cli_args"])
+            self.assertIn("--max-new-tokens", repro["final_validation_cli_args"])
+            self.assertIn("3", repro["final_validation_cli_args"])
+            self.assertIn("--prefill-len", repro["final_validation_cli_args"])
+            self.assertIn("9", repro["final_validation_cli_args"])
             self.assertIn("--prompt", repro["final_validation_cli_args"])
             self.assertIn(
                 "hello tenstorrent",
@@ -1584,6 +1598,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["single_layer_decode"], "dry_run")
             self.assertEqual(report["results"]["smoke_decode_step"], "dry_run")
             self.assertEqual(report["results"]["profile_decode_step"], "dry_run")
+            self.assertEqual(
+                report["results"]["generate_prefill_decode"],
+                "dry_run",
+            )
             self.assertEqual(report["results"]["decode_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertIn("official_config", report)
@@ -1946,6 +1964,7 @@ class ValidateDirectTest(unittest.TestCase):
                 step: "pass" for step in REAL_DECODE_VALIDATION_STEPS
             }
             expected_results["prompt_decode_loop"] = "skipped"
+            expected_results["generate_prefill_decode"] = "skipped"
             self.assertEqual(report["results"], expected_results)
             self.assertEqual(
                 report["steps"]["materialize_parameters"]["tensor_count"],
@@ -4133,7 +4152,7 @@ class ValidateDirectTest(unittest.TestCase):
                     prompt="hello tenstorrent",
                     tokenizer_path=model_dir,
                     tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
-                    ttnn_module=_make_fake_ttnn(),
+                    ttnn_module=_make_fake_ttnn(with_to_torch=True),
                     torch_module=_fake_torch(),
                 )
 
@@ -4189,6 +4208,44 @@ class ValidateDirectTest(unittest.TestCase):
                 0,
             )
             self.assertEqual(prompt_loop["synthetic_rotary_tensor_count"], 0)
+
+            generate_step = report["steps"]["generate_prefill_decode"]
+            self.assertEqual(generate_step["status"], "pass")
+            self.assertEqual(generate_step["prefill_status"], "passed")
+            self.assertTrue(generate_step["generate_runtime_owned"])
+            self.assertTrue(generate_step["decode_loop_runtime_owned"])
+            self.assertEqual(generate_step["kv_cache_source"], "prefill")
+            self.assertEqual(
+                generate_step["model_semantics"],
+                "prompt_prefill_then_decode",
+            )
+            self.assertEqual(generate_step["input_source"], "prompt_prefill")
+            self.assertEqual(generate_step["prompt_runtime_input_tensor_count"], 1)
+            self.assertEqual(
+                generate_step["synthetic_runtime_input_tensor_count"],
+                0,
+            )
+            self.assertEqual(generate_step["synthetic_rotary_tensor_count"], 0)
+            self.assertEqual(generate_step["synthetic_kv_cache_tensor_count"], 0)
+            self.assertEqual(
+                generate_step["generated_token_budget"][
+                    "total_planned_generated_tokens"
+                ],
+                2,
+            )
+            self.assertEqual(
+                generate_step["generated_text_status"],
+                "fallback",
+            )
+            self.assertEqual(
+                generate_step["runtime_context"]["class"],
+                "TTNNDirectRuntimeContext",
+            )
+            self.assertFalse(
+                generate_step["runtime_context"][
+                    "kv_cache_reinitialized_per_step"
+                ]
+            )
 
             self.assertEqual(
                 report["steps"]["decode_shell"]["runtime_input_tensor_count"],
@@ -4307,11 +4364,13 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(e2e["model_end_to_end_ready"])
             self.assertFalse(e2e["uses_synthetic_runtime_inputs"])
             self.assertTrue(e2e["decode_loop_runtime_owned"])
+            self.assertTrue(e2e["generate_prefill_decode_ready"])
             self.assertEqual(
                 scope["runtime_input_sources"],
                 {
                     **{step: "prompt_runtime" for step in prompt_runtime_steps},
                     "prompt_decode_loop": "prompt_decode_loop",
+                    "generate_prefill_decode": "prompt_prefill",
                 },
             )
             self.assertEqual(
@@ -4319,6 +4378,7 @@ class ValidateDirectTest(unittest.TestCase):
                 {
                     **{step: 1 for step in prompt_runtime_steps},
                     "prompt_decode_loop": 1,
+                    "generate_prefill_decode": 1,
                 },
             )
             self.assertEqual(
@@ -4328,6 +4388,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step": 2,
                     "profile_decode_step": 2,
                     "prompt_decode_loop": 4,
+                    "generate_prefill_decode": 2,
                 },
             )
             self.assertEqual(
@@ -4337,6 +4398,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step": 3,
                     "profile_decode_step": 3,
                     "prompt_decode_loop": 6,
+                    "generate_prefill_decode": 6,
                 },
             )
             self.assertEqual(
@@ -4346,6 +4408,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step": 2,
                     "profile_decode_step": 2,
                     "prompt_decode_loop": 2,
+                    "generate_prefill_decode": 2,
                 },
             )
             self.assertEqual(
@@ -4356,6 +4419,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step": 0,
                     "profile_decode_step": 0,
                     "prompt_decode_loop": 0,
+                    "generate_prefill_decode": 0,
                 },
             )
             self.assertEqual(scope["synthetic_runtime_input_steps"], [])
@@ -5690,6 +5754,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "smoke_decode_step",
                     "profile_decode_step",
                     "prompt_decode_loop",
+                    "generate_prefill_decode",
                     "decode_depth_sweep",
                     "decode_step_autotune",
                 ],

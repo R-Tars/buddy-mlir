@@ -35,6 +35,7 @@ from .runtime_environment import (
     collect_ttnn_environment,
 )
 from .decode_loop import run_prompt_decode_loop
+from .generate import run_generate
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -103,6 +104,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "smoke_decode_step",
     "profile_decode_step",
     "prompt_decode_loop",
+    "generate_prefill_decode",
     "decode_depth_sweep",
     "decode_step_autotune",
 )
@@ -251,6 +253,8 @@ def _real_decode_cli_args(
     layers: int,
     batch_size: int | None,
     cache_len: int | None,
+    max_new_tokens: int,
+    prefill_len: int | None,
     device: str,
     device_id: int,
     trace: bool,
@@ -307,6 +311,8 @@ def _real_decode_cli_args(
     ]
     _append_option(args, "--batch-size", batch_size)
     _append_option(args, "--cache-len", cache_len)
+    _append_option(args, "--max-new-tokens", max_new_tokens)
+    _append_option(args, "--prefill-len", prefill_len)
     _append_option(args, "--prompt", prompt)
     _append_option(args, "--tokenizer-path", tokenizer_path)
     _append_option(args, "--dtype-seed", dtype_seed)
@@ -1048,6 +1054,8 @@ def preflight_real_decode(
     layers: int = 1,
     batch_size: int | None = None,
     cache_len: int | None = None,
+    max_new_tokens: int = 2,
+    prefill_len: int | None = None,
     device: str = "p150a",
     device_id: int = 0,
     trace: bool = False,
@@ -1094,6 +1102,12 @@ def preflight_real_decode(
         if performance_baselines_path is not None
         else default_performance_baselines_path()
     )
+    max_new_token_count = int(max_new_tokens)
+    prefill_token_count = int(prefill_len) if prefill_len is not None else None
+    if max_new_token_count <= 0:
+        raise ValueError("max_new_tokens must be positive")
+    if prefill_token_count is not None and prefill_token_count <= 0:
+        raise ValueError("prefill_len must be positive")
 
     checks: list[dict[str, Any]] = []
 
@@ -1632,6 +1646,8 @@ def preflight_real_decode(
         layers=rerun_layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
+        max_new_tokens=max_new_token_count,
+        prefill_len=prefill_token_count,
         device=device,
         device_id=device_id,
         trace=normalized["trace"],
@@ -1677,6 +1693,8 @@ def preflight_real_decode(
         layers=rerun_layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
+        max_new_tokens=max_new_token_count,
+        prefill_len=prefill_token_count,
         device=device,
         device_id=device_id,
         trace=normalized["trace"],
@@ -1726,6 +1744,8 @@ def preflight_real_decode(
         "layers": layer_count,
         "requested_batch_size": batch_size,
         "requested_cache_len": cache_len,
+        "max_new_tokens": max_new_token_count,
+        "prefill_len": prefill_token_count,
         "batch_size": resolved_batch_size,
         "cache_len": resolved_cache_len,
         "trace_iterations": trace_iteration_count,
@@ -1811,6 +1831,8 @@ def validate_real_decode(
     layers: int = 1,
     batch_size: int | None = None,
     cache_len: int | None = None,
+    max_new_tokens: int = 2,
+    prefill_len: int | None = None,
     device: str = "p150a",
     device_id: int = 0,
     dtype_seed: str = "bf16",
@@ -1846,8 +1868,14 @@ def validate_real_decode(
     device-free, while this one proves the materialize/tensorize/runtime path.
     """
     layer_count = int(layers)
+    max_new_token_count = int(max_new_tokens)
+    prefill_token_count = int(prefill_len) if prefill_len is not None else None
     if layer_count <= 0:
         raise ValueError("layers must be positive")
+    if max_new_token_count <= 0:
+        raise ValueError("max_new_tokens must be positive")
+    if prefill_token_count is not None and prefill_token_count <= 0:
+        raise ValueError("prefill_len must be positive")
     if trace_iterations <= 0:
         raise ValueError("trace_iterations must be positive")
     if (
@@ -2024,6 +2052,7 @@ def validate_real_decode(
         "smoke_report": root / "decode_step_smoke_report.json",
         "profile_report": root / "decode_step_profile_report.json",
         "prompt_decode_loop_report": root / "prompt_decode_loop_report.json",
+        "generate_report": root / "generate_prefill_decode_report.json",
         "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
         "decode_depth_profiles_dir": root / "decode_depth_profiles",
         "autotune_report": root / "decode_step_autotune_report.json",
@@ -2043,6 +2072,8 @@ def validate_real_decode(
         layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
+        max_new_tokens=max_new_token_count,
+        prefill_len=prefill_token_count,
         device=device,
         device_id=device_id,
         dtype_seed=dtype_seed,
@@ -2082,6 +2113,8 @@ def validate_real_decode(
         layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
+        max_new_tokens=max_new_token_count,
+        prefill_len=prefill_token_count,
         device=device,
         device_id=device_id,
         trace=trace,
@@ -2140,6 +2173,8 @@ def validate_real_decode(
         "requested_cache_len": cache_len,
         "batch_size": resolved_batch_size,
         "cache_len": resolved_cache_len,
+        "max_new_tokens": max_new_token_count,
+        "prefill_len": prefill_token_count,
         "device": device,
         "device_id": device_id,
         "dtype_seed": dtype_seed,
@@ -2925,6 +2960,150 @@ def validate_real_decode(
             **_reference_summary(loop_report),
         }
 
+    def generate_prefill_decode_step() -> dict[str, Any]:
+        if not dry_run and prompt is None:
+            report["generate_runtime_owned"] = False
+            return {
+                "status": "skipped",
+                "reason": (
+                    "prompt is required for prefill+decode generate evidence"
+                ),
+                "generate_runtime_owned": False,
+                "prefill_status": None,
+                "kv_cache_source": None,
+                "input_source": None,
+            }
+        generate_report = run_generate(
+            out=paths["generate_report"],
+            program_dir=program_dir,
+            model_path=None if dry_run else model_path,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            max_new_tokens=max_new_token_count,
+            layers=layer_count,
+            prefill_len=prefill_token_count,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            dry_run=dry_run,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+            tokenizer_module=tokenizer_module,
+        )
+        report["generate_runtime_owned"] = bool(
+            generate_report.get("generate_runtime_owned")
+        )
+        setup = generate_report.get("parameter_setup")
+        if not isinstance(setup, dict):
+            setup = {}
+        prefill_rotary_count = setup.get(
+            "prefill_rotary_runtime_input_tensor_count"
+        )
+        decode_rotary_count = setup.get(
+            "decode_rotary_runtime_input_tensor_count"
+        )
+        rotary_runtime_count = _sum_present_counts(
+            prefill_rotary_count,
+            decode_rotary_count,
+        )
+        kv_cache_state = generate_report.get("kv_cache_runtime_state")
+        kv_cache_runtime_count = None
+        if isinstance(kv_cache_state, dict):
+            kv_cache_runtime_count = kv_cache_state.get("tensor_count")
+        return {
+            "status": _runtime_step_status(generate_report, dry_run=dry_run),
+            "generate_report": str(paths["generate_report"]),
+            "runtime_status": generate_report.get("runtime_status"),
+            "prefill_status": generate_report.get("prefill_status"),
+            "generate_runtime_owned": generate_report.get(
+                "generate_runtime_owned"
+            ),
+            "decode_loop_runtime_owned": generate_report.get(
+                "decode_loop_runtime_owned"
+            ),
+            "kv_cache_source": generate_report.get("kv_cache_source"),
+            "model_semantics": generate_report.get("model_semantics"),
+            "semantic_disclaimer": generate_report.get(
+                "semantic_disclaimer"
+            ),
+            "layers": generate_report.get("layers"),
+            "batch_size": generate_report.get("batch_size"),
+            "cache_len": generate_report.get("cache_len"),
+            "prefill_len": generate_report.get("prefill_len"),
+            "max_new_tokens": generate_report.get("max_new_tokens"),
+            "decode_steps": generate_report.get("decode_steps"),
+            "generated_token_budget": generate_report.get(
+                "generated_token_budget"
+            ),
+            "parameter_source": generate_report.get("parameter_source"),
+            "input_source": generate_report.get("input_source"),
+            "runtime_owner": generate_report.get("runtime_owner"),
+            "generated_token_ids": generate_report.get(
+                "generated_token_ids"
+            ),
+            "generated_token_id_source": generate_report.get(
+                "generated_token_id_source"
+            ),
+            "token_materialization_status": generate_report.get(
+                "token_materialization_status"
+            ),
+            "generated_text": generate_report.get("generated_text"),
+            "generated_text_by_user": generate_report.get(
+                "generated_text_by_user"
+            ),
+            "generated_text_status": generate_report.get(
+                "generated_text_status"
+            ),
+            "generated_text_source": generate_report.get(
+                "generated_text_source"
+            ),
+            "synthetic_runtime_input_tensor_count": generate_report.get(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            "synthetic_rotary_tensor_count": generate_report.get(
+                "synthetic_rotary_tensor_count"
+            ),
+            "synthetic_kv_cache_tensor_count": generate_report.get(
+                "synthetic_kv_cache_tensor_count"
+            ),
+            "prompt_runtime_input_tensor_count": setup.get(
+                "prefill_prompt_runtime_input_tensor_count"
+            ),
+            "decode_runtime_state_input_tensor_count": setup.get(
+                "decode_runtime_state_input_tensor_count"
+            ),
+            "rotary_runtime_input_tensor_count": rotary_runtime_count,
+            "kv_cache_runtime_input_tensor_count": kv_cache_runtime_count,
+            "prefill": generate_report.get("prefill"),
+            "prompt_tokenization": generate_report.get("prompt_tokenization"),
+            "prefill_tokenization": generate_report.get(
+                "prefill_tokenization"
+            ),
+            "decode_runtime_state": generate_report.get(
+                "decode_runtime_state"
+            ),
+            "rotary_runtime_state": generate_report.get(
+                "rotary_runtime_state"
+            ),
+            "kv_cache_runtime_state": kv_cache_state,
+            "runtime_context": generate_report.get("runtime_context"),
+            "parameter_setup": generate_report.get("parameter_setup"),
+            "per_step_token_metadata": generate_report.get(
+                "per_step_token_metadata",
+                [],
+            ),
+            "step_reports": generate_report.get("step_reports", []),
+            "latency_ms": generate_report.get("latency_ms"),
+            "throughput_summary": generate_report.get("throughput_summary"),
+            "ttnn_environment": generate_report.get("ttnn_environment"),
+            "trace_status": generate_report.get("trace", {}).get("status"),
+            "trace": _trace_summary(generate_report.get("trace")),
+            **tensorization_path_detail(generate_report),
+            **_reference_summary(generate_report),
+        }
+
     def decode_depth_sweep_step() -> dict[str, Any]:
         sweep_depths = _validation_depth_sweep_targets(
             layer_count=layer_count,
@@ -3097,6 +3276,7 @@ def validate_real_decode(
         "smoke_decode_step": smoke_step,
         "profile_decode_step": profile_step,
         "prompt_decode_loop": prompt_decode_loop_step,
+        "generate_prefill_decode": generate_prefill_decode_step,
         "decode_depth_sweep": decode_depth_sweep_step,
         "decode_step_autotune": autotune_step,
     }
@@ -3889,9 +4069,15 @@ def _model_end_to_end_readiness(
     prompt_loop = steps.get("prompt_decode_loop")
     if not isinstance(prompt_loop, dict):
         prompt_loop = {}
+    generate_step = steps.get("generate_prefill_decode")
+    if not isinstance(generate_step, dict):
+        generate_step = {}
     decode_loop_runtime_owned = bool(
         report.get("decode_loop_runtime_owned")
         or prompt_loop.get("decode_loop_runtime_owned")
+    )
+    generate_prefill_decode_ready = _generate_prefill_decode_ready(
+        generate_step
     )
     missing = []
     if report.get("dry_run"):
@@ -3957,12 +4143,18 @@ def _model_end_to_end_readiness(
             "position, rotary tensors, and KV cache beyond smoke/profile "
             "harnesses"
         )
+    if not generate_prefill_decode_ready:
+        missing.append(
+            "prefill+decode generate evidence with kv_cache_source=prefill "
+            "and generated token/text output"
+        )
 
     ready = (
         accepted
         and full_decode_ready
         and not synthetic_inputs
         and decode_loop_runtime_owned
+        and generate_prefill_decode_ready
     )
     if ready:
         status = "ready"
@@ -3974,6 +4166,8 @@ def _model_end_to_end_readiness(
         status = "needs_full_decode_step"
     elif not decode_loop_runtime_owned:
         status = "needs_decode_loop_ownership"
+    elif not generate_prefill_decode_ready:
+        status = "needs_prefill_generate"
     else:
         status = "incomplete"
 
@@ -3984,6 +4178,7 @@ def _model_end_to_end_readiness(
         "accepted_real_weight_runtime": accepted,
         "full_decode_step_ready": full_decode_ready,
         "decode_loop_runtime_owned": decode_loop_runtime_owned,
+        "generate_prefill_decode_ready": generate_prefill_decode_ready,
         "uses_synthetic_runtime_inputs": synthetic_inputs,
         "runtime_input_scope": runtime_scope,
         "missing_for_model_end_to_end": missing,
@@ -4024,6 +4219,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         "smoke_decode_step",
         "profile_decode_step",
         "prompt_decode_loop",
+        "generate_prefill_decode",
     ]
     sources: dict[str, Any] = {}
     runtime_counts: dict[str, Any] = {}
@@ -4140,9 +4336,49 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _generate_prefill_decode_ready(step: Any) -> bool:
+    if not isinstance(step, dict):
+        return False
+    return (
+        step.get("status") == "pass"
+        and step.get("prefill_status") == "passed"
+        and step.get("kv_cache_source") == "prefill"
+        and step.get("generate_runtime_owned") is True
+        and step.get("decode_loop_runtime_owned") is True
+        and _generated_tokens_present(step.get("generated_token_ids"))
+        and step.get("generated_text_status") not in {
+            None,
+            "not_run",
+            "dry_run",
+            "error",
+        }
+    )
+
+
+def _generated_tokens_present(value: Any) -> bool:
+    if not isinstance(value, list):
+        return False
+    for row in value:
+        if isinstance(row, list) and row:
+            return True
+    return False
+
+
 def _positive_scalar_count(value: Any) -> bool:
     numeric = _safe_int(value)
     return numeric is not None and numeric > 0
+
+
+def _sum_present_counts(*values: Any) -> int | None:
+    total = 0
+    seen = False
+    for value in values:
+        numeric = _safe_int(value)
+        if numeric is None:
+            continue
+        total += numeric
+        seen = True
+    return total if seen else None
 
 
 def _real_decode_evidence_manifest(
@@ -4159,6 +4395,7 @@ def _real_decode_evidence_manifest(
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     prompt_loop = steps.get("prompt_decode_loop", {})
+    generate_step = steps.get("generate_prefill_decode", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
@@ -4235,6 +4472,8 @@ def _real_decode_evidence_manifest(
             "requested_cache_len": report.get("requested_cache_len"),
             "batch_size": report.get("batch_size"),
             "cache_len": report.get("cache_len"),
+            "max_new_tokens": report.get("max_new_tokens"),
+            "prefill_len": report.get("prefill_len"),
             "device": report.get("device"),
             "device_id": report.get("device_id"),
             "dtype_seed": report.get("dtype_seed"),
@@ -4335,6 +4574,9 @@ def _real_decode_evidence_manifest(
             "prompt_decode_loop_ttnn_environment": prompt_loop.get(
                 "ttnn_environment"
             ),
+            "generate_prefill_decode_ttnn_environment": generate_step.get(
+                "ttnn_environment"
+            ),
         },
         "performance_evidence": {
             "throughput_baseline": _throughput_baseline_summary(
@@ -4418,6 +4660,9 @@ def _real_decode_evidence_manifest(
             "profile_tensorization": _tensorization_evidence(profile),
             "prompt_decode_loop_tensorization": _tensorization_evidence(
                 prompt_loop
+            ),
+            "generate_prefill_decode_tensorization": _tensorization_evidence(
+                generate_step
             ),
         },
         "runtime_evidence": {
@@ -4668,6 +4913,87 @@ def _real_decode_evidence_manifest(
                 "reference_status": prompt_loop.get("reference_status"),
                 "reference_kind": prompt_loop.get("reference_kind"),
                 "reference_failed_checks": prompt_loop.get(
+                    "reference_failed_checks",
+                    [],
+                ),
+            },
+            "generate_prefill_decode": {
+                "status": generate_step.get("status"),
+                "runtime_status": generate_step.get("runtime_status"),
+                "prefill_status": generate_step.get("prefill_status"),
+                "generate_runtime_owned": generate_step.get(
+                    "generate_runtime_owned"
+                ),
+                "decode_loop_runtime_owned": generate_step.get(
+                    "decode_loop_runtime_owned"
+                ),
+                "kv_cache_source": generate_step.get("kv_cache_source"),
+                "model_semantics": generate_step.get("model_semantics"),
+                "runtime_owner": generate_step.get("runtime_owner"),
+                "layers": generate_step.get("layers"),
+                "batch_size": generate_step.get("batch_size"),
+                "cache_len": generate_step.get("cache_len"),
+                "prefill_len": generate_step.get("prefill_len"),
+                "max_new_tokens": generate_step.get("max_new_tokens"),
+                "decode_steps": generate_step.get("decode_steps"),
+                "generated_token_budget": generate_step.get(
+                    "generated_token_budget"
+                ),
+                "parameter_source": generate_step.get("parameter_source"),
+                "input_source": generate_step.get("input_source"),
+                "synthetic_runtime_input_tensor_count": generate_step.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
+                "synthetic_rotary_tensor_count": generate_step.get(
+                    "synthetic_rotary_tensor_count"
+                ),
+                "synthetic_kv_cache_tensor_count": generate_step.get(
+                    "synthetic_kv_cache_tensor_count"
+                ),
+                "prompt_runtime_input_tensor_count": generate_step.get(
+                    "prompt_runtime_input_tensor_count"
+                ),
+                "decode_runtime_state_input_tensor_count": generate_step.get(
+                    "decode_runtime_state_input_tensor_count"
+                ),
+                "rotary_runtime_input_tensor_count": generate_step.get(
+                    "rotary_runtime_input_tensor_count"
+                ),
+                "kv_cache_runtime_input_tensor_count": generate_step.get(
+                    "kv_cache_runtime_input_tensor_count"
+                ),
+                "runtime_context": generate_step.get("runtime_context"),
+                "prefill_cache_population": (
+                    (generate_step.get("prefill") or {}).get(
+                        "cache_population"
+                    )
+                    if isinstance(generate_step.get("prefill"), dict)
+                    else None
+                ),
+                "generated_token_ids": generate_step.get(
+                    "generated_token_ids"
+                ),
+                "generated_token_id_source": generate_step.get(
+                    "generated_token_id_source"
+                ),
+                "token_materialization_status": generate_step.get(
+                    "token_materialization_status"
+                ),
+                "generated_text": generate_step.get("generated_text"),
+                "generated_text_status": generate_step.get(
+                    "generated_text_status"
+                ),
+                "generated_text_source": generate_step.get(
+                    "generated_text_source"
+                ),
+                "latency_ms": generate_step.get("latency_ms"),
+                "throughput_summary": generate_step.get(
+                    "throughput_summary"
+                ),
+                "trace_status": generate_step.get("trace_status"),
+                "reference_status": generate_step.get("reference_status"),
+                "reference_kind": generate_step.get("reference_kind"),
+                "reference_failed_checks": generate_step.get(
                     "reference_failed_checks",
                     [],
                 ),
@@ -5470,6 +5796,7 @@ def _real_decode_acceptance(
     smoke = steps.get("smoke_decode_step", {})
     profile = steps.get("profile_decode_step", {})
     prompt_loop = steps.get("prompt_decode_loop", {})
+    generate_step = steps.get("generate_prefill_decode", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
@@ -6988,12 +7315,16 @@ def _real_decode_acceptance(
             report.get("decode_loop_runtime_owned")
             or prompt_loop.get("decode_loop_runtime_owned")
         )
+        generate_prefill_decode_ready = _generate_prefill_decode_ready(
+            generate_step
+        )
         checks.append(
             _acceptance_check(
                 "model_end_to_end_readiness.ready",
                 (
                     not runtime_scope.get("uses_synthetic_runtime_inputs")
                     and decode_loop_runtime_owned
+                    and generate_prefill_decode_ready
                 ),
                 observed={
                     "status": runtime_scope.get("status"),
@@ -7006,10 +7337,18 @@ def _real_decode_acceptance(
                     "decode_loop_runtime_owned": (
                         decode_loop_runtime_owned
                     ),
+                    "generate_prefill_decode_ready": (
+                        generate_prefill_decode_ready
+                    ),
+                    "prefill_status": generate_step.get("prefill_status"),
+                    "kv_cache_source": generate_step.get("kv_cache_source"),
+                    "generated_text_status": generate_step.get(
+                        "generated_text_status"
+                    ),
                 },
                 expected=(
-                    "no synthetic runtime inputs and prompt decode loop "
-                    "ownership"
+                    "no synthetic runtime inputs, prompt decode loop "
+                    "ownership, and prefill+decode generate evidence"
                 ),
             )
         )

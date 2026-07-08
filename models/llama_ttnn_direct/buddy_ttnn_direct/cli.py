@@ -1585,6 +1585,23 @@ def build_parser() -> argparse.ArgumentParser:
     validate_real.add_argument("--batch-size", type=int, default=None)
     validate_real.add_argument("--cache-len", type=int, default=None)
     validate_real.add_argument(
+        "--max-new-tokens",
+        type=int,
+        default=2,
+        help=(
+            "Generated token budget for the prefill+decode generate evidence "
+            "step. The first token is materialized from prefill output."
+        ),
+    )
+    validate_real.add_argument(
+        "--prefill-len",
+        type=int,
+        default=None,
+        help=(
+            "Prompt length used by the prefill+decode generate evidence step."
+        ),
+    )
+    validate_real.add_argument(
         "--device",
         default="p150a",
         help="Target device label recorded in reports.",
@@ -2458,6 +2475,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             ),
             prompt=args.prompt,
             tokenizer_path=args.tokenizer_path,
+            max_new_tokens=args.max_new_tokens,
+            prefill_len=args.prefill_len,
         )
         report_path = args.out_dir / "real_decode_preflight_report.json"
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
@@ -2472,6 +2491,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         layers=args.layers,
         batch_size=args.batch_size,
         cache_len=args.cache_len,
+        max_new_tokens=args.max_new_tokens,
+        prefill_len=args.prefill_len,
         device=args.device,
         device_id=args.device_id,
         dtype_seed=args.dtype_seed,

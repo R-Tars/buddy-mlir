@@ -595,8 +595,9 @@ generated program, materializes selected HF safetensors, then runs the
 attention-disabled decode shell, an independent attention primitive sweep, an
 independent single-layer attention decode smoke, a real-weight single-layer
 generated decode smoke, real-weight
-`smoke-decode-step`, `profile-decode-step`, an integrated decode-depth sweep,
-and optionally
+`smoke-decode-step`, `profile-decode-step`, a prompt decode loop,
+prefill+decode `generate_prefill_decode`, an integrated decode-depth sweep, and
+optionally
 `autotune-decode-step` against the existing generated program:
 
 Preflight the exact final-acceptance arguments first. This writes a
@@ -617,6 +618,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --device p150a \
   --prompt "Hello from TTNN Direct" \
   --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
+  --prefill-len 128 \
+  --max-new-tokens 8 \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
   --trace-iterations 10 \
   --require-model-end-to-end \
@@ -640,6 +643,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --device p150a \
   --prompt "Hello from TTNN Direct" \
   --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
+  --prefill-len 128 \
+  --max-new-tokens 8 \
   --official-config models/llama_ttnn_direct/buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json \
   --trace-iterations 10 \
   --require-model-end-to-end \
@@ -666,9 +671,13 @@ standalone attention layer then records layer0 primitive latency and
 tensor/memory-config conversion counts before the single-layer gate proves the
 generated
 `embedding -> layer0 attention -> layer0 MLP -> final norm -> LM-head` path
-before the validation scales to the requested layer count. When a torch
-reference can run, `--decode-shell-pcc-threshold` gates the shell final-hidden
-PCC.
+before the validation scales to the requested layer count. With a prompt,
+validation also runs a prefill+decode `generate_prefill_decode` gate and writes
+`generate_prefill_decode_report.json`; that report records `prefill_status`,
+`kv_cache_source=prefill`, generated token/text output, and the persistent
+runtime context that owns parameters, prefilled KV cache, page table, rotary
+state, tokenizer, and generated model. When a torch reference can run,
+`--decode-shell-pcc-threshold` gates the shell final-hidden PCC.
 The integrated decode-depth sweep reuses `profile-decode-step` for the
 review ladder. By default it covers `1`, `2`, and `4` where those depths are
 not greater than the requested `--layers`, and always includes the requested
@@ -708,7 +717,9 @@ tensors are supplied by the smoke/profile harness as synthetic tensors. Use it
 to avoid confusing generated decode-step evidence with a real
 tokenizer/prompt driven model decode loop. Even when prompt mode owns all
 runtime tensors, the block remains false until a non-smoke decode loop records
-`decode_loop_runtime_owned=true`.
+`decode_loop_runtime_owned=true` and the prefill+decode generate gate records
+`prefill_status=passed`, `kv_cache_source=prefill`, and generated token/text
+output.
 The smoke/profile commands and generated runner accept `--prompt` plus
 `--tokenizer-path` to build decode `token_ids` through the Hugging Face
 tokenizer and derive paged decode metadata for page table and cache position.
@@ -726,9 +737,10 @@ feeds each generated token into the next step, and records
 Use `--require-model-end-to-end` when final validation should fail unless that
 block reports `model_end_to_end_ready=true`; the flag also enables the full
 decode-step acceptance requirements. Preflight treats a non-empty prompt as
-required for this scope, because the prompt decode loop is the evidence that
-runtime token ids, page table/cache position, rotary tensors, and paged KV cache
-are owned by the decode loop rather than by smoke/profile harnesses.
+required for this scope, because the prompt decode loop and prefill+decode
+generate report are the evidence that runtime token ids, page
+table/cache-position, rotary tensors, prefilled paged KV cache, and generated
+text are owned by the runtime rather than by smoke/profile harnesses.
 The manifest also includes an `acceptance_scope` block. `status=accepted`
 means the requested gates passed, while
 `acceptance_scope.full_decode_step_ready=true` is reserved for stricter runs

@@ -1091,7 +1091,11 @@ def _set_program_full_logits(program_dir: Path) -> None:
     config_path.write_text(json.dumps(config, indent=2) + "\n")
 
 
-def _make_fake_ttnn(*, with_transformer: bool = True):
+def _make_fake_ttnn(
+    *,
+    with_transformer: bool = True,
+    with_to_torch: bool = False,
+):
     module = types.ModuleType("ttnn")
     module.calls = []
     module.__version__ = "fake-ttnn"
@@ -1111,6 +1115,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
 
     def embedding(token_ids, weight, **kwargs):
         batch = token_ids.shape[0]
+        seq_len = token_ids.shape[1] if len(token_ids.shape) > 1 else 1
         hidden_size = weight.shape[-1]
         module.calls.append(
             {
@@ -1120,7 +1125,7 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("embedding", [batch, 1, hidden_size])
+        return FakeTensor("embedding", [batch, seq_len, hidden_size])
 
     def from_torch(tensor, **kwargs):
         module.calls.append(
@@ -1135,6 +1140,17 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
             list(tensor.shape),
             dtype=str(kwargs.get("dtype")),
         )
+
+    def to_torch(tensor):
+        module.calls.append({"op": "to_torch", "tensor": tensor.name})
+        shape = list(tensor.shape)
+        if len(shape) == 2 and shape[1] > 1:
+            return [[17 for _ in range(shape[1])] for _ in range(shape[0])]
+        if len(shape) == 2:
+            return [[23] for _ in range(shape[0])]
+        if len(shape) == 1:
+            return [23 for _ in range(shape[0])]
+        return [[23], [23]]
 
     def rms_norm(hidden, **kwargs):
         module.calls.append(
@@ -1193,6 +1209,26 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
             ),
         )
 
+    def split_query_key_value_and_split_heads(fused_qkv, **kwargs):
+        batch, seq_len = fused_qkv.shape[0], fused_qkv.shape[1]
+        num_heads = int(kwargs["num_heads"])
+        num_kv_heads = int(kwargs["num_kv_heads"])
+        head_dim = fused_qkv.shape[-1] // (num_heads + 2 * num_kv_heads)
+        module.calls.append(
+            {
+                "op": "split_query_key_value_and_split_heads",
+                "qkv": fused_qkv.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return (
+            FakeTensor("query_prefill", [batch, num_heads, seq_len, head_dim]),
+            FakeTensor("key_prefill", [batch, num_kv_heads, seq_len, head_dim]),
+            FakeTensor(
+                "value_prefill", [batch, num_kv_heads, seq_len, head_dim]
+            ),
+        )
+
     def rotary_embedding_llama(tensor, cos, sin, transform, **kwargs):
         module.calls.append(
             {
@@ -1202,6 +1238,27 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
             }
         )
         return FakeTensor(f"rotary:{tensor.name}", tensor.shape)
+
+    def scaled_dot_product_attention(query, key, value, **kwargs):
+        module.calls.append(
+            {
+                "op": "scaled_dot_product_attention",
+                "query": query.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor("prefill_attention", query.shape)
+
+    def fill_cache(cache, update, **kwargs):
+        module.calls.append(
+            {
+                "op": "fill_cache",
+                "cache": cache.name,
+                "update": update.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor(cache.name, cache.shape)
 
     def paged_update_cache(cache, update, **kwargs):
         module.calls.append(
@@ -1233,6 +1290,17 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
             }
         )
         return FakeTensor(f"mem:{tensor.name}", tensor.shape)
+
+    def concatenate_heads(attention, **kwargs):
+        batch, _, seq_len, head_dim = attention.shape
+        module.calls.append(
+            {
+                "op": "concatenate_heads",
+                "attention": attention.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor("prefill_concat_heads", [batch, seq_len, 4 * head_dim])
 
     def nlp_concat_heads_decode(attention, **kwargs):
         num_heads = int(kwargs["num_heads"])
@@ -1345,10 +1413,13 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
     module.from_torch = from_torch
+    if with_to_torch:
+        module.to_torch = to_torch
     module.embedding = embedding
     module.rms_norm = rms_norm
     module.linear = linear
     module.to_memory_config = to_memory_config
+    module.fill_cache = fill_cache
     module.mul = mul
     module.add = add
     module.concat = concat
@@ -1365,6 +1436,11 @@ def _make_fake_ttnn(*, with_transformer: bool = True):
     )
     if with_transformer:
         module.transformer = types.SimpleNamespace(
+            split_query_key_value_and_split_heads=(
+                split_query_key_value_and_split_heads
+            ),
+            scaled_dot_product_attention=scaled_dot_product_attention,
+            concatenate_heads=concatenate_heads,
             paged_scaled_dot_product_attention_decode=(
                 paged_scaled_dot_product_attention_decode
             )
