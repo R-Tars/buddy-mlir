@@ -103,6 +103,9 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 payload = json.loads(path.read_text())
                 self.assertEqual(payload["mode"], "generate")
                 self.assertEqual(payload["status"], "dry_run")
+                self.assertEqual(payload["parameter_tensorization_count_per_generate"], 1)
+                self.assertEqual(payload["parameter_tensorization_count_per_decode_step"], 0)
+                self.assertFalse(payload["kv_cache_reinitialized_per_step"])
 
     def test_generate_depth_sweep_runs_fake_generate_depths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -164,6 +167,13 @@ class GenerateDepthSweepTest(unittest.TestCase):
             self.assertEqual(depth_two["prefill_status"], "passed")
             self.assertEqual(depth_two["kv_cache_source"], "prefill")
             self.assertTrue(depth_two["decode_loop_runtime_owned"])
+            self.assertEqual(depth_two["parameter_tensorization_count_per_generate"], 1)
+            self.assertEqual(depth_two["parameter_tensorization_count_per_decode_step"], 0)
+            self.assertFalse(depth_two["kv_cache_reinitialized_per_step"])
+            self.assertEqual(
+                depth_two["runtime_context"]["class"],
+                "TTNNDirectRuntimeContext",
+            )
             self.assertEqual(
                 depth_two["generated_text"],
                 "<tok:17> <tok:23> <tok:23>",

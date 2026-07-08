@@ -88,6 +88,11 @@ class GenerateTest(unittest.TestCase):
             self.assertFalse(report["decode_loop_runtime_owned"])
             self.assertEqual(report["generated_token_ids"], [])
             self.assertEqual(report["generated_text"], "")
+            self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
+            self.assertEqual(report["runtime_context"]["status"], "planned")
+            self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
+            self.assertEqual(report["parameter_tensorization_count_per_decode_step"], 0)
+            self.assertFalse(report["kv_cache_reinitialized_per_step"])
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -143,6 +148,36 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["decode_steps"], 2)
             self.assertEqual(report["prefill"]["status"], "passed")
             self.assertEqual(report["prefill"]["cache_population"][0]["status"], "filled")
+            self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
+            self.assertEqual(report["runtime_context"]["status"], "built")
+            self.assertTrue(report["runtime_context"]["generated_model_initialized"])
+            self.assertEqual(
+                report["runtime_context"]["parameter_tensorization_count_per_generate"],
+                1,
+            )
+            self.assertEqual(
+                report["runtime_context"]["parameter_tensorization_count_per_decode_step"],
+                0,
+            )
+            self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
+            self.assertEqual(report["parameter_tensorization_count_per_decode_step"], 0)
+            self.assertFalse(report["kv_cache_reinitialized_per_step"])
+            self.assertFalse(
+                report["runtime_context"]["kv_cache_reinitialized_per_step"]
+            )
+            self.assertEqual(
+                report["parameter_setup"]["parameter_tensorization_count_per_generate"],
+                1,
+            )
+            self.assertEqual(
+                report["parameter_setup"][
+                    "parameter_tensorization_count_per_decode_step"
+                ],
+                0,
+            )
+            self.assertFalse(
+                report["parameter_setup"]["kv_cache_reinitialized_per_step"]
+            )
             self.assertEqual(
                 report["prefill"]["first_token"]["token_ids_by_user"],
                 [[17], [17]],

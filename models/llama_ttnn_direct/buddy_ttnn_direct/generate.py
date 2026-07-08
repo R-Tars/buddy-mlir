@@ -63,6 +63,130 @@ from .decode_loop import (
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
 
+class TTNNDirectRuntimeContext:
+    """Owns the TTNN Direct runtime state for one generate invocation."""
+
+    def __init__(
+        self,
+        *,
+        parameters: Any,
+        prefill_token_ids: Any,
+        kv_cache: Any,
+        tensor_conversion_count: int,
+        parameter_source: str,
+        input_source: str,
+        prefill_tokenization: dict[str, Any],
+        kv_cache_runtime_state: dict[str, Any],
+        prefill_prompt_runtime_input_tensor_count: int,
+        prefill_rotary_runtime_input_tensor_count: int,
+        parameter_setup: dict[str, Any],
+        tokenizer_path: str | Path,
+        tokenizer_module: Any | None,
+    ) -> None:
+        self.parameters = parameters
+        self.prefill_token_ids = prefill_token_ids
+        self.kv_cache = kv_cache
+        self.token_ids = None
+        self.page_table = None
+        self.cache_position = None
+        self.rotary_state = None
+        self.decode_runtime_state = None
+        self.generated_module = None
+        self.generated_model = None
+        self.tensor_conversion_count = int(tensor_conversion_count)
+        self.parameter_source = parameter_source
+        self.input_source = input_source
+        self.prefill_tokenization = prefill_tokenization
+        self.kv_cache_runtime_state = kv_cache_runtime_state
+        self.prefill_prompt_runtime_input_tensor_count = int(
+            prefill_prompt_runtime_input_tensor_count
+        )
+        self.prefill_rotary_runtime_input_tensor_count = int(
+            prefill_rotary_runtime_input_tensor_count
+        )
+        self.parameter_setup = parameter_setup
+        self.tokenizer_path = str(tokenizer_path)
+        self.tokenizer_module = tokenizer_module
+        self.parameter_tensorization_count_per_generate = 1
+        self.parameter_tensorization_count_per_decode_step = 0
+        self.kv_cache_initialization_count_per_generate = 1
+        self.kv_cache_reinitialized_per_step = False
+        self.kv_cache_update_count = 0
+        self.page_table_update_count = 0
+        self.rotary_state_update_count = 0
+        self.generated_model_initialization_count = 0
+        self.decode_token_update_count = 0
+
+    def install_generated_model(
+        self,
+        *,
+        generated_module: Any,
+        generated_model: Any,
+    ) -> None:
+        self.generated_module = generated_module
+        self.generated_model = generated_model
+        self.generated_model_initialization_count += 1
+
+    def install_decode_runtime(self, runtime_state: SimpleNamespace) -> None:
+        self.page_table = runtime_state.page_table
+        self.cache_position = runtime_state.cache_position
+        self.decode_runtime_state = runtime_state.decode_runtime_state
+        self.rotary_state = runtime_state.rotary_runtime_state
+        self.page_table_update_count += 1
+        self.rotary_state_update_count += 1
+
+    def update_decode_token(self, token_ids: Any) -> None:
+        self.token_ids = token_ids
+        self.decode_token_update_count += 1
+
+    def update_kv_cache(self, kv_cache: Any) -> None:
+        self.kv_cache = kv_cache
+        self.kv_cache_update_count += 1
+
+    def to_report(self, *, decode_step_count: int) -> dict[str, Any]:
+        return {
+            "class": "TTNNDirectRuntimeContext",
+            "status": "built",
+            "owns": [
+                "parameters",
+                "kv_cache",
+                "page_table",
+                "rotary_state",
+                "tokenizer",
+                "generated_model",
+            ],
+            "parameter_source": self.parameter_source,
+            "input_source": self.input_source,
+            "tokenizer_path": self.tokenizer_path,
+            "tokenizer_module_injected": self.tokenizer_module is not None,
+            "generated_model_initialized": self.generated_model is not None,
+            "generated_model_initialization_count": (
+                self.generated_model_initialization_count
+            ),
+            "parameter_tensorization_count_per_generate": (
+                self.parameter_tensorization_count_per_generate
+            ),
+            "parameter_tensorization_count_per_decode_step": (
+                self.parameter_tensorization_count_per_decode_step
+            ),
+            "kv_cache_initialization_count_per_generate": (
+                self.kv_cache_initialization_count_per_generate
+            ),
+            "kv_cache_reinitialized_per_step": (
+                self.kv_cache_reinitialized_per_step
+            ),
+            "kv_cache_update_count": self.kv_cache_update_count,
+            "decode_step_count": int(decode_step_count),
+            "page_table_update_count": self.page_table_update_count,
+            "rotary_state_update_count": self.rotary_state_update_count,
+            "decode_token_update_count": self.decode_token_update_count,
+            "current_kv_cache_layers": len(self.kv_cache or []),
+            "current_page_table_shape": _shape(self.page_table),
+            "current_cache_position_shape": _shape(self.cache_position),
+            "current_rotary_state": self.rotary_state,
+        }
+
+
 def run_generate(
     *,
     out: str | Path,
@@ -162,6 +286,27 @@ def run_generate(
                     prefill_plan["tensor_conversion_count"]
                     + decode_plan["tensor_conversion_count"]
                 ),
+                "runtime_context": {
+                    "class": "TTNNDirectRuntimeContext",
+                    "status": "planned",
+                    "owns": [
+                        "parameters",
+                        "kv_cache",
+                        "page_table",
+                        "rotary_state",
+                        "tokenizer",
+                        "generated_model",
+                    ],
+                    "parameter_tensorization_count_per_generate": 1,
+                    "parameter_tensorization_count_per_decode_step": 0,
+                    "kv_cache_initialization_count_per_generate": 1,
+                    "kv_cache_reinitialized_per_step": False,
+                    "decode_step_count": decode_step_count,
+                },
+                "parameter_tensorization_count_per_generate": 1,
+                "parameter_tensorization_count_per_decode_step": 0,
+                "kv_cache_initialization_count_per_generate": 1,
+                "kv_cache_reinitialized_per_step": False,
                 "synthetic_runtime_input_tensor_count": 0,
                 "synthetic_rotary_tensor_count": 0,
                 "synthetic_kv_cache_tensor_count": 0,
@@ -290,7 +435,7 @@ def run_generate(
 
     try:
         with _maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
-            state = _build_generate_state(
+            context = _build_generate_state(
                 ttnn=ttnn,
                 torch=torch,
                 device=ttnn_device,
@@ -308,16 +453,21 @@ def run_generate(
             generate_config["num_layers"] = layer_count
             model = generated.BuddyLlama31TTNN(
                 device=ttnn_device,
-                parameters=state.parameters,
+                parameters=context.parameters,
                 config=_to_namespace(generate_config),
+            )
+            context.install_generated_model(
+                generated_module=generated,
+                generated_model=model,
             )
 
             total_start = time.perf_counter()
             prefill_start = time.perf_counter()
-            prefill_token, kv_cache, cache_reports = model.prefill_prompt(
-                state.prefill_token_ids,
-                state.kv_cache,
+            prefill_token, kv_cache, cache_reports = context.generated_model.prefill_prompt(
+                context.prefill_token_ids,
+                context.kv_cache,
             )
+            context.update_kv_cache(kv_cache)
             synchronize = getattr(ttnn, "synchronize_device", None)
             if callable(synchronize):
                 synchronize(ttnn_device)
@@ -344,7 +494,10 @@ def run_generate(
                     "shape": _shape(prefill_token),
                     "dtype": _dtype(prefill_token),
                 },
-                observed_ops=_generated_observed_op_sequence(model, ttnn),
+                observed_ops=_generated_observed_op_sequence(
+                    context.generated_model,
+                    ttnn,
+                ),
             )
             first_token = _prefill_last_token_to_decode_token(
                 prefill_token=prefill_token,
@@ -361,6 +514,7 @@ def run_generate(
             generated_token_ids_by_user = [
                 list(row) for row in first_token.token_ids_by_user
             ]
+            context.update_decode_token(first_token.token_ids)
             per_step_token_metadata = [
                 {
                     "step_index": "prefill",
@@ -368,33 +522,31 @@ def run_generate(
                     "token_materialization_status": first_token.status,
                     "token_materialization_source": first_token.source,
                     "cache_position_value": (
-                        state.prefill_tokenization["effective_token_count"] - 1
+                        context.prefill_tokenization["effective_token_count"] - 1
                     ),
                     "token_shape": _shape(first_token.token_ids),
                 }
             ]
 
-            token_ids = first_token.token_ids
             decode_runtime = _build_decode_runtime_for_position(
                 ttnn=ttnn,
                 torch=torch,
                 device=ttnn_device,
                 dtype_seed=dtype_seed,
-                parameters=state.parameters,
+                parameters=context.parameters,
                 decode_plan=decode_plan,
                 batch_size=batch_size,
                 cache_len=cache_len,
                 prefill_effective_token_count=(
-                    state.prefill_tokenization["effective_token_count"]
+                    context.prefill_tokenization["effective_token_count"]
                 ),
                 generated_token_index=0,
             )
-            page_table = decode_runtime.page_table
-            cache_position = decode_runtime.cache_position
-            decode_runtime_state = decode_runtime.decode_runtime_state
-            rotary_runtime_state = decode_runtime.rotary_runtime_state
+            context.install_decode_runtime(decode_runtime)
+            decode_runtime_state = context.decode_runtime_state
+            rotary_runtime_state = context.rotary_state
             tensor_conversion_count = (
-                state.tensor_conversion_count
+                context.tensor_conversion_count
                 + first_token.tensor_conversion_count
                 + decode_runtime.tensor_conversion_count
             )
@@ -407,23 +559,24 @@ def run_generate(
             step_reports = []
             for step_index in range(decode_step_count):
                 input_shapes = _loop_input_shapes(
-                    token_ids=token_ids,
-                    page_table=page_table,
-                    cache_position=cache_position,
-                    kv_cache=kv_cache,
+                    token_ids=context.token_ids,
+                    page_table=context.page_table,
+                    cache_position=context.cache_position,
+                    kv_cache=context.kv_cache,
                 )
                 token, kv_cache, latency_ms = _time_decode_step(
                     ttnn=ttnn,
-                    model=model,
+                    model=context.generated_model,
                     device=ttnn_device,
-                    token_ids=token_ids,
-                    page_table=page_table,
-                    cache_position=cache_position,
-                    kv_cache=kv_cache,
+                    token_ids=context.token_ids,
+                    page_table=context.page_table,
+                    cache_position=context.cache_position,
+                    kv_cache=context.kv_cache,
                 )
+                context.update_kv_cache(kv_cache)
                 output_shapes = _loop_output_shapes(
                     token=token,
-                    kv_cache=kv_cache,
+                    kv_cache=context.kv_cache,
                     layer_count=layer_count,
                 )
                 output = {
@@ -461,7 +614,10 @@ def run_generate(
                     layer_count=layer_count,
                     output_shapes=output_shapes,
                     output=output,
-                    observed_ops=_generated_observed_op_sequence(model, ttnn),
+                    observed_ops=_generated_observed_op_sequence(
+                        context.generated_model,
+                        ttnn,
+                    ),
                 )
                 step_reports.append(
                     {
@@ -486,26 +642,25 @@ def run_generate(
                         "reference": reference,
                     }
                 )
-                token_ids = token
+                context.update_decode_token(token)
                 if step_index + 1 < decode_step_count:
                     decode_runtime = _build_decode_runtime_for_position(
                         ttnn=ttnn,
                         torch=torch,
                         device=ttnn_device,
                         dtype_seed=dtype_seed,
-                        parameters=state.parameters,
+                        parameters=context.parameters,
                         decode_plan=decode_plan,
                         batch_size=batch_size,
                         cache_len=cache_len,
                         prefill_effective_token_count=(
-                            state.prefill_tokenization["effective_token_count"]
+                            context.prefill_tokenization["effective_token_count"]
                         ),
                         generated_token_index=step_index + 1,
                     )
-                    page_table = decode_runtime.page_table
-                    cache_position = decode_runtime.cache_position
-                    decode_runtime_state = decode_runtime.decode_runtime_state
-                    rotary_runtime_state = decode_runtime.rotary_runtime_state
+                    context.install_decode_runtime(decode_runtime)
+                    decode_runtime_state = context.decode_runtime_state
+                    rotary_runtime_state = context.rotary_state
                     decode_runtime_state_count += (
                         decode_runtime.decode_runtime_state_input_tensor_count
                     )
@@ -524,7 +679,7 @@ def run_generate(
             )
             decode_passed = all(step["passed"] for step in step_reports)
             passed = bool(prefill_reference["passed"] and decode_passed)
-            parameter_setup = dict(state.parameter_setup)
+            parameter_setup = dict(context.parameter_setup)
             parameter_setup.update(
                 {
                     "generate_runtime_owned": passed,
@@ -532,10 +687,10 @@ def run_generate(
                         decode_step_count == 0 or decode_passed
                     ),
                     "prefill_prompt_runtime_input_tensor_count": (
-                        state.prefill_prompt_runtime_input_tensor_count
+                        context.prefill_prompt_runtime_input_tensor_count
                     ),
                     "prefill_rotary_runtime_input_tensor_count": (
-                        state.prefill_rotary_runtime_input_tensor_count
+                        context.prefill_rotary_runtime_input_tensor_count
                     ),
                     "prefill_first_token_tensor_conversion_count": (
                         first_token.tensor_conversion_count
@@ -550,6 +705,18 @@ def run_generate(
                     "synthetic_runtime_input_tensor_count": 0,
                     "synthetic_rotary_tensor_count": 0,
                     "synthetic_kv_cache_tensor_count": 0,
+                    "parameter_tensorization_count_per_generate": (
+                        context.parameter_tensorization_count_per_generate
+                    ),
+                    "parameter_tensorization_count_per_decode_step": (
+                        context.parameter_tensorization_count_per_decode_step
+                    ),
+                    "kv_cache_initialization_count_per_generate": (
+                        context.kv_cache_initialization_count_per_generate
+                    ),
+                    "kv_cache_reinitialized_per_step": (
+                        context.kv_cache_reinitialized_per_step
+                    ),
                 }
             )
             report = _generate_base_report(
@@ -586,13 +753,28 @@ def run_generate(
                     "kv_cache_source": "prefill",
                     "input_source": "prompt_prefill",
                     "runtime_owner": "generate",
-                    "parameter_source": state.parameter_source,
+                    "parameter_source": context.parameter_source,
                     "parameter_setup": parameter_setup,
-                    "prompt_tokenization": state.prefill_tokenization,
-                    "prefill_tokenization": state.prefill_tokenization,
+                    "prompt_tokenization": context.prefill_tokenization,
+                    "prefill_tokenization": context.prefill_tokenization,
                     "decode_runtime_state": decode_runtime_state,
                     "rotary_runtime_state": rotary_runtime_state,
-                    "kv_cache_runtime_state": state.kv_cache_runtime_state,
+                    "kv_cache_runtime_state": context.kv_cache_runtime_state,
+                    "runtime_context": context.to_report(
+                        decode_step_count=decode_step_count
+                    ),
+                    "parameter_tensorization_count_per_generate": (
+                        context.parameter_tensorization_count_per_generate
+                    ),
+                    "parameter_tensorization_count_per_decode_step": (
+                        context.parameter_tensorization_count_per_decode_step
+                    ),
+                    "kv_cache_initialization_count_per_generate": (
+                        context.kv_cache_initialization_count_per_generate
+                    ),
+                    "kv_cache_reinitialized_per_step": (
+                        context.kv_cache_reinitialized_per_step
+                    ),
                     "prefill": {
                         "status": (
                             "passed"
@@ -822,7 +1004,7 @@ def _build_generate_state(
         + int(kv_runtime.tensor_conversion_count)
         + int(prefill_rotary.tensor_conversion_count)
     )
-    return SimpleNamespace(
+    return TTNNDirectRuntimeContext(
         parameters=result.parameters,
         prefill_token_ids=prefill_token_ids,
         kv_cache=kv_runtime.kv_cache,
@@ -850,6 +1032,8 @@ def _build_generate_state(
             ),
             "kv_cache_runtime_state": kv_runtime.kv_cache_runtime_state,
         },
+        tokenizer_path=tokenizer_path,
+        tokenizer_module=tokenizer_module,
     )
 
 

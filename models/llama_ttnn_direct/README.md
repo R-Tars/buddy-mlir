@@ -1442,6 +1442,23 @@ The summary report records `records[]` with each depth's generate report path,
 reported when requested but not required to pass; use `--require-full-depth`
 when the full generated layer depth should be an acceptance gate.
 
+`generate` now builds a `TTNNDirectRuntimeContext` for the whole run. The
+context owns the generated model instance, tensorized parameters, prefilled KV
+cache, current token ids, page table/cache position, rotary state, and tokenizer
+metadata. Reports expose the persistent runtime contract:
+
+```text
+parameter_tensorization_count_per_generate = 1
+parameter_tensorization_count_per_decode_step = 0
+kv_cache_reinitialized_per_step = false
+```
+
+`generate-depth-sweep` carries the same fields into each depth record and adds
+an acceptance check named `generate_depth_sweep.persistent_runtime_context`.
+The first generate implementation still materializes the last prefill token on
+host before decode; the persistent context prevents weight/KV reinitialization
+from being hidden inside that bring-up path.
+
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report

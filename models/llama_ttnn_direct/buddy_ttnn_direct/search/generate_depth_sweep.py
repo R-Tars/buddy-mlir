@@ -210,6 +210,16 @@ def _generate_record(
         "generated_token_count_by_user": token_counts,
         "prefill_cache_population": prefill.get("cache_population", []),
         "prefill_first_token": prefill.get("first_token"),
+        "runtime_context": generate.get("runtime_context"),
+        "parameter_tensorization_count_per_generate": generate.get(
+            "parameter_tensorization_count_per_generate"
+        ),
+        "parameter_tensorization_count_per_decode_step": generate.get(
+            "parameter_tensorization_count_per_decode_step"
+        ),
+        "kv_cache_reinitialized_per_step": generate.get(
+            "kv_cache_reinitialized_per_step"
+        ),
         "throughput_status": throughput.get("status"),
         "tokens_per_second_per_user": throughput.get(
             "tokens_per_second_per_user"
@@ -285,6 +295,17 @@ def _generate_depth_acceptance(
             "passed": all(
                 record.get("generate_report") is not None
                 for record in records
+            ),
+        }
+    )
+    checks.append(
+        {
+            "name": "generate_depth_sweep.persistent_runtime_context",
+            "passed": all(
+                record.get("parameter_tensorization_count_per_generate") == 1
+                and record.get("parameter_tensorization_count_per_decode_step") == 0
+                and record.get("kv_cache_reinitialized_per_step") is False
+                for record in evidence_records
             ),
         }
     )
