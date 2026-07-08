@@ -34,6 +34,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
     VALIDATION_STEPS,
     preflight_real_decode,
     recover_real_decode_process_failure,
+    recover_real_decode_process_timeout,
     validate_real_decode,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
@@ -5993,6 +5994,85 @@ class ValidateDirectTest(unittest.TestCase):
                 "device_unhealthy",
             )
 
+    def test_recover_real_decode_process_timeout_writes_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "validate_real"
+            out_dir.mkdir()
+            report_path = out_dir / "real_decode_validation_report.json"
+            evidence_path = out_dir / "real_decode_evidence_manifest.json"
+            results = {
+                step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
+            }
+            results["official_config_diff"] = "pass"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "command": "validate-real-decode",
+                        "status": "running",
+                        "out_dir": str(out_dir),
+                        "dry_run": False,
+                        "guard_device_health": True,
+                        "device_id": 0,
+                        "results": results,
+                        "steps": {
+                            "official_config_diff": {"status": "pass"},
+                        },
+                        "artifacts": {
+                            "report": str(report_path),
+                            "evidence_manifest": str(evidence_path),
+                        },
+                    }
+                )
+            )
+
+            report = recover_real_decode_process_timeout(
+                out_dir=out_dir,
+                timeout_seconds=12.5,
+                stdout="partial stdout",
+                stderr="partial stderr",
+                command=["python", "-m", "validate-real-decode"],
+            )
+
+            self.assertEqual(report["status"], "device_unhealthy")
+            self.assertEqual(
+                report["tenstorrent_runtime_health"]["status"],
+                "timeout",
+            )
+            self.assertEqual(
+                report["tenstorrent_runtime_health"]["timeout_seconds"],
+                12.5,
+            )
+            self.assertEqual(
+                report["results"]["materialize_parameters"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                report["steps"]["materialize_parameters"]["error"]["type"],
+                "SubprocessTimeout",
+            )
+            self.assertEqual(
+                report["results"]["decode_shell"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["runtime_diagnostics"]["status"],
+                "device_unhealthy",
+            )
+            self.assertTrue(evidence_path.is_file())
+            evidence = json.loads(evidence_path.read_text())
+            self.assertEqual(
+                evidence["validation"]["status"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                evidence["runtime_diagnostics"]["findings"][0][
+                    "health_status"
+                ],
+                "timeout",
+            )
+
     def test_validate_real_decode_cli_isolates_signal_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -6030,6 +6110,59 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["results"]["official_config_diff"],
                 "device_unhealthy",
+            )
+            self.assertTrue(
+                (out_dir / "real_decode_evidence_manifest.json").is_file()
+            )
+
+    def test_validate_real_decode_cli_isolates_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "validate_real"
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli."
+                "subprocess.run",
+                side_effect=subprocess.TimeoutExpired(
+                    ["python", "-m", "models...cli"],
+                    timeout=9.0,
+                    output="partial stdout",
+                    stderr="partial stderr",
+                ),
+            ) as run_mock:
+                self.assertEqual(
+                    main(
+                        [
+                            "validate-real-decode",
+                            "--program-dir",
+                            str(root / "program"),
+                            "--model-path",
+                            str(root / "model"),
+                            "--out-dir",
+                            str(out_dir),
+                            "--guard-device-health",
+                            "--device-isolation-timeout-seconds",
+                            "9",
+                        ]
+                    ),
+                    1,
+                )
+
+            self.assertEqual(run_mock.call_args.kwargs["timeout"], 9.0)
+            report = json.loads(
+                (out_dir / "real_decode_validation_report.json").read_text()
+            )
+            self.assertEqual(report["status"], "device_unhealthy")
+            self.assertEqual(
+                report["tenstorrent_runtime_health"]["status"],
+                "timeout",
+            )
+            self.assertEqual(
+                report["results"]["official_config_diff"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                report["steps"]["official_config_diff"]["error"]["type"],
+                "SubprocessTimeout",
             )
             self.assertTrue(
                 (out_dir / "real_decode_evidence_manifest.json").is_file()

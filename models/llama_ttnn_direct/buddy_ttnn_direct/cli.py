@@ -79,6 +79,7 @@ from .validation import (
     default_search_space_path,
     preflight_real_decode,
     recover_real_decode_process_failure,
+    recover_real_decode_process_timeout,
     validate_direct,
     validate_real_decode,
 )
@@ -1663,6 +1664,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     validate_real.add_argument(
+        "--device-isolation-timeout-seconds",
+        type=float,
+        default=3600.0,
+        help=(
+            "Maximum wall-clock seconds for the isolated real validation "
+            "subprocess. Use 0 to disable the timeout."
+        ),
+    )
+    validate_real.add_argument(
         "--require-full-decode-step",
         action="store_true",
         help=(
@@ -2585,12 +2595,43 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
         "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
         *raw_argv,
     ]
-    result = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
+    timeout_seconds = (
+        float(args.device_isolation_timeout_seconds)
+        if args.device_isolation_timeout_seconds
+        and float(args.device_isolation_timeout_seconds) > 0.0
+        else None
     )
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = getattr(exc, "stdout", None) or getattr(exc, "output", None)
+        stderr = getattr(exc, "stderr", None)
+        stdout_text = _coerce_subprocess_text(stdout)
+        stderr_text = _coerce_subprocess_text(stderr)
+        if stdout_text:
+            print(stdout_text, end="")
+        if stderr_text:
+            print(stderr_text, end="", file=sys.stderr)
+        report = recover_real_decode_process_timeout(
+            out_dir=args.out_dir,
+            timeout_seconds=float(exc.timeout),
+            stdout=stdout,
+            stderr=stderr,
+            command=command,
+        )
+        report_path = args.out_dir / "real_decode_validation_report.json"
+        print(
+            "wrote TTNN Direct real decode validation report: "
+            f"{report_path}"
+        )
+        print(f"  status: {report['status']}")
+        return 1
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -2612,6 +2653,14 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
     )
     print(f"  status: {report['status']}")
     return 1
+
+
+def _coerce_subprocess_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
 
 
 def main(argv: list[str] | None = None) -> int:

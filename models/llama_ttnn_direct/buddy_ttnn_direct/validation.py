@@ -3602,6 +3602,115 @@ def recover_real_decode_process_failure(
     return report
 
 
+def recover_real_decode_process_timeout(
+    *,
+    out_dir: str | Path,
+    timeout_seconds: float,
+    stdout: str | bytes | None = None,
+    stderr: str | bytes | None = None,
+    command: list[str] | None = None,
+) -> dict[str, Any]:
+    """Complete real-decode evidence after an isolated runner timeout."""
+    root = Path(out_dir)
+    report_path = root / "real_decode_validation_report.json"
+    if report_path.is_file():
+        report = json.loads(report_path.read_text())
+    else:
+        report = {
+            "schema_version": 1,
+            "command": "validate-real-decode",
+            "status": "running",
+            "out_dir": str(root),
+            "dry_run": False,
+            "guard_device_health": True,
+            "results": {
+                step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
+            },
+            "steps": {},
+            "artifacts": {
+                "evidence_manifest": str(
+                    root / "real_decode_evidence_manifest.json"
+                ),
+                "report": str(report_path),
+            },
+        }
+
+    stdout_text = _coerce_process_text(stdout)
+    stderr_text = _coerce_process_text(stderr)
+    status = "device_unhealthy"
+    failed_step = _first_pending_real_decode_step(report) or "process"
+    message = (
+        "Isolated validate-real-decode subprocess timed out before "
+        f"completing {failed_step}."
+    )
+    report["status"] = status
+    report["message"] = message
+    report["tenstorrent_runtime_health"] = {
+        "status": "timeout",
+        "device_id": report.get("device_id"),
+        "timeout_seconds": timeout_seconds,
+        "stdout": _diagnostic_excerpt(stdout_text, limit=2000),
+        "stderr": _diagnostic_excerpt(stderr_text, limit=2000),
+    }
+    report["subprocess_timeout"] = {
+        "status": status,
+        "timeout_seconds": timeout_seconds,
+        "command": command or [],
+        "stdout": _diagnostic_excerpt(stdout_text, limit=2000),
+        "stderr": _diagnostic_excerpt(stderr_text, limit=2000),
+    }
+    if failed_step in REAL_DECODE_VALIDATION_STEPS:
+        report["results"][failed_step] = status
+        report["steps"][failed_step] = {
+            "status": status,
+            "error": {
+                "type": "SubprocessTimeout",
+                "timeout_seconds": timeout_seconds,
+                "message": message,
+                "stdout": _diagnostic_excerpt(stdout_text),
+                "stderr": _diagnostic_excerpt(stderr_text),
+            },
+        }
+        _mark_remaining_skipped(
+            report,
+            failed_step,
+            REAL_DECODE_VALIDATION_STEPS,
+        )
+    else:
+        report["steps"]["process"] = {
+            "status": status,
+            "error": report["subprocess_timeout"],
+        }
+
+    paths = {
+        name: Path(path)
+        for name, path in (report.get("artifacts") or {}).items()
+        if isinstance(path, str)
+    }
+    paths.setdefault(
+        "evidence_manifest",
+        root / "real_decode_evidence_manifest.json",
+    )
+    paths.setdefault("report", report_path)
+    report["artifacts"] = {name: str(path) for name, path in paths.items()}
+    report["runtime_diagnostics"] = _real_decode_runtime_diagnostics(report)
+    evidence = _real_decode_evidence_manifest(report, paths)
+    _write_json(paths["evidence_manifest"], evidence)
+    report["evidence"] = {
+        "status": evidence["status"],
+        "manifest": str(paths["evidence_manifest"]),
+        "artifact_count": len(evidence["artifacts"]),
+        "acceptance_scope": evidence.get("acceptance_scope", {}),
+        "model_end_to_end_readiness": evidence.get(
+            "model_end_to_end_readiness",
+            {},
+        ),
+        "failed_acceptance_checks": evidence["acceptance"]["failed_checks"],
+    }
+    _write_json(report_path, report)
+    return report
+
+
 def _first_pending_real_decode_step(report: dict[str, Any]) -> str | None:
     results = report.get("results") or {}
     for step in REAL_DECODE_VALIDATION_STEPS:
