@@ -143,6 +143,20 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertTrue(op_check["passed"])
             self.assertEqual(op_check["expected"], DECODE_SHELL_OPS)
             self.assertIn("mlp_gate", report["reference"]["observed_ops"])
+            token_shape_check = next(
+                check
+                for check in report["reference"]["checks"]
+                if check["name"] == "output.token"
+                and check["type"] == "shape"
+            )
+            self.assertIn([1, 32, 1], token_shape_check["accepted"])
+            layer_shape_check = next(
+                check
+                for check in report["reference"]["checks"]
+                if check["name"] == "layers.0.output"
+                and check["type"] == "shape"
+            )
+            self.assertIn([1, 32, 1, 16], layer_shape_check["accepted"])
             self.assertTrue(
                 all(check["passed"] for check in report["reference"]["checks"])
             )
@@ -219,6 +233,13 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(numeric["status"], "passed")
             self.assertEqual(numeric["kind"], "torch_decode_shell")
             self.assertGreaterEqual(numeric["pcc"], 0.999999)
+            hidden_shape_check = next(
+                check
+                for check in numeric["checks"]
+                if check["name"] == "final_hidden"
+                and check["type"] == "shape"
+            )
+            self.assertIn([1, 32, 1, 16], hidden_shape_check["accepted"])
             self.assertTrue(all(check["passed"] for check in numeric["checks"]))
             self.assertIn("mlp_down", report["reference"]["observed_ops"])
             self.assertEqual(json.loads(report_json.read_text()), report)

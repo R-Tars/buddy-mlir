@@ -110,6 +110,10 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
                         report["reference"]["planned_ops"],
                         PRIMITIVE_EXPECTED_OBSERVED_OPS[primitive],
                     )
+                    self.assertEqual(
+                        report["reference"]["observed_ops_source"],
+                        "ttnn_module_instrumentation",
+                    )
                     self.assertIn(
                         "observed_op_sequence",
                         [
@@ -152,6 +156,38 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             "paged_scaled_dot_product_attention_decode",
             all_called_ops,
         )
+
+    def test_successful_primitive_without_op_instrumentation_uses_direct_call_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "primitive_report.json"
+            report = run_smoke_attention_primitive(
+                out=out,
+                primitive="qkv_linear",
+                device="p150a",
+                batch_size=2,
+                hidden_size=16,
+                num_heads=4,
+                num_kv_heads=2,
+                head_dim=4,
+                max_cache_len=16,
+                ttnn_module=_fake_ttnn(instrumented=False),
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["reference"]["status"], "passed")
+            self.assertEqual(
+                report["reference"]["observed_ops"],
+                PRIMITIVE_EXPECTED_OBSERVED_OPS["qkv_linear"],
+            )
+            self.assertEqual(
+                report["reference"]["observed_ops_source"],
+                "direct_primitive_call",
+            )
+            self.assertEqual(json.loads(out.read_text()), report)
 
     def test_api_mismatch_is_reported_without_silent_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -273,8 +309,17 @@ def _fake_torch():
     return module
 
 
-def _fake_ttnn(*, with_transformer: bool = True):
-    module = types.SimpleNamespace(calls=[])
+class _CallSink:
+    def append(self, call: Any) -> None:
+        pass
+
+
+def _fake_ttnn(
+    *,
+    with_transformer: bool = True,
+    instrumented: bool = True,
+):
+    module = types.SimpleNamespace(calls=[] if instrumented else _CallSink())
     module.__version__ = "fake-ttnn"
     module.__tt_metal_commit__ = "fake-tt-metal"
     module.bfloat16 = "ttnn.bfloat16"

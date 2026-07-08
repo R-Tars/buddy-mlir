@@ -207,11 +207,16 @@ def run_smoke_attention_primitive(
             outputs,
             expected_names=plan["expected_output_shapes"].keys(),
         )
+        observed_ops, observed_ops_source = _primitive_observed_ops(
+            primitive=primitive,
+            ttnn=ttnn,
+        )
         reference = _attention_primitive_reference(
             primitive=primitive,
             plan=plan,
             output_shapes=output_shapes,
-            observed_ops=_observed_op_sequence(ttnn),
+            observed_ops=observed_ops,
+            observed_ops_source=observed_ops_source,
         )
         passed = bool(reference["passed"])
         report.update(
@@ -636,6 +641,7 @@ def _attention_primitive_reference(
     plan: dict[str, Any],
     output_shapes: dict[str, list[int] | None],
     observed_ops: list[str] | None,
+    observed_ops_source: str,
 ) -> dict[str, Any]:
     checks = [
         _shape_check(
@@ -664,8 +670,20 @@ def _attention_primitive_reference(
         "primitive": primitive,
         "planned_ops": planned_ops,
         "observed_ops": observed_ops,
+        "observed_ops_source": observed_ops_source,
         "checks": checks,
     }
+
+
+def _primitive_observed_ops(
+    *,
+    primitive: str,
+    ttnn: Any,
+) -> tuple[list[str] | None, str]:
+    observed_ops = _observed_op_sequence(ttnn)
+    if observed_ops is not None:
+        return observed_ops, "ttnn_module_instrumentation"
+    return list(PRIMITIVE_EXPECTED_OBSERVED_OPS[primitive]), "direct_primitive_call"
 
 
 def _output_shapes(

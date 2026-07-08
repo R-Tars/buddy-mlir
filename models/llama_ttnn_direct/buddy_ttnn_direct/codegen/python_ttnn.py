@@ -379,12 +379,24 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                             "rms_norm",
                             (("rms_norm",), ("rmsnorm",)),
                         )
+                    hidden = self.ensure_tile_layout(
+                        hidden,
+                        op_name=f"to_layout.tile.{{op_name}}",
+                    )
                     kwargs = {{"weight": weight, "epsilon": epsilon}}
                     if memory_config is not None:
                         kwargs["memory_config"] = memory_config
                     if dtype is not None:
                         kwargs["dtype"] = dtype
                     return op(hidden, **kwargs)
+
+                def ensure_tile_layout(self, tensor, *, op_name):
+                    to_layout = getattr(self.ttnn, "to_layout", None)
+                    tile_layout = getattr(self.ttnn, "TILE_LAYOUT", None)
+                    if to_layout is None or tile_layout is None:
+                        return tensor
+                    self._record(op_name)
+                    return to_layout(tensor, tile_layout)
 
                 def nlp_create_qkv_heads_decode(
                     self,

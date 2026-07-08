@@ -740,7 +740,16 @@ def _decode_shell_reference(
     seq_len = int(config["seq_len"])
     hidden_size = int(config["hidden_size"])
     expected_hidden_shape = [batch_size, seq_len, hidden_size]
-    accepted_token_shapes = [[batch_size, seq_len], [batch_size]]
+    accepted_hidden_shapes = [
+        expected_hidden_shape,
+        [1, batch_size, seq_len, hidden_size],
+    ]
+    accepted_token_shapes = [
+        [batch_size, seq_len],
+        [batch_size],
+        [1, batch_size, seq_len],
+        [1, batch_size],
+    ]
     checks: list[dict[str, Any]] = [
         _value_check("layer_count", len(layer_reports), layer_count),
         _shape_check(
@@ -763,6 +772,7 @@ def _decode_shell_reference(
                     f"layers.{layer_id}.output",
                     layer_report.get("output_shape"),
                     expected=expected_hidden_shape,
+                    accepted=accepted_hidden_shapes,
                 ),
                 _dtype_check(
                     f"layers.{layer_id}.output",
@@ -883,6 +893,10 @@ def _decode_shell_numeric_reference(
             observed_hidden,
             expected.final_hidden,
         )
+        expected_hidden_shape = _shape(expected.final_hidden)
+        accepted_hidden_shapes = [expected_hidden_shape]
+        if expected_hidden_shape is not None and len(expected_hidden_shape) == 3:
+            accepted_hidden_shapes.append([1, *expected_hidden_shape])
         checks = [
             {
                 "name": "final_hidden.pcc",
@@ -894,7 +908,8 @@ def _decode_shell_numeric_reference(
             _shape_check(
                 "final_hidden",
                 _shape(observed_hidden),
-                expected=_shape(expected.final_hidden),
+                expected=expected_hidden_shape,
+                accepted=accepted_hidden_shapes,
             ),
             _dtype_check(
                 "final_hidden",

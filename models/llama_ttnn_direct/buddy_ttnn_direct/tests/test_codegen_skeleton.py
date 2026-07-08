@@ -248,6 +248,65 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 },
             )
 
+    def test_generated_rms_norm_converts_hidden_to_tile_layout(self) -> None:
+        plan = _fake_plan(num_layers=1)
+        source = render_python_ttnn_model(plan)
+        self.assertIn("def ensure_tile_layout", source)
+        self.assertIn("to_layout.tile.{op_name}", source)
+
+        fake_ttnn = _make_fake_ttnn_module()
+        fake_ttnn.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
+
+        def to_layout(tensor, layout):
+            fake_ttnn.calls.append(
+                {
+                    "op": "to_layout",
+                    "tensor": getattr(tensor, "name", tensor),
+                    "layout": layout,
+                }
+            )
+            return _FakeTensor(
+                f"tile:{getattr(tensor, 'name', tensor)}",
+                getattr(tensor, "_mem_config", None),
+            )
+
+        fake_ttnn.to_layout = to_layout
+        sys.modules["ttnn"] = fake_ttnn
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                model_py = Path(tmpdir) / "model.py"
+                model_py.write_text(source)
+                generated = _load_generated_model(model_py)
+        finally:
+            sys.modules.pop("ttnn", None)
+
+        model = generated.BuddyLlama31TTNN(
+            device=None,
+            parameters=_ns(
+                layers=[
+                    _ns(input_norm=_ns(weight="attn_norm_weight"))
+                ],
+            ),
+            config=_ns(
+                rms_norm=_ns(
+                    eps=1e-5,
+                    output_memory_config="norm_mem",
+                    output_dtype="bf16",
+                ),
+            ),
+        )
+
+        out = model.rmsnorm(_FakeTensor("hidden"), 0, kind="attn")
+
+        self.assertEqual(out.name, "rms_norm:attn_norm_weight")
+        self.assertEqual(
+            [call["op"] for call in fake_ttnn.calls],
+            ["to_layout", "rms_norm"],
+        )
+        self.assertEqual(fake_ttnn.calls[0]["tensor"], "hidden")
+        self.assertEqual(fake_ttnn.calls[0]["layout"], "ttnn.TILE_LAYOUT")
+        self.assertEqual(fake_ttnn.calls[1]["hidden"], "tile:hidden")
+
     def test_lm_head_split_count_changes_codegen_and_config(self) -> None:
         configs = {}
         sources = {}
