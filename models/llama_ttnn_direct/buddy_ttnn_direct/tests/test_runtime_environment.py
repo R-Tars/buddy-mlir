@@ -133,6 +133,32 @@ bob 200 1 Sl 00:02 python -m examples.tenstorrent.eltwise_binary.eltwise_binary
         self.assertTrue(environment["reset_in_progress"])
         self.assertEqual(environment["conflicts"][0]["kind"], "tt_smi_reset")
 
+    def test_collect_tenstorrent_process_environment_detects_debug_workload(
+        self,
+    ) -> None:
+        ps_output = """USER PID PPID STAT ELAPSED CMD
+alice 100 1 Sl 00:20 python /home/alice/project/.test/softmax_launch_debug/run_ttk.py --package-dir /tmp/pkg --mode blocking
+"""
+        with patch(
+            "models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment."
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["ps"],
+                0,
+                stdout=ps_output,
+                stderr="",
+            ),
+        ):
+            environment = collect_tenstorrent_process_environment()
+
+        self.assertEqual(environment["status"], "busy")
+        self.assertEqual(environment["conflict_count"], 1)
+        self.assertFalse(environment["reset_in_progress"])
+        self.assertEqual(
+            environment["conflicts"][0]["kind"],
+            "tenstorrent_workload",
+        )
+
     def test_collect_ttnn_runtime_health_reports_probe_failure(self) -> None:
         with patch(
             "models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment."

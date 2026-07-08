@@ -115,6 +115,10 @@ def _tenstorrent_process_conflict_kind(command: str) -> str | None:
         return "tenstorrent_example"
     if "phase6_torch_add" in normalized:
         return "tenstorrent_example"
+    if "softmax_launch_debug" in normalized:
+        return "tenstorrent_workload"
+    if "run_ttk.py" in normalized:
+        return "tenstorrent_workload"
     if "trex" in normalized and "tenstorrent" in normalized:
         return "tenstorrent_example"
     return None
