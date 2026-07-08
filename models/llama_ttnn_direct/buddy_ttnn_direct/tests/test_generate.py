@@ -111,6 +111,10 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
             self.assertEqual(report["parameter_tensorization_count_per_decode_step"], 0)
             self.assertFalse(report["kv_cache_reinitialized_per_step"])
+            self.assertEqual(report["host_copy_profile"]["status"], "not_run")
+            self.assertFalse(
+                report["host_copy_profile"]["host_roundtrip_present"]
+            )
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -207,6 +211,25 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 report["prefill"]["first_token"]["token_ids_by_user"],
                 [[17], [17]],
+            )
+            self.assertEqual(report["host_copy_profile"]["status"], "measured")
+            self.assertTrue(
+                report["host_copy_profile"]["host_roundtrip_present"]
+            )
+            self.assertIsNotNone(
+                report["host_copy_profile"]["prefill_first_token_ms"]
+            )
+            self.assertGreaterEqual(
+                report["host_copy_profile"]["total_ms"],
+                0.0,
+            )
+            self.assertEqual(
+                len(
+                    report["host_copy_profile"][
+                        "decode_token_materialization_ms_samples"
+                    ]
+                ),
+                2,
             )
             self.assertEqual(report["generated_token_ids"], [[17, 23, 23], [17, 23, 23]])
             self.assertEqual(report["generated_text_status"], "fallback")

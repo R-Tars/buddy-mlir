@@ -92,6 +92,8 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertTrue(generate_report_json.is_file())
             self.assertIsNone(report["prefill_ms"])
             self.assertIsNone(report["decode_step_ms_mean"])
+            self.assertIsNone(report["host_copy_ms"])
+            self.assertEqual(report["host_copy_profile"]["status"], "not_run")
             self.assertIsNone(report["tokens_per_second_per_user"])
             self.assertFalse(report["official_performance_parity_claimed"])
             self.assertTrue(report["acceptance"]["passed"])
@@ -171,6 +173,18 @@ class ProfileGenerateTest(unittest.TestCase):
                 report["sections"]["host_copy_ms"]["host_roundtrip_present"],
                 True,
             )
+            self.assertEqual(
+                report["sections"]["host_copy_ms"]["status"],
+                "measured",
+            )
+            self.assertGreaterEqual(report["sections"]["host_copy_ms"]["value_ms"], 0.0)
+            self.assertEqual(report["host_copy_profile"]["status"], "measured")
+            self.assertGreaterEqual(report["host_copy_ms"], 0.0)
+            self.assertGreaterEqual(
+                report["prefill_first_token_materialization_ms"],
+                0.0,
+            )
+            self.assertEqual(len(report["decode_token_materialization_ms_samples"]), 2)
             self.assertEqual(report["per_layer"]["status"], "unavailable")
             self.assertTrue(generate_report_json.is_file())
             self.assertEqual(json.loads(report_json.read_text()), report)

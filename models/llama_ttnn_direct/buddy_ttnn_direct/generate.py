@@ -310,6 +310,7 @@ def run_generate(
                 "synthetic_runtime_input_tensor_count": 0,
                 "synthetic_rotary_tensor_count": 0,
                 "synthetic_kv_cache_tensor_count": 0,
+                "host_copy_profile": _host_copy_not_run_profile("dry_run"),
                 "trace": _trace_report(requested=False, status="disabled"),
                 "reference": _dry_run_reference("generate"),
                 "error": None,
@@ -499,6 +500,7 @@ def run_generate(
                     ttnn,
                 ),
             )
+            first_token_start = time.perf_counter()
             first_token = _prefill_last_token_to_decode_token(
                 prefill_token=prefill_token,
                 ttnn=ttnn,
@@ -506,6 +508,9 @@ def run_generate(
                 device=ttnn_device,
                 batch_size=batch_size,
             )
+            first_token_materialization_ms = (
+                time.perf_counter() - first_token_start
+            ) * 1000.0
             if first_token.status != "materialized":
                 raise PromptTokenizationError(
                     "prefill token could not be materialized for decode"
@@ -521,6 +526,7 @@ def run_generate(
                     "token_ids_by_user": first_token.token_ids_by_user,
                     "token_materialization_status": first_token.status,
                     "token_materialization_source": first_token.source,
+                    "token_materialization_ms": first_token_materialization_ms,
                     "cache_position_value": (
                         context.prefill_tokenization["effective_token_count"] - 1
                     ),
@@ -585,11 +591,15 @@ def run_generate(
                     "dtype": _dtype(token),
                     "repr": repr(token),
                 }
+                token_materialization_start = time.perf_counter()
                 token_materialization = _loop_generated_token_ids(
                     token=token,
                     ttnn=ttnn,
                     batch_size=batch_size,
                 )
+                token_materialization_ms = (
+                    time.perf_counter() - token_materialization_start
+                ) * 1000.0
                 step_token_ids = token_materialization["token_ids_by_user"]
                 for user_index, row in enumerate(step_token_ids):
                     generated_token_ids_by_user[user_index].extend(row)
@@ -602,6 +612,7 @@ def run_generate(
                     "token_materialization_source": (
                         token_materialization["source"]
                     ),
+                    "token_materialization_ms": token_materialization_ms,
                     "cache_position_value": decode_runtime_state.get(
                         "cache_position_value"
                     ),
@@ -639,6 +650,7 @@ def run_generate(
                         "output": output,
                         "generated_token_ids": step_token_ids,
                         "token_materialization": token_materialization,
+                        "token_materialization_ms": token_materialization_ms,
                         "reference": reference,
                     }
                 )
@@ -831,6 +843,12 @@ def run_generate(
                     "synthetic_runtime_input_tensor_count": 0,
                     "synthetic_rotary_tensor_count": 0,
                     "synthetic_kv_cache_tensor_count": 0,
+                    "host_copy_profile": _host_copy_profile(
+                        first_token_materialization_ms=(
+                            first_token_materialization_ms
+                        ),
+                        step_reports=step_reports,
+                    ),
                     "latency_ms": latency_ms,
                     "throughput_summary": _generate_throughput_summary(
                         latency_ms=latency_ms,
@@ -1394,6 +1412,7 @@ def _generate_failed_report(
             "synthetic_runtime_input_tensor_count": 0,
             "synthetic_rotary_tensor_count": 0,
             "synthetic_kv_cache_tensor_count": 0,
+            "host_copy_profile": _host_copy_not_run_profile(status),
             "latency_ms": None,
             "trace": _trace_report(requested=False, status="disabled"),
             "reference": {
@@ -1469,6 +1488,52 @@ def _generate_throughput_summary(
     return summary
 
 
+def _host_copy_not_run_profile(status: str) -> dict[str, Any]:
+    return {
+        "status": "not_run",
+        "reason": status,
+        "basis": "prefill/decode token materialization timing",
+        "host_roundtrip_present": False,
+        "prefill_first_token_ms": None,
+        "decode_token_materialization_ms_samples": [],
+        "decode_token_materialization_ms_total": None,
+        "decode_token_materialization_ms_mean": None,
+        "total_ms": None,
+    }
+
+
+def _host_copy_profile(
+    *,
+    first_token_materialization_ms: float,
+    step_reports: list[dict[str, Any]],
+) -> dict[str, Any]:
+    samples = [
+        latency
+        for latency in (
+            _float_or_none(step.get("token_materialization_ms"))
+            for step in step_reports
+        )
+        if latency is not None
+    ]
+    decode_total = sum(samples) if samples else 0.0
+    first_token_ms = float(first_token_materialization_ms)
+    total_ms = first_token_ms + decode_total
+    return {
+        "status": "measured",
+        "basis": (
+            "token materialization between TTNN tensors and host token ids"
+        ),
+        "host_roundtrip_present": True,
+        "prefill_first_token_ms": first_token_ms,
+        "decode_token_materialization_ms_samples": samples,
+        "decode_token_materialization_ms_total": decode_total,
+        "decode_token_materialization_ms_mean": (
+            decode_total / len(samples) if samples else None
+        ),
+        "total_ms": total_ms,
+    }
+
+
 def _profile_generate_from_generate_report(
     generate: dict[str, Any],
     *,
@@ -1497,6 +1562,18 @@ def _profile_generate_from_generate_report(
     aggregate_tokens_per_second = _float_or_none(
         throughput.get("aggregate_tokens_per_second")
     )
+    host_copy = generate.get("host_copy_profile") or {}
+    host_copy_ms = _float_or_none(host_copy.get("total_ms"))
+    decode_token_materialization_samples = [
+        latency
+        for latency in (
+            _float_or_none(value)
+            for value in host_copy.get(
+                "decode_token_materialization_ms_samples", []
+            )
+        )
+        if latency is not None
+    ]
     dry_run = generate.get("status") == "dry_run"
     generate_ran = bool(generate.get("passed"))
     has_positive_throughput = (
@@ -1575,6 +1652,17 @@ def _profile_generate_from_generate_report(
         "decode_step_ms_min": min(step_latencies) if step_latencies else None,
         "decode_step_ms_max": max(step_latencies) if step_latencies else None,
         "decode_step_ms_samples": step_latencies,
+        "host_copy_ms": host_copy_ms,
+        "host_copy_profile": host_copy,
+        "prefill_first_token_materialization_ms": _float_or_none(
+            host_copy.get("prefill_first_token_ms")
+        ),
+        "decode_token_materialization_ms_mean": _float_or_none(
+            host_copy.get("decode_token_materialization_ms_mean")
+        ),
+        "decode_token_materialization_ms_samples": (
+            decode_token_materialization_samples
+        ),
         "tokens_per_second_per_user": tokens_per_second_per_user,
         "aggregate_tokens_per_second": aggregate_tokens_per_second,
         "throughput_summary": throughput,
@@ -1582,6 +1670,7 @@ def _profile_generate_from_generate_report(
             prefill_ms=prefill_ms,
             decode_total_ms=decode_total_ms,
             decode_step_ms_mean=decode_step_ms_mean,
+            host_copy_profile=host_copy,
         ),
         "per_layer": _profile_generate_per_layer(generate),
         "acceptance": acceptance,
@@ -1600,12 +1689,47 @@ def _profile_generate_sections(
     prefill_ms: float | None,
     decode_total_ms: float | None,
     decode_step_ms_mean: float | None,
+    host_copy_profile: dict[str, Any],
 ) -> dict[str, Any]:
     unavailable = {
         "status": "unavailable",
         "value_ms": None,
         "reason": "generate path does not yet collect section-level timers",
     }
+    host_copy_ms = _float_or_none(host_copy_profile.get("total_ms"))
+    host_copy_status = host_copy_profile.get("status") or "unavailable"
+    if host_copy_ms is None:
+        host_copy_section = {
+            "status": host_copy_status,
+            "value_ms": None,
+            "host_roundtrip_present": bool(
+                host_copy_profile.get("host_roundtrip_present")
+            ),
+            "reason": host_copy_profile.get(
+                "reason",
+                "host token materialization did not run",
+            ),
+        }
+    else:
+        host_copy_section = {
+            "status": "measured",
+            "value_ms": host_copy_ms,
+            "host_roundtrip_present": bool(
+                host_copy_profile.get("host_roundtrip_present")
+            ),
+            "prefill_first_token_ms": _float_or_none(
+                host_copy_profile.get("prefill_first_token_ms")
+            ),
+            "decode_token_materialization_ms_total": _float_or_none(
+                host_copy_profile.get(
+                    "decode_token_materialization_ms_total"
+                )
+            ),
+            "decode_token_materialization_ms_mean": _float_or_none(
+                host_copy_profile.get("decode_token_materialization_ms_mean")
+            ),
+            "basis": host_copy_profile.get("basis"),
+        }
     return {
         "prefill_ms": prefill_ms,
         "decode_total_ms": decode_total_ms,
@@ -1616,15 +1740,7 @@ def _profile_generate_sections(
         "mlp_ms": dict(unavailable),
         "lm_head_ms": dict(unavailable),
         "argmax_ms": dict(unavailable),
-        "host_copy_ms": {
-            "status": "unmeasured",
-            "value_ms": None,
-            "host_roundtrip_present": True,
-            "reason": (
-                "first generate implementation materializes the prefill token "
-                "on host, but does not time the copy separately"
-            ),
-        },
+        "host_copy_ms": host_copy_section,
     }
 
 
