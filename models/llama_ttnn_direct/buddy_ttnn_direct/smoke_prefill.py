@@ -784,6 +784,7 @@ def _planned_cache_population(plan: dict[str, Any]) -> list[dict[str, Any]]:
             "key_cache_shape": plan["expected_output_shapes"]["key_cache"],
             "value_cache_shape": plan["expected_output_shapes"]["value_cache"],
             "write_policy": "fill_cache_per_user",
+            "update_shape_layout": "batch_heads_seq_head_dim",
             "planned_user_count": plan["batch_size"],
         }
         for layer_id in range(int(plan["layers"]))
@@ -820,6 +821,10 @@ def _observed_cache_population(
                 "write_policy": generated_report.get(
                     "write_policy",
                     "fill_cache_per_user",
+                ),
+                "update_shape_layout": generated_report.get(
+                    "update_shape_layout",
+                    "batch_heads_seq_head_dim",
                 ),
                 "planned_user_count": plan["batch_size"],
                 "filled_user_count": generated_report.get(

@@ -1362,6 +1362,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         "page_table_shape": _tensor_shape(page_table),
                         "filled_user_count": batch_user_count,
+                        "update_shape_layout": "batch_heads_seq_head_dim",
                         "key_update_shape": key_shape,
                         "value_update_shape": value_shape,
                         "users": user_reports,

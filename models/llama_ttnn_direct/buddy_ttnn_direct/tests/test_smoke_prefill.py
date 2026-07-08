@@ -78,6 +78,10 @@ class SmokePrefillTest(unittest.TestCase):
                 "fill_cache_per_user",
             )
             self.assertEqual(
+                report["cache_population"][0]["update_shape_layout"],
+                "batch_heads_seq_head_dim",
+            )
+            self.assertEqual(
                 report["cache_population"][0]["planned_user_count"],
                 2,
             )
@@ -137,6 +141,10 @@ class SmokePrefillTest(unittest.TestCase):
             self.assertEqual(
                 report["cache_population"][0]["write_policy"],
                 "fill_cache_per_user",
+            )
+            self.assertEqual(
+                report["cache_population"][0]["update_shape_layout"],
+                "batch_heads_seq_head_dim",
             )
             self.assertEqual(
                 report["cache_population"][0]["filled_user_count"],

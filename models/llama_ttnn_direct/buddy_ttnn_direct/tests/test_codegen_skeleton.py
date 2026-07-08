@@ -630,6 +630,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             )
 
             self.assertEqual(report["write_policy"], "fill_cache_per_user")
+            self.assertEqual(
+                report["update_shape_layout"],
+                "batch_heads_seq_head_dim",
+            )
             self.assertEqual(report["filled_user_count"], 2)
             self.assertEqual(
                 [user["user_id"] for user in report["users"]],
@@ -710,6 +714,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             self.assertEqual(report["write_policy"], "paged_fill_cache_per_user")
             self.assertEqual(report["page_table_shape"], [2, 2])
+            self.assertEqual(
+                report["update_shape_layout"],
+                "batch_heads_seq_head_dim",
+            )
             self.assertEqual(report["filled_user_count"], 2)
             paged_calls = [
                 call
@@ -720,6 +728,15 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(
                 [call["kwargs"].get("batch_idx") for call in paged_calls],
                 [0, 0, 1, 1],
+            )
+            self.assertEqual(
+                [call["update_shape"] for call in paged_calls],
+                [
+                    [1, 2, 128, 4],
+                    [1, 2, 128, 4],
+                    [1, 2, 128, 4],
+                    [1, 2, 128, 4],
+                ],
             )
             self.assertNotIn(
                 "fill_cache",
@@ -1038,6 +1055,7 @@ def _make_fake_ttnn_module():
                 "op": "paged_fill_cache",
                 "cache": getattr(cache, "name", cache),
                 "update": getattr(update, "name", update),
+                "update_shape": list(getattr(update, "shape", [])),
                 "page_table": getattr(page_table, "name", page_table),
                 "kwargs": dict(kwargs),
             }

@@ -203,6 +203,12 @@ class GenerateTest(unittest.TestCase):
                 "paged_fill_cache_per_user",
             )
             self.assertEqual(
+                report["prefill"]["cache_population"][0][
+                    "update_shape_layout"
+                ],
+                "batch_heads_seq_head_dim",
+            )
+            self.assertEqual(
                 report["prefill"]["cache_population"][0]["filled_user_count"],
                 2,
             )
