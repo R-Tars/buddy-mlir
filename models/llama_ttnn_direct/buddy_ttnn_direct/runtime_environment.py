@@ -29,13 +29,15 @@ def collect_tenstorrent_device_environment() -> dict[str, Any]:
     device_nodes = [
         path for path in entries if _is_character_device(Path(path))
     ]
+    tt_smi_path = shutil.which("tt-smi")
     return {
         "device_available": bool(device_nodes),
         "device_node_count": len(device_nodes),
         "device_nodes": device_nodes,
         "filesystem_entries": entries,
         "driver_loaded": _kernel_module_loaded("tenstorrent"),
-        "tt_smi_path": shutil.which("tt-smi"),
+        "tt_smi_path": tt_smi_path,
+        "tt_smi": _probe_command([tt_smi_path]) if tt_smi_path else None,
     }
 
 
@@ -65,6 +67,51 @@ def _kernel_module_loaded(name: str) -> bool:
         return False
     prefix = f"{name} "
     return any(line.startswith(prefix) for line in lines)
+
+
+def _probe_command(command: list[str], timeout: float = 5.0) -> dict[str, Any]:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "timeout",
+            "command": command,
+            "timeout_seconds": timeout,
+            "stdout": _trim_probe_output(exc.stdout),
+            "stderr": _trim_probe_output(exc.stderr),
+        }
+    except OSError as exc:
+        return {
+            "status": "error",
+            "command": command,
+            "error": str(exc),
+        }
+    return {
+        "status": "pass" if result.returncode == 0 else "fail",
+        "command": command,
+        "returncode": result.returncode,
+        "stdout": _trim_probe_output(result.stdout),
+        "stderr": _trim_probe_output(result.stderr),
+    }
+
+
+def _trim_probe_output(value: str | bytes | None, limit: int = 2000) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        text = value.decode(errors="replace")
+    else:
+        text = value
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
 
 
 def _tt_metal_commit(

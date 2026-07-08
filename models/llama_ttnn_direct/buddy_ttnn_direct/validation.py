@@ -1600,6 +1600,7 @@ def preflight_real_decode(
                 "driver_loaded"
             ),
             "tt_smi_path": tenstorrent_device_environment.get("tt_smi_path"),
+            "tt_smi": tenstorrent_device_environment.get("tt_smi"),
         },
         expected="at least one Tenstorrent character device node",
         message=(

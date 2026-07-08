@@ -614,6 +614,12 @@ class ValidateDirectTest(unittest.TestCase):
                     "filesystem_entries": [],
                     "driver_loaded": True,
                     "tt_smi_path": "/usr/bin/tt-smi",
+                    "tt_smi": {
+                        "status": "fail",
+                        "returncode": 1,
+                        "stdout": "No Tenstorrent devices detected",
+                        "stderr": "",
+                    },
                 },
             )
 
@@ -7916,6 +7922,12 @@ def _fake_tenstorrent_device_environment() -> dict[str, object]:
         "filesystem_entries": ["/dev/tenstorrent/0"],
         "driver_loaded": True,
         "tt_smi_path": "/usr/bin/tt-smi",
+        "tt_smi": {
+            "status": "pass",
+            "returncode": 0,
+            "stdout": "Tenstorrent device 0",
+            "stderr": "",
+        },
     }
 
 
