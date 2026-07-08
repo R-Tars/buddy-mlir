@@ -84,6 +84,24 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["kv_cache_source"], "prefill")
             self.assertEqual(report["max_new_tokens"], 3)
             self.assertEqual(report["decode_steps"], 2)
+            self.assertTrue(
+                report["prefill_first_token_counts_as_generated_token"]
+            )
+            self.assertTrue(report["decode_steps_excludes_prefill_token"])
+            self.assertEqual(
+                report["generated_token_budget"],
+                {
+                    "max_new_tokens": 3,
+                    "prefill_first_token_count": 1,
+                    "decode_loop_token_count": 2,
+                    "decode_steps": 2,
+                    "total_planned_generated_tokens": 3,
+                    "decode_steps_formula": (
+                        "max_new_tokens - 1 because the first generated token "
+                        "is materialized from prefill output"
+                    ),
+                },
+            )
             self.assertTrue(report["planned_decode_loop_runtime_owned"])
             self.assertFalse(report["decode_loop_runtime_owned"])
             self.assertEqual(report["generated_token_ids"], [])
@@ -146,6 +164,14 @@ class GenerateTest(unittest.TestCase):
             self.assertTrue(report["generate_runtime_owned"])
             self.assertTrue(report["decode_loop_runtime_owned"])
             self.assertEqual(report["decode_steps"], 2)
+            self.assertEqual(
+                report["generated_token_budget"]["total_planned_generated_tokens"],
+                3,
+            )
+            self.assertEqual(
+                report["generated_token_budget"]["decode_loop_token_count"],
+                2,
+            )
             self.assertEqual(report["prefill"]["status"], "passed")
             self.assertEqual(report["prefill"]["cache_population"][0]["status"], "filled")
             self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")

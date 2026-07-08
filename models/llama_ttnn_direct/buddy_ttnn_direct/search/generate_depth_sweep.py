@@ -196,6 +196,7 @@ def _generate_record(
         "batch_size": generate.get("batch_size"),
         "cache_len": generate.get("cache_len"),
         "max_new_tokens": generate.get("max_new_tokens"),
+        "generated_token_budget": generate.get("generated_token_budget"),
         "prefill_len": generate.get("prefill_len"),
         "parameter_source": generate.get("parameter_source"),
         "input_source": generate.get("input_source"),

@@ -1260,6 +1260,10 @@ def _generate_base_report(
     decode_plan: dict[str, Any],
     prefill_plan: dict[str, Any],
 ) -> dict[str, Any]:
+    token_budget = _generated_token_budget(
+        max_new_tokens=max_new_tokens,
+        decode_steps=decode_steps,
+    )
     return {
         "schema_version": 1,
         "command": "generate",
@@ -1274,6 +1278,9 @@ def _generate_base_report(
         "cache_len": cache_len,
         "max_new_tokens": max_new_tokens,
         "decode_steps": decode_steps,
+        "generated_token_budget": token_budget,
+        "prefill_first_token_counts_as_generated_token": True,
+        "decode_steps_excludes_prefill_token": True,
         "dtype_seed": dtype_seed,
         "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
         "layout": "tile",
@@ -1291,6 +1298,27 @@ def _generate_base_report(
             "not claimed."
         ),
         "ttnn_environment": collect_ttnn_environment(None),
+    }
+
+
+def _generated_token_budget(
+    *,
+    max_new_tokens: int,
+    decode_steps: int,
+) -> dict[str, Any]:
+    prefill_first_token_count = 1 if max_new_tokens > 0 else 0
+    return {
+        "max_new_tokens": max_new_tokens,
+        "prefill_first_token_count": prefill_first_token_count,
+        "decode_loop_token_count": decode_steps,
+        "decode_steps": decode_steps,
+        "total_planned_generated_tokens": (
+            prefill_first_token_count + decode_steps
+        ),
+        "decode_steps_formula": (
+            "max_new_tokens - 1 because the first generated token is "
+            "materialized from prefill output"
+        ),
     }
 
 

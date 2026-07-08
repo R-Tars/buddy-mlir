@@ -164,6 +164,16 @@ class GenerateDepthSweepTest(unittest.TestCase):
             depth_one, depth_two = report["records"]
             self.assertEqual(depth_one["generated_token_count_by_user"], [3, 3])
             self.assertEqual(depth_two["generated_token_count_by_user"], [3, 3])
+            self.assertEqual(
+                depth_two["generated_token_budget"][
+                    "total_planned_generated_tokens"
+                ],
+                3,
+            )
+            self.assertEqual(
+                depth_two["generated_token_budget"]["decode_loop_token_count"],
+                2,
+            )
             self.assertEqual(depth_two["prefill_status"], "passed")
             self.assertEqual(depth_two["kv_cache_source"], "prefill")
             self.assertTrue(depth_two["decode_loop_runtime_owned"])
