@@ -27,9 +27,13 @@ from .runtime_inputs import (
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
+    _decode_rotary_cos_sin_shape,
+    _decode_rotary_transform_shape,
     _linear_weight_shape,
     _maybe_managed_device,
     _randn,
+    _rotary_cos_sin_height_sharded_memory_config,
+    _rotary_transform_height_sharded_memory_config,
     _ttnn_dtype,
     _zeros,
 )
@@ -1294,12 +1298,28 @@ def _profile_lm_head_and_argmax(
     generation_mode = _optional_attr(generation_config, "mode", "greedy")
     retain_logits = bool(_optional_attr(lm_head_config, "retain_logits", False))
     if generation_mode == "greedy" and not retain_logits:
-        token, argmax_ms = _time_section(
-            lambda: model.ops.argmax(
+        def argmax_and_normalize() -> Any:
+            token = model.ops.argmax(
                 logits,
                 dim=-1,
                 op_name="argmax_or_sampling",
-            ),
+            )
+            normalize_decode_token = getattr(
+                model.ops,
+                "normalize_decode_token",
+                None,
+            )
+            if callable(normalize_decode_token):
+                token = normalize_decode_token(
+                    token,
+                    batch_size=int(
+                        _optional_attr(model.config, "batch_size", 1) or 1
+                    ),
+                )
+            return token
+
+        token, argmax_ms = _time_section(
+            argmax_and_normalize,
             ttnn=ttnn,
             device=device,
         )
@@ -1923,8 +1943,8 @@ def _build_prompt_decode_runtime_state_tensors(
     kwargs = {"device": device}
     dtype = getattr(
         ttnn,
-        "uint32",
-        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+        "int32",
+        getattr(ttnn, "uint32", getattr(ttnn, "bfloat16", None)),
     )
     if dtype is not None:
         kwargs["dtype"] = dtype
@@ -2118,10 +2138,12 @@ def _attach_runtime_rotary_parameters(
 ) -> SimpleNamespace:
     layer_count = int(plan["layers"])
     layer_params = plan["layer_parameter_shapes"]
-    matrix_shape = list(layer_params["rotary_cos_matrix"])
-    head_dim = int(matrix_shape[-1])
+    cos_sin_shape = list(layer_params["rotary_cos_matrix"])
+    batch_size = int(cos_sin_shape[1])
+    head_dim = int(cos_sin_shape[-1])
     runtime_state = build_decode_rotary_runtime_state(
         layer_count=layer_count,
+        batch_size=batch_size,
         head_dim=head_dim,
         cache_position_value=cache_position_value,
     )
@@ -2132,19 +2154,38 @@ def _attach_runtime_rotary_parameters(
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     if layout is not None:
         kwargs["layout"] = layout
+    rotary_cos_sin_memory_config = _rotary_cos_sin_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+    rotary_transform_memory_config = _rotary_transform_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+    )
     tensor_count = 0
 
-    def runtime_tensor(name: str) -> Any:
+    def runtime_tensor(
+        name: str,
+        shape: list[int],
+        *,
+        memory_config: Any | None,
+    ) -> Any:
         nonlocal tensor_count
         tensor_count += 1
+        tensor_kwargs = dict(kwargs)
+        if memory_config is not None:
+            tensor_kwargs["memory_config"] = memory_config
         return ttnn.from_torch(
             _runtime_float_tensor(
                 torch,
-                runtime_state.matrix_shape,
+                shape,
                 dtype_seed=dtype_seed,
                 name=name,
             ),
-            **kwargs,
+            **tensor_kwargs,
         )
 
     for layer_id in range(layer_count):
@@ -2155,13 +2196,19 @@ def _attach_runtime_rotary_parameters(
             layer.attention = attention
         attention.rotary = SimpleNamespace(
             cos_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_cos"
+                f"runtime.layers.{layer_id}.rotary_cos",
+                list(runtime_state.cos_sin_shape),
+                memory_config=rotary_cos_sin_memory_config,
             ),
             sin_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_sin"
+                f"runtime.layers.{layer_id}.rotary_sin",
+                list(runtime_state.cos_sin_shape),
+                memory_config=rotary_cos_sin_memory_config,
             ),
             transformation_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_transform"
+                f"runtime.layers.{layer_id}.rotary_transform",
+                list(runtime_state.transformation_shape),
+                memory_config=rotary_transform_memory_config,
             ),
         )
 
@@ -2274,9 +2321,17 @@ def _decode_step_plan(
             num_heads * head_dim,
             hidden_size,
         ),
-        "rotary_cos_matrix": [1, 1, head_dim, head_dim],
-        "rotary_sin_matrix": [1, 1, head_dim, head_dim],
-        "rotary_transformation_matrix": [1, 1, head_dim, head_dim],
+        "rotary_cos_matrix": _decode_rotary_cos_sin_shape(
+            batch_size,
+            head_dim,
+        ),
+        "rotary_sin_matrix": _decode_rotary_cos_sin_shape(
+            batch_size,
+            head_dim,
+        ),
+        "rotary_transformation_matrix": _decode_rotary_transform_shape(
+            batch_size,
+        ),
         "mlp_gate": _linear_weight_shape(hidden_size, intermediate_size),
         "mlp_up": _linear_weight_shape(hidden_size, intermediate_size),
         "mlp_down": _linear_weight_shape(intermediate_size, hidden_size),

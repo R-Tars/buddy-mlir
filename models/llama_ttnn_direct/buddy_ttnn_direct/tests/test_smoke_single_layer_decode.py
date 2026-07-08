@@ -550,7 +550,15 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["rotary_runtime_state"]["matrix_shape"],
-                [1, 1, 4, 4],
+                [1, 2, 1, 4],
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["cos_sin_shape"],
+                [1, 2, 1, 4],
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["transformation_shape"],
+                [1, 1, 64, 32],
             )
             self.assertEqual(
                 report["rotary_runtime_state"]["cache_position_value"],

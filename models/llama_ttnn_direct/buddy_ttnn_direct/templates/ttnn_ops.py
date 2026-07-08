@@ -254,7 +254,15 @@ def fill_cache(
         ),
     )
     kwargs = _without_none(user_id=user_id, page_table=page_table)
-    return op(cache_tensor, update_tensor, **kwargs)
+    try:
+        return op(cache_tensor, update_tensor, **kwargs)
+    except TypeError as err:
+        if page_table is not None:
+            raise
+        try:
+            return op(cache_tensor, update_tensor, user_id)
+        except TypeError:
+            raise err
 
 
 def nlp_concat_heads_decode(

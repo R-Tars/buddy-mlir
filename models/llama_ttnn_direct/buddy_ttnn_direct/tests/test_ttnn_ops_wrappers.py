@@ -212,6 +212,24 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             fake.calls,
         )
 
+    def test_fill_cache_falls_back_to_positional_batch_index(self) -> None:
+        calls = []
+
+        def fill_cache_for_user_(cache_tensor, update_tensor, batch_index):
+            calls.append((cache_tensor, update_tensor, batch_index))
+            return f"filled:{cache_tensor}:{batch_index}"
+
+        fake = types.SimpleNamespace(
+            kv_cache=types.SimpleNamespace(
+                fill_cache_for_user_=fill_cache_for_user_
+            )
+        )
+
+        out = ttnn_ops.fill_cache(fake, "cache", "key", user_id=3)
+
+        self.assertEqual(out, "filled:cache:3")
+        self.assertEqual(calls, [("cache", "key", 3)])
+
     def test_missing_api_raises_clear_unsupported_error(self) -> None:
         with self.assertRaises(UnsupportedTTNNOp) as ctx:
             ttnn_ops.paged_sdpa_decode(

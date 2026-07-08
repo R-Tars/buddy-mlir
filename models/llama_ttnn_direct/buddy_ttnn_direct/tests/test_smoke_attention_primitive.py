@@ -256,7 +256,7 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
     def test_decode_sharded_primitives_request_height_sharded_memory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "primitive_report.json"
-            fake_ttnn = _fake_ttnn()
+            fake_ttnn = _fake_ttnn(with_create_sharded=True)
 
             report = run_smoke_attention_primitive(
                 out=out,
@@ -280,15 +280,29 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             }
             self.assertEqual(
                 by_name["query"]["kwargs"]["memory_config"],
-                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+                "sharded:(32, 4)",
             )
             self.assertEqual(
                 by_name["key"]["kwargs"]["memory_config"],
-                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+                "sharded:(32, 4)",
+            )
+            self.assertEqual(
+                by_name["cos_matrix"]["kwargs"]["memory_config"],
+                "sharded:(32, 4)",
+            )
+            self.assertEqual(
+                by_name["sin_matrix"]["kwargs"]["memory_config"],
+                "sharded:(32, 4)",
             )
             self.assertEqual(
                 by_name["transformation_matrix"]["kwargs"]["memory_config"],
-                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+                "sharded:(32, 32)",
+            )
+            self.assertEqual(by_name["cos_matrix"]["shape"], [1, 2, 1, 4])
+            self.assertEqual(by_name["sin_matrix"]["shape"], [1, 2, 1, 4])
+            self.assertEqual(
+                by_name["transformation_matrix"]["shape"],
+                [1, 1, 64, 32],
             )
 
             concat_out = Path(tmpdir) / "concat_report.json"
@@ -313,7 +327,7 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             self.assertTrue(to_memory_calls)
             self.assertEqual(
                 to_memory_calls[-1]["kwargs"]["memory_config"],
-                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+                "sharded:(32, 4)",
             )
 
     def test_api_mismatch_is_reported_without_silent_fallback(self) -> None:
@@ -465,6 +479,7 @@ def _fake_ttnn(
     *,
     with_transformer: bool = True,
     instrumented: bool = True,
+    with_create_sharded: bool = False,
 ):
     module = types.SimpleNamespace(calls=[] if instrumented else _CallSink())
     module.__version__ = "fake-ttnn"
@@ -479,6 +494,29 @@ def _fake_ttnn(
         "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
     )
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
+    module.TILE_SIZE = 32
+
+    if with_create_sharded:
+        module.ShardStrategy = types.SimpleNamespace(HEIGHT="HEIGHT")
+        module.ShardOrientation = types.SimpleNamespace(ROW_MAJOR="ROW_MAJOR")
+
+        class CoreGrid:
+            def __init__(self, y, x):
+                self.y = y
+                self.x = x
+
+        module.CoreGrid = CoreGrid
+
+        def create_sharded_memory_config(**kwargs):
+            module.calls.append(
+                {
+                    "op": "create_sharded_memory_config",
+                    "kwargs": dict(kwargs),
+                }
+            )
+            return f"sharded:{tuple(kwargs['shape'])}"
+
+        module.create_sharded_memory_config = create_sharded_memory_config
 
     def from_torch(tensor, **kwargs):
         module.calls.append(

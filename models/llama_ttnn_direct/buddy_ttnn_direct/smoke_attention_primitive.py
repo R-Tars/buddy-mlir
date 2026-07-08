@@ -315,6 +315,17 @@ def _run_primitive(
         batch_size=int(plan["batch_size"]),
         head_dim=head_dim,
     )
+    rotary_cos_sin_memory_config = _rotary_cos_sin_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=int(plan["batch_size"]),
+        head_dim=head_dim,
+    )
+    rotary_transform_memory_config = _rotary_transform_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=int(plan["batch_size"]),
+    )
     index_layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
     index_dtype = getattr(ttnn, "int32", dtype)
     page_state = _page_state_from_plan(plan)
@@ -343,6 +354,10 @@ def _run_primitive(
             }
             if contract["memory_config"] == "height_sharded_l1":
                 kwargs["memory_config"] = height_sharded_memory_config
+            elif contract["memory_config"] == "rotary_cos_sin_height_sharded_l1":
+                kwargs["memory_config"] = rotary_cos_sin_memory_config
+            elif contract["memory_config"] == "rotary_transform_height_sharded_l1":
+                kwargs["memory_config"] = rotary_transform_memory_config
             elif contract["memory_config"] == "dram":
                 dram_memory_config = getattr(ttnn, "DRAM_MEMORY_CONFIG", None)
                 if dram_memory_config is not None:
@@ -395,7 +410,7 @@ def _run_primitive(
             tensor("page_table"),
             tensor("cache_position"),
             scale=float(head_dim) ** -0.5,
-            memory_config=height_sharded_memory_config,
+            memory_config=memory_config,
         )
     if primitive == "nlp_concat_heads_decode":
         return ttnn_ops.nlp_concat_heads_decode(
@@ -452,9 +467,17 @@ def _primitive_plan(
             "input_shapes": {
                 "query": _decode_head_shape(batch_size, num_heads, head_dim),
                 "key": _decode_head_shape(batch_size, num_kv_heads, head_dim),
-                "cos_matrix": [1, 1, head_dim, head_dim],
-                "sin_matrix": [1, 1, head_dim, head_dim],
-                "transformation_matrix": [1, 1, head_dim, head_dim],
+                "cos_matrix": _decode_rotary_cos_sin_shape(
+                    batch_size,
+                    head_dim,
+                ),
+                "sin_matrix": _decode_rotary_cos_sin_shape(
+                    batch_size,
+                    head_dim,
+                ),
+                "transformation_matrix": _decode_rotary_transform_shape(
+                    batch_size,
+                ),
             },
             "expected_output_shapes": {
                 "query": _decode_head_shape(batch_size, num_heads, head_dim),
@@ -538,6 +561,21 @@ def _decode_head_shape(
 
 def _linear_weight_shape(in_features: int, out_features: int) -> list[int]:
     return [1, 1, in_features, out_features]
+
+
+def _decode_rotary_cos_sin_shape(
+    batch_size: int,
+    head_dim: int,
+) -> list[int]:
+    return [1, batch_size, 1, head_dim]
+
+
+def _decode_rotary_transform_shape(
+    batch_size: int,
+    *,
+    tile_size: int = 32,
+) -> list[int]:
+    return [1, 1, batch_size * tile_size, tile_size]
 
 
 def _base_report(
@@ -885,6 +923,76 @@ def _height_sharded_memory_config(
     )
 
 
+def _rotary_cos_sin_height_sharded_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+    head_dim: int,
+) -> Any | None:
+    tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
+    return _sharded_height_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        shard_shape=(tile_size, head_dim),
+    ) or _height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+
+
+def _rotary_transform_height_sharded_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+) -> Any | None:
+    tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
+    return _sharded_height_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        shard_shape=(tile_size, tile_size),
+    ) or getattr(
+        ttnn,
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+        _memory_config(ttnn),
+    )
+
+
+def _sharded_height_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+    shard_shape: tuple[int, int],
+) -> Any | None:
+    create_sharded = getattr(ttnn, "create_sharded_memory_config", None)
+    if callable(create_sharded):
+        core_grid = _batch_core_grid(ttnn, device, batch_size=batch_size)
+        shard_strategy = getattr(getattr(ttnn, "ShardStrategy", None), "HEIGHT", None)
+        shard_orientation = getattr(
+            getattr(ttnn, "ShardOrientation", None),
+            "ROW_MAJOR",
+            None,
+        )
+        if core_grid is not None and shard_strategy is not None:
+            try:
+                return create_sharded(
+                    shape=shard_shape,
+                    core_grid=core_grid,
+                    strategy=shard_strategy,
+                    orientation=shard_orientation,
+                    use_height_and_width_as_shard_shape=True,
+                )
+            except Exception:
+                pass
+    return None
+
+
 def _batch_core_grid(
     ttnn: Any,
     device: Any,
@@ -959,9 +1067,6 @@ def _input_tensor_contracts(
         "rotary_embedding_decode": {
             "query",
             "key",
-            "cos_matrix",
-            "sin_matrix",
-            "transformation_matrix",
         },
         "paged_update_cache": {"update"},
         "paged_scaled_dot_product_attention_decode": {"query"},
@@ -973,6 +1078,20 @@ def _input_tensor_contracts(
                 "dtype": "bfloat16_or_float32",
                 "layout": "tile",
                 "memory_config": "height_sharded_l1",
+            }
+    if primitive == "rotary_embedding_decode":
+        for name in ("cos_matrix", "sin_matrix"):
+            if name in contracts:
+                contracts[name] = {
+                    "dtype": "bfloat16_or_float32",
+                    "layout": "tile",
+                    "memory_config": "rotary_cos_sin_height_sharded_l1",
+                }
+        if "transformation_matrix" in contracts:
+            contracts["transformation_matrix"] = {
+                "dtype": "bfloat16_or_float32",
+                "layout": "tile",
+                "memory_config": "rotary_transform_height_sharded_l1",
             }
 
     for name in ("cache", "key_cache", "value_cache"):

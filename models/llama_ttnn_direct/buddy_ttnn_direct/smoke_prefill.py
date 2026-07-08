@@ -564,7 +564,7 @@ def _prefill_plan(
         ),
         "rotary_cos_matrix": [1, 1, prefill_len, head_dim],
         "rotary_sin_matrix": [1, 1, prefill_len, head_dim],
-        "rotary_transformation_matrix": [1, 1, head_dim, head_dim],
+        "rotary_transformation_matrix": _prefill_rotary_transform_shape(),
         "mlp_gate": _linear_weight_shape(hidden_size, intermediate_size),
         "mlp_up": _linear_weight_shape(hidden_size, intermediate_size),
         "mlp_down": _linear_weight_shape(intermediate_size, hidden_size),
@@ -622,6 +622,10 @@ def _prefill_op_sequence(layers: int) -> list[str]:
         ops.extend(PREFILL_LAYER_OPS)
     ops.extend(PREFILL_FINAL_OPS)
     return ops
+
+
+def _prefill_rotary_transform_shape() -> list[int]:
+    return [1, 1, 32, 32]
 
 
 def _base_report(

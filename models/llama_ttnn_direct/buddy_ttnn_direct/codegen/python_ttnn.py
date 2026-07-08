@@ -398,6 +398,69 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     return to_layout(tensor, tile_layout)
 
+                def reshape_decode_qkv_for_heads(
+                    self,
+                    qkv,
+                    *,
+                    op_name="reshape_qkv_decode",
+                ):
+                    shape = getattr(qkv, "shape", None)
+                    if shape is None or len(shape) != 4:
+                        return qkv
+                    shape = [int(dim) for dim in shape]
+                    if not (shape[0] == 1 and shape[1] != 1 and shape[2] == 1):
+                        return qkv
+                    reshape = getattr(self.ttnn, "reshape", None)
+                    if reshape is None:
+                        return qkv
+                    batch = shape[1]
+                    feature_dim = shape[3]
+                    logical_shape = (1, 1, batch, feature_dim)
+                    padded_batch = ((batch + 31) // 32) * 32
+                    padded_shape = (1, 1, padded_batch, feature_dim)
+                    self._record(op_name)
+                    try:
+                        return reshape(qkv, logical_shape, padded_shape)
+                    except TypeError:
+                        return reshape(qkv, logical_shape)
+
+                def reshape_prefill_qkv_for_heads(
+                    self,
+                    qkv,
+                    *,
+                    op_name="reshape_qkv_prefill",
+                ):
+                    shape = getattr(qkv, "shape", None)
+                    if shape is None or len(shape) != 4:
+                        return qkv
+                    shape = [int(dim) for dim in shape]
+                    if shape[0] != 1:
+                        return qkv
+                    squeeze = getattr(self.ttnn, "squeeze", None)
+                    if callable(squeeze):
+                        self._record(op_name)
+                        return squeeze(qkv, 0)
+                    reshape = getattr(self.ttnn, "reshape", None)
+                    if reshape is None:
+                        return qkv
+                    self._record(op_name)
+                    return reshape(qkv, (shape[1], shape[2], shape[3]))
+
+                def to_memory_config(
+                    self,
+                    tensor,
+                    *,
+                    memory_config=None,
+                    op_name="to_memory_config",
+                ):
+                    if memory_config is None:
+                        return tensor
+                    op = getattr(self.ttnn, "to_memory_config", None)
+                    if op is None:
+                        return tensor
+                    self._record(op_name)
+                    return op(tensor, memory_config=memory_config)
+
                 def nlp_create_qkv_heads_decode(
                     self,
                     qkv,
@@ -618,6 +681,58 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     return self.ttnn.argmax(tensor, dim=dim)
 
+                def normalize_decode_token(
+                    self,
+                    token,
+                    *,
+                    batch_size,
+                    op_name="normalize_argmax_token",
+                ):
+                    shape = getattr(token, "shape", None)
+                    if shape is None:
+                        return token
+                    shape = [int(dim) for dim in shape]
+                    if shape in ([batch_size, 1], [batch_size]):
+                        return token
+                    slice_op = getattr(self.ttnn, "slice", None)
+                    squeeze_op = getattr(self.ttnn, "squeeze", None)
+                    if not callable(slice_op) or not callable(squeeze_op):
+                        return token
+                    if (
+                        len(shape) == 3
+                        and shape[0] == 1
+                        and shape[1] == batch_size
+                        and shape[2] >= 1
+                    ):
+                        if shape[2] > 1:
+                            self._record(f"{{op_name}}.slice")
+                            token = slice_op(
+                                token,
+                                [0, 0, 0],
+                                [1, batch_size, 1],
+                            )
+                        self._record(f"{{op_name}}.squeeze")
+                        return squeeze_op(token, 0)
+                    if (
+                        len(shape) == 4
+                        and shape[0] == 1
+                        and shape[1] == 1
+                        and shape[2] == batch_size
+                        and shape[3] >= 1
+                    ):
+                        if shape[3] > 1:
+                            self._record(f"{{op_name}}.slice")
+                            token = slice_op(
+                                token,
+                                [0, 0, 0, 0],
+                                [1, 1, batch_size, 1],
+                            )
+                        self._record(f"{{op_name}}.squeeze.0")
+                        token = squeeze_op(token, 0)
+                        self._record(f"{{op_name}}.squeeze.1")
+                        return squeeze_op(token, 0)
+                    return token
+
 
             class {model_class}:
                 def __init__(self, device, parameters, config):
@@ -625,6 +740,78 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self.parameters = parameters
                     self.config = config
                     self.ops = TTNNCompatOps(ttnn)
+
+                def _attention_heads_memory_config(self):
+                    return self._height_sharded_memory_config(
+                        batch_size=int(_optional_attr(self.config, "batch_size", 1) or 1),
+                        head_dim=int(_optional_attr(self.config, "head_dim", 1) or 1),
+                    )
+
+                def _height_sharded_memory_config(self, *, batch_size, head_dim):
+                    ttnn_module = self.ops.ttnn
+                    create_sharded = getattr(
+                        ttnn_module,
+                        "create_sharded_memory_config",
+                        None,
+                    )
+                    if callable(create_sharded):
+                        core_grid = self._batch_core_grid(batch_size=batch_size)
+                        shard_strategy = getattr(
+                            getattr(ttnn_module, "ShardStrategy", None),
+                            "HEIGHT",
+                            None,
+                        )
+                        shard_orientation = getattr(
+                            getattr(ttnn_module, "ShardOrientation", None),
+                            "ROW_MAJOR",
+                            None,
+                        )
+                        tile_size = int(getattr(ttnn_module, "TILE_SIZE", 32))
+                        if core_grid is not None and shard_strategy is not None:
+                            try:
+                                return create_sharded(
+                                    shape=(tile_size, head_dim),
+                                    core_grid=core_grid,
+                                    strategy=shard_strategy,
+                                    orientation=shard_orientation,
+                                    use_height_and_width_as_shard_shape=True,
+                                )
+                            except Exception:
+                                pass
+                    return getattr(
+                        ttnn_module,
+                        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+                        None,
+                    )
+
+                def _batch_core_grid(self, *, batch_size):
+                    ttnn_module = self.ops.ttnn
+                    core_grid_type = getattr(ttnn_module, "CoreGrid", None)
+                    if not callable(core_grid_type):
+                        return None
+                    compute_grid = None
+                    compute_with_storage_grid_size = getattr(
+                        self.device,
+                        "compute_with_storage_grid_size",
+                        None,
+                    )
+                    if callable(compute_with_storage_grid_size):
+                        try:
+                            compute_grid = compute_with_storage_grid_size()
+                        except Exception:
+                            compute_grid = None
+                    physical_x = int(getattr(compute_grid, "x", 8) or 8)
+                    physical_y = int(getattr(compute_grid, "y", 8) or 8)
+                    grid_x = max(1, min(batch_size, physical_x))
+                    while grid_x > 1 and batch_size % grid_x != 0:
+                        grid_x -= 1
+                    grid_y = max(1, (batch_size + grid_x - 1) // grid_x)
+                    if grid_y > physical_y:
+                        return None
+                    try:
+                        return core_grid_type(y=grid_y, x=grid_x)
+                    except TypeError:
+                        return core_grid_type(grid_y, grid_x)
 
                 def prefill_prompt(self, token_ids, kv_cache):
                     hidden = self.embed(token_ids)
@@ -779,6 +966,10 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         op_name="qkv_linear",
                     )
+                    qkv = self.ops.reshape_prefill_qkv_for_heads(
+                        qkv,
+                        op_name="reshape_qkv_prefill",
+                    )
 
                     q, k, v = self.ops.split_qkv_heads_prefill(
                         qkv,
@@ -869,14 +1060,20 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                         op_name="qkv_linear",
                     )
+                    qkv = self.ops.reshape_decode_qkv_for_heads(
+                        qkv,
+                        op_name="reshape_qkv_decode",
+                    )
+                    attention_heads_memory_config = _optional_attr(
+                        attention_config,
+                        "qkv_heads_memory_config",
+                    ) or self._attention_heads_memory_config()
 
                     q, k, v = self.ops.nlp_create_qkv_heads_decode(
                         qkv,
                         num_heads=self.config.num_attention_heads,
                         num_kv_heads=self.config.num_key_value_heads,
-                        memory_config=_optional_attr(
-                            attention_config, "qkv_heads_memory_config"
-                        ),
+                        memory_config=attention_heads_memory_config,
                         op_name="nlp_create_qkv_heads_decode",
                     )
 
@@ -911,13 +1108,19 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         ),
                     )
 
+                    attn = self.ops.to_memory_config(
+                        attn,
+                        memory_config=_optional_attr(
+                            attention_config,
+                            "concat_heads_input_memory_config",
+                        )
+                        or attention_heads_memory_config,
+                        op_name="to_memory_config.concat_heads_input",
+                    )
                     attn = self.ops.nlp_concat_heads_decode(
                         attn,
                         num_heads=self.config.num_attention_heads,
-                        memory_config=_optional_attr(
-                            attention_config,
-                            "concat_heads_output_memory_config",
-                        ),
+                        memory_config=None,
                     )
 
                     return self.ops.linear(
@@ -1169,10 +1372,21 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         _optional_attr(lm_head_config, "retain_logits", False)
                     )
                     if generation_mode == "greedy" and not retain_logits:
-                        return self.ops.argmax(
+                        token = self.ops.argmax(
                             logits,
                             dim=-1,
                             op_name="argmax_or_sampling",
+                        )
+                        return self.ops.normalize_decode_token(
+                            token,
+                            batch_size=int(
+                                _optional_attr(
+                                    self.config,
+                                    "batch_size",
+                                    1,
+                                )
+                                or 1
+                            ),
                         )
                     return logits
 

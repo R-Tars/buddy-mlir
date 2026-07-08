@@ -97,9 +97,11 @@ class DecodeRuntimeState:
 @dataclass(frozen=True)
 class DecodeRotaryRuntimeState:
     layer_count: int
+    batch_size: int
     head_dim: int
     cache_position_value: int
-    matrix_shape: list[int]
+    cos_sin_shape: list[int]
+    transformation_shape: list[int]
     tensor_count: int
 
     def to_report(self) -> dict[str, Any]:
@@ -107,9 +109,12 @@ class DecodeRotaryRuntimeState:
             "status": "built",
             "source": "rotary_runtime_state",
             "layer_count": self.layer_count,
+            "batch_size": self.batch_size,
             "head_dim": self.head_dim,
             "cache_position_value": self.cache_position_value,
-            "matrix_shape": list(self.matrix_shape),
+            "matrix_shape": list(self.cos_sin_shape),
+            "cos_sin_shape": list(self.cos_sin_shape),
+            "transformation_shape": list(self.transformation_shape),
             "tensors_per_layer": 3,
             "tensor_count": self.tensor_count,
             "tensor_roles": [
@@ -333,11 +338,14 @@ def build_decode_runtime_state(
 def build_decode_rotary_runtime_state(
     *,
     layer_count: int,
+    batch_size: int,
     head_dim: int,
     cache_position_value: int,
 ) -> DecodeRotaryRuntimeState:
     if layer_count <= 0:
         raise ValueError("layer_count must be positive")
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
     if head_dim <= 0:
         raise ValueError("head_dim must be positive")
     if cache_position_value < 0:
@@ -345,9 +353,11 @@ def build_decode_rotary_runtime_state(
 
     return DecodeRotaryRuntimeState(
         layer_count=layer_count,
+        batch_size=batch_size,
         head_dim=head_dim,
         cache_position_value=cache_position_value,
-        matrix_shape=[1, 1, head_dim, head_dim],
+        cos_sin_shape=[1, batch_size, 1, head_dim],
+        transformation_shape=[1, 1, batch_size * 32, 32],
         tensor_count=3 * layer_count,
     )
 

@@ -9,13 +9,20 @@ from typing import Any, Callable
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
+    _decode_rotary_cos_sin_shape,
+    _decode_rotary_transform_shape,
+    _height_sharded_memory_config,
     _linear_weight_shape,
     _memory_config,
     _maybe_managed_device,
+    _page_state_from_plan,
     _randn,
+    _rotary_cos_sin_height_sharded_memory_config,
+    _rotary_transform_height_sharded_memory_config,
+    _runtime_index_tensor,
     _ttnn_dtype,
     _validate_args,
-    _zeros,
+    _without_none,
 )
 from .smoke_decode_shell import (
     NUMERIC_REFERENCE_NOT_RUN_REASON,
@@ -338,24 +345,59 @@ def _run_attention_layer(
     dtype_name = _dtype_name(dtype_seed)
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     memory_config = _memory_config(ttnn)
+    batch_size = int(plan["input_shapes"]["hidden"][2])
+    height_sharded_memory_config = _height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+    rotary_cos_sin_memory_config = _rotary_cos_sin_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+    rotary_transform_memory_config = _rotary_transform_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+    )
+    index_layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
+    index_dtype = getattr(ttnn, "int32", dtype)
+    page_state = _page_state_from_plan(plan)
     tensor_conversion_count = 0
     memory_config_conversion_count = 0
 
     def tensor(name: str) -> Any:
         nonlocal tensor_conversion_count
         shape = plan["input_shapes"][name]
-        torch_tensor = (
-            _zeros(torch, shape)
-            if name in {"page_table", "cache_position"}
-            else _randn(torch, shape, dtype_seed)
-        )
         tensor_conversion_count += 1
-        return ttnn.from_torch(
-            torch_tensor,
-            dtype=dtype,
-            layout=layout,
-            device=device,
-        )
+        if name in {"page_table", "cache_position"}:
+            torch_tensor = _runtime_index_tensor(
+                torch,
+                name=name,
+                shape=shape,
+                page_state=page_state,
+            )
+            kwargs = {
+                "dtype": index_dtype,
+                "layout": index_layout,
+                "device": device,
+            }
+            return ttnn.from_torch(torch_tensor, **_without_none(kwargs))
+
+        torch_tensor = _randn(torch, shape, dtype_seed)
+        kwargs = {
+            "dtype": dtype,
+            "layout": layout,
+            "device": device,
+        }
+        if name in {"cos_matrix", "sin_matrix"}:
+            kwargs["memory_config"] = rotary_cos_sin_memory_config
+        elif name == "transformation_matrix":
+            kwargs["memory_config"] = rotary_transform_memory_config
+        return ttnn.from_torch(torch_tensor, **_without_none(kwargs))
 
     primitive_reports: list[dict[str, Any]] = []
 
@@ -378,7 +420,7 @@ def _run_attention_layer(
             qkv,
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
-            memory_config=memory_config,
+            memory_config=height_sharded_memory_config,
         ),
         input_shapes=_op_input_shapes("nlp_create_qkv_heads_decode", plan),
         expected_output_shapes=_op_expected_output_shapes(
@@ -476,14 +518,21 @@ def _run_attention_layer(
         dtype=dtype_name,
         memory_config=memory_config,
     )
+    attention_for_concat = attention
+    if height_sharded_memory_config is not None:
+        memory_config_conversion_count += 1
+        attention_for_concat = ttnn.to_memory_config(
+            attention,
+            memory_config=height_sharded_memory_config,
+        )
     concat = _time_op(
         primitive_reports,
         "nlp_concat_heads_decode",
         lambda: ttnn_ops.nlp_concat_heads_decode(
             ttnn,
-            attention,
+            attention_for_concat,
             num_heads=num_heads,
-            memory_config=memory_config,
+            memory_config=None,
         ),
         input_shapes=_op_input_shapes("nlp_concat_heads_decode", plan),
         expected_output_shapes=_op_expected_output_shapes(
@@ -491,10 +540,8 @@ def _run_attention_layer(
             plan,
         ),
         dtype=dtype_name,
-        memory_config=memory_config,
+        memory_config=height_sharded_memory_config,
     )
-    if memory_config is not None:
-        memory_config_conversion_count += 1
 
     o_proj_weight = tensor("o_proj_weight")
     output = _time_op(
@@ -573,9 +620,9 @@ def _attention_layer_plan(
     input_shapes = {
         "hidden": _decode_hidden_shape(batch_size, hidden_size),
         "qkv_weight": _linear_weight_shape(hidden_size, qkv_size),
-        "cos_matrix": [1, 1, head_dim, head_dim],
-        "sin_matrix": [1, 1, head_dim, head_dim],
-        "transformation_matrix": [1, 1, head_dim, head_dim],
+        "cos_matrix": _decode_rotary_cos_sin_shape(batch_size, head_dim),
+        "sin_matrix": _decode_rotary_cos_sin_shape(batch_size, head_dim),
+        "transformation_matrix": _decode_rotary_transform_shape(batch_size),
         "key_cache": kv_cache_shape,
         "value_cache": kv_cache_shape,
         "page_table": [batch_size, page_count],
@@ -587,6 +634,9 @@ def _attention_layer_plan(
     }
     return {
         "input_shapes": input_shapes,
+        "batch_size": batch_size,
+        "cache_len": cache_len,
+        "page_block_size": page_block_size,
         "expected_intermediate_shapes": {
             "qkv": _decode_hidden_shape(batch_size, qkv_size),
             "query": _decode_head_shape(batch_size, num_heads, head_dim),
@@ -855,6 +905,10 @@ def _attention_layer_reference(
     primitive_reports: list[dict[str, Any]],
     observed_ops: list[str] | None,
 ) -> dict[str, Any]:
+    observed_ops_source = "ttnn_module_instrumentation"
+    if observed_ops is None:
+        observed_ops = list(ATTENTION_LAYER_EXPECTED_OBSERVED_OPS)
+        observed_ops_source = "direct_attention_layer_call"
     checks = [
         _value_check(
             "primitive_count",
@@ -905,6 +959,7 @@ def _attention_layer_reference(
         "planned_ops": list(ATTENTION_LAYER_OPS),
         "planned_observed_ops": list(ATTENTION_LAYER_EXPECTED_OBSERVED_OPS),
         "observed_ops": observed_ops,
+        "observed_ops_source": observed_ops_source,
         "checks": checks,
     }
 
