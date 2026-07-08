@@ -147,10 +147,23 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(report["generate_status"], "passed")
             self.assertEqual(report["prefill_status"], "passed")
             self.assertEqual(report["kv_cache_source"], "prefill")
+            self.assertEqual(report["parameter_source"], "hf_model")
+            self.assertEqual(report["input_source"], "prompt_prefill")
+            self.assertTrue(report["generate_runtime_owned"])
+            self.assertTrue(report["decode_loop_runtime_owned"])
             self.assertIsNotNone(report["prefill_ms"])
             self.assertIsNotNone(report["decode_step_ms_mean"])
             self.assertGreater(report["tokens_per_second_per_user"], 0.0)
             self.assertGreater(report["aggregate_tokens_per_second"], 0.0)
+            self.assertEqual(report["synthetic_runtime_input_tensor_count"], 0)
+            self.assertEqual(report["synthetic_rotary_tensor_count"], 0)
+            self.assertEqual(report["synthetic_kv_cache_tensor_count"], 0)
+            self.assertEqual(
+                report["parameter_setup"][
+                    "parameter_tensorization_count_per_generate"
+                ],
+                1,
+            )
             self.assertEqual(report["generated_token_count_by_user"], [3, 3])
             self.assertFalse(report["official_performance_parity_claimed"])
             self.assertEqual(report["acceptance"]["failed_checks"], [])

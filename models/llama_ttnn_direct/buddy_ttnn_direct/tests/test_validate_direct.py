@@ -368,6 +368,67 @@ class ValidateDirectTest(unittest.TestCase):
                 report["requirements"]["require_official_config_match"]
             )
             self.assertEqual(report["official_config_diff"]["status"], "match")
+
+    def test_preflight_real_decode_accepts_source_ttnn_without_version(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            _write_official_parity_from_program(program_dir, official_json)
+
+            fake_ttnn = _make_fake_ttnn()
+            delattr(fake_ttnn, "__version__")
+            fake_ttnn.__file__ = "/fake/ttnn/__init__.py"
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=official_json,
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                metric="tokens_per_second_per_user",
+                require_official_performance_parity=True,
+                min_tokens_per_second_per_user=1.0,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                decode_shell_pcc_threshold=0.99,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                ttnn_module=fake_ttnn,
+            )
+
+            self.assertEqual(report["status"], "pass")
+            version_check = _check_by_name(report, "ttnn.version")
+            self.assertTrue(version_check["passed"])
+            self.assertIsNone(version_check["observed"]["version"])
+            self.assertEqual(
+                version_check["observed"]["module_file"],
+                "/fake/ttnn/__init__.py",
+            )
             self.assertEqual(
                 report["official_config_diff"]["official_source_format"],
                 "normalized_parity_config",
@@ -7755,6 +7816,13 @@ class ValidateDirectTest(unittest.TestCase):
                 report["steps"]["import_llama"]["error"]["type"],
                 "ValueError",
             )
+
+
+def _check_by_name(report: dict[str, object], name: str) -> dict[str, object]:
+    for check in report.get("checks", []):  # type: ignore[union-attr]
+        if check.get("name") == name:
+            return check
+    raise AssertionError(f"missing check {name!r}")
 
 
 def _write_fake_model_config(model_dir: Path) -> None:

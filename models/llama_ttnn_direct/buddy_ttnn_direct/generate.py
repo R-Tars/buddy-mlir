@@ -1508,8 +1508,37 @@ def _profile_generate_from_generate_report(
         "decode_steps": generate.get("decode_steps"),
         "prefill_status": generate.get("prefill_status"),
         "kv_cache_source": generate.get("kv_cache_source"),
+        "parameter_source": generate.get("parameter_source"),
+        "input_source": generate.get("input_source"),
+        "runtime_owner": generate.get("runtime_owner"),
+        "generate_runtime_owned": generate.get("generate_runtime_owned"),
+        "decode_loop_runtime_owned": generate.get("decode_loop_runtime_owned"),
         "runtime_context": generate.get("runtime_context"),
         "parameter_setup": generate.get("parameter_setup"),
+        "synthetic_runtime_input_tensor_count": generate.get(
+            "synthetic_runtime_input_tensor_count"
+        ),
+        "synthetic_rotary_tensor_count": generate.get(
+            "synthetic_rotary_tensor_count"
+        ),
+        "synthetic_kv_cache_tensor_count": generate.get(
+            "synthetic_kv_cache_tensor_count"
+        ),
+        "prefill_prompt_runtime_input_tensor_count": (
+            _setup_count(generate, "prefill_prompt_runtime_input_tensor_count")
+        ),
+        "prefill_rotary_runtime_input_tensor_count": (
+            _setup_count(generate, "prefill_rotary_runtime_input_tensor_count")
+        ),
+        "decode_runtime_state_input_tensor_count": (
+            _setup_count(generate, "decode_runtime_state_input_tensor_count")
+        ),
+        "decode_rotary_runtime_input_tensor_count": (
+            _setup_count(generate, "decode_rotary_runtime_input_tensor_count")
+        ),
+        "kv_cache_runtime_input_tensor_count": (
+            _setup_count(generate, "kv_cache_runtime_input_tensor_count")
+        ),
         "generated_text_status": generate.get("generated_text_status"),
         "generated_token_count_by_user": _generated_token_counts(generate),
         "latency_ms": _float_or_none(generate.get("latency_ms")),
@@ -1618,6 +1647,13 @@ def _profile_generate_acceptance(
 def _generated_token_counts(generate: dict[str, Any]) -> list[int]:
     rows = generate.get("generated_token_ids") or []
     return [len(row) for row in rows if isinstance(row, list)]
+
+
+def _setup_count(generate: dict[str, Any], key: str) -> Any:
+    setup = generate.get("parameter_setup")
+    if isinstance(setup, dict):
+        return setup.get(key)
+    return None
 
 
 def _float_or_none(value: Any) -> float | None:

@@ -1561,9 +1561,13 @@ def preflight_real_decode(
     )
     add(
         "ttnn.version",
-        _non_empty_string(ttnn_environment.get("version")),
-        observed=ttnn_environment.get("version"),
-        expected="non-empty version",
+        _non_empty_string(ttnn_environment.get("version"))
+        or _non_empty_string(ttnn_environment.get("module_file")),
+        observed={
+            "version": ttnn_environment.get("version"),
+            "module_file": ttnn_environment.get("module_file"),
+        },
+        expected="non-empty version or importable source module path",
     )
     add(
         "ttnn.tt_metal_git_commit",
