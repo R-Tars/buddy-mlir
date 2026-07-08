@@ -4220,7 +4220,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(generate_step["kv_cache_source"], "prefill")
             self.assertEqual(
                 generate_step["model_semantics"],
-                "prompt_prefill_then_decode",
+                "prompt_conditioned_prefill_decode",
             )
             self.assertEqual(generate_step["input_source"], "prompt_prefill")
             self.assertEqual(generate_step["prompt_runtime_input_tensor_count"], 1)

@@ -1417,11 +1417,13 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli \
   --out /tmp/generate_report.json
 ```
 
-The report sets `mode=generate`, `prefill_status`, `kv_cache_source=prefill`,
-`decode_loop_runtime_owned`, `generated_token_ids`, and `generated_text`. This
-is a functional bring-up path, not a performance-parity result: the first
-version intentionally uses host-side token materialization between prefill and
-decode so the next optimization phase can remove that round trip explicitly.
+The report sets `mode=generate`,
+`model_semantics=prompt_conditioned_prefill_decode`, `prefill_status`,
+`kv_cache_source=prefill`, `decode_loop_runtime_owned`,
+`generated_token_ids`, and `generated_text`. This is a functional bring-up
+path, not a performance-parity result: the first version intentionally uses
+host-side token materialization between prefill and decode so the next
+optimization phase can remove that round trip explicitly.
 
 `generate-depth-sweep` runs the same prefill+decode generate path across a
 depth ladder and preserves one generate report per depth:

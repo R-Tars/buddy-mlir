@@ -64,6 +64,11 @@ from .decode_loop import (
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
 
+PROMPT_CONDITIONED_GENERATE_SEMANTICS = (
+    "prompt_conditioned_prefill_decode"
+)
+
+
 class TTNNDirectRuntimeContext:
     """Owns the TTNN Direct runtime state for one generate invocation."""
 
@@ -1606,7 +1611,7 @@ def _generate_base_report(
         "decode_plan": decode_plan,
         "prefill_op_sequence": prefill_plan["op_sequence"],
         "decode_op_sequence": decode_plan["op_sequence"],
-        "model_semantics": "prompt_prefill_then_decode",
+        "model_semantics": PROMPT_CONDITIONED_GENERATE_SEMANTICS,
         "kv_cache_source": "prefill",
         "semantic_disclaimer": (
             "This generate path runs prefill before decode. It is a first "
@@ -1828,6 +1833,15 @@ def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
             "passed": report.get("kv_cache_source") == "prefill",
             "observed": report.get("kv_cache_source"),
             "expected": "prefill",
+        },
+        {
+            "name": "generate.model_semantics",
+            "passed": (
+                report.get("model_semantics")
+                == PROMPT_CONDITIONED_GENERATE_SEMANTICS
+            ),
+            "observed": report.get("model_semantics"),
+            "expected": PROMPT_CONDITIONED_GENERATE_SEMANTICS,
         },
         {
             "name": "generate.prefill_kv_cache_write_policy",

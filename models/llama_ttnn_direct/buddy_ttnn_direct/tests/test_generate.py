@@ -82,6 +82,10 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["status"], "dry_run")
             self.assertEqual(report["prefill_status"], "dry_run")
             self.assertEqual(report["kv_cache_source"], "prefill")
+            self.assertEqual(
+                report["model_semantics"],
+                "prompt_conditioned_prefill_decode",
+            )
             self.assertEqual(report["max_new_tokens"], 3)
             self.assertEqual(report["decode_steps"], 2)
             self.assertTrue(
@@ -135,6 +139,7 @@ class GenerateTest(unittest.TestCase):
                 "generate.prefill_kv_cache_user_count",
                 check_names,
             )
+            self.assertIn("generate.model_semantics", check_names)
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -185,6 +190,10 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["mode"], "generate")
             self.assertEqual(report["prefill_status"], "passed")
             self.assertEqual(report["kv_cache_source"], "prefill")
+            self.assertEqual(
+                report["model_semantics"],
+                "prompt_conditioned_prefill_decode",
+            )
             self.assertTrue(report["generate_runtime_owned"])
             self.assertTrue(report["decode_loop_runtime_owned"])
             self.assertEqual(report["decode_steps"], 2)
@@ -342,6 +351,7 @@ class GenerateTest(unittest.TestCase):
             )
             check_names = {check["name"] for check in contract["checks"]}
             self.assertIn("generate.prefill_status", check_names)
+            self.assertIn("generate.model_semantics", check_names)
             self.assertIn("generate.generated_text_available", check_names)
             self.assertIn("generate.synthetic_kv_cache_inputs", check_names)
             self.assertIn(
