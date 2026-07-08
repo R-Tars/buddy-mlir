@@ -6561,15 +6561,44 @@ class ValidateDirectTest(unittest.TestCase):
                     "kv_cache_runtime_state": {
                         "tensor_count": 2,
                     },
-                    "prefill": {"status": "passed"},
+                    "prefill": {
+                        "status": "passed",
+                        "cache_population": [
+                            {
+                                "layer_id": 0,
+                                "status": "filled",
+                                "write_policy": "paged_fill_cache_per_user",
+                                "update_shape_layout": (
+                                    "batch_heads_seq_head_dim"
+                                ),
+                                "key_update_shape": [1, 2, 8, 4],
+                                "value_update_shape": [1, 2, 8, 4],
+                                "key_cache_shape": [2, 2, 16, 4],
+                                "value_cache_shape": [2, 2, 16, 4],
+                                "page_table_shape": [2, 1],
+                                "planned_user_count": 2,
+                                "filled_user_count": 2,
+                            }
+                        ],
+                    },
                     "prompt_tokenization": {"status": "tokenized"},
                     "prefill_tokenization": {"status": "tokenized"},
                     "runtime_context": {
                         "class": "TTNNDirectRuntimeContext",
                         "status": "built",
                     },
+                    "end_to_end_contract": {
+                        "status": "passed",
+                        "failed_checks": [],
+                    },
+                    "host_copy_profile": {
+                        "status": "measured",
+                        "total_ms": 0.1,
+                    },
+                    "section_profile": {"status": "measured"},
                     "per_step_token_metadata": [],
                     "step_reports": [],
+                    "output_shapes": {"token": [2, 1]},
                     "latency_ms": 1.0,
                     "throughput_summary": {
                         "status": "measured",
@@ -6674,6 +6703,140 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 "passed",
             )
+            generate_evidence = evidence["runtime_evidence"][
+                "generate_prefill_decode"
+            ]
+            self.assertEqual(generate_evidence["end_to_end_failed_checks"], [])
+            self.assertEqual(
+                generate_evidence["end_to_end_contract"]["status"],
+                "passed",
+            )
+            self.assertEqual(
+                generate_evidence[
+                    "prefill_cache_population_diagnostics"
+                ][0]["update_shape_layout"],
+                "batch_heads_seq_head_dim",
+            )
+            self.assertEqual(
+                generate_evidence[
+                    "prefill_cache_population_diagnostics"
+                ][0]["key_update_shape"],
+                [1, 2, 8, 4],
+            )
+            self.assertEqual(
+                generate_evidence["host_copy_profile"]["status"],
+                "measured",
+            )
+            self.assertIsNone(generate_evidence["failure_diagnostics"])
+
+    def test_generate_prefill_decode_failure_diagnostics_capture_shapes_ops(
+        self,
+    ) -> None:
+        diagnostics = (
+            validation_module._generate_prefill_decode_failure_diagnostics(
+                {
+                    "status": "reference_mismatch",
+                    "passed": False,
+                    "runtime_status": "reference_mismatch",
+                    "error": "generate reference mismatch",
+                    "detail": "decode output shape mismatch",
+                    "model_semantics": "prompt_conditioned_prefill_decode",
+                    "layers": 2,
+                    "layout": "tile",
+                    "prefill_status": "passed",
+                    "decode_loop_runtime_owned": False,
+                    "end_to_end_contract": {
+                        "status": "failed",
+                        "failed_checks": [
+                            "generate.decode_loop_runtime_owned"
+                        ],
+                    },
+                    "prefill": {
+                        "cache_population": [
+                            {
+                                "layer_id": 1,
+                                "status": "filled",
+                                "write_policy": "paged_fill_cache_per_user",
+                                "update_shape_layout": (
+                                    "batch_heads_seq_head_dim"
+                                ),
+                                "key_update_shape": [1, 2, 8, 4],
+                                "value_update_shape": [1, 2, 8, 4],
+                                "key_cache_shape": [2, 2, 16, 4],
+                                "value_cache_shape": [2, 2, 16, 4],
+                                "page_table_shape": [2, 1],
+                                "planned_user_count": 2,
+                                "filled_user_count": 2,
+                            }
+                        ],
+                    },
+                    "step_reports": [
+                        {
+                            "step_index": 0,
+                            "status": "reference_mismatch",
+                            "passed": False,
+                            "cache_position_value": 8,
+                            "input_shapes": {
+                                "token_ids": [2, 1],
+                                "page_table": [2, 1],
+                            },
+                            "output_shapes": {"token": [2, 1]},
+                            "decode_runtime_state": {
+                                "cache_position_value": 8
+                            },
+                            "rotary_runtime_state": {
+                                "cos_shape": [2, 1, 64]
+                            },
+                            "reference": {
+                                "status": "failed",
+                                "failed_checks": ["decode.output_shape"],
+                                "observed_ops": [
+                                    "paged_scaled_dot_product_attention_decode"
+                                ],
+                                "expected_ops": [
+                                    "paged_scaled_dot_product_attention_decode"
+                                ],
+                            },
+                            "error": "decode output shape mismatch",
+                        }
+                    ],
+                }
+            )
+        )
+
+        self.assertEqual(diagnostics["status"], "reference_mismatch")
+        self.assertEqual(
+            diagnostics["end_to_end_contract"]["failed_checks"],
+            ["generate.decode_loop_runtime_owned"],
+        )
+        self.assertEqual(
+            diagnostics["prefill"]["cache_population"][0][
+                "update_shape_layout"
+            ],
+            "batch_heads_seq_head_dim",
+        )
+        self.assertEqual(
+            diagnostics["prefill"]["cache_population"][0][
+                "key_update_shape"
+            ],
+            [1, 2, 8, 4],
+        )
+        failed_step = diagnostics["decode"]["failed_step"]
+        self.assertEqual(failed_step["step_index"], 0)
+        self.assertEqual(failed_step["input_shapes"]["token_ids"], [2, 1])
+        self.assertEqual(failed_step["output_shapes"]["token"], [2, 1])
+        self.assertEqual(
+            failed_step["reference_failed_checks"],
+            ["decode.output_shape"],
+        )
+        self.assertEqual(
+            failed_step["observed_ops"],
+            ["paged_scaled_dot_product_attention_decode"],
+        )
+        self.assertEqual(
+            failed_step["error"],
+            "decode output shape mismatch",
+        )
 
     def test_validate_real_decode_fails_without_profile_runtime_inputs(
         self,

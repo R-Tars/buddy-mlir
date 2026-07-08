@@ -3326,16 +3326,29 @@ def validate_real_decode(
             "kv_cache_runtime_state": kv_cache_state,
             "runtime_context": generate_report.get("runtime_context"),
             "parameter_setup": generate_report.get("parameter_setup"),
+            "end_to_end_contract": generate_report.get(
+                "end_to_end_contract"
+            ),
+            "host_copy_profile": generate_report.get("host_copy_profile"),
+            "section_profile": generate_report.get("section_profile"),
             "per_step_token_metadata": generate_report.get(
                 "per_step_token_metadata",
                 [],
             ),
             "step_reports": generate_report.get("step_reports", []),
+            "output_shapes": generate_report.get("output_shapes"),
             "latency_ms": generate_report.get("latency_ms"),
             "throughput_summary": generate_report.get("throughput_summary"),
             "ttnn_environment": generate_report.get("ttnn_environment"),
             "trace_status": generate_report.get("trace", {}).get("status"),
             "trace": _trace_summary(generate_report.get("trace")),
+            "error": generate_report.get("error"),
+            "detail": generate_report.get("detail"),
+            "failure_diagnostics": (
+                _generate_prefill_decode_failure_diagnostics(
+                    generate_report
+                )
+            ),
             **tensorization_path_detail(generate_report),
             **_reference_summary(generate_report),
         }
@@ -4907,6 +4920,105 @@ def _generated_tokens_present(value: Any) -> bool:
     return False
 
 
+def _generate_prefill_decode_failure_diagnostics(
+    generate_report: dict[str, Any],
+) -> dict[str, Any] | None:
+    if bool(generate_report.get("passed")):
+        return None
+    prefill = generate_report.get("prefill")
+    if not isinstance(prefill, dict):
+        prefill = {}
+    contract = generate_report.get("end_to_end_contract")
+    if not isinstance(contract, dict):
+        contract = {}
+    step_reports = generate_report.get("step_reports")
+    if not isinstance(step_reports, list):
+        step_reports = []
+    failed_step = next(
+        (
+            step
+            for step in step_reports
+            if isinstance(step, dict) and not bool(step.get("passed"))
+        ),
+        None,
+    )
+    return {
+        "status": generate_report.get("status"),
+        "runtime_status": generate_report.get("runtime_status"),
+        "error": generate_report.get("error"),
+        "detail": generate_report.get("detail"),
+        "model_semantics": generate_report.get("model_semantics"),
+        "layers": generate_report.get("layers"),
+        "layout": generate_report.get("layout"),
+        "end_to_end_contract": {
+            "status": contract.get("status"),
+            "failed_checks": contract.get("failed_checks", []),
+        },
+        "prefill": {
+            "status": generate_report.get("prefill_status"),
+            "cache_population": _prefill_cache_population_diagnostics(
+                prefill.get("cache_population", [])
+            ),
+        },
+        "decode": {
+            "decode_loop_runtime_owned": generate_report.get(
+                "decode_loop_runtime_owned"
+            ),
+            "step_count": len(step_reports),
+            "failed_step": _generate_failed_step_diagnostics(failed_step),
+        },
+    }
+
+
+def _prefill_cache_population_diagnostics(
+    cache_population: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(cache_population, list):
+        return []
+    diagnostics = []
+    for entry in cache_population:
+        if not isinstance(entry, dict):
+            continue
+        diagnostics.append(
+            {
+                "layer_id": entry.get("layer_id"),
+                "status": entry.get("status"),
+                "write_policy": entry.get("write_policy"),
+                "update_shape_layout": entry.get("update_shape_layout"),
+                "key_update_shape": entry.get("key_update_shape"),
+                "value_update_shape": entry.get("value_update_shape"),
+                "key_cache_shape": entry.get("key_cache_shape"),
+                "value_cache_shape": entry.get("value_cache_shape"),
+                "page_table_shape": entry.get("page_table_shape"),
+                "planned_user_count": entry.get("planned_user_count"),
+                "filled_user_count": entry.get("filled_user_count"),
+            }
+        )
+    return diagnostics
+
+
+def _generate_failed_step_diagnostics(step: Any) -> dict[str, Any] | None:
+    if not isinstance(step, dict):
+        return None
+    reference = step.get("reference")
+    if not isinstance(reference, dict):
+        reference = {}
+    return {
+        "step_index": step.get("step_index"),
+        "status": step.get("status"),
+        "cache_position_value": step.get("cache_position_value"),
+        "input_shapes": step.get("input_shapes"),
+        "output_shapes": step.get("output_shapes"),
+        "decode_runtime_state": step.get("decode_runtime_state"),
+        "rotary_runtime_state": step.get("rotary_runtime_state"),
+        "reference_status": reference.get("status"),
+        "reference_failed_checks": reference.get("failed_checks", []),
+        "observed_ops": reference.get("observed_ops"),
+        "expected_ops": reference.get("expected_ops"),
+        "error": step.get("error"),
+    }
+
+
 def _positive_scalar_count(value: Any) -> bool:
     numeric = _safe_int(value)
     return numeric is not None and numeric > 0
@@ -5462,6 +5574,7 @@ def _real_decode_evidence_manifest(
             },
             "generate_prefill_decode": {
                 "status": generate_step.get("status"),
+                "generate_report": generate_step.get("generate_report"),
                 "runtime_status": generate_step.get("runtime_status"),
                 "prefill_status": generate_step.get("prefill_status"),
                 "generate_runtime_owned": generate_step.get(
@@ -5513,6 +5626,29 @@ def _real_decode_evidence_manifest(
                     if isinstance(generate_step.get("prefill"), dict)
                     else None
                 ),
+                "prefill_cache_population_diagnostics": (
+                    _prefill_cache_population_diagnostics(
+                        (generate_step.get("prefill") or {}).get(
+                            "cache_population"
+                        )
+                        if isinstance(generate_step.get("prefill"), dict)
+                        else []
+                    )
+                ),
+                "end_to_end_contract": generate_step.get(
+                    "end_to_end_contract"
+                ),
+                "end_to_end_failed_checks": (
+                    (generate_step.get("end_to_end_contract") or {}).get(
+                        "failed_checks",
+                        [],
+                    )
+                    if isinstance(
+                        generate_step.get("end_to_end_contract"),
+                        dict,
+                    )
+                    else []
+                ),
                 "generated_token_ids": generate_step.get(
                     "generated_token_ids"
                 ),
@@ -5529,16 +5665,24 @@ def _real_decode_evidence_manifest(
                 "generated_text_source": generate_step.get(
                     "generated_text_source"
                 ),
+                "output_shapes": generate_step.get("output_shapes"),
                 "latency_ms": generate_step.get("latency_ms"),
                 "throughput_summary": generate_step.get(
                     "throughput_summary"
                 ),
+                "host_copy_profile": generate_step.get("host_copy_profile"),
+                "section_profile": generate_step.get("section_profile"),
                 "trace_status": generate_step.get("trace_status"),
                 "reference_status": generate_step.get("reference_status"),
                 "reference_kind": generate_step.get("reference_kind"),
                 "reference_failed_checks": generate_step.get(
                     "reference_failed_checks",
                     [],
+                ),
+                "error": generate_step.get("error"),
+                "detail": generate_step.get("detail"),
+                "failure_diagnostics": generate_step.get(
+                    "failure_diagnostics"
                 ),
             },
             "decode_depth_sweep": {

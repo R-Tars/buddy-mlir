@@ -691,10 +691,13 @@ The validation also writes
 evidence bundle index that records artifact existence, TTNN environment,
 materialization/tensorization summaries, trace status, throughput summary,
 autotune status, failed runtime steps, skipped follow-up steps, and failed
-acceptance checks. If a runtime gate stops early, the manifest is still written
-with `status=incomplete` so the failed bring-up attempt has an inspectable
-evidence bundle. Use this manifest as the primary attachment for P150A
-acceptance runs.
+acceptance checks. Its `runtime_evidence.generate_prefill_decode` section also
+mirrors the generate end-to-end contract, prefill cache write shape/layout
+diagnostics, host-copy/section profiles, and a compact failure diagnostic with
+the first failing decode step's shapes, reference op checks, and error. If a
+runtime gate stops early, the manifest is still written with
+`status=incomplete` so the failed bring-up attempt has an inspectable evidence
+bundle. Use this manifest as the primary attachment for P150A acceptance runs.
 The validation report and evidence manifest also include a `reproducibility`
 block with canonical `validate-real-decode` and preflight CLI commands plus a
 machine-readable index of the key report/artifact paths.
