@@ -2210,6 +2210,9 @@ def validate_real_decode(
         _write_json(report_path, report)
 
     def write_evidence_summary() -> dict[str, Any]:
+        report["runtime_diagnostics"] = _real_decode_runtime_diagnostics(
+            report
+        )
         evidence = _real_decode_evidence_manifest(report, paths)
         _write_json(paths["evidence_manifest"], evidence)
         report["evidence"] = {
@@ -2458,6 +2461,9 @@ def validate_real_decode(
             "status": _runtime_step_status(shell_report, dry_run=dry_run),
             "decode_shell_report": str(paths["decode_shell_report"]),
             "runtime_status": shell_report["status"],
+            "error": shell_report.get("error"),
+            "message": shell_report.get("message"),
+            "detail": shell_report.get("detail"),
             "layers": shell_report.get("layers_requested"),
             "parameter_source": shell_report.get("parameter_source"),
             "input_source": shell_report.get("input_source"),
@@ -4182,6 +4188,8 @@ def _real_decode_evidence_manifest(
         "model_end_to_end_readiness": model_end_to_end_readiness,
         "reproducibility": report.get("reproducibility"),
         "final_acceptance_plan": report.get("final_acceptance_plan"),
+        "runtime_diagnostics": report.get("runtime_diagnostics")
+        or _real_decode_runtime_diagnostics(report),
         "acceptance_gate_matrix": _final_acceptance_gate_matrix(
             report,
             acceptance,
@@ -4416,6 +4424,9 @@ def _real_decode_evidence_manifest(
             "decode_shell": {
                 "status": decode_shell.get("status"),
                 "runtime_status": decode_shell.get("runtime_status"),
+                "error": decode_shell.get("error"),
+                "message": decode_shell.get("message"),
+                "detail": decode_shell.get("detail"),
                 "layers": decode_shell.get("layers"),
                 "parameter_source": decode_shell.get("parameter_source"),
                 "input_source": decode_shell.get("input_source"),
@@ -4744,6 +4755,81 @@ def _real_decode_evidence_manifest(
             "failed_checks": [check.get("name") for check in failed_checks],
         },
     }
+
+
+def _real_decode_runtime_diagnostics(
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    findings = _runtime_error_findings(report.get("steps") or {})
+    reset_findings = [
+        finding
+        for finding in findings
+        if finding["kind"] == "tenstorrent_firmware_init_failed"
+    ]
+    device_reset_recommended = bool(reset_findings)
+    return {
+        "status": (
+            "device_reset_recommended"
+            if device_reset_recommended
+            else "none"
+        ),
+        "device_reset_recommended": device_reset_recommended,
+        "findings": findings,
+        "recommended_action": (
+            "Confirm no other jobs are using the board, reset the target "
+            "device with tt-smi -r /dev/tenstorrent/<device_id>, then rerun "
+            "validate-real-decode."
+            if device_reset_recommended
+            else None
+        ),
+    }
+
+
+def _runtime_error_findings(value: Any) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    for path, text in _walk_strings(value):
+        normalized = text.lower()
+        if (
+            "failed to initialize fw" in normalized
+            or "try resetting the board" in normalized
+            or (
+                "timeout" in normalized
+                and "physical cores" in normalized
+            )
+        ):
+            findings.append(
+                {
+                    "kind": "tenstorrent_firmware_init_failed",
+                    "path": path,
+                    "message_excerpt": _diagnostic_excerpt(text),
+                }
+            )
+    return findings
+
+
+def _walk_strings(value: Any, path: str = "") -> list[tuple[str, str]]:
+    if isinstance(value, str):
+        return [(path or "$", value)]
+    if isinstance(value, dict):
+        items: list[tuple[str, str]] = []
+        for key, nested in value.items():
+            nested_path = f"{path}.{key}" if path else str(key)
+            items.extend(_walk_strings(nested, nested_path))
+        return items
+    if isinstance(value, list):
+        items = []
+        for index, nested in enumerate(value):
+            nested_path = f"{path}[{index}]" if path else f"[{index}]"
+            items.extend(_walk_strings(nested, nested_path))
+        return items
+    return []
+
+
+def _diagnostic_excerpt(text: str, limit: int = 300) -> str:
+    text = " ".join(str(text).split())
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
 
 
 def _final_acceptance_gate_matrix(

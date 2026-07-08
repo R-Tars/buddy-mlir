@@ -5706,6 +5706,96 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(artifact_names["attention_layer_report"]["exists"])
             self.assertFalse(artifact_names["smoke_report"]["exists"])
 
+    def test_validate_real_decode_diagnoses_firmware_init_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            def shell_firmware_init_failure(*args, **kwargs):
+                message = (
+                    "RuntimeError: Device 0 init: failed to initialize FW! "
+                    "Try resetting the board."
+                )
+                report = {
+                    "schema_version": 1,
+                    "passed": False,
+                    "status": "runtime_error",
+                    "layers_requested": 1,
+                    "parameter_source": None,
+                    "input_source": None,
+                    "runtime_input_tensor_count": 0,
+                    "reference": {
+                        "status": "not_run",
+                        "kind": None,
+                        "checks": [],
+                    },
+                    "error": message,
+                }
+                out = kwargs.get("out")
+                if out is not None:
+                    Path(out).write_text(json.dumps(report, indent=2) + "\n")
+                return report
+
+            with patch.object(
+                validation_module,
+                "run_smoke_decode_shell",
+                side_effect=shell_firmware_init_failure,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        skip_autotune=True,
+                    )
+
+            diagnostics = report["runtime_diagnostics"]
+            self.assertEqual(diagnostics["status"], "device_reset_recommended")
+            self.assertTrue(diagnostics["device_reset_recommended"])
+            self.assertIn("tt-smi -r", diagnostics["recommended_action"])
+            self.assertEqual(
+                diagnostics["findings"][0]["kind"],
+                "tenstorrent_firmware_init_failed",
+            )
+            self.assertIn(
+                "decode_shell.error",
+                diagnostics["findings"][0]["path"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(
+                evidence["runtime_diagnostics"]["status"],
+                "device_reset_recommended",
+            )
+            self.assertTrue(
+                evidence["runtime_diagnostics"]["device_reset_recommended"]
+            )
+
     def test_validate_real_decode_fails_acceptance_threshold(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
