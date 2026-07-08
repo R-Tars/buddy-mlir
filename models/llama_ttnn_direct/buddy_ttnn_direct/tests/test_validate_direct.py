@@ -348,6 +348,7 @@ class ValidateDirectTest(unittest.TestCase):
                 prompt="hello tenstorrent",
                 tokenizer_path=model_dir,
                 ttnn_module=_make_fake_ttnn(),
+                device_environment=_fake_tenstorrent_device_environment(),
             )
 
             self.assertEqual(report["status"], "pass")
@@ -419,6 +420,7 @@ class ValidateDirectTest(unittest.TestCase):
                 prompt="hello tenstorrent",
                 tokenizer_path=model_dir,
                 ttnn_module=fake_ttnn,
+                device_environment=_fake_tenstorrent_device_environment(),
             )
 
             self.assertEqual(report["status"], "pass")
@@ -429,6 +431,11 @@ class ValidateDirectTest(unittest.TestCase):
                 version_check["observed"]["module_file"],
                 "/fake/ttnn/__init__.py",
             )
+            device_check = _check_by_name(
+                report,
+                "tenstorrent.device_available",
+            )
+            self.assertTrue(device_check["passed"])
             self.assertEqual(
                 report["official_config_diff"]["official_source_format"],
                 "normalized_parity_config",
@@ -553,6 +560,78 @@ class ValidateDirectTest(unittest.TestCase):
                 "fake-tt-metal",
             )
             self.assertEqual(report["failed_checks"], [])
+
+    def test_preflight_real_decode_fails_without_visible_device(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            official_json = root / "official_parity_config.json"
+            report_json = root / "real_decode_preflight_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            _write_official_parity_from_program(program_dir, official_json)
+
+            report = preflight_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out=report_json,
+                official_config_path=official_json,
+                layers=2,
+                batch_size=32,
+                cache_len=1024,
+                trace_iterations=10,
+                metric="tokens_per_second_per_user",
+                require_official_performance_parity=True,
+                min_tokens_per_second_per_user=1.0,
+                baseline_reference="tt_metal_official_llama31_8b_b32",
+                min_baseline_ratio=0.1,
+                decode_shell_pcc_threshold=0.99,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                ttnn_module=_make_fake_ttnn(),
+                device_environment={
+                    "device_available": False,
+                    "device_nodes": [],
+                    "filesystem_entries": [],
+                    "driver_loaded": True,
+                    "tt_smi_path": "/usr/bin/tt-smi",
+                },
+            )
+
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["ready_to_run"])
+            self.assertIn(
+                "tenstorrent.device_available",
+                report["failed_checks"],
+            )
+            device_check = _check_by_name(
+                report,
+                "tenstorrent.device_available",
+            )
+            self.assertFalse(device_check["passed"])
+            self.assertEqual(
+                report["tenstorrent_device_environment"]["device_nodes"],
+                [],
+            )
 
     def test_preflight_rejects_generated_config_as_official_reference(
         self,
@@ -964,6 +1043,10 @@ class ValidateDirectTest(unittest.TestCase):
                 validation_module.importlib,
                 "import_module",
                 return_value=_make_fake_ttnn(),
+            ), patch.object(
+                validation_module,
+                "collect_tenstorrent_device_environment",
+                return_value=_fake_tenstorrent_device_environment(),
             ):
                 exit_code = main(
                     [
@@ -7823,6 +7906,17 @@ def _check_by_name(report: dict[str, object], name: str) -> dict[str, object]:
         if check.get("name") == name:
             return check
     raise AssertionError(f"missing check {name!r}")
+
+
+def _fake_tenstorrent_device_environment() -> dict[str, object]:
+    return {
+        "device_available": True,
+        "device_node_count": 1,
+        "device_nodes": ["/dev/tenstorrent/0"],
+        "filesystem_entries": ["/dev/tenstorrent/0"],
+        "driver_loaded": True,
+        "tt_smi_path": "/usr/bin/tt-smi",
+    }
 
 
 def _write_fake_model_config(model_dir: Path) -> None:

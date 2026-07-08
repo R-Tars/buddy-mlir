@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import shutil
+import stat
 import subprocess
 from functools import lru_cache
+from glob import glob
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +22,49 @@ def collect_ttnn_environment(ttnn_module: Any | None) -> dict[str, Any]:
         "tt_metal_git_commit": commit,
         "tt_metal_git_commit_source": commit_source,
     }
+
+
+def collect_tenstorrent_device_environment() -> dict[str, Any]:
+    entries = _tenstorrent_device_entries()
+    device_nodes = [
+        path for path in entries if _is_character_device(Path(path))
+    ]
+    return {
+        "device_available": bool(device_nodes),
+        "device_node_count": len(device_nodes),
+        "device_nodes": device_nodes,
+        "filesystem_entries": entries,
+        "driver_loaded": _kernel_module_loaded("tenstorrent"),
+        "tt_smi_path": shutil.which("tt-smi"),
+    }
+
+
+def _tenstorrent_device_entries() -> list[str]:
+    paths: set[str] = set()
+    for pattern in (
+        "/dev/tenstorrent",
+        "/dev/tenstorrent/*",
+        "/dev/tenstorrent*",
+    ):
+        for path in glob(pattern):
+            paths.add(path)
+    return sorted(paths)
+
+
+def _is_character_device(path: Path) -> bool:
+    try:
+        return stat.S_ISCHR(path.stat().st_mode)
+    except OSError:
+        return False
+
+
+def _kernel_module_loaded(name: str) -> bool:
+    try:
+        lines = Path("/proc/modules").read_text().splitlines()
+    except OSError:
+        return False
+    prefix = f"{name} "
+    return any(line.startswith(prefix) for line in lines)
 
 
 def _tt_metal_commit(

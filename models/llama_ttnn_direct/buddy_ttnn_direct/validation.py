@@ -30,7 +30,10 @@ from .codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
     tensorize_parameters_from_program_dry_run,
 )
-from .runtime_environment import collect_ttnn_environment
+from .runtime_environment import (
+    collect_tenstorrent_device_environment,
+    collect_ttnn_environment,
+)
 from .decode_loop import run_prompt_decode_loop
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
@@ -1068,6 +1071,7 @@ def preflight_real_decode(
     prompt: str | None = None,
     tokenizer_path: str | Path | None = None,
     ttnn_module: Any | None = None,
+    device_environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Check real-decode prerequisites without loading weights or opening a device."""
     program_dir = Path(program_dir)
@@ -1575,6 +1579,34 @@ def preflight_real_decode(
         observed=ttnn_environment.get("tt_metal_git_commit"),
         expected="non-empty tt-metal commit",
     )
+    tenstorrent_device_environment = (
+        device_environment
+        if device_environment is not None
+        else collect_tenstorrent_device_environment()
+    )
+    add(
+        "tenstorrent.device_available",
+        tenstorrent_device_environment.get("device_available") is True,
+        observed={
+            "device_nodes": tenstorrent_device_environment.get(
+                "device_nodes",
+                [],
+            ),
+            "filesystem_entries": tenstorrent_device_environment.get(
+                "filesystem_entries",
+                [],
+            ),
+            "driver_loaded": tenstorrent_device_environment.get(
+                "driver_loaded"
+            ),
+            "tt_smi_path": tenstorrent_device_environment.get("tt_smi_path"),
+        },
+        expected="at least one Tenstorrent character device node",
+        message=(
+            "real decode cannot open a TTNN device unless the current process "
+            "can see /dev/tenstorrent* device nodes"
+        ),
+    )
 
     failed_checks = [
         check
@@ -1715,6 +1747,7 @@ def preflight_real_decode(
         "official_config_diff": official_config_diff_summary,
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
+        "tenstorrent_device_environment": tenstorrent_device_environment,
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
             skip_autotune=skip_autotune,

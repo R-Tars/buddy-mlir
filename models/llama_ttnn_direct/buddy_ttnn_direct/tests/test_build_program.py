@@ -15,6 +15,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
     PROGRAM_ARTIFACTS,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment import (
+    collect_tenstorrent_device_environment,
+)
 
 
 class BuildProgramTest(unittest.TestCase):
@@ -423,6 +426,12 @@ class BuildProgramTest(unittest.TestCase):
                 profile_generate_payload["official_performance_parity_claimed"]
             )
 
+            device_environment = collect_tenstorrent_device_environment()
+            expected_preflight_status = (
+                "pass"
+                if device_environment["device_available"]
+                else "fail"
+            )
             preflight = subprocess.run(
                 [
                     sys.executable,
@@ -459,19 +468,29 @@ class BuildProgramTest(unittest.TestCase):
                     "--out-dir",
                     str(preflight_dir),
                 ],
-                check=True,
+                check=False,
                 capture_output=True,
                 cwd=out_dir,
                 text=True,
             )
+            expected_returncode = (
+                0 if expected_preflight_status == "pass" else 1
+            )
+            self.assertEqual(preflight.returncode, expected_returncode)
             preflight_summary = json.loads(preflight.stdout)
-            self.assertEqual(preflight_summary["status"], "pass")
+            self.assertEqual(
+                preflight_summary["status"],
+                expected_preflight_status,
+            )
             preflight_report = (
                 preflight_dir / "real_decode_preflight_report.json"
             )
             self.assertEqual(preflight_summary["report"], str(preflight_report))
             preflight_payload = json.loads(preflight_report.read_text())
-            self.assertEqual(preflight_payload["status"], "pass")
+            self.assertEqual(
+                preflight_payload["status"],
+                expected_preflight_status,
+            )
             self.assertEqual(
                 preflight_payload["metric"],
                 "tokens_per_second_per_user",
@@ -492,6 +511,20 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 preflight_payload["ttnn_environment"]["version"],
                 "fake-ttnn",
+            )
+            device_check = _check_by_name(
+                preflight_payload,
+                "tenstorrent.device_available",
+            )
+            self.assertEqual(
+                device_check["passed"],
+                device_environment["device_available"],
+            )
+            self.assertEqual(
+                preflight_payload["tenstorrent_device_environment"][
+                    "device_available"
+                ],
+                device_environment["device_available"],
             )
             self.assertIn(
                 "--prompt",
@@ -666,6 +699,13 @@ def _write_fake_model_config(model_dir: Path) -> None:
             }
         )
     )
+
+
+def _check_by_name(report: dict[str, object], name: str) -> dict[str, object]:
+    for check in report["checks"]:  # type: ignore[index]
+        if check["name"] == name:
+            return check
+    raise AssertionError(f"missing check {name!r}")
 
 
 def _write_template_config(path: Path) -> None:
