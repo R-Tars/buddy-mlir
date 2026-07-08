@@ -4327,6 +4327,39 @@ class ValidateDirectTest(unittest.TestCase):
                     "kv_cache_reinitialized_per_step"
                 ]
             )
+            profile_generate = report["steps"]["profile_generate"]
+            self.assertEqual(profile_generate["status"], "pass")
+            self.assertTrue(profile_generate["generate_passed"])
+            self.assertEqual(
+                profile_generate["model_semantics"],
+                "prompt_conditioned_prefill_decode",
+            )
+            self.assertGreater(
+                profile_generate["tokens_per_second_per_user"],
+                0.0,
+            )
+            self.assertFalse(
+                profile_generate["official_performance_parity_claimed"]
+            )
+            acceptance_check_names = {
+                check["name"] for check in report["acceptance"]["checks"]
+            }
+            self.assertIn(
+                "profile_generate.full_generated_model_can_run",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_generate.tokens_per_second_per_user_positive",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_generate.no_official_parity_claim",
+                acceptance_check_names,
+            )
+            self.assertIn(
+                "profile_generate.profile_fields",
+                acceptance_check_names,
+            )
 
             self.assertEqual(
                 report["steps"]["decode_shell"]["runtime_input_tensor_count"],
@@ -4452,6 +4485,7 @@ class ValidateDirectTest(unittest.TestCase):
                     **{step: "prompt_runtime" for step in prompt_runtime_steps},
                     "prompt_decode_loop": "prompt_decode_loop",
                     "generate_prefill_decode": "prompt_prefill",
+                    "profile_generate": "prompt_prefill",
                 },
             )
             self.assertEqual(
@@ -4460,6 +4494,7 @@ class ValidateDirectTest(unittest.TestCase):
                     **{step: 1 for step in prompt_runtime_steps},
                     "prompt_decode_loop": 1,
                     "generate_prefill_decode": 1,
+                    "profile_generate": 1,
                 },
             )
             self.assertEqual(
@@ -4470,6 +4505,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 2,
                     "prompt_decode_loop": 4,
                     "generate_prefill_decode": 2,
+                    "profile_generate": 2,
                 },
             )
             self.assertEqual(
@@ -4480,6 +4516,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 3,
                     "prompt_decode_loop": 6,
                     "generate_prefill_decode": 6,
+                    "profile_generate": 6,
                 },
             )
             self.assertEqual(
@@ -4490,6 +4527,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 2,
                     "prompt_decode_loop": 2,
                     "generate_prefill_decode": 2,
+                    "profile_generate": 2,
                 },
             )
             self.assertEqual(
@@ -4501,6 +4539,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step": 0,
                     "prompt_decode_loop": 0,
                     "generate_prefill_decode": 0,
+                    "profile_generate": 0,
                 },
             )
             self.assertEqual(scope["synthetic_runtime_input_steps"], [])
@@ -4532,6 +4571,150 @@ class ValidateDirectTest(unittest.TestCase):
                 "real runtime input path for token ids, page table, cache "
                 "position, KV cache, and rotary tensors",
                 e2e["missing_for_model_end_to_end"],
+            )
+
+    def test_validate_real_decode_rejects_generate_profile_parity_claim(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            def fake_profile_generate(*args, **kwargs):
+                out = Path(kwargs["out"])
+                generate_report = Path(kwargs["generate_report"])
+                generate_report.write_text("{}\n")
+                profile = {
+                    "schema_version": 1,
+                    "command": "profile-generate",
+                    "mode": "profile-generate",
+                    "status": "profiled",
+                    "passed": True,
+                    "generate_status": "passed",
+                    "generate_passed": True,
+                    "prefill_status": "passed",
+                    "kv_cache_source": "prefill",
+                    "model_semantics": "prompt_conditioned_prefill_decode",
+                    "parameter_source": "hf_model",
+                    "input_source": "prompt_prefill",
+                    "runtime_owner": "TTNNDirectRuntimeContext",
+                    "generate_runtime_owned": True,
+                    "decode_loop_runtime_owned": True,
+                    "runtime_context": {
+                        "class": "TTNNDirectRuntimeContext",
+                        "status": "built",
+                    },
+                    "parameter_setup": {},
+                    "synthetic_runtime_input_tensor_count": 0,
+                    "synthetic_rotary_tensor_count": 0,
+                    "synthetic_kv_cache_tensor_count": 0,
+                    "prefill_prompt_runtime_input_tensor_count": 1,
+                    "prefill_rotary_runtime_input_tensor_count": 3,
+                    "decode_runtime_state_input_tensor_count": 2,
+                    "decode_rotary_runtime_input_tensor_count": 3,
+                    "kv_cache_runtime_input_tensor_count": 2,
+                    "generated_text_status": "fallback",
+                    "generated_token_count_by_user": [2, 2],
+                    "latency_ms": 2.0,
+                    "prefill_ms": 1.0,
+                    "decode_step_ms_mean": 1.0,
+                    "decode_step_ms_samples": [1.0],
+                    "host_copy_ms": 0.1,
+                    "host_copy_profile": {
+                        "status": "measured",
+                        "total_ms": 0.1,
+                    },
+                    "section_profile": {"status": "measured"},
+                    "sections": {
+                        "prefill_ms": 1.0,
+                        "decode_total_ms": 1.0,
+                        "decode_step_ms_mean": 1.0,
+                        "embedding_ms": {"status": "measured"},
+                        "prefill_attention_ms": {"status": "measured"},
+                        "decode_attention_ms": {"status": "measured"},
+                        "mlp_ms": {"status": "measured"},
+                        "lm_head_ms": {"status": "measured"},
+                        "argmax_ms": {"status": "measured"},
+                        "host_copy_ms": {"status": "measured"},
+                    },
+                    "per_layer": {"status": "measured"},
+                    "tokens_per_second_per_user": 1.0,
+                    "aggregate_tokens_per_second": 2.0,
+                    "throughput_summary": {
+                        "status": "measured",
+                        "tokens_per_second_per_user": 1.0,
+                        "aggregate_tokens_per_second": 2.0,
+                    },
+                    "acceptance": {
+                        "passed": True,
+                        "failed_checks": [],
+                    },
+                    "official_performance_parity_claimed": True,
+                    "ttnn_environment": {"module_available": True},
+                }
+                out.write_text(json.dumps(profile, indent=2) + "\n")
+                return profile
+
+            with patch.object(
+                validation_module,
+                "run_profile_generate",
+                side_effect=fake_profile_generate,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        device="p150a",
+                        prompt="hello tenstorrent",
+                        tokenizer_path=model_dir,
+                        tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                        skip_autotune=True,
+                        min_tokens_per_second_per_user=0.0,
+                        ttnn_module=_make_fake_ttnn(with_to_torch=True),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            failed_checks = [
+                check["name"]
+                for check in report["acceptance"]["checks"]
+                if not check["passed"]
+            ]
+            self.assertEqual(
+                failed_checks,
+                ["profile_generate.no_official_parity_claim"],
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["acceptance"]["failed_checks"],
+                ["profile_generate.no_official_parity_claim"],
             )
 
     def test_validate_real_decode_can_require_official_config_match(

@@ -145,6 +145,19 @@ PROFILE_BOTTLENECK_SECTION_KEYS = (
     "trace_execute_ms",
 )
 
+PROFILE_GENERATE_SECTION_KEYS = (
+    "prefill_ms",
+    "decode_total_ms",
+    "decode_step_ms_mean",
+    "embedding_ms",
+    "prefill_attention_ms",
+    "decode_attention_ms",
+    "mlp_ms",
+    "lm_head_ms",
+    "argmax_ms",
+    "host_copy_ms",
+)
+
 
 def default_official_template_path() -> Path:
     return (
@@ -3449,6 +3462,10 @@ def validate_real_decode(
             torch_module=torch_module,
             tokenizer_module=tokenizer_module,
         )
+        profile_generate_rotary_count = _sum_present_counts(
+            profile_report.get("prefill_rotary_runtime_input_tensor_count"),
+            profile_report.get("decode_rotary_runtime_input_tensor_count"),
+        )
         return {
             "status": _runtime_step_status(
                 profile_report,
@@ -3491,6 +3508,24 @@ def validate_real_decode(
             ),
             "synthetic_kv_cache_tensor_count": profile_report.get(
                 "synthetic_kv_cache_tensor_count"
+            ),
+            "prompt_runtime_input_tensor_count": profile_report.get(
+                "prefill_prompt_runtime_input_tensor_count"
+            ),
+            "prefill_rotary_runtime_input_tensor_count": profile_report.get(
+                "prefill_rotary_runtime_input_tensor_count"
+            ),
+            "decode_runtime_state_input_tensor_count": profile_report.get(
+                "decode_runtime_state_input_tensor_count"
+            ),
+            "decode_rotary_runtime_input_tensor_count": profile_report.get(
+                "decode_rotary_runtime_input_tensor_count"
+            ),
+            "rotary_runtime_input_tensor_count": (
+                profile_generate_rotary_count
+            ),
+            "kv_cache_runtime_input_tensor_count": profile_report.get(
+                "kv_cache_runtime_input_tensor_count"
             ),
             "generated_text_status": profile_report.get(
                 "generated_text_status"
@@ -5064,6 +5099,7 @@ def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
         "profile_decode_step",
         "prompt_decode_loop",
         "generate_prefill_decode",
+        "profile_generate",
     ]
     sources: dict[str, Any] = {}
     runtime_counts: dict[str, Any] = {}
@@ -6047,6 +6083,20 @@ def _real_decode_evidence_manifest(
                 "synthetic_kv_cache_tensor_count": profile_generate.get(
                     "synthetic_kv_cache_tensor_count"
                 ),
+                "prompt_runtime_input_tensor_count": profile_generate.get(
+                    "prompt_runtime_input_tensor_count"
+                ),
+                "decode_runtime_state_input_tensor_count": (
+                    profile_generate.get(
+                        "decode_runtime_state_input_tensor_count"
+                    )
+                ),
+                "rotary_runtime_input_tensor_count": profile_generate.get(
+                    "rotary_runtime_input_tensor_count"
+                ),
+                "kv_cache_runtime_input_tensor_count": profile_generate.get(
+                    "kv_cache_runtime_input_tensor_count"
+                ),
                 "generated_text_status": profile_generate.get(
                     "generated_text_status"
                 ),
@@ -6992,6 +7042,7 @@ def _real_decode_acceptance(
     profile = steps.get("profile_decode_step", {})
     prompt_loop = steps.get("prompt_decode_loop", {})
     generate_step = steps.get("generate_prefill_decode", {})
+    profile_generate = steps.get("profile_generate", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
@@ -7054,6 +7105,11 @@ def _real_decode_acceptance(
     profile_lm_head = profile.get("lm_head_profile")
     profile_layer_profiles = profile.get("layer_profiles")
     profile_bottleneck = profile.get("bottleneck_summary")
+    profile_generate_status = profile_generate.get("status")
+    profile_generate_evaluated = profile_generate_status not in {
+        None,
+        "skipped",
+    }
     skip_autotune = bool(report.get("skip_autotune"))
     checks = [
         _acceptance_check(
@@ -8354,64 +8410,148 @@ def _real_decode_acceptance(
             observed=throughput.get("aggregate_tokens_per_second"),
             minimum=0,
         ),
-        _acceptance_check(
-            "decode_depth_sweep.status",
-            depth_sweep.get("status") == "pass",
-            observed=depth_sweep.get("status"),
-            expected="pass",
-        ),
-        _acceptance_check(
-            "decode_depth_sweep.acceptance",
-            (depth_sweep.get("acceptance") or {}).get("passed") is True,
-            observed=depth_sweep.get("acceptance"),
-            expected="passed",
-        ),
-        _acceptance_check(
-            "decode_depth_sweep.requested_depth",
-            _int_list_contains(depth_sweep.get("depths"), expected_layers),
-            observed=depth_sweep.get("depths"),
-            expected=expected_layers,
-        ),
-        _acceptance_check(
-            "decode_depth_sweep.passed_depth_count",
-            _int_equal(
-                depth_sweep.get("passed_depth_count"),
-                depth_sweep.get("depth_count"),
-            ),
-            observed=depth_sweep.get("passed_depth_count"),
-            expected=depth_sweep.get("depth_count"),
-        ),
-        _acceptance_check(
-            "decode_depth_sweep.records",
-            _decode_depth_sweep_records_complete(
-                depth_sweep.get("records"),
-                expected_depths=depth_sweep.get("depths"),
-                batch_size=expected_batch_size,
-                cache_len=expected_cache_len,
-                seq_len=program_seq_len,
-                vocab_size=report.get("program_vocab_size"),
-                num_kv_heads=program_num_kv_heads,
-                head_dim=program_head_dim,
-                output_kind=expected_output_kind,
-                page_block_size=decode_contract.get("kv_page_block_size"),
-                require_trace=require_trace,
-                trace_iterations=expected_trace_iterations,
-            ),
-            observed=_decode_depth_sweep_records_observed(
-                depth_sweep.get("records")
-            ),
-            expected={
-                "depths": depth_sweep.get("depths"),
-                "batch_size": expected_batch_size,
-                "cache_len": expected_cache_len,
-                "reference_status": "passed",
-                "throughput_status": "measured",
-                "trace_status": (
-                    "captured_and_executed" if require_trace else None
-                ),
-            },
-        ),
     ]
+    if profile_generate_evaluated:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "profile_generate.full_generated_model_can_run",
+                    profile_generate.get("generate_passed") is True,
+                    observed={
+                        "status": profile_generate.get("status"),
+                        "runtime_status": profile_generate.get(
+                            "runtime_status"
+                        ),
+                        "generate_status": profile_generate.get(
+                            "generate_status"
+                        ),
+                        "generate_passed": profile_generate.get(
+                            "generate_passed"
+                        ),
+                    },
+                    expected="generate_passed=true",
+                ),
+                _acceptance_check(
+                    "profile_generate.tokens_per_second_per_user_positive",
+                    _positive_number(
+                        profile_generate.get("tokens_per_second_per_user")
+                    ),
+                    observed=profile_generate.get(
+                        "tokens_per_second_per_user"
+                    ),
+                    minimum=0,
+                ),
+                _acceptance_check(
+                    "profile_generate.aggregate_tokens_per_second_positive",
+                    _positive_number(
+                        profile_generate.get("aggregate_tokens_per_second")
+                    ),
+                    observed=profile_generate.get(
+                        "aggregate_tokens_per_second"
+                    ),
+                    minimum=0,
+                ),
+                _acceptance_check(
+                    "profile_generate.no_official_parity_claim",
+                    (
+                        profile_generate.get(
+                            "official_performance_parity_claimed"
+                        )
+                        is False
+                    ),
+                    observed=profile_generate.get(
+                        "official_performance_parity_claimed"
+                    ),
+                    expected=False,
+                ),
+                _acceptance_check(
+                    "profile_generate.profile_fields",
+                    (
+                        _contains_all(
+                            _field_keys(profile_generate.get("sections")),
+                            list(PROFILE_GENERATE_SECTION_KEYS),
+                        )
+                        and isinstance(
+                            profile_generate.get("per_layer"),
+                            dict,
+                        )
+                    ),
+                    observed={
+                        "sections": _field_keys(
+                            profile_generate.get("sections")
+                        ),
+                        "per_layer": _field_keys(
+                            profile_generate.get("per_layer")
+                        ),
+                    },
+                    expected={
+                        "sections": list(PROFILE_GENERATE_SECTION_KEYS),
+                        "per_layer": "dict",
+                    },
+                ),
+            ]
+        )
+    checks.extend(
+        [
+            _acceptance_check(
+                "decode_depth_sweep.status",
+                depth_sweep.get("status") == "pass",
+                observed=depth_sweep.get("status"),
+                expected="pass",
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.acceptance",
+                (depth_sweep.get("acceptance") or {}).get("passed") is True,
+                observed=depth_sweep.get("acceptance"),
+                expected="passed",
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.requested_depth",
+                _int_list_contains(depth_sweep.get("depths"), expected_layers),
+                observed=depth_sweep.get("depths"),
+                expected=expected_layers,
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.passed_depth_count",
+                _int_equal(
+                    depth_sweep.get("passed_depth_count"),
+                    depth_sweep.get("depth_count"),
+                ),
+                observed=depth_sweep.get("passed_depth_count"),
+                expected=depth_sweep.get("depth_count"),
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.records",
+                _decode_depth_sweep_records_complete(
+                    depth_sweep.get("records"),
+                    expected_depths=depth_sweep.get("depths"),
+                    batch_size=expected_batch_size,
+                    cache_len=expected_cache_len,
+                    seq_len=program_seq_len,
+                    vocab_size=report.get("program_vocab_size"),
+                    num_kv_heads=program_num_kv_heads,
+                    head_dim=program_head_dim,
+                    output_kind=expected_output_kind,
+                    page_block_size=decode_contract.get("kv_page_block_size"),
+                    require_trace=require_trace,
+                    trace_iterations=expected_trace_iterations,
+                ),
+                observed=_decode_depth_sweep_records_observed(
+                    depth_sweep.get("records")
+                ),
+                expected={
+                    "depths": depth_sweep.get("depths"),
+                    "batch_size": expected_batch_size,
+                    "cache_len": expected_cache_len,
+                    "reference_status": "passed",
+                    "throughput_status": "measured",
+                    "trace_status": (
+                        "captured_and_executed" if require_trace else None
+                    ),
+                },
+            ),
+        ]
+    )
     if require_decode_shell_numeric_reference:
         checks.append(
             _acceptance_check(

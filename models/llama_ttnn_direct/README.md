@@ -689,6 +689,11 @@ and `profile_generate_underlying_generate_report.json` with first-pass
 prefill/decode latency, tokens/s/user, section, per-layer, and host-copy
 profile fields for the same prompt-conditioned generate path. It is skipped
 with `--skip-profile-decode-step` and never claims official performance parity.
+When it runs, the top-level real-decode acceptance matrix also records
+`profile_generate.full_generated_model_can_run`,
+`profile_generate.tokens_per_second_per_user_positive`, and
+`profile_generate.no_official_parity_claim`, so early performance evidence is
+visible without turning it into an official parity gate.
 The integrated decode-depth sweep reuses `profile-decode-step` for the
 review ladder. By default it covers `1`, `2`, and `4` where those depths are
 not greater than the requested `--layers`, and always includes the requested
