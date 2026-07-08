@@ -536,6 +536,54 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 {"num_heads": 4},
             )
 
+    def test_generated_prefill_qkv_reshape_squeezes_batch_or_unit_axis(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=1), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            ops = generated.TTNNCompatOps(fake_ttnn)
+            qkv_official = _FakeTensor(
+                "qkv_official",
+                shape=(1, 32, 128, 64),
+            )
+            qkv_runtime = _FakeTensor(
+                "qkv_runtime",
+                shape=(32, 1, 128, 64),
+            )
+
+            official = ops.reshape_prefill_qkv_for_heads(qkv_official)
+            runtime = ops.reshape_prefill_qkv_for_heads(qkv_runtime)
+
+            self.assertEqual(official.shape, (32, 128, 64))
+            self.assertEqual(runtime.shape, (32, 128, 64))
+            self.assertEqual(
+                [call["dim"] for call in fake_ttnn.calls],
+                [0, 1],
+            )
+
     def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
         self,
     ) -> None:
@@ -649,9 +697,17 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertFalse(out_dir.exists())
 
 class _FakeTensor:
-    def __init__(self, name: str, mem_config: str | None = None):
+    def __init__(
+        self,
+        name: str,
+        mem_config: str | None = None,
+        *,
+        shape: tuple[int, ...] | None = None,
+    ):
         self.name = name
         self._mem_config = mem_config
+        if shape is not None:
+            self.shape = shape
 
     def memory_config(self):
         return self._mem_config
@@ -766,6 +822,40 @@ def _make_fake_ttnn_module():
         )
         return _FakeTensor(f"argmax:{getattr(tensor, 'name', tensor)}")
 
+    def squeeze(tensor, dim):
+        shape = list(getattr(tensor, "shape", ()))
+        if shape:
+            shape.pop(int(dim))
+        module.calls.append(
+            {
+                "op": "squeeze",
+                "tensor": getattr(tensor, "name", tensor),
+                "dim": dim,
+            }
+        )
+        return _FakeTensor(
+            f"squeeze:{getattr(tensor, 'name', tensor)}",
+            getattr(tensor, "_mem_config", None),
+            shape=tuple(shape),
+        )
+
+    def reshape(tensor, logical_shape, padded_shape=None):
+        module.calls.append(
+            {
+                "op": "reshape",
+                "tensor": getattr(tensor, "name", tensor),
+                "logical_shape": tuple(logical_shape),
+                "padded_shape": (
+                    tuple(padded_shape) if padded_shape is not None else None
+                ),
+            }
+        )
+        return _FakeTensor(
+            f"reshape:{getattr(tensor, 'name', tensor)}",
+            getattr(tensor, "_mem_config", None),
+            shape=tuple(logical_shape),
+        )
+
     def nlp_create_qkv_heads_decode(qkv, **kwargs):
         module.calls.append(
             {
@@ -819,6 +909,8 @@ def _make_fake_ttnn_module():
     module.concat = concat
     module.to_memory_config = to_memory_config
     module.argmax = argmax
+    module.squeeze = squeeze
+    module.reshape = reshape
     module.experimental = _ns(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         nlp_concat_heads_decode=nlp_concat_heads_decode,

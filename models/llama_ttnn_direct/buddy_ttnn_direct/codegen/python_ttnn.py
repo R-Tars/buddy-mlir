@@ -434,17 +434,26 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     if shape is None or len(shape) != 4:
                         return qkv
                     shape = [int(dim) for dim in shape]
-                    if shape[0] != 1:
+                    if shape[0] == 1:
+                        squeeze_dim = 0
+                        logical_shape = (shape[1], shape[2], shape[3])
+                    elif shape[1] == 1:
+                        squeeze_dim = 1
+                        logical_shape = (shape[0], shape[2], shape[3])
+                    else:
                         return qkv
                     squeeze = getattr(self.ttnn, "squeeze", None)
                     if callable(squeeze):
                         self._record(op_name)
-                        return squeeze(qkv, 0)
+                        try:
+                            return squeeze(qkv, squeeze_dim)
+                        except TypeError:
+                            pass
                     reshape = getattr(self.ttnn, "reshape", None)
                     if reshape is None:
                         return qkv
                     self._record(op_name)
-                    return reshape(qkv, (shape[1], shape[2], shape[3]))
+                    return reshape(qkv, logical_shape)
 
                 def to_memory_config(
                     self,
