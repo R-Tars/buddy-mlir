@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment import (
     collect_tenstorrent_device_environment,
+    collect_tenstorrent_process_environment,
+    collect_ttnn_runtime_health,
     collect_ttnn_environment,
 )
 
@@ -105,6 +107,49 @@ class RuntimeEnvironmentTest(unittest.TestCase):
         self.assertEqual(environment["device_nodes"], [])
         self.assertIsNone(environment["tt_smi_path"])
         self.assertIsNone(environment["tt_smi"])
+
+    def test_collect_tenstorrent_process_environment_detects_reset(
+        self,
+    ) -> None:
+        ps_output = """USER PID PPID STAT ELAPSED CMD
+alice 100 1 Ss 00:10 /bin/bash -c tt-smi -r 0
+alice 101 100 R 00:09 /opt/tt/bin/tt-smi -r 0
+bob 200 1 Sl 00:02 python -m examples.tenstorrent.eltwise_binary.eltwise_binary
+"""
+        with patch(
+            "models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment."
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["ps"],
+                0,
+                stdout=ps_output,
+                stderr="",
+            ),
+        ):
+            environment = collect_tenstorrent_process_environment()
+
+        self.assertEqual(environment["status"], "busy")
+        self.assertEqual(environment["conflict_count"], 3)
+        self.assertTrue(environment["reset_in_progress"])
+        self.assertEqual(environment["conflicts"][0]["kind"], "tt_smi_reset")
+
+    def test_collect_ttnn_runtime_health_reports_probe_failure(self) -> None:
+        with patch(
+            "models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment."
+            "subprocess.run",
+            return_value=subprocess.CompletedProcess(
+                ["python", "-c", "..."],
+                135,
+                stdout="",
+                stderr="Bus error (core dumped)",
+            ),
+        ):
+            environment = collect_ttnn_runtime_health(device_id=0, timeout=1.0)
+
+        self.assertEqual(environment["status"], "fail")
+        self.assertEqual(environment["device_id"], 0)
+        self.assertEqual(environment["returncode"], 135)
+        self.assertIn("Bus error", environment["stderr"])
 
 
 if __name__ == "__main__":

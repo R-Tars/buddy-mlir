@@ -4,6 +4,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from functools import lru_cache
 from glob import glob
 from pathlib import Path
@@ -38,6 +39,141 @@ def collect_tenstorrent_device_environment() -> dict[str, Any]:
         "driver_loaded": _kernel_module_loaded("tenstorrent"),
         "tt_smi_path": tt_smi_path,
         "tt_smi": _probe_command([tt_smi_path]) if tt_smi_path else None,
+    }
+
+
+def collect_tenstorrent_process_environment() -> dict[str, Any]:
+    current_pid = os.getpid()
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "user,pid,ppid,stat,etime,cmd"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "status": "error",
+            "error": str(exc),
+            "conflict_count": 0,
+            "conflicts": [],
+        }
+    if result.returncode != 0:
+        return {
+            "status": "error",
+            "returncode": result.returncode,
+            "stderr": _trim_probe_output(result.stderr),
+            "conflict_count": 0,
+            "conflicts": [],
+        }
+
+    conflicts: list[dict[str, Any]] = []
+    for line in result.stdout.splitlines()[1:]:
+        fields = line.strip().split(None, 5)
+        if len(fields) < 6:
+            continue
+        user, pid_text, ppid_text, stat_text, elapsed_text, command = fields
+        try:
+            pid = int(pid_text)
+            ppid = int(ppid_text)
+        except ValueError:
+            continue
+        if pid == current_pid or ppid == current_pid:
+            continue
+        kind = _tenstorrent_process_conflict_kind(command)
+        if kind is None:
+            continue
+        conflicts.append(
+            {
+                "kind": kind,
+                "user": user,
+                "pid": pid,
+                "ppid": ppid,
+                "stat": stat_text,
+                "elapsed": elapsed_text,
+                "command": command,
+            }
+        )
+
+    return {
+        "status": "busy" if conflicts else "idle",
+        "conflict_count": len(conflicts),
+        "reset_in_progress": any(
+            conflict["kind"] == "tt_smi_reset"
+            for conflict in conflicts
+        ),
+        "conflicts": conflicts[:16],
+    }
+
+
+def _tenstorrent_process_conflict_kind(command: str) -> str | None:
+    normalized = " ".join(command.split())
+    if "tt-smi -r" in normalized or "tt_smi -r" in normalized:
+        return "tt_smi_reset"
+    if "examples.tenstorrent" in normalized:
+        return "tenstorrent_example"
+    if "phase6_torch_add" in normalized:
+        return "tenstorrent_example"
+    if "trex" in normalized and "tenstorrent" in normalized:
+        return "tenstorrent_example"
+    return None
+
+
+def collect_ttnn_runtime_health(
+    *,
+    device_id: int = 0,
+    timeout: float = 45.0,
+) -> dict[str, Any]:
+    script = f"""
+import torch
+import ttnn
+
+device = ttnn.open_device(device_id={int(device_id)})
+try:
+    x = torch.zeros((1, 1, 32, 32), dtype=torch.bfloat16)
+    y = ttnn.from_torch(
+        x,
+        dtype=ttnn.bfloat16,
+        layout=ttnn.TILE_LAYOUT,
+        device=device,
+        memory_config=ttnn.DRAM_MEMORY_CONFIG,
+    )
+    z = ttnn.to_torch(y)
+    print("ttnn_runtime_health=pass")
+    print("shape=" + str(list(z.shape)))
+    print("sum=" + str(float(z.sum())))
+finally:
+    ttnn.close_device(device)
+"""
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "status": "timeout",
+            "device_id": device_id,
+            "timeout_seconds": timeout,
+            "stdout": _trim_probe_output(exc.stdout),
+            "stderr": _trim_probe_output(exc.stderr),
+        }
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {
+            "status": "error",
+            "device_id": device_id,
+            "error": str(exc),
+        }
+    return {
+        "status": "pass" if result.returncode == 0 else "fail",
+        "device_id": device_id,
+        "returncode": result.returncode,
+        "stdout": _trim_probe_output(result.stdout),
+        "stderr": _trim_probe_output(result.stderr),
     }
 
 

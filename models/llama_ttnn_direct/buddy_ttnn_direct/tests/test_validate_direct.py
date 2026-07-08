@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -32,6 +33,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
     REAL_DECODE_VALIDATION_STEPS,
     VALIDATION_STEPS,
     preflight_real_decode,
+    recover_real_decode_process_failure,
     validate_real_decode,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
@@ -5770,6 +5772,268 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(artifact_names["decode_shell_report"]["exists"])
             self.assertFalse(artifact_names["attention_layer_report"]["exists"])
             self.assertFalse(artifact_names["smoke_report"]["exists"])
+
+    def test_validate_real_decode_guard_reports_device_busy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = validate_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out_dir=out_dir,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                device="p150a",
+                skip_autotune=True,
+                guard_device_busy=True,
+                device_process_environment={
+                    "status": "busy",
+                    "conflict_count": 1,
+                    "reset_in_progress": True,
+                    "conflicts": [
+                        {
+                            "kind": "tt_smi_reset",
+                            "user": "other",
+                            "pid": 123,
+                            "command": "tt-smi -r 0",
+                        }
+                    ],
+                },
+            )
+
+            self.assertEqual(report["status"], "device_busy")
+            self.assertEqual(
+                report["results"]["official_config_diff"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["steps"]["device_exclusive_check"]["status"],
+                "device_busy",
+            )
+            self.assertEqual(
+                report["runtime_diagnostics"]["status"],
+                "device_busy",
+            )
+            self.assertTrue(
+                (out_dir / "real_decode_evidence_manifest.json").is_file()
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["validation"]["status"], "device_busy")
+            self.assertEqual(
+                evidence["runtime_diagnostics"]["status"],
+                "device_busy",
+            )
+
+    def test_validate_real_decode_guard_reports_device_unhealthy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = validate_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out_dir=out_dir,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                device="p150a",
+                skip_autotune=True,
+                guard_device_health=True,
+                device_process_environment={
+                    "status": "idle",
+                    "conflict_count": 0,
+                    "reset_in_progress": False,
+                    "conflicts": [],
+                },
+                device_health_environment={
+                    "status": "fail",
+                    "device_id": 0,
+                    "returncode": 135,
+                    "stdout": "",
+                    "stderr": "Bus error (core dumped)",
+                },
+            )
+
+            self.assertEqual(report["status"], "device_unhealthy")
+            self.assertEqual(
+                report["results"]["official_config_diff"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["steps"]["device_health_check"]["status"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                report["runtime_diagnostics"]["status"],
+                "device_unhealthy",
+            )
+            self.assertTrue(
+                report["runtime_diagnostics"]["device_reset_recommended"]
+            )
+            self.assertTrue(
+                (out_dir / "real_decode_evidence_manifest.json").is_file()
+            )
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(
+                evidence["validation"]["status"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                evidence["runtime_diagnostics"]["status"],
+                "device_unhealthy",
+            )
+
+    def test_recover_real_decode_process_failure_writes_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "validate_real"
+            out_dir.mkdir()
+            report_path = out_dir / "real_decode_validation_report.json"
+            evidence_path = out_dir / "real_decode_evidence_manifest.json"
+            results = {
+                step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
+            }
+            results["official_config_diff"] = "pass"
+            results["materialize_parameters"] = "pass"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "command": "validate-real-decode",
+                        "status": "running",
+                        "out_dir": str(out_dir),
+                        "dry_run": False,
+                        "guard_device_health": True,
+                        "device_id": 0,
+                        "results": results,
+                        "steps": {
+                            "official_config_diff": {"status": "pass"},
+                            "materialize_parameters": {"status": "pass"},
+                        },
+                        "artifacts": {
+                            "report": str(report_path),
+                            "evidence_manifest": str(evidence_path),
+                        },
+                    }
+                )
+            )
+
+            report = recover_real_decode_process_failure(
+                out_dir=out_dir,
+                returncode=-7,
+                stderr="Bus error in libtt_metal",
+                command=["python", "-m", "validate-real-decode"],
+            )
+
+            self.assertEqual(report["status"], "device_unhealthy")
+            self.assertEqual(
+                report["results"]["decode_shell"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                report["steps"]["decode_shell"]["status"],
+                "device_unhealthy",
+            )
+            self.assertEqual(
+                report["results"]["attention_primitives"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["runtime_diagnostics"]["status"],
+                "device_unhealthy",
+            )
+            self.assertTrue(evidence_path.is_file())
+            evidence = json.loads(evidence_path.read_text())
+            self.assertEqual(
+                evidence["validation"]["status"],
+                "device_unhealthy",
+            )
+
+    def test_validate_real_decode_cli_isolates_signal_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            out_dir = root / "validate_real"
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli."
+                "subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    ["python", "-m", "models...cli"],
+                    -7,
+                    stdout="",
+                    stderr="Bus error in libtt_metal",
+                ),
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "validate-real-decode",
+                            "--program-dir",
+                            str(root / "program"),
+                            "--model-path",
+                            str(root / "model"),
+                            "--out-dir",
+                            str(out_dir),
+                            "--guard-device-health",
+                        ]
+                    ),
+                    1,
+                )
+
+            report = json.loads(
+                (out_dir / "real_decode_validation_report.json").read_text()
+            )
+            self.assertEqual(report["status"], "device_unhealthy")
+            self.assertEqual(
+                report["results"]["official_config_diff"],
+                "device_unhealthy",
+            )
+            self.assertTrue(
+                (out_dir / "real_decode_evidence_manifest.json").is_file()
+            )
 
     def test_validate_real_decode_diagnoses_firmware_init_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

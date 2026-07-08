@@ -32,6 +32,8 @@ from .codegen.ttnn_tensorizer import (
 )
 from .runtime_environment import (
     collect_tenstorrent_device_environment,
+    collect_tenstorrent_process_environment,
+    collect_ttnn_runtime_health,
     collect_ttnn_environment,
 )
 from .decode_loop import run_prompt_decode_loop
@@ -280,6 +282,8 @@ def _real_decode_cli_args(
     metric: str | None = None,
     dry_run: bool = False,
     preflight_only: bool = False,
+    guard_device_busy: bool = False,
+    guard_device_health: bool = False,
 ) -> list[str]:
     args = [
         "python",
@@ -353,6 +357,10 @@ def _real_decode_cli_args(
         args.append("--require-batch32-decode-step")
     if require_decode_shell_numeric_reference:
         args.append("--require-decode-shell-numeric-reference")
+    if guard_device_busy:
+        args.append("--guard-device-busy")
+    if guard_device_health:
+        args.append("--guard-device-health")
     if preflight_only:
         args.append("--preflight-only")
     return args
@@ -1080,6 +1088,9 @@ def preflight_real_decode(
     tokenizer_path: str | Path | None = None,
     ttnn_module: Any | None = None,
     device_environment: dict[str, Any] | None = None,
+    guard_device_busy: bool = False,
+    device_process_environment: dict[str, Any] | None = None,
+    guard_device_health: bool = False,
 ) -> dict[str, Any]:
     """Check real-decode prerequisites without loading weights or opening a device."""
     program_dir = Path(program_dir)
@@ -1598,6 +1609,11 @@ def preflight_real_decode(
         if device_environment is not None
         else collect_tenstorrent_device_environment()
     )
+    tenstorrent_process_environment = (
+        device_process_environment
+        if device_process_environment is not None
+        else collect_tenstorrent_process_environment()
+    )
     add(
         "tenstorrent.device_available",
         tenstorrent_device_environment.get("device_available") is True,
@@ -1622,6 +1638,29 @@ def preflight_real_decode(
             "can see /dev/tenstorrent* device nodes"
         ),
     )
+    if guard_device_busy:
+        add(
+            "tenstorrent.device_exclusive",
+            tenstorrent_process_environment.get("status") != "busy",
+            observed={
+                "status": tenstorrent_process_environment.get("status"),
+                "conflict_count": tenstorrent_process_environment.get(
+                    "conflict_count"
+                ),
+                "reset_in_progress": tenstorrent_process_environment.get(
+                    "reset_in_progress"
+                ),
+                "conflicts": tenstorrent_process_environment.get(
+                    "conflicts",
+                    [],
+                ),
+            },
+            expected="no external Tenstorrent reset/example process",
+            message=(
+                "real validation requires an exclusive board window when "
+                "--guard-device-busy is set"
+            ),
+        )
 
     failed_checks = [
         check
@@ -1680,6 +1719,8 @@ def preflight_real_decode(
         require_decode_shell_numeric_reference=normalized[
             "require_decode_shell_numeric_reference"
         ],
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
     )
     preflight_cli_args = _real_decode_cli_args(
         program_dir=program_dir,
@@ -1728,6 +1769,8 @@ def preflight_real_decode(
             "require_decode_shell_numeric_reference"
         ],
         preflight_only=True,
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
     )
     report = {
         "schema_version": 1,
@@ -1769,6 +1812,11 @@ def preflight_real_decode(
         "decode_step_contract": decode_step_contract,
         "ttnn_environment": ttnn_environment,
         "tenstorrent_device_environment": tenstorrent_device_environment,
+        "tenstorrent_process_environment": (
+            tenstorrent_process_environment
+        ),
+        "guard_device_busy": guard_device_busy,
+        "guard_device_health": guard_device_health,
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
             skip_autotune=skip_autotune,
@@ -1861,6 +1909,10 @@ def validate_real_decode(
     tokenizer_module: Any | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
+    guard_device_busy: bool = False,
+    device_process_environment: dict[str, Any] | None = None,
+    guard_device_health: bool = False,
+    device_health_environment: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Run the real-weight generated decode validation gates.
 
@@ -2100,6 +2152,8 @@ def validate_real_decode(
         require_decode_shell_numeric_reference=(
             require_decode_shell_numeric_reference
         ),
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
     )
     preflight_cli_args = _real_decode_cli_args(
         program_dir=program_dir,
@@ -2140,6 +2194,21 @@ def validate_real_decode(
             require_decode_shell_numeric_reference
         ),
         preflight_only=True,
+        guard_device_busy=guard_device_busy,
+        guard_device_health=guard_device_health,
+    )
+    tenstorrent_process_environment = (
+        device_process_environment
+        if device_process_environment is not None
+        else collect_tenstorrent_process_environment()
+    )
+    tenstorrent_process_environment_is_injected = (
+        device_process_environment is not None
+    )
+    tenstorrent_runtime_health = (
+        device_health_environment
+        if device_health_environment is not None
+        else {"status": "not_checked", "device_id": device_id}
     )
     report: dict[str, Any] = {
         "schema_version": 1,
@@ -2202,6 +2271,10 @@ def validate_real_decode(
         "require_decode_shell_numeric_reference": (
             require_decode_shell_numeric_reference
         ),
+        "guard_device_busy": guard_device_busy,
+        "guard_device_health": guard_device_health,
+        "tenstorrent_process_environment": tenstorrent_process_environment,
+        "tenstorrent_runtime_health": tenstorrent_runtime_health,
         "prompt_runtime_requested": prompt is not None,
         "tokenizer_path": str(tokenizer_path) if tokenizer_path else None,
         "results": {
@@ -2266,10 +2339,100 @@ def validate_real_decode(
         persist()
         return evidence
 
+    def mark_device_busy(blocked_step: str) -> bool:
+        report["status"] = "device_busy"
+        report["message"] = (
+            "Tenstorrent device appears to be in use by another process; "
+            "rerun validate-real-decode during an exclusive board window."
+        )
+        report["steps"]["device_exclusive_check"] = {
+            "status": "device_busy",
+            "blocked_step": blocked_step,
+            "process_environment": tenstorrent_process_environment,
+            "message": report["message"],
+        }
+        for step in REAL_DECODE_VALIDATION_STEPS:
+            if report["results"].get(step) == "pending":
+                report["results"][step] = "skipped"
+                report["steps"][step] = {
+                    "status": "skipped",
+                    "reason": (
+                        "blocked by failed step: device_exclusive_check"
+                    ),
+                }
+        persist()
+        return False
+
+    def mark_device_unhealthy(blocked_step: str) -> bool:
+        report["status"] = "device_unhealthy"
+        report["message"] = (
+            "Tenstorrent device is visible but failed an isolated TTNN "
+            "runtime health probe; reset the board or rerun after the shared "
+            "device recovers."
+        )
+        report["steps"]["device_health_check"] = {
+            "status": "device_unhealthy",
+            "blocked_step": blocked_step,
+            "runtime_health": tenstorrent_runtime_health,
+            "message": report["message"],
+        }
+        for step in REAL_DECODE_VALIDATION_STEPS:
+            if report["results"].get(step) == "pending":
+                report["results"][step] = "skipped"
+                report["steps"][step] = {
+                    "status": "skipped",
+                    "reason": "blocked by failed step: device_health_check",
+                }
+        persist()
+        return False
+
+    def device_busy_guard(blocked_step: str) -> bool:
+        nonlocal tenstorrent_process_environment
+        if not guard_device_busy or dry_run:
+            return False
+        if not tenstorrent_process_environment_is_injected:
+            tenstorrent_process_environment = (
+                collect_tenstorrent_process_environment()
+            )
+        report["tenstorrent_process_environment"] = (
+            tenstorrent_process_environment
+        )
+        if tenstorrent_process_environment.get("status") != "busy":
+            return False
+        mark_device_busy(blocked_step)
+        return True
+
+    device_health_checked = False
+
+    def device_health_guard(blocked_step: str) -> bool:
+        nonlocal device_health_checked, tenstorrent_runtime_health
+        if not guard_device_health or dry_run or device_health_checked:
+            return False
+        if tenstorrent_runtime_health.get("status") == "not_checked":
+            tenstorrent_runtime_health = collect_ttnn_runtime_health(
+                device_id=device_id
+            )
+        device_health_checked = True
+        report["tenstorrent_runtime_health"] = tenstorrent_runtime_health
+        if tenstorrent_runtime_health.get("status") == "pass":
+            report["steps"]["device_health_check"] = {
+                "status": "pass",
+                "blocked_step": blocked_step,
+                "runtime_health": tenstorrent_runtime_health,
+            }
+            persist()
+            return False
+        mark_device_unhealthy(blocked_step)
+        return True
+
     def run_step(
         name: str,
         action: Callable[[], dict[str, Any]],
     ) -> bool:
+        if device_busy_guard(name):
+            return False
+        if device_health_guard(name):
+            return False
         try:
             detail = action()
         except Exception as exc:  # pragma: no cover - exercised by CLI users.
@@ -3313,6 +3476,165 @@ def validate_real_decode(
     )
     write_evidence_summary()
     return report
+
+
+def recover_real_decode_process_failure(
+    *,
+    out_dir: str | Path,
+    returncode: int,
+    stdout: str | bytes | None = None,
+    stderr: str | bytes | None = None,
+    command: list[str] | None = None,
+) -> dict[str, Any]:
+    """Complete real-decode evidence after an isolated runner crash."""
+    root = Path(out_dir)
+    report_path = root / "real_decode_validation_report.json"
+    if report_path.is_file():
+        report = json.loads(report_path.read_text())
+    else:
+        report = {
+            "schema_version": 1,
+            "command": "validate-real-decode",
+            "status": "running",
+            "out_dir": str(root),
+            "dry_run": False,
+            "guard_device_health": True,
+            "results": {
+                step: "pending" for step in REAL_DECODE_VALIDATION_STEPS
+            },
+            "steps": {},
+            "artifacts": {
+                "evidence_manifest": str(
+                    root / "real_decode_evidence_manifest.json"
+                ),
+                "report": str(report_path),
+            },
+        }
+
+    stdout_text = _coerce_process_text(stdout)
+    stderr_text = _coerce_process_text(stderr)
+    status = (
+        "device_unhealthy"
+        if _real_decode_process_failure_looks_device_related(
+            returncode=returncode,
+            stdout=stdout_text,
+            stderr=stderr_text,
+        )
+        else "fail"
+    )
+    failed_step = _first_pending_real_decode_step(report) or "process"
+    message = (
+        "Isolated validate-real-decode subprocess exited before completing "
+        f"{failed_step}."
+    )
+    if status == "device_unhealthy":
+        message = (
+            "Isolated validate-real-decode subprocess exited with a "
+            "Tenstorrent runtime/device failure before evidence completion."
+        )
+        report["tenstorrent_runtime_health"] = {
+            "status": "fail",
+            "device_id": report.get("device_id"),
+            "returncode": returncode,
+            "stdout": _diagnostic_excerpt(stdout_text, limit=2000),
+            "stderr": _diagnostic_excerpt(stderr_text, limit=2000),
+        }
+
+    report["status"] = status
+    report["message"] = message
+    report["subprocess_failure"] = {
+        "status": status,
+        "returncode": returncode,
+        "signal": -returncode if returncode < 0 else None,
+        "command": command or [],
+        "stdout": _diagnostic_excerpt(stdout_text, limit=2000),
+        "stderr": _diagnostic_excerpt(stderr_text, limit=2000),
+    }
+    if failed_step in REAL_DECODE_VALIDATION_STEPS:
+        report["results"][failed_step] = status
+        report["steps"][failed_step] = {
+            "status": status,
+            "error": {
+                "type": "SubprocessFailure",
+                "returncode": returncode,
+                "message": message,
+                "stdout": _diagnostic_excerpt(stdout_text),
+                "stderr": _diagnostic_excerpt(stderr_text),
+            },
+        }
+        _mark_remaining_skipped(
+            report,
+            failed_step,
+            REAL_DECODE_VALIDATION_STEPS,
+        )
+    else:
+        report["steps"]["process"] = {
+            "status": status,
+            "error": report["subprocess_failure"],
+        }
+
+    paths = {
+        name: Path(path)
+        for name, path in (report.get("artifacts") or {}).items()
+        if isinstance(path, str)
+    }
+    paths.setdefault(
+        "evidence_manifest",
+        root / "real_decode_evidence_manifest.json",
+    )
+    paths.setdefault("report", report_path)
+    report["artifacts"] = {name: str(path) for name, path in paths.items()}
+    report["runtime_diagnostics"] = _real_decode_runtime_diagnostics(report)
+    evidence = _real_decode_evidence_manifest(report, paths)
+    _write_json(paths["evidence_manifest"], evidence)
+    report["evidence"] = {
+        "status": evidence["status"],
+        "manifest": str(paths["evidence_manifest"]),
+        "artifact_count": len(evidence["artifacts"]),
+        "acceptance_scope": evidence.get("acceptance_scope", {}),
+        "model_end_to_end_readiness": evidence.get(
+            "model_end_to_end_readiness",
+            {},
+        ),
+        "failed_acceptance_checks": evidence["acceptance"]["failed_checks"],
+    }
+    _write_json(report_path, report)
+    return report
+
+
+def _first_pending_real_decode_step(report: dict[str, Any]) -> str | None:
+    results = report.get("results") or {}
+    for step in REAL_DECODE_VALIDATION_STEPS:
+        if results.get(step) == "pending":
+            return step
+    return None
+
+
+def _real_decode_process_failure_looks_device_related(
+    *,
+    returncode: int,
+    stdout: str,
+    stderr: str,
+) -> bool:
+    if returncode in {-7, 135}:
+        return True
+    text = f"{stdout}\n{stderr}".lower()
+    return (
+        "bus error" in text
+        or "failed to initialize fw" in text
+        or "try resetting the board" in text
+        or "non-existent physical address" in text
+        or "libtt_metal" in text
+        or "libtt-umd" in text
+    )
+
+
+def _coerce_process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode(errors="replace")
+    return str(value)
 
 
 def _runtime_step_status(
@@ -5086,6 +5408,69 @@ def _real_decode_evidence_manifest(
 def _real_decode_runtime_diagnostics(
     report: dict[str, Any],
 ) -> dict[str, Any]:
+    process_environment = report.get("tenstorrent_process_environment") or {}
+    if (
+        process_environment.get("status") == "busy"
+        and (
+            report.get("guard_device_busy") is True
+            or report.get("status") == "device_busy"
+        )
+    ):
+        return {
+            "status": "device_busy",
+            "device_busy": True,
+            "device_reset_recommended": bool(
+                process_environment.get("reset_in_progress")
+            ),
+            "findings": [
+                {
+                    "kind": "tenstorrent_device_busy",
+                    "conflict_count": process_environment.get(
+                        "conflict_count",
+                        0,
+                    ),
+                    "reset_in_progress": process_environment.get(
+                        "reset_in_progress"
+                    ),
+                    "conflicts": process_environment.get("conflicts", []),
+                }
+            ],
+            "recommended_action": (
+                "Wait for an exclusive P150A window or stop external "
+                "Tenstorrent reset/example jobs, then rerun "
+                "validate-real-decode."
+            ),
+        }
+    runtime_health = report.get("tenstorrent_runtime_health") or {}
+    if (
+        runtime_health.get("status") in {"fail", "timeout", "error"}
+        and (
+            report.get("guard_device_health") is True
+            or report.get("status") == "device_unhealthy"
+        )
+    ):
+        return {
+            "status": "device_unhealthy",
+            "device_busy": False,
+            "device_reset_recommended": True,
+            "findings": [
+                {
+                    "kind": "tenstorrent_runtime_health_failed",
+                    "health_status": runtime_health.get("status"),
+                    "device_id": runtime_health.get("device_id"),
+                    "returncode": runtime_health.get("returncode"),
+                    "timeout_seconds": runtime_health.get("timeout_seconds"),
+                    "stdout": runtime_health.get("stdout"),
+                    "stderr": runtime_health.get("stderr"),
+                    "error": runtime_health.get("error"),
+                }
+            ],
+            "recommended_action": (
+                "Confirm no other jobs are using the board, reset the target "
+                "device, then rerun validate-real-decode with "
+                "--guard-device-busy --guard-device-health."
+            ),
+        }
     findings = _runtime_error_findings(report.get("steps") or {})
     reset_findings = [
         finding

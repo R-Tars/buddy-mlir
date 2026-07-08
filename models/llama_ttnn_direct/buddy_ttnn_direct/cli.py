@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from .codegen.artifacts import prepare_offline_artifacts
@@ -76,6 +78,7 @@ from .validation import (
     default_performance_baselines_path,
     default_search_space_path,
     preflight_real_decode,
+    recover_real_decode_process_failure,
     validate_direct,
     validate_real_decode,
 )
@@ -1637,6 +1640,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run materialize/smoke/profile gates without candidate search.",
     )
     validate_real.add_argument(
+        "--guard-device-busy",
+        action="store_true",
+        help=(
+            "Check for external Tenstorrent reset/example processes before "
+            "running real device gates and write device_busy evidence instead "
+            "of racing a shared board."
+        ),
+    )
+    validate_real.add_argument(
+        "--guard-device-health",
+        action="store_true",
+        help=(
+            "Run an isolated TTNN open/write/read health probe before real "
+            "device gates and write device_unhealthy evidence if the shared "
+            "board is visible but not runnable."
+        ),
+    )
+    validate_real.add_argument(
+        "--disable-device-isolation",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    validate_real.add_argument(
         "--require-full-decode-step",
         action="store_true",
         help=(
@@ -2477,10 +2503,19 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             tokenizer_path=args.tokenizer_path,
             max_new_tokens=args.max_new_tokens,
             prefill_len=args.prefill_len,
+            guard_device_busy=args.guard_device_busy,
+            guard_device_health=args.guard_device_health,
         )
         report_path = args.out_dir / "real_decode_preflight_report.json"
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
         return 0 if report["status"] == "pass" else 1
+
+    if (
+        args.guard_device_health
+        and not args.disable_device_isolation
+        and not args.dry_run
+    ):
+        return _cmd_validate_real_decode_isolated(args)
 
     report = validate_real_decode(
         program_dir=args.program_dir,
@@ -2524,6 +2559,8 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         ),
         prompt=args.prompt,
         tokenizer_path=args.tokenizer_path,
+        guard_device_busy=args.guard_device_busy,
+        guard_device_health=args.guard_device_health,
     )
     print(
         "wrote TTNN Direct real decode validation report: "
@@ -2538,9 +2575,50 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
+    raw_argv = list(getattr(args, "_raw_argv", []))
+    if "--disable-device-isolation" not in raw_argv:
+        raw_argv.append("--disable-device-isolation")
+    command = [
+        sys.executable,
+        "-m",
+        "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+        *raw_argv,
+    ]
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode in {0, 1, 2}:
+        return int(result.returncode)
+
+    report = recover_real_decode_process_failure(
+        out_dir=args.out_dir,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        command=command,
+    )
+    report_path = args.out_dir / "real_decode_validation_report.json"
+    print(
+        "wrote TTNN Direct real decode validation report: "
+        f"{report_path}"
+    )
+    print(f"  status: {report['status']}")
+    return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(raw_argv)
+    args._raw_argv = raw_argv
     return int(args.func(args))
 
 

@@ -72,6 +72,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -158,6 +159,13 @@ def main(argv=None):
     parser.add_argument("--official-config", type=Path, default=None)
     parser.add_argument("--performance-baselines", type=Path, default=None)
     parser.add_argument("--skip-autotune", action="store_true")
+    parser.add_argument("--guard-device-busy", action="store_true")
+    parser.add_argument("--guard-device-health", action="store_true")
+    parser.add_argument(
+        "--disable-device-isolation",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--require-full-decode-step", action="store_true")
     parser.add_argument("--require-model-end-to-end", action="store_true")
@@ -207,7 +215,8 @@ def main(argv=None):
         default=None,
         help="Report directory for validate-real mode.",
     )
-    args = parser.parse_args(argv)
+    raw_argv = list(argv) if argv is not None else sys.argv[1:]
+    args = parser.parse_args(raw_argv)
     program_dir = _program_dir()
 
     if args.mode == "inspect":
@@ -382,6 +391,7 @@ def main(argv=None):
     _ensure_repo_import_path()
     from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
         preflight_real_decode,
+        recover_real_decode_process_failure,
         validate_real_decode,
     )
 
@@ -427,10 +437,25 @@ def main(argv=None):
             ),
             prompt=args.prompt,
             tokenizer_path=args.tokenizer_path,
+            guard_device_busy=args.guard_device_busy,
+            guard_device_health=args.guard_device_health,
         )
         report_path = out_dir / "real_decode_preflight_report.json"
         print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
         return 0 if report["status"] == "pass" else 1
+
+    if (
+        args.guard_device_health
+        and not args.disable_device_isolation
+        and not args.dry_run
+    ):
+        return _run_validate_real_isolated(
+            raw_argv=raw_argv,
+            out_dir=out_dir,
+            recover_real_decode_process_failure=(
+                recover_real_decode_process_failure
+            ),
+        )
 
     report = validate_real_decode(
         program_dir=program_dir,
@@ -472,10 +497,46 @@ def main(argv=None):
         ),
         prompt=args.prompt,
         tokenizer_path=args.tokenizer_path,
+        guard_device_busy=args.guard_device_busy,
+        guard_device_health=args.guard_device_health,
     )
     report_path = out_dir / "real_decode_validation_report.json"
     print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
     return 0 if report["status"] in {"pass", "dry_run"} else 1
+
+
+def _run_validate_real_isolated(
+    *,
+    raw_argv,
+    out_dir,
+    recover_real_decode_process_failure,
+):
+    child_argv = list(raw_argv)
+    if "--disable-device-isolation" not in child_argv:
+        child_argv.append("--disable-device-isolation")
+    command = [sys.executable, str(Path(__file__).resolve()), *child_argv]
+    result = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
+    if result.returncode in {0, 1, 2}:
+        return int(result.returncode)
+    report = recover_real_decode_process_failure(
+        out_dir=out_dir,
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+        command=command,
+    )
+    report_path = out_dir / "real_decode_validation_report.json"
+    print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+    return 1
 
 
 def _report_exit_code(report):
