@@ -116,6 +116,16 @@ class GenerateTest(unittest.TestCase):
                 report["host_copy_profile"]["host_roundtrip_present"]
             )
             self.assertEqual(report["section_profile"]["status"], "not_run")
+            contract = report["end_to_end_contract"]
+            self.assertEqual(contract["status"], "dry_run")
+            self.assertTrue(contract["passed"])
+            self.assertEqual(contract["failed_checks"], [])
+            self.assertEqual(
+                contract["runtime_input_summary"][
+                    "synthetic_runtime_input_tensor_count"
+                ],
+                0,
+            )
 
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -281,6 +291,20 @@ class GenerateTest(unittest.TestCase):
                 report["parameter_setup"]["synthetic_kv_cache_tensor_count"],
                 0,
             )
+            contract = report["end_to_end_contract"]
+            self.assertEqual(contract["status"], "passed")
+            self.assertTrue(contract["passed"])
+            self.assertEqual(contract["failed_checks"], [])
+            self.assertEqual(
+                contract["runtime_input_summary"][
+                    "synthetic_runtime_input_tensor_count"
+                ],
+                0,
+            )
+            check_names = {check["name"] for check in contract["checks"]}
+            self.assertIn("generate.prefill_status", check_names)
+            self.assertIn("generate.generated_text_available", check_names)
+            self.assertIn("generate.synthetic_kv_cache_inputs", check_names)
             ops = [call["op"] for call in fake_ttnn.calls]
             self.assertIn("scaled_dot_product_attention", ops)
             self.assertIn("fill_cache", ops)

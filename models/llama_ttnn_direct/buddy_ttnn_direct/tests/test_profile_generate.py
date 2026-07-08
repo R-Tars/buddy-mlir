@@ -171,6 +171,14 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertFalse(report["official_performance_parity_claimed"])
             self.assertEqual(report["acceptance"]["failed_checks"], [])
             self.assertEqual(
+                report["end_to_end_contract"]["status"],
+                "passed",
+            )
+            self.assertEqual(
+                report["end_to_end_contract"]["failed_checks"],
+                [],
+            )
+            self.assertEqual(
                 report["sections"]["host_copy_ms"]["host_roundtrip_present"],
                 True,
             )

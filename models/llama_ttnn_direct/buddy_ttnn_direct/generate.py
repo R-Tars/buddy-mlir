@@ -520,6 +520,7 @@ def run_generate(
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
+        report["end_to_end_contract"] = _generate_end_to_end_contract(report)
         _write_report(out, report)
         return report
 
@@ -1080,6 +1081,9 @@ def run_generate(
                     "ttnn_version": getattr(ttnn, "__version__", None),
                     "ttnn_environment": collect_ttnn_environment(ttnn),
                 }
+            )
+            report["end_to_end_contract"] = _generate_end_to_end_contract(
+                report
             )
     except NoTTNNDeviceError as err:
         report = _generate_no_device_report(
@@ -1642,7 +1646,182 @@ def _generate_failed_report(
             "ttnn_environment": collect_ttnn_environment(ttnn_module),
         }
     )
+    report["end_to_end_contract"] = _generate_end_to_end_contract(report)
     return report
+
+
+def _generate_end_to_end_contract(report: dict[str, Any]) -> dict[str, Any]:
+    dry_run = bool(report.get("dry_run"))
+    runtime_context = report.get("runtime_context")
+    if not isinstance(runtime_context, dict):
+        runtime_context = {}
+
+    def value_or_setup(key: str) -> Any:
+        value = report.get(key)
+        if value is not None:
+            return value
+        return _setup_count(report, key)
+
+    generated_text_status = report.get("generated_text_status")
+    generated_text_ready = (
+        generated_text_status in {"decoded", "fallback", "placeholder"}
+        and isinstance(report.get("generated_text"), str)
+    )
+    decode_runtime_owned = (
+        bool(report.get("planned_decode_loop_runtime_owned"))
+        if dry_run
+        else bool(report.get("decode_loop_runtime_owned"))
+    )
+    prefill_ready = (
+        report.get("prefill_status") == "dry_run"
+        if dry_run
+        else report.get("prefill_status") == "passed"
+    )
+    runtime_context_ready = (
+        runtime_context.get("status") == "planned"
+        if dry_run
+        else (
+            runtime_context.get("status") == "built"
+            and runtime_context.get("generated_model_initialized") is True
+        )
+    )
+    checks = [
+        {
+            "name": "generate.mode",
+            "passed": report.get("mode") == "generate",
+            "observed": report.get("mode"),
+            "expected": "generate",
+        },
+        {
+            "name": "generate.prefill_status",
+            "passed": prefill_ready,
+            "observed": report.get("prefill_status"),
+            "expected": "dry_run" if dry_run else "passed",
+        },
+        {
+            "name": "generate.decode_loop_runtime_owned",
+            "passed": decode_runtime_owned,
+            "observed": report.get("decode_loop_runtime_owned"),
+            "expected": True,
+        },
+        {
+            "name": "generate.kv_cache_source",
+            "passed": report.get("kv_cache_source") == "prefill",
+            "observed": report.get("kv_cache_source"),
+            "expected": "prefill",
+        },
+        {
+            "name": "generate.input_source",
+            "passed": dry_run or report.get("input_source") == "prompt_prefill",
+            "observed": report.get("input_source"),
+            "expected": "prompt_prefill",
+        },
+        {
+            "name": "generate.generated_text_available",
+            "passed": dry_run or generated_text_ready,
+            "observed": {
+                "generated_text_status": generated_text_status,
+                "generated_text_type": type(report.get("generated_text")).__name__,
+            },
+            "expected": "decoded/fallback/placeholder generated_text",
+        },
+        {
+            "name": "generate.synthetic_runtime_inputs",
+            "passed": value_or_setup("synthetic_runtime_input_tensor_count") == 0,
+            "observed": value_or_setup("synthetic_runtime_input_tensor_count"),
+            "expected": 0,
+        },
+        {
+            "name": "generate.synthetic_rotary_inputs",
+            "passed": value_or_setup("synthetic_rotary_tensor_count") == 0,
+            "observed": value_or_setup("synthetic_rotary_tensor_count"),
+            "expected": 0,
+        },
+        {
+            "name": "generate.synthetic_kv_cache_inputs",
+            "passed": value_or_setup("synthetic_kv_cache_tensor_count") == 0,
+            "observed": value_or_setup("synthetic_kv_cache_tensor_count"),
+            "expected": 0,
+        },
+        {
+            "name": "generate.parameter_tensorization_once",
+            "passed": (
+                value_or_setup("parameter_tensorization_count_per_generate")
+                == 1
+            ),
+            "observed": value_or_setup(
+                "parameter_tensorization_count_per_generate"
+            ),
+            "expected": 1,
+        },
+        {
+            "name": "generate.no_decode_step_parameter_tensorization",
+            "passed": (
+                value_or_setup("parameter_tensorization_count_per_decode_step")
+                == 0
+            ),
+            "observed": value_or_setup(
+                "parameter_tensorization_count_per_decode_step"
+            ),
+            "expected": 0,
+        },
+        {
+            "name": "generate.kv_cache_not_reinitialized_per_step",
+            "passed": report.get("kv_cache_reinitialized_per_step") is False,
+            "observed": report.get("kv_cache_reinitialized_per_step"),
+            "expected": False,
+        },
+        {
+            "name": "generate.runtime_context",
+            "passed": runtime_context_ready,
+            "observed": {
+                "status": runtime_context.get("status"),
+                "generated_model_initialized": runtime_context.get(
+                    "generated_model_initialized"
+                ),
+            },
+            "expected": "planned" if dry_run else "built generated model",
+        },
+    ]
+    failed_checks = [
+        check["name"] for check in checks if not bool(check["passed"])
+    ]
+    status = "dry_run" if dry_run else ("passed" if not failed_checks else "failed")
+    return {
+        "schema_version": 1,
+        "status": status,
+        "passed": not failed_checks,
+        "dry_run": dry_run,
+        "checks": checks,
+        "failed_checks": failed_checks,
+        "runtime_input_summary": {
+            "prefill_prompt_runtime_input_tensor_count": value_or_setup(
+                "prefill_prompt_runtime_input_tensor_count"
+            ),
+            "prefill_rotary_runtime_input_tensor_count": value_or_setup(
+                "prefill_rotary_runtime_input_tensor_count"
+            ),
+            "decode_runtime_state_input_tensor_count": value_or_setup(
+                "decode_runtime_state_input_tensor_count"
+            ),
+            "decode_rotary_runtime_input_tensor_count": value_or_setup(
+                "decode_rotary_runtime_input_tensor_count"
+            ),
+            "kv_cache_runtime_input_tensor_count": value_or_setup(
+                "kv_cache_runtime_input_tensor_count"
+            ),
+            "synthetic_runtime_input_tensor_count": value_or_setup(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            "synthetic_rotary_tensor_count": value_or_setup(
+                "synthetic_rotary_tensor_count"
+            ),
+            "synthetic_kv_cache_tensor_count": value_or_setup(
+                "synthetic_kv_cache_tensor_count"
+            ),
+        },
+        "semantic_disclaimer": report.get("semantic_disclaimer"),
+    }
 
 
 def _generate_reference_summary(
@@ -1861,6 +2040,7 @@ def _profile_generate_from_generate_report(
         "decode_loop_runtime_owned": generate.get("decode_loop_runtime_owned"),
         "runtime_context": generate.get("runtime_context"),
         "parameter_setup": generate.get("parameter_setup"),
+        "end_to_end_contract": generate.get("end_to_end_contract"),
         "synthetic_runtime_input_tensor_count": generate.get(
             "synthetic_runtime_input_tensor_count"
         ),
