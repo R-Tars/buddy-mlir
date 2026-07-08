@@ -37,7 +37,7 @@ from .runtime_environment import (
     collect_ttnn_environment,
 )
 from .decode_loop import run_prompt_decode_loop
-from .generate import run_generate
+from .generate import run_generate, run_profile_generate
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -108,6 +108,7 @@ REAL_DECODE_VALIDATION_STEPS = (
     "profile_decode_step",
     "prompt_decode_loop",
     "generate_prefill_decode",
+    "profile_generate",
     "generate_depth_sweep",
     "decode_depth_sweep",
     "decode_step_autotune",
@@ -429,6 +430,7 @@ def _real_decode_final_acceptance_plan(
                 and step
                 in {
                     "profile_decode_step",
+                    "profile_generate",
                     "decode_depth_sweep",
                     "decode_step_autotune",
                 }
@@ -2146,6 +2148,10 @@ def validate_real_decode(
         "profile_report": root / "decode_step_profile_report.json",
         "prompt_decode_loop_report": root / "prompt_decode_loop_report.json",
         "generate_report": root / "generate_prefill_decode_report.json",
+        "profile_generate_report": root / "generate_profile_report.json",
+        "profile_generate_underlying_report": (
+            root / "profile_generate_underlying_generate_report.json"
+        ),
         "generate_depth_sweep_report": root / "generate_depth_sweep_report.json",
         "generate_depth_reports_dir": root / "generate_depth_reports",
         "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
@@ -3357,6 +3363,173 @@ def validate_real_decode(
             **_reference_summary(generate_report),
         }
 
+    def profile_generate_step() -> dict[str, Any]:
+        if skip_profile_decode_step:
+            profile_report = {
+                "schema_version": 1,
+                "command": "profile-generate",
+                "mode": "profile-generate",
+                "status": "skipped",
+                "passed": False,
+                "dry_run": dry_run,
+                "reason": "skip_profile_decode_step requested",
+                "generate_report": str(
+                    paths["profile_generate_underlying_report"]
+                ),
+                "acceptance": {
+                    "passed": False,
+                    "failed_checks": [
+                        "profile_generate.skipped_by_skip_profile_decode_step"
+                    ],
+                },
+                "official_performance_parity_claimed": False,
+            }
+            _write_json(paths["profile_generate_report"], profile_report)
+            return {
+                "status": "skipped",
+                "profile_generate_report": str(
+                    paths["profile_generate_report"]
+                ),
+                "generate_report": profile_report["generate_report"],
+                "runtime_status": "skipped",
+                "reason": profile_report["reason"],
+                "acceptance": profile_report["acceptance"],
+                "official_performance_parity_claimed": False,
+            }
+        if not dry_run and prompt is None:
+            profile_report = {
+                "schema_version": 1,
+                "command": "profile-generate",
+                "mode": "profile-generate",
+                "status": "skipped",
+                "passed": False,
+                "dry_run": dry_run,
+                "reason": (
+                    "prompt is required for prefill+decode generate profile"
+                ),
+                "generate_report": str(
+                    paths["profile_generate_underlying_report"]
+                ),
+                "acceptance": {
+                    "passed": False,
+                    "failed_checks": ["profile_generate.prompt_required"],
+                },
+                "official_performance_parity_claimed": False,
+            }
+            _write_json(paths["profile_generate_report"], profile_report)
+            return {
+                "status": "skipped",
+                "profile_generate_report": str(
+                    paths["profile_generate_report"]
+                ),
+                "generate_report": profile_report["generate_report"],
+                "runtime_status": "skipped",
+                "reason": profile_report["reason"],
+                "acceptance": profile_report["acceptance"],
+                "official_performance_parity_claimed": False,
+            }
+
+        profile_report = run_profile_generate(
+            out=paths["profile_generate_report"],
+            program_dir=program_dir,
+            model_path=None if dry_run else model_path,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            max_new_tokens=max_new_token_count,
+            layers=layer_count,
+            prefill_len=prefill_token_count,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            dry_run=dry_run,
+            generate_report=paths["profile_generate_underlying_report"],
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+            tokenizer_module=tokenizer_module,
+        )
+        return {
+            "status": _runtime_step_status(
+                profile_report,
+                dry_run=dry_run,
+            ),
+            "profile_generate_report": str(paths["profile_generate_report"]),
+            "generate_report": profile_report.get("generate_report"),
+            "runtime_status": profile_report.get("status"),
+            "passed": profile_report.get("passed"),
+            "generate_status": profile_report.get("generate_status"),
+            "generate_passed": profile_report.get("generate_passed"),
+            "prefill_status": profile_report.get("prefill_status"),
+            "kv_cache_source": profile_report.get("kv_cache_source"),
+            "model_semantics": profile_report.get("model_semantics"),
+            "layers": profile_report.get("layers"),
+            "batch_size": profile_report.get("batch_size"),
+            "cache_len": profile_report.get("cache_len"),
+            "prefill_len": profile_report.get("prefill_len"),
+            "max_new_tokens": profile_report.get("max_new_tokens"),
+            "decode_steps": profile_report.get("decode_steps"),
+            "parameter_source": profile_report.get("parameter_source"),
+            "input_source": profile_report.get("input_source"),
+            "runtime_owner": profile_report.get("runtime_owner"),
+            "generate_runtime_owned": profile_report.get(
+                "generate_runtime_owned"
+            ),
+            "decode_loop_runtime_owned": profile_report.get(
+                "decode_loop_runtime_owned"
+            ),
+            "runtime_context": profile_report.get("runtime_context"),
+            "parameter_setup": profile_report.get("parameter_setup"),
+            "end_to_end_contract": profile_report.get(
+                "end_to_end_contract"
+            ),
+            "synthetic_runtime_input_tensor_count": profile_report.get(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            "synthetic_rotary_tensor_count": profile_report.get(
+                "synthetic_rotary_tensor_count"
+            ),
+            "synthetic_kv_cache_tensor_count": profile_report.get(
+                "synthetic_kv_cache_tensor_count"
+            ),
+            "generated_text_status": profile_report.get(
+                "generated_text_status"
+            ),
+            "generated_token_count_by_user": profile_report.get(
+                "generated_token_count_by_user"
+            ),
+            "latency_ms": profile_report.get("latency_ms"),
+            "prefill_ms": profile_report.get("prefill_ms"),
+            "decode_step_ms_mean": profile_report.get(
+                "decode_step_ms_mean"
+            ),
+            "decode_step_ms_min": profile_report.get("decode_step_ms_min"),
+            "decode_step_ms_max": profile_report.get("decode_step_ms_max"),
+            "decode_step_ms_samples": profile_report.get(
+                "decode_step_ms_samples",
+                [],
+            ),
+            "host_copy_ms": profile_report.get("host_copy_ms"),
+            "host_copy_profile": profile_report.get("host_copy_profile"),
+            "section_profile": profile_report.get("section_profile"),
+            "sections": profile_report.get("sections"),
+            "per_layer": profile_report.get("per_layer"),
+            "tokens_per_second_per_user": profile_report.get(
+                "tokens_per_second_per_user"
+            ),
+            "aggregate_tokens_per_second": profile_report.get(
+                "aggregate_tokens_per_second"
+            ),
+            "throughput_summary": profile_report.get("throughput_summary"),
+            "acceptance": profile_report.get("acceptance"),
+            "official_performance_parity_claimed": profile_report.get(
+                "official_performance_parity_claimed"
+            ),
+            "message": profile_report.get("message"),
+            "error": profile_report.get("error"),
+            "ttnn_environment": profile_report.get("ttnn_environment"),
+        }
+
     def generate_depth_sweep_step() -> dict[str, Any]:
         if not dry_run and prompt is None:
             sweep_report = {
@@ -3666,6 +3839,7 @@ def validate_real_decode(
         "profile_decode_step": profile_step,
         "prompt_decode_loop": prompt_decode_loop_step,
         "generate_prefill_decode": generate_prefill_decode_step,
+        "profile_generate": profile_generate_step,
         "generate_depth_sweep": generate_depth_sweep_step,
         "decode_depth_sweep": decode_depth_sweep_step,
         "decode_step_autotune": autotune_step,
@@ -5165,6 +5339,7 @@ def _real_decode_evidence_manifest(
     profile = steps.get("profile_decode_step", {})
     prompt_loop = steps.get("prompt_decode_loop", {})
     generate_step = steps.get("generate_prefill_decode", {})
+    profile_generate = steps.get("profile_generate", {})
     generate_depth_sweep = steps.get("generate_depth_sweep", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
     autotune = steps.get("decode_step_autotune", {})
@@ -5347,6 +5522,9 @@ def _real_decode_evidence_manifest(
             "generate_prefill_decode_ttnn_environment": generate_step.get(
                 "ttnn_environment"
             ),
+            "profile_generate_ttnn_environment": profile_generate.get(
+                "ttnn_environment"
+            ),
             "generate_depth_sweep_ttnn_environment": (
                 generate_depth_sweep.get("ttnn_environment")
             ),
@@ -5360,6 +5538,37 @@ def _real_decode_evidence_manifest(
                 report,
                 profile,
             ),
+            "profile_generate": {
+                "status": profile_generate.get("status"),
+                "runtime_status": profile_generate.get("runtime_status"),
+                "profile_generate_report": profile_generate.get(
+                    "profile_generate_report"
+                ),
+                "generate_report": profile_generate.get("generate_report"),
+                "prefill_ms": profile_generate.get("prefill_ms"),
+                "decode_step_ms_mean": profile_generate.get(
+                    "decode_step_ms_mean"
+                ),
+                "tokens_per_second_per_user": profile_generate.get(
+                    "tokens_per_second_per_user"
+                ),
+                "aggregate_tokens_per_second": profile_generate.get(
+                    "aggregate_tokens_per_second"
+                ),
+                "throughput_summary": profile_generate.get(
+                    "throughput_summary"
+                ),
+                "sections": profile_generate.get("sections"),
+                "per_layer": profile_generate.get("per_layer"),
+                "host_copy_profile": profile_generate.get(
+                    "host_copy_profile"
+                ),
+                "section_profile": profile_generate.get("section_profile"),
+                "acceptance": profile_generate.get("acceptance"),
+                "official_performance_parity_claimed": profile_generate.get(
+                    "official_performance_parity_claimed"
+                ),
+            },
         },
         "decode_step_contract": decode_step_contract,
         "config_evidence": {
@@ -5436,6 +5645,9 @@ def _real_decode_evidence_manifest(
             ),
             "generate_prefill_decode_tensorization": _tensorization_evidence(
                 generate_step
+            ),
+            "profile_generate_tensorization": _tensorization_evidence(
+                profile_generate
             ),
         },
         "runtime_evidence": {
@@ -5802,6 +6014,76 @@ def _real_decode_evidence_manifest(
                 "failure_diagnostics": generate_step.get(
                     "failure_diagnostics"
                 ),
+            },
+            "profile_generate": {
+                "status": profile_generate.get("status"),
+                "profile_generate_report": profile_generate.get(
+                    "profile_generate_report"
+                ),
+                "generate_report": profile_generate.get("generate_report"),
+                "runtime_status": profile_generate.get("runtime_status"),
+                "generate_status": profile_generate.get("generate_status"),
+                "generate_passed": profile_generate.get("generate_passed"),
+                "prefill_status": profile_generate.get("prefill_status"),
+                "kv_cache_source": profile_generate.get("kv_cache_source"),
+                "model_semantics": profile_generate.get("model_semantics"),
+                "runtime_owner": profile_generate.get("runtime_owner"),
+                "generate_runtime_owned": profile_generate.get(
+                    "generate_runtime_owned"
+                ),
+                "decode_loop_runtime_owned": profile_generate.get(
+                    "decode_loop_runtime_owned"
+                ),
+                "runtime_context": profile_generate.get("runtime_context"),
+                "end_to_end_contract": profile_generate.get(
+                    "end_to_end_contract"
+                ),
+                "synthetic_runtime_input_tensor_count": profile_generate.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
+                "synthetic_rotary_tensor_count": profile_generate.get(
+                    "synthetic_rotary_tensor_count"
+                ),
+                "synthetic_kv_cache_tensor_count": profile_generate.get(
+                    "synthetic_kv_cache_tensor_count"
+                ),
+                "generated_text_status": profile_generate.get(
+                    "generated_text_status"
+                ),
+                "generated_token_count_by_user": profile_generate.get(
+                    "generated_token_count_by_user"
+                ),
+                "latency_ms": profile_generate.get("latency_ms"),
+                "prefill_ms": profile_generate.get("prefill_ms"),
+                "decode_step_ms_mean": profile_generate.get(
+                    "decode_step_ms_mean"
+                ),
+                "decode_step_ms_samples": profile_generate.get(
+                    "decode_step_ms_samples",
+                    [],
+                ),
+                "tokens_per_second_per_user": profile_generate.get(
+                    "tokens_per_second_per_user"
+                ),
+                "aggregate_tokens_per_second": profile_generate.get(
+                    "aggregate_tokens_per_second"
+                ),
+                "throughput_summary": profile_generate.get(
+                    "throughput_summary"
+                ),
+                "sections": profile_generate.get("sections"),
+                "per_layer": profile_generate.get("per_layer"),
+                "host_copy_ms": profile_generate.get("host_copy_ms"),
+                "host_copy_profile": profile_generate.get(
+                    "host_copy_profile"
+                ),
+                "section_profile": profile_generate.get("section_profile"),
+                "acceptance": profile_generate.get("acceptance"),
+                "official_performance_parity_claimed": profile_generate.get(
+                    "official_performance_parity_claimed"
+                ),
+                "reason": profile_generate.get("reason"),
+                "error": profile_generate.get("error"),
             },
             "generate_depth_sweep": {
                 "status": generate_depth_sweep.get("status"),

@@ -1605,6 +1605,7 @@ class ValidateDirectTest(unittest.TestCase):
                 report["results"]["generate_prefill_decode"],
                 "dry_run",
             )
+            self.assertEqual(report["results"]["profile_generate"], "dry_run")
             self.assertEqual(report["results"]["generate_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
@@ -1739,6 +1740,10 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue((out_dir / "single_layer_decode_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
+            self.assertTrue((out_dir / "generate_profile_report.json").is_file())
+            self.assertTrue(
+                (out_dir / "profile_generate_underlying_generate_report.json").is_file()
+            )
             self.assertTrue((out_dir / "generate_depth_sweep_report.json").is_file())
             self.assertTrue((out_dir / "generate_depth_reports").is_dir())
             self.assertTrue((out_dir / "decode_depth_sweep_report.json").is_file())
@@ -1803,6 +1808,21 @@ class ValidateDirectTest(unittest.TestCase):
                 [1],
             )
             self.assertEqual(
+                evidence["runtime_evidence"]["profile_generate"]["status"],
+                "dry_run",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_generate"][
+                    "model_semantics"
+                ],
+                "prompt_conditioned_prefill_decode",
+            )
+            self.assertFalse(
+                evidence["performance_evidence"]["profile_generate"][
+                    "official_performance_parity_claimed"
+                ]
+            )
+            self.assertEqual(
                 evidence["runtime_evidence"]["generate_depth_sweep"][
                     "model_semantics_counts"
                 ],
@@ -1847,6 +1867,12 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(artifact_names["smoke_report"]["exists"])
             self.assertTrue(
                 artifact_names["generate_depth_sweep_report"]["exists"]
+            )
+            self.assertTrue(
+                artifact_names["profile_generate_report"]["exists"]
+            )
+            self.assertTrue(
+                artifact_names["profile_generate_underlying_report"]["exists"]
             )
             self.assertTrue(
                 artifact_names["generate_depth_reports_dir"]["exists"]
@@ -2018,6 +2044,7 @@ class ValidateDirectTest(unittest.TestCase):
             }
             expected_results["prompt_decode_loop"] = "skipped"
             expected_results["generate_prefill_decode"] = "skipped"
+            expected_results["profile_generate"] = "skipped"
             expected_results["generate_depth_sweep"] = "skipped"
             self.assertEqual(report["results"], expected_results)
             self.assertEqual(
@@ -5809,6 +5836,7 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_decode_step",
                     "prompt_decode_loop",
                     "generate_prefill_decode",
+                    "profile_generate",
                     "generate_depth_sweep",
                     "decode_depth_sweep",
                     "decode_step_autotune",
@@ -6763,6 +6791,10 @@ class ValidateDirectTest(unittest.TestCase):
                 "pass",
             )
             self.assertEqual(
+                report["results"]["profile_generate"],
+                "skipped",
+            )
+            self.assertEqual(
                 report["results"]["generate_depth_sweep"],
                 "pass",
             )
@@ -6816,6 +6848,10 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "decode_step_profile_report.json").read_text()
             )
             self.assertEqual(profile_stub["status"], "skipped")
+            profile_generate_stub = json.loads(
+                (out_dir / "generate_profile_report.json").read_text()
+            )
+            self.assertEqual(profile_generate_stub["status"], "skipped")
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
@@ -6825,6 +6861,14 @@ class ValidateDirectTest(unittest.TestCase):
                     "runtime_status"
                 ],
                 "skipped",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_generate"]["status"],
+                "skipped",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_generate"]["reason"],
+                "skip_profile_decode_step requested",
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["generate_prefill_decode"][
