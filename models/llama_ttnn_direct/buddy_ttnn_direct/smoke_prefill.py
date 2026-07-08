@@ -738,6 +738,7 @@ def _prefill_reference(
             output_shapes.get("token"),
             accepted=[
                 expected_outputs["token"],
+                [expected_outputs["token"][0], 1],
                 [expected_outputs["token"][0]],
             ],
         ),

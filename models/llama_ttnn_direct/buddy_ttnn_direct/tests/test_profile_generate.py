@@ -200,7 +200,13 @@ class ProfileGenerateTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["sections"]["host_copy_ms"]["host_roundtrip_present"],
-                True,
+                False,
+            )
+            self.assertEqual(
+                report["sections"]["host_copy_ms"][
+                    "runtime_host_roundtrip_present"
+                ],
+                False,
             )
             self.assertEqual(
                 report["sections"]["host_copy_ms"]["status"],

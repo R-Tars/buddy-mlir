@@ -115,6 +115,14 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
             self.assertEqual(report["parameter_tensorization_count_per_decode_step"], 0)
             self.assertFalse(report["kv_cache_reinitialized_per_step"])
+            self.assertEqual(
+                report["decode_token_runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(report["decode_token_host_roundtrip_per_step"])
+            self.assertTrue(
+                report["host_token_materialization_for_reporting_only"]
+            )
             self.assertEqual(report["host_copy_profile"]["status"], "not_run")
             self.assertFalse(
                 report["host_copy_profile"]["host_roundtrip_present"]
@@ -243,6 +251,15 @@ class GenerateTest(unittest.TestCase):
                 report["runtime_context"]["kv_cache_reinitialized_per_step"]
             )
             self.assertEqual(
+                report["runtime_context"]["decode_token_runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                report["runtime_context"][
+                    "decode_token_host_roundtrip_per_step"
+                ]
+            )
+            self.assertEqual(
                 report["parameter_setup"]["parameter_tensorization_count_per_generate"],
                 1,
             )
@@ -256,12 +273,40 @@ class GenerateTest(unittest.TestCase):
                 report["parameter_setup"]["kv_cache_reinitialized_per_step"]
             )
             self.assertEqual(
+                report["parameter_setup"]["decode_token_runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                report["parameter_setup"][
+                    "decode_token_host_roundtrip_per_step"
+                ]
+            )
+            self.assertEqual(
                 report["prefill"]["first_token"]["token_ids_by_user"],
-                [[17], [17]],
+                [[23], [23]],
+            )
+            self.assertEqual(
+                report["prefill"]["first_token"]["runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                report["prefill"]["first_token"]["runtime_host_roundtrip"]
+            )
+            self.assertTrue(
+                report["prefill"]["first_token"][
+                    "host_materialization_for_reporting"
+                ]
             )
             self.assertEqual(report["host_copy_profile"]["status"], "measured")
-            self.assertTrue(
+            self.assertFalse(
                 report["host_copy_profile"]["host_roundtrip_present"]
+            )
+            self.assertFalse(
+                report["host_copy_profile"]["runtime_host_roundtrip_present"]
+            )
+            self.assertEqual(
+                report["host_copy_profile"]["runtime_handoff"],
+                "device_tensor_direct",
             )
             self.assertIsNotNone(
                 report["host_copy_profile"]["prefill_first_token_ms"]
@@ -299,9 +344,9 @@ class GenerateTest(unittest.TestCase):
                 len(report["section_profile"]["decode_layer_profiles"]),
                 1,
             )
-            self.assertEqual(report["generated_token_ids"], [[17, 23, 23], [17, 23, 23]])
+            self.assertEqual(report["generated_token_ids"], [[23, 23, 23], [23, 23, 23]])
             self.assertEqual(report["generated_text_status"], "fallback")
-            self.assertEqual(report["generated_text"], "<tok:17> <tok:23> <tok:23>")
+            self.assertEqual(report["generated_text"], "<tok:23> <tok:23> <tok:23>")
             self.assertEqual(
                 report["prompt_tokenization"]["effective_token_count"],
                 3,
@@ -354,6 +399,7 @@ class GenerateTest(unittest.TestCase):
             self.assertIn("generate.model_semantics", check_names)
             self.assertIn("generate.generated_text_available", check_names)
             self.assertIn("generate.synthetic_kv_cache_inputs", check_names)
+            self.assertIn("generate.decode_token_device_handoff", check_names)
             self.assertIn(
                 "generate.prefill_kv_cache_write_policy",
                 check_names,

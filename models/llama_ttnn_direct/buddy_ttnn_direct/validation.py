@@ -3352,6 +3352,17 @@ def validate_real_decode(
             "kv_cache_runtime_state": kv_cache_state,
             "runtime_context": generate_report.get("runtime_context"),
             "parameter_setup": generate_report.get("parameter_setup"),
+            "decode_token_runtime_handoff": generate_report.get(
+                "decode_token_runtime_handoff"
+            ),
+            "decode_token_host_roundtrip_per_step": generate_report.get(
+                "decode_token_host_roundtrip_per_step"
+            ),
+            "host_token_materialization_for_reporting_only": (
+                generate_report.get(
+                    "host_token_materialization_for_reporting_only"
+                )
+            ),
             "end_to_end_contract": generate_report.get(
                 "end_to_end_contract"
             ),
@@ -3501,6 +3512,17 @@ def validate_real_decode(
             ),
             "runtime_context": profile_report.get("runtime_context"),
             "parameter_setup": profile_report.get("parameter_setup"),
+            "decode_token_runtime_handoff": profile_report.get(
+                "decode_token_runtime_handoff"
+            ),
+            "decode_token_host_roundtrip_per_step": profile_report.get(
+                "decode_token_host_roundtrip_per_step"
+            ),
+            "host_token_materialization_for_reporting_only": (
+                profile_report.get(
+                    "host_token_materialization_for_reporting_only"
+                )
+            ),
             "end_to_end_contract": profile_report.get(
                 "end_to_end_contract"
             ),
@@ -5613,6 +5635,17 @@ def _real_decode_evidence_manifest(
                 "host_copy_profile": profile_generate.get(
                     "host_copy_profile"
                 ),
+                "decode_token_runtime_handoff": profile_generate.get(
+                    "decode_token_runtime_handoff"
+                ),
+                "decode_token_host_roundtrip_per_step": profile_generate.get(
+                    "decode_token_host_roundtrip_per_step"
+                ),
+                "host_token_materialization_for_reporting_only": (
+                    profile_generate.get(
+                        "host_token_materialization_for_reporting_only"
+                    )
+                ),
                 "section_profile": profile_generate.get("section_profile"),
                 "acceptance": profile_generate.get("acceptance"),
                 "official_performance_parity_claimed": profile_generate.get(
@@ -5999,6 +6032,17 @@ def _real_decode_evidence_manifest(
                     "kv_cache_runtime_input_tensor_count"
                 ),
                 "runtime_context": generate_step.get("runtime_context"),
+                "decode_token_runtime_handoff": generate_step.get(
+                    "decode_token_runtime_handoff"
+                ),
+                "decode_token_host_roundtrip_per_step": generate_step.get(
+                    "decode_token_host_roundtrip_per_step"
+                ),
+                "host_token_materialization_for_reporting_only": (
+                    generate_step.get(
+                        "host_token_materialization_for_reporting_only"
+                    )
+                ),
                 "prefill_cache_population": (
                     (generate_step.get("prefill") or {}).get(
                         "cache_population"
@@ -6088,6 +6132,17 @@ def _real_decode_evidence_manifest(
                     "decode_loop_runtime_owned"
                 ),
                 "runtime_context": profile_generate.get("runtime_context"),
+                "decode_token_runtime_handoff": profile_generate.get(
+                    "decode_token_runtime_handoff"
+                ),
+                "decode_token_host_roundtrip_per_step": profile_generate.get(
+                    "decode_token_host_roundtrip_per_step"
+                ),
+                "host_token_materialization_for_reporting_only": (
+                    profile_generate.get(
+                        "host_token_materialization_for_reporting_only"
+                    )
+                ),
                 "end_to_end_contract": profile_generate.get(
                     "end_to_end_contract"
                 ),

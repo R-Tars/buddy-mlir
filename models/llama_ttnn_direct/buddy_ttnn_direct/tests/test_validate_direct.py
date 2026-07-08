@@ -4322,6 +4322,18 @@ class ValidateDirectTest(unittest.TestCase):
                 generate_step["runtime_context"]["class"],
                 "TTNNDirectRuntimeContext",
             )
+            self.assertEqual(
+                generate_step["decode_token_runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                generate_step["decode_token_host_roundtrip_per_step"]
+            )
+            self.assertTrue(
+                generate_step[
+                    "host_token_materialization_for_reporting_only"
+                ]
+            )
             self.assertFalse(
                 generate_step["runtime_context"][
                     "kv_cache_reinitialized_per_step"
@@ -4355,6 +4367,13 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertFalse(
                 profile_generate["official_performance_parity_claimed"]
+            )
+            self.assertEqual(
+                profile_generate["decode_token_runtime_handoff"],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                profile_generate["decode_token_host_roundtrip_per_step"]
             )
             acceptance_check_names = {
                 check["name"] for check in report["acceptance"]["checks"]
@@ -4582,6 +4601,17 @@ class ValidateDirectTest(unittest.TestCase):
                     "covered_full_depth"
                 ],
                 False,
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_prefill_decode"][
+                    "decode_token_runtime_handoff"
+                ],
+                "device_tensor_direct",
+            )
+            self.assertFalse(
+                evidence["runtime_evidence"]["profile_generate"][
+                    "decode_token_host_roundtrip_per_step"
+                ]
             )
             self.assertNotIn(
                 "decode loop that owns prompt token ids, page table, cache "

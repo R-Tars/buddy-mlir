@@ -1450,9 +1450,10 @@ The report sets `mode=generate`,
 `model_semantics=prompt_conditioned_prefill_decode`, `prefill_status`,
 `kv_cache_source=prefill`, `decode_loop_runtime_owned`,
 `generated_token_ids`, and `generated_text`. This is a functional bring-up
-path, not a performance-parity result: the first version intentionally uses
-host-side token materialization between prefill and decode so the next
-optimization phase can remove that round trip explicitly.
+path, not a performance-parity result: decode now hands TTNN token tensors
+directly from prefill and each decode step into the next decode invocation.
+Host token materialization is kept for reporting and detokenization, and the
+report marks it as `host_token_materialization_for_reporting_only=true`.
 
 `generate-depth-sweep` runs the same prefill+decode generate path across a
 depth ladder and preserves one generate report per depth:

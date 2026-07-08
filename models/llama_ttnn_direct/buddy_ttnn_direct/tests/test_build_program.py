@@ -99,6 +99,9 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("def prefill_prompt", source)
             self.assertIn("ttnn_ops.scaled_dot_product_attention", source)
             self.assertIn("ttnn_ops.fill_cache", source)
+            self.assertIn("def normalize_decode_token", source)
+            self.assertIn("[0, shape[1] - 1]", source)
+            self.assertIn("[batch_size, shape[1]]", source)
 
     def test_generated_run_decode_dry_run_prints_per_layer_ops(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

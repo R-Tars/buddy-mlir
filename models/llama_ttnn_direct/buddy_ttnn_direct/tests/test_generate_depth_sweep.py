@@ -207,7 +207,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
             )
             self.assertEqual(
                 depth_two["generated_text"],
-                "<tok:17> <tok:23> <tok:23>",
+                "<tok:23> <tok:23> <tok:23>",
             )
             self.assertEqual(len(depth_two["prefill_cache_population"]), 2)
             self.assertTrue(Path(depth_two["generate_report"]).is_file())

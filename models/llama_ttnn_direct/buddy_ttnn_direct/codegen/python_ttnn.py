@@ -767,6 +767,18 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         return token
                     slice_op = getattr(self.ttnn, "slice", None)
                     squeeze_op = getattr(self.ttnn, "squeeze", None)
+                    if (
+                        callable(slice_op)
+                        and len(shape) == 2
+                        and shape[0] == batch_size
+                        and shape[1] > 1
+                    ):
+                        self._record(f"{{op_name}}.slice")
+                        return slice_op(
+                            token,
+                            [0, shape[1] - 1],
+                            [batch_size, shape[1]],
+                        )
                     if not callable(slice_op) or not callable(squeeze_op):
                         return token
                     if (
