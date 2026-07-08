@@ -66,6 +66,20 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             self.assertEqual(report["layout"], "tile")
             self.assertEqual(report["dtype"], "bfloat16")
             self.assertEqual(report["memory_config"], "default_or_l1")
+            self.assertEqual(
+                report["input_tensor_contracts"]["cache_position"],
+                {
+                    "dtype": "int32",
+                    "layout": "row_major",
+                    "memory_config": "default_or_dram",
+                },
+            )
+            self.assertEqual(
+                report["input_tensor_contracts"]["query"][
+                    "memory_config"
+                ],
+                "height_sharded_l1",
+            )
             self.assertEqual(report["tensor_conversion_count"], 5)
             self.assertEqual(
                 report["ttnn_environment"]["module_available"],
@@ -189,6 +203,119 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
             )
             self.assertEqual(json.loads(out.read_text()), report)
 
+    def test_runtime_index_tensors_use_int32_row_major(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "primitive_report.json"
+            fake_ttnn = _fake_ttnn()
+
+            report = run_smoke_attention_primitive(
+                out=out,
+                primitive="paged_update_cache",
+                device="p150a",
+                batch_size=2,
+                hidden_size=16,
+                num_heads=4,
+                num_kv_heads=2,
+                head_dim=4,
+                max_cache_len=64,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            by_name = {
+                call["name"]: call
+                for call in fake_ttnn.calls
+                if call["op"] == "from_torch"
+            }
+            self.assertEqual(
+                by_name["page_table"]["kwargs"]["dtype"],
+                "ttnn.int32",
+            )
+            self.assertEqual(
+                by_name["page_table"]["kwargs"]["layout"],
+                "ttnn.ROW_MAJOR_LAYOUT",
+            )
+            self.assertEqual(
+                by_name["page_table"]["values"],
+                [[0, 1], [2, 3]],
+            )
+            self.assertEqual(
+                by_name["cache_position"]["kwargs"]["dtype"],
+                "ttnn.int32",
+            )
+            self.assertEqual(
+                by_name["cache_position"]["values"],
+                [0, 0],
+            )
+            self.assertEqual(
+                by_name["update"]["kwargs"]["memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
+
+    def test_decode_sharded_primitives_request_height_sharded_memory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out = Path(tmpdir) / "primitive_report.json"
+            fake_ttnn = _fake_ttnn()
+
+            report = run_smoke_attention_primitive(
+                out=out,
+                primitive="rotary_embedding_decode",
+                device="p150a",
+                batch_size=2,
+                hidden_size=16,
+                num_heads=4,
+                num_kv_heads=2,
+                head_dim=4,
+                max_cache_len=16,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertTrue(report["passed"])
+            by_name = {
+                call["name"]: call
+                for call in fake_ttnn.calls
+                if call["op"] == "from_torch"
+            }
+            self.assertEqual(
+                by_name["query"]["kwargs"]["memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
+            self.assertEqual(
+                by_name["key"]["kwargs"]["memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
+            self.assertEqual(
+                by_name["transformation_matrix"]["kwargs"]["memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
+
+            concat_out = Path(tmpdir) / "concat_report.json"
+            run_smoke_attention_primitive(
+                out=concat_out,
+                primitive="nlp_concat_heads_decode",
+                device="p150a",
+                batch_size=2,
+                hidden_size=16,
+                num_heads=4,
+                num_kv_heads=2,
+                head_dim=4,
+                max_cache_len=16,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+            to_memory_calls = [
+                call
+                for call in fake_ttnn.calls
+                if call["op"] == "to_memory_config"
+            ]
+            self.assertTrue(to_memory_calls)
+            self.assertEqual(
+                to_memory_calls[-1]["kwargs"]["memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
+
     def test_api_mismatch_is_reported_without_silent_fallback(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             out = Path(tmpdir) / "primitive_report.json"
@@ -274,10 +401,12 @@ class FakeTorchTensor:
         shape: tuple[int, ...],
         dtype: str | None = None,
         name: str = "torch_tensor",
+        values: Any | None = None,
     ) -> None:
         self.shape = list(shape)
         self.dtype = dtype
         self.name = name
+        self.values = values
 
 
 class FakeTTNNTensor:
@@ -304,9 +433,27 @@ def _fake_torch():
     def zeros(shape, dtype=None):
         return FakeTorchTensor(tuple(shape), dtype=dtype, name="zeros")
 
+    def tensor(values, dtype=None):
+        return FakeTorchTensor(
+            tuple(_nested_shape(values)),
+            dtype=dtype,
+            name="tensor",
+            values=values,
+        )
+
     module.randn = randn
     module.zeros = zeros
+    module.tensor = tensor
     return module
+
+
+def _nested_shape(values: Any) -> list[int]:
+    shape = []
+    current = values
+    while isinstance(current, list):
+        shape.append(len(current))
+        current = current[0] if current else []
+    return shape
 
 
 class _CallSink:
@@ -324,14 +471,22 @@ def _fake_ttnn(
     module.__tt_metal_commit__ = "fake-tt-metal"
     module.bfloat16 = "ttnn.bfloat16"
     module.float32 = "ttnn.float32"
+    module.int32 = "ttnn.int32"
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
+    module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
     module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
+    module.L1_HEIGHT_SHARDED_MEMORY_CONFIG = (
+        "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
+    )
+    module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     def from_torch(tensor, **kwargs):
         module.calls.append(
             {
                 "op": "from_torch",
+                "name": tensor.name,
                 "shape": list(tensor.shape),
+                "values": tensor.values,
                 "kwargs": dict(kwargs),
             }
         )

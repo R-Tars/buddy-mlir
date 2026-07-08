@@ -20,6 +20,7 @@ from .smoke_decode_shell import (
     _shape_check,
 )
 from .runtime_environment import collect_ttnn_environment
+from .runtime_inputs import build_decode_runtime_state
 from .templates import ttnn_ops
 from .templates.ttnn_ops import UnsupportedTTNNOp
 
@@ -308,19 +309,45 @@ def _run_primitive(
     dtype = _ttnn_dtype(ttnn, dtype_seed)
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     memory_config = _memory_config(ttnn)
+    height_sharded_memory_config = _height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=int(plan["batch_size"]),
+        head_dim=head_dim,
+    )
+    index_layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
+    index_dtype = getattr(ttnn, "int32", dtype)
+    page_state = _page_state_from_plan(plan)
 
     def tensor(name: str) -> Any:
         shape = plan["input_shapes"][name]
-        if "position" in name or name == "page_table":
-            torch_tensor = _zeros(torch, shape)
+        contract = plan["input_tensor_contracts"][name]
+        if contract["dtype"] == "int32":
+            torch_tensor = _runtime_index_tensor(
+                torch,
+                name=name,
+                shape=shape,
+                page_state=page_state,
+            )
+            kwargs = {
+                "dtype": index_dtype,
+                "layout": index_layout,
+                "device": device,
+            }
         else:
-            torch_tensor = _randn(torch, shape, dtype_seed)
-        return ttnn.from_torch(
-            torch_tensor,
-            dtype=dtype,
-            layout=layout,
-            device=device,
-        )
+            torch_tensor = _randn(torch, shape, dtype_seed, name=name)
+            kwargs = {
+                "dtype": dtype,
+                "layout": layout,
+                "device": device,
+            }
+            if contract["memory_config"] == "height_sharded_l1":
+                kwargs["memory_config"] = height_sharded_memory_config
+            elif contract["memory_config"] == "dram":
+                dram_memory_config = getattr(ttnn, "DRAM_MEMORY_CONFIG", None)
+                if dram_memory_config is not None:
+                    kwargs["memory_config"] = dram_memory_config
+        return ttnn.from_torch(torch_tensor, **_without_none(kwargs))
 
     if primitive == "qkv_linear":
         return ttnn.linear(
@@ -340,7 +367,7 @@ def _run_primitive(
             tensor("fused_qkv"),
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
-            memory_config=memory_config,
+            memory_config=height_sharded_memory_config,
         )
     if primitive == "rotary_embedding_decode":
         return ttnn_ops.rotary_embedding_decode(
@@ -368,14 +395,14 @@ def _run_primitive(
             tensor("page_table"),
             tensor("cache_position"),
             scale=float(head_dim) ** -0.5,
-            memory_config=memory_config,
+            memory_config=height_sharded_memory_config,
         )
     if primitive == "nlp_concat_heads_decode":
         return ttnn_ops.nlp_concat_heads_decode(
             ttnn,
             tensor("attention"),
             num_heads=num_heads,
-            memory_config=memory_config,
+            memory_config=height_sharded_memory_config,
         )
     raise AssertionError(f"unhandled primitive: {primitive}")
 
@@ -485,6 +512,14 @@ def _primitive_plan(
         },
     }
     plan = dict(plans[primitive])
+    plan["primitive"] = primitive
+    plan["batch_size"] = batch_size
+    plan["max_cache_len"] = max_cache_len
+    plan["page_block_size"] = page_block_size
+    plan["input_tensor_contracts"] = _input_tensor_contracts(
+        primitive,
+        input_shapes=plan["input_shapes"],
+    )
     plan["tensor_conversion_count"] = len(plan["input_shapes"])
     return plan
 
@@ -538,6 +573,7 @@ def _base_report(
         "memory_config": "default_or_l1",
         "dry_run": dry_run,
         "input_shapes": plan["input_shapes"],
+        "input_tensor_contracts": plan["input_tensor_contracts"],
         "expected_output_shapes": plan["expected_output_shapes"],
         "output_shapes": None,
         "tensor_conversion_count": plan["tensor_conversion_count"],
@@ -711,24 +747,97 @@ def _shape(tensor: Any) -> list[int] | None:
     return [int(dim) for dim in shape]
 
 
-def _randn(torch: Any, shape: list[int], dtype_seed: str) -> Any:
+def _randn(
+    torch: Any,
+    shape: list[int],
+    dtype_seed: str,
+    *,
+    name: str | None = None,
+) -> Any:
     dtype = (
         getattr(torch, "bfloat16", None)
         if dtype_seed == "bf16"
         else getattr(torch, "float32", None)
     )
     try:
-        return torch.randn(tuple(shape), dtype=dtype)
+        tensor = torch.randn(tuple(shape), dtype=dtype)
     except TypeError:
-        return torch.randn(tuple(shape))
+        tensor = torch.randn(tuple(shape))
+    if name is not None:
+        try:
+            tensor.name = name
+        except AttributeError:
+            pass
+    return tensor
 
 
-def _zeros(torch: Any, shape: list[int]) -> Any:
+def _runtime_index_tensor(
+    torch: Any,
+    *,
+    name: str,
+    shape: list[int],
+    page_state: Any | None,
+) -> Any:
     dtype = getattr(torch, "int32", None)
+    if name == "page_table" and page_state is not None:
+        return _tensor_from_values(
+            torch,
+            page_state.page_table,
+            dtype=dtype,
+            name=name,
+            fallback_shape=shape,
+        )
+    if name == "cache_position" and page_state is not None:
+        return _tensor_from_values(
+            torch,
+            page_state.cache_position,
+            dtype=dtype,
+            name=name,
+            fallback_shape=shape,
+        )
+    return _zeros(torch, shape, dtype=dtype, name=name)
+
+
+def _tensor_from_values(
+    torch: Any,
+    values: Any,
+    *,
+    dtype: Any,
+    name: str,
+    fallback_shape: list[int],
+) -> Any:
+    tensor_fn = getattr(torch, "tensor", None)
+    if callable(tensor_fn):
+        try:
+            tensor = tensor_fn(values, dtype=dtype)
+        except TypeError:
+            tensor = tensor_fn(values)
+    else:
+        tensor = _zeros(torch, fallback_shape, dtype=dtype, name=name)
     try:
-        return torch.zeros(tuple(shape), dtype=dtype)
+        tensor.name = name
+    except AttributeError:
+        pass
+    return tensor
+
+
+def _zeros(
+    torch: Any,
+    shape: list[int],
+    *,
+    dtype: Any | None = None,
+    name: str | None = None,
+) -> Any:
+    try:
+        tensor = torch.zeros(tuple(shape), dtype=dtype)
     except TypeError:
-        return torch.zeros(tuple(shape))
+        tensor = torch.zeros(tuple(shape))
+    if name is not None:
+        try:
+            tensor.name = name
+        except AttributeError:
+            pass
+    return tensor
 
 
 def _ttnn_dtype(ttnn: Any, dtype_seed: str) -> Any:
@@ -739,6 +848,141 @@ def _ttnn_dtype(ttnn: Any, dtype_seed: str) -> Any:
 
 def _memory_config(ttnn: Any) -> Any | None:
     return getattr(ttnn, "L1_MEMORY_CONFIG", None)
+
+
+def _height_sharded_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+    head_dim: int,
+) -> Any | None:
+    create_sharded = getattr(ttnn, "create_sharded_memory_config", None)
+    if callable(create_sharded):
+        core_grid = _batch_core_grid(ttnn, device, batch_size=batch_size)
+        shard_strategy = getattr(getattr(ttnn, "ShardStrategy", None), "HEIGHT", None)
+        shard_orientation = getattr(
+            getattr(ttnn, "ShardOrientation", None),
+            "ROW_MAJOR",
+            None,
+        )
+        tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
+        if core_grid is not None and shard_strategy is not None:
+            try:
+                return create_sharded(
+                    shape=(tile_size, head_dim),
+                    core_grid=core_grid,
+                    strategy=shard_strategy,
+                    orientation=shard_orientation,
+                    use_height_and_width_as_shard_shape=True,
+                )
+            except Exception:
+                pass
+    return getattr(
+        ttnn,
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+        _memory_config(ttnn),
+    )
+
+
+def _batch_core_grid(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+) -> Any | None:
+    core_grid_type = getattr(ttnn, "CoreGrid", None)
+    if not callable(core_grid_type):
+        return None
+    compute_grid = None
+    compute_with_storage_grid_size = getattr(
+        device,
+        "compute_with_storage_grid_size",
+        None,
+    )
+    if callable(compute_with_storage_grid_size):
+        try:
+            compute_grid = compute_with_storage_grid_size()
+        except Exception:
+            compute_grid = None
+    physical_x = int(getattr(compute_grid, "x", 8) or 8)
+    physical_y = int(getattr(compute_grid, "y", 8) or 8)
+    grid_x = max(1, min(batch_size, physical_x))
+    while grid_x > 1 and batch_size % grid_x != 0:
+        grid_x -= 1
+    grid_y = max(1, (batch_size + grid_x - 1) // grid_x)
+    if grid_y > physical_y:
+        return None
+    try:
+        return core_grid_type(y=grid_y, x=grid_x)
+    except TypeError:
+        return core_grid_type(grid_y, grid_x)
+
+
+def _page_state_from_plan(plan: dict[str, Any]) -> Any | None:
+    input_shapes = plan["input_shapes"]
+    page_table_shape = input_shapes.get("page_table")
+    cache_position_shape = input_shapes.get("cache_position")
+    if not page_table_shape or not cache_position_shape:
+        return None
+    page_count = int(page_table_shape[1])
+    return build_decode_runtime_state(
+        batch_size=int(page_table_shape[0]),
+        cache_len=page_count * int(plan["page_block_size"]),
+        page_block_size=int(plan["page_block_size"]),
+        prompt_token_count=1,
+    )
+
+
+def _input_tensor_contracts(
+    primitive: str,
+    *,
+    input_shapes: dict[str, list[int]],
+) -> dict[str, dict[str, str]]:
+    contracts = {
+        name: {
+            "dtype": "bfloat16_or_float32",
+            "layout": "tile",
+            "memory_config": "default_or_l1",
+        }
+        for name in input_shapes
+    }
+    for name in ("page_table", "cache_position"):
+        if name in contracts:
+            contracts[name] = {
+                "dtype": "int32",
+                "layout": "row_major",
+                "memory_config": "default_or_dram",
+            }
+
+    height_sharded_inputs = {
+        "rotary_embedding_decode": {
+            "query",
+            "key",
+            "cos_matrix",
+            "sin_matrix",
+            "transformation_matrix",
+        },
+        "paged_update_cache": {"update"},
+        "paged_scaled_dot_product_attention_decode": {"query"},
+        "nlp_concat_heads_decode": {"attention"},
+    }.get(primitive, set())
+    for name in height_sharded_inputs:
+        if name in contracts:
+            contracts[name] = {
+                "dtype": "bfloat16_or_float32",
+                "layout": "tile",
+                "memory_config": "height_sharded_l1",
+            }
+
+    for name in ("cache", "key_cache", "value_cache"):
+        if name in contracts:
+            contracts[name]["memory_config"] = "dram"
+    return contracts
+
+
+def _without_none(kwargs: dict[str, Any]) -> dict[str, Any]:
+    return {name: value for name, value in kwargs.items() if value is not None}
 
 
 @contextmanager
