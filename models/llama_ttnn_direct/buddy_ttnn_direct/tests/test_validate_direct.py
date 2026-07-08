@@ -6489,6 +6489,192 @@ class ValidateDirectTest(unittest.TestCase):
                 "runtime_error",
             )
 
+    def test_validate_real_decode_skip_profile_continues_generate_evidence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            out_dir = root / "validate_real"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            def fake_generate(*args, **kwargs):
+                out = Path(kwargs["out"])
+                generate_report = {
+                    "status": "passed",
+                    "passed": True,
+                    "runtime_status": "passed",
+                    "prefill_status": "passed",
+                    "generate_runtime_owned": True,
+                    "decode_loop_runtime_owned": True,
+                    "kv_cache_source": "prefill",
+                    "model_semantics": "prompt_conditioned_prefill_decode",
+                    "layers": kwargs["layers"],
+                    "batch_size": kwargs["batch_size"],
+                    "cache_len": kwargs["cache_len"],
+                    "prefill_len": kwargs["prefill_len"],
+                    "max_new_tokens": kwargs["max_new_tokens"],
+                    "decode_steps": 2,
+                    "generated_token_budget": {
+                        "total_planned_generated_tokens": 3,
+                    },
+                    "parameter_source": "hf_model",
+                    "input_source": "prompt_prefill",
+                    "runtime_owner": "TTNNDirectRuntimeContext",
+                    "generated_token_ids": [[17, 23, 23], [17, 23, 23]],
+                    "generated_token_id_source": "runtime",
+                    "token_materialization_status": "passed",
+                    "generated_text": "<tok:17> <tok:23> <tok:23>",
+                    "generated_text_by_user": [
+                        "<tok:17> <tok:23> <tok:23>",
+                        "<tok:17> <tok:23> <tok:23>",
+                    ],
+                    "generated_text_status": "fallback",
+                    "generated_text_source": "tokenizer",
+                    "synthetic_runtime_input_tensor_count": 0,
+                    "synthetic_rotary_tensor_count": 0,
+                    "synthetic_kv_cache_tensor_count": 0,
+                    "parameter_setup": {
+                        "prefill_prompt_runtime_input_tensor_count": 1,
+                        "decode_runtime_state_input_tensor_count": 2,
+                        "prefill_rotary_runtime_input_tensor_count": 3,
+                        "decode_rotary_runtime_input_tensor_count": 3,
+                    },
+                    "kv_cache_runtime_state": {
+                        "tensor_count": 2,
+                    },
+                    "prefill": {"status": "passed"},
+                    "prompt_tokenization": {"status": "tokenized"},
+                    "prefill_tokenization": {"status": "tokenized"},
+                    "runtime_context": {
+                        "class": "TTNNDirectRuntimeContext",
+                        "status": "built",
+                    },
+                    "per_step_token_metadata": [],
+                    "step_reports": [],
+                    "latency_ms": 1.0,
+                    "throughput_summary": {
+                        "status": "measured",
+                        "tokens_per_second_per_user": 1.0,
+                    },
+                    "ttnn_environment": {
+                        "module_available": True,
+                    },
+                    "trace": {"status": "disabled"},
+                    "reference_status": "passed",
+                    "reference_failed_checks": [],
+                }
+                out.write_text(json.dumps(generate_report, indent=2) + "\n")
+                return generate_report
+
+            with patch.object(
+                validation_module,
+                "run_generate",
+                side_effect=fake_generate,
+            ):
+                with _fake_torch_and_safetensors():
+                    report = validate_real_decode(
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        out_dir=out_dir,
+                        layers=1,
+                        batch_size=2,
+                        cache_len=16,
+                        max_new_tokens=3,
+                        prefill_len=8,
+                        device="p150a",
+                        prompt="hello tenstorrent",
+                        tokenizer_path=model_dir,
+                        tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                        skip_profile_decode_step=True,
+                        ttnn_module=_make_fake_ttnn(),
+                        torch_module=_fake_torch(),
+                    )
+
+            self.assertEqual(report["status"], "acceptance_failed")
+            self.assertTrue(report["skip_profile_decode_step"])
+            self.assertEqual(
+                report["results"]["profile_decode_step"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["results"]["generate_prefill_decode"],
+                "pass",
+            )
+            self.assertEqual(
+                report["results"]["decode_depth_sweep"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["results"]["decode_step_autotune"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["steps"]["profile_decode_step"]["runtime_status"],
+                "skipped",
+            )
+            self.assertEqual(
+                report["steps"]["generate_prefill_decode"]["prefill_status"],
+                "passed",
+            )
+            self.assertTrue(
+                report["steps"]["generate_prefill_decode"][
+                    "decode_loop_runtime_owned"
+                ]
+            )
+            self.assertEqual(
+                report["final_acceptance_plan"]["required_runtime_steps"],
+                [
+                    "official_config_diff",
+                    "materialize_parameters",
+                    "decode_shell",
+                    "attention_primitives",
+                    "attention_layer",
+                    "single_layer_decode",
+                    "smoke_decode_step",
+                    "prompt_decode_loop",
+                    "generate_prefill_decode",
+                ],
+            )
+            profile_stub = json.loads(
+                (out_dir / "decode_step_profile_report.json").read_text()
+            )
+            self.assertEqual(profile_stub["status"], "skipped")
+            evidence = json.loads(
+                (out_dir / "real_decode_evidence_manifest.json").read_text()
+            )
+            self.assertEqual(evidence["status"], "incomplete")
+            self.assertEqual(
+                evidence["runtime_evidence"]["profile_decode_step"][
+                    "runtime_status"
+                ],
+                "skipped",
+            )
+            self.assertEqual(
+                evidence["runtime_evidence"]["generate_prefill_decode"][
+                    "prefill_status"
+                ],
+                "passed",
+            )
+
     def test_validate_real_decode_fails_without_profile_runtime_inputs(
         self,
     ) -> None:

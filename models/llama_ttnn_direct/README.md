@@ -799,7 +799,16 @@ opening a TTNN device. `--require-official-performance-parity` rejects
 decode-step autotune leaderboard and best-candidate summary. It also requires
 `--metric tokens_per_second_per_user`, so the best candidate is selected by the
 same per-user decode throughput used for official baseline ratios; latency
-remains useful for exploratory bring-up runs. With
+remains useful for exploratory bring-up runs.
+Use `--skip-profile-decode-step` during short or unstable board windows when
+the priority is collecting prompt-loop and prefill+decode generate evidence
+before profiling. This writes a skipped `decode_step_profile_report.json`,
+skips the profile-backed decode-depth sweep and autotune steps, and continues
+to later runtime gates. It is a bring-up-only control: official performance
+parity rejects it, and final performance/full-depth acceptance remains
+incomplete until profile evidence is collected.
+
+With
 `--require-trace`, `--require-decode-shell-numeric-reference`, and/or
 `--min-tokens-per-second-per-user`, the final report includes an
 `acceptance` block that checks materialized tensor count, real-weight

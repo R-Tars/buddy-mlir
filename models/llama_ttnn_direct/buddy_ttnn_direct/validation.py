@@ -262,6 +262,7 @@ def _real_decode_cli_args(
     trace: bool,
     trace_iterations: int,
     skip_autotune: bool,
+    skip_profile_decode_step: bool,
     require_full_decode_step: bool,
     require_model_end_to_end: bool,
     require_official_performance_parity: bool,
@@ -339,6 +340,8 @@ def _real_decode_cli_args(
         args.append("--dry-run")
     if skip_autotune:
         args.append("--skip-autotune")
+    if skip_profile_decode_step:
+        args.append("--skip-profile-decode-step")
     if require_full_decode_step:
         args.append("--require-full-decode-step")
     if require_model_end_to_end:
@@ -389,6 +392,7 @@ def _real_decode_final_acceptance_plan(
     *,
     metric: str,
     skip_autotune: bool,
+    skip_profile_decode_step: bool,
     require_full_decode_step: bool,
     require_model_end_to_end: bool,
     require_official_performance_parity: bool,
@@ -416,7 +420,18 @@ def _real_decode_final_acceptance_plan(
     runtime_steps = [
         step
         for step in REAL_DECODE_VALIDATION_STEPS
-        if not (skip_autotune and step == "decode_step_autotune")
+        if not (
+            (skip_autotune and step == "decode_step_autotune")
+            or (
+                skip_profile_decode_step
+                and step
+                in {
+                    "profile_decode_step",
+                    "decode_depth_sweep",
+                    "decode_step_autotune",
+                }
+            )
+        )
     ]
     effective_requirements = {
         "require_full_decode_step": bool(require_full_decode_step),
@@ -434,6 +449,7 @@ def _real_decode_final_acceptance_plan(
         "require_decode_shell_numeric_reference": bool(
             require_decode_shell_numeric_reference
         ),
+        "skip_profile_decode_step": bool(skip_profile_decode_step),
     }
     requested_flags = []
     for flag, enabled in (
@@ -1070,6 +1086,7 @@ def preflight_real_decode(
     trace_iterations: int = 1,
     metric: str = "latency_ms",
     skip_autotune: bool = False,
+    skip_profile_decode_step: bool = False,
     require_full_decode_step: bool = False,
     require_model_end_to_end: bool = False,
     require_official_performance_parity: bool = False,
@@ -1193,6 +1210,18 @@ def preflight_real_decode(
             message=(
                 "official performance parity requires decode-step autotune "
                 "evidence; use --skip-autotune only for bring-up"
+            ),
+        )
+        add(
+            "requirements.official_performance_profile_enabled",
+            not skip_profile_decode_step,
+            observed={
+                "skip_profile_decode_step": skip_profile_decode_step,
+            },
+            expected="skip_profile_decode_step=false",
+            message=(
+                "official performance parity requires profile-decode-step "
+                "evidence; use --skip-profile-decode-step only for bring-up"
             ),
         )
         add(
@@ -1693,6 +1722,7 @@ def preflight_real_decode(
         trace_iterations=rerun_trace_iterations,
         metric=metric,
         skip_autotune=skip_autotune,
+        skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
         require_official_performance_parity=normalized[
@@ -1742,6 +1772,7 @@ def preflight_real_decode(
         trace_iterations=rerun_trace_iterations,
         metric=metric,
         skip_autotune=skip_autotune,
+        skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
         require_official_performance_parity=normalized[
@@ -1793,6 +1824,7 @@ def preflight_real_decode(
         "cache_len": resolved_cache_len,
         "trace_iterations": trace_iteration_count,
         "metric": metric,
+        "skip_profile_decode_step": skip_profile_decode_step,
         "requirements": normalized,
         "baseline_reference": baseline_reference,
         "baseline_reference_entry": _performance_baseline_entry_summary(
@@ -1820,6 +1852,7 @@ def preflight_real_decode(
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
             skip_autotune=skip_autotune,
+            skip_profile_decode_step=skip_profile_decode_step,
             require_full_decode_step=normalized[
                 "require_full_decode_step"
             ],
@@ -1889,6 +1922,7 @@ def validate_real_decode(
     metric: str = "latency_ms",
     dry_run: bool = False,
     skip_autotune: bool = False,
+    skip_profile_decode_step: bool = False,
     require_full_decode_step: bool = False,
     require_model_end_to_end: bool = False,
     require_official_performance_parity: bool = False,
@@ -1965,6 +1999,11 @@ def validate_real_decode(
             raise ValueError(
                 "require_official_performance_parity cannot be used with "
                 "skip_autotune"
+            )
+        if skip_profile_decode_step:
+            raise ValueError(
+                "require_official_performance_parity cannot be used with "
+                "skip_profile_decode_step"
             )
         if metric != OFFICIAL_PERFORMANCE_PARITY_METRIC:
             raise ValueError(
@@ -2134,6 +2173,7 @@ def validate_real_decode(
         metric=metric,
         dry_run=dry_run,
         skip_autotune=skip_autotune,
+        skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=require_full_decode_step,
         require_model_end_to_end=require_model_end_to_end,
         require_official_performance_parity=require_official_performance_parity,
@@ -2175,6 +2215,7 @@ def validate_real_decode(
         trace_iterations=trace_iterations,
         metric=metric,
         skip_autotune=skip_autotune,
+        skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=require_full_decode_step,
         require_model_end_to_end=require_model_end_to_end,
         require_official_performance_parity=require_official_performance_parity,
@@ -2252,6 +2293,7 @@ def validate_real_decode(
         "metric": metric,
         "dry_run": dry_run,
         "skip_autotune": skip_autotune,
+        "skip_profile_decode_step": skip_profile_decode_step,
         "require_full_decode_step": require_full_decode_step,
         "require_model_end_to_end": require_model_end_to_end,
         "require_official_performance_parity": (
@@ -2291,6 +2333,7 @@ def validate_real_decode(
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
             skip_autotune=skip_autotune,
+            skip_profile_decode_step=skip_profile_decode_step,
             require_full_decode_step=require_full_decode_step,
             require_model_end_to_end=require_model_end_to_end,
             require_official_performance_parity=(
@@ -2947,6 +2990,36 @@ def validate_real_decode(
         }
 
     def profile_step() -> dict[str, Any]:
+        if skip_profile_decode_step:
+            profile_report = {
+                "schema_version": 1,
+                "command": "profile-decode-step",
+                "status": "skipped",
+                "reason": "skip_profile_decode_step requested",
+                "dry_run": dry_run,
+                "program_dir": str(program_dir),
+                "model_path": str(model_path),
+                "layers": layer_count,
+                "batch_size": resolved_batch_size,
+                "cache_len": resolved_cache_len,
+                "device": device,
+                "device_id": device_id,
+                "trace_requested": trace,
+                "trace_iterations": trace_iterations,
+            }
+            _write_json(paths["profile_report"], profile_report)
+            return {
+                "status": "skipped",
+                "profile_report": str(paths["profile_report"]),
+                "runtime_status": "skipped",
+                "reason": profile_report["reason"],
+                "layers": layer_count,
+                "batch_size": resolved_batch_size,
+                "cache_len": resolved_cache_len,
+                "trace_status": "skipped",
+                "trace": {"status": "skipped"},
+            }
+
         profile_report = profile_decode_step(
             out=paths["profile_report"],
             program_dir=program_dir,
@@ -3268,6 +3341,39 @@ def validate_real_decode(
         }
 
     def decode_depth_sweep_step() -> dict[str, Any]:
+        if skip_profile_decode_step:
+            sweep_report = {
+                "schema_version": 1,
+                "command": "decode-depth-sweep",
+                "status": "skipped",
+                "reason": (
+                    "skip_profile_decode_step requested; "
+                    "decode-depth-sweep requires profile-decode-step"
+                ),
+                "dry_run": dry_run,
+                "depths": [],
+                "depth_count": 0,
+                "records": [],
+            }
+            _write_json(paths["decode_depth_sweep_report"], sweep_report)
+            return {
+                "status": "skipped",
+                "decode_depth_sweep_report": str(
+                    paths["decode_depth_sweep_report"]
+                ),
+                "profiles_dir": str(paths["decode_depth_profiles_dir"]),
+                "reason": sweep_report["reason"],
+                "depths": [],
+                "depth_count": 0,
+                "status_counts": {"skipped": 1},
+                "records": [],
+                "acceptance": {
+                    "status": "skipped",
+                    "passed": False,
+                    "failed_checks": ["decode_depth_sweep.profile_required"],
+                },
+            }
+
         sweep_depths = _validation_depth_sweep_targets(
             layer_count=layer_count,
             program_num_layers=program_num_layers,
@@ -3321,10 +3427,16 @@ def validate_real_decode(
         }
 
     def autotune_step() -> dict[str, Any]:
-        if skip_autotune:
+        if skip_autotune or skip_profile_decode_step:
+            reason = (
+                "skip_profile_decode_step requested; "
+                "decode-step autotune requires profile-decode-step"
+                if skip_profile_decode_step
+                else "skip_autotune requested"
+            )
             return {
                 "status": "skipped",
-                "reason": "skip_autotune requested",
+                "reason": reason,
             }
         autotune_report = run_decode_step_autotune(
             program_dir=program_dir,
