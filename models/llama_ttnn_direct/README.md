@@ -1529,7 +1529,7 @@ host before decode; the persistent context prevents weight/KV reinitialization
 from being hidden inside that bring-up path.
 
 A compact local P150A functional evidence record from 2026-07-09 is tracked in
-`buddy_ttnn_direct/reference/p150a_generate_depth_evidence_20260709.json`.
+`docs/evidence/p150a_generate_depth_evidence_20260709.json`.
 It records prompt-conditioned generate passes for depths `1,2,4,8,16,full`
 with `--require-full-depth`, batch 32, prefill length 128, cache length 1024,
 and two generated tokens per user. This is functional bring-up evidence only;
@@ -1582,7 +1582,7 @@ M6: >90% official
 Dry-run reports preserve the schema without marking any milestone passed.
 
 A compact full-depth P150A profile record from 2026-07-09 is tracked in
-`buddy_ttnn_direct/reference/p150a_generate_profile_evidence_20260709.json`.
+`docs/evidence/p150a_generate_profile_evidence_20260709.json`.
 It records `profile-generate` for 32 layers, batch 32, prefill length 128, and
 two generated tokens per user. The observed throughput is about `0.1898 t/s/u`
 against the `33.1 t/s/u` official reference, with `highest_passed=M1` and
