@@ -22,6 +22,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
     build_decode_runtime_for_position,
     materialize_generate_token_events,
     prefill_token_direct_handoff,
+    run_decode_loop,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.generate import (
     build_generate_state,
@@ -703,6 +704,102 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(runtime_state.tensor_conversion_count, 5)
         self.assertEqual(runtime_state.decode_runtime_state_input_tensor_count, 2)
         self.assertEqual(runtime_state.rotary_runtime_input_tensor_count, 3)
+
+    def test_runtime_decode_loop_updates_context_and_counts_runtime_tensors(self) -> None:
+        original_builder = runtime_decode.build_decode_runtime_for_position
+        original_time_decode = runtime_decode._time_decode_step
+        original_input_shapes = runtime_decode._loop_input_shapes
+        original_output_shapes = runtime_decode._loop_output_shapes
+        original_reference = runtime_decode._decode_step_reference
+        original_observed_ops = runtime_decode._generated_observed_op_sequence
+        builder_indexes: list[int] = []
+
+        def fake_builder(**kwargs: object) -> types.SimpleNamespace:
+            generated_token_index = int(kwargs["generated_token_index"])
+            builder_indexes.append(generated_token_index)
+            return types.SimpleNamespace(
+                page_table=f"page-table-{generated_token_index}",
+                cache_position=f"cache-position-{generated_token_index}",
+                decode_runtime_state={
+                    "cache_position_value": 5 + generated_token_index
+                },
+                rotary_runtime_state={"rotary_index": generated_token_index},
+                tensor_conversion_count=5,
+                decode_runtime_state_input_tensor_count=2,
+                rotary_runtime_input_tensor_count=3,
+            )
+
+        decode_tokens = [_FakeTensor((2, 1)), _FakeTensor((2, 1))]
+
+        def fake_time_decode_step(**kwargs: object) -> tuple[object, list[object], float]:
+            step_index = len(builder_indexes) - 1
+            return (
+                decode_tokens[step_index],
+                [types.SimpleNamespace(k=_FakeTensor((1,)), v=_FakeTensor((1,)))],
+                1.25 + step_index,
+            )
+
+        context = types.SimpleNamespace(
+            parameters=object(),
+            prefill_tokenization={"effective_token_count": 4},
+            generated_model=object(),
+            token_ids="prefill-token",
+            page_table=None,
+            cache_position=None,
+            kv_cache=["initial-cache"],
+        )
+
+        def install_decode_runtime(runtime_state: types.SimpleNamespace) -> None:
+            context.page_table = runtime_state.page_table
+            context.cache_position = runtime_state.cache_position
+            context.decode_runtime_state = runtime_state.decode_runtime_state
+            context.rotary_state = runtime_state.rotary_runtime_state
+
+        context.install_decode_runtime = install_decode_runtime
+        context.update_kv_cache = lambda kv_cache: setattr(context, "kv_cache", kv_cache)
+        context.update_decode_token = lambda token: setattr(context, "token_ids", token)
+
+        try:
+            runtime_decode.build_decode_runtime_for_position = fake_builder
+            runtime_decode._time_decode_step = fake_time_decode_step
+            runtime_decode._loop_input_shapes = lambda **_: {"page_table": [2, 1]}
+            runtime_decode._loop_output_shapes = lambda **_: {"token": [2, 1]}
+            runtime_decode._decode_step_reference = (
+                lambda **_: {"status": "passed", "passed": True}
+            )
+            runtime_decode._generated_observed_op_sequence = lambda *_: ["decode_step"]
+            result = run_decode_loop(
+                context=context,
+                ttnn=object(),
+                torch=object(),
+                device="device0",
+                dtype_seed="bf16",
+                decode_plan={"kv_cache": {"page_block_size": 4}},
+                batch_size=2,
+                cache_len=16,
+                layer_count=1,
+                decode_step_count=2,
+                generated_token_events=[{"step_index": "prefill", "token": "t0"}],
+                initial_tensor_conversion_count=10,
+            )
+        finally:
+            runtime_decode.build_decode_runtime_for_position = original_builder
+            runtime_decode._time_decode_step = original_time_decode
+            runtime_decode._loop_input_shapes = original_input_shapes
+            runtime_decode._loop_output_shapes = original_output_shapes
+            runtime_decode._decode_step_reference = original_reference
+            runtime_decode._generated_observed_op_sequence = original_observed_ops
+
+        self.assertEqual(builder_indexes, [0, 1])
+        self.assertEqual(result.tensor_conversion_count, 20)
+        self.assertEqual(result.decode_runtime_state_input_tensor_count, 4)
+        self.assertEqual(result.decode_rotary_runtime_input_tensor_count, 6)
+        self.assertEqual(len(result.step_reports), 2)
+        self.assertTrue(all(report["passed"] for report in result.step_reports))
+        self.assertEqual(result.generated_token_events[1]["step_index"], 0)
+        self.assertEqual(result.generated_token_events[2]["step_index"], 1)
+        self.assertIs(context.token_ids, decode_tokens[-1])
+        self.assertEqual(result.decode_runtime_state, {"cache_position_value": 6})
 
 
 if __name__ == "__main__":
