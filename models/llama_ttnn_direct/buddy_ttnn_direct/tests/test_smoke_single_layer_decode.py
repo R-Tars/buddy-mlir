@@ -843,7 +843,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 0,
             )
 
-            fake_ttnn = _make_fake_ttnn()
+            fake_ttnn = _make_fake_ttnn(with_reshape=True)
             report = profile_decode_step(
                 out=report_json,
                 program_dir=program_dir,
@@ -861,6 +861,12 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["status"], "profiled")
             self.assertEqual(report["layers"], 2)
             self.assertEqual(len(report["layer_profiles"]), 2)
+            self.assertTrue(
+                all(
+                    "reshape_hidden_ms" in layer
+                    for layer in report["layer_profiles"]
+                )
+            )
             self.assertEqual(report["tensor_conversion_count"], 37)
             self.assertGreaterEqual(report["tensor_conversion_ms"], 0.0)
             self.assertEqual(report["output_shapes"]["token"], [2, 1])
@@ -881,6 +887,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             sections = report["bottleneck_summary"]["sections_ms"]
             for name in (
                 "embedding_ms",
+                "per_layer_reshape_hidden_ms",
                 "per_layer_attention_ms",
                 "per_layer_mlp_ms",
                 "lm_head_ms",
@@ -908,6 +915,14 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 report["ttnn_environment"]["tt_metal_git_commit"],
                 "fake-tt-metal",
+            )
+            self.assertIn(
+                "reshape",
+                [call["op"] for call in fake_ttnn.calls],
+            )
+            self.assertIn(
+                "reshape_hidden_decode",
+                report["reference"]["observed_ops"],
             )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
@@ -1132,6 +1147,7 @@ def _make_fake_ttnn(
     *,
     with_transformer: bool = True,
     with_to_torch: bool = False,
+    with_reshape: bool = False,
 ):
     module = types.ModuleType("ttnn")
     module.calls = []
@@ -1188,6 +1204,19 @@ def _make_fake_ttnn(
         if len(shape) == 1:
             return [23 for _ in range(shape[0])]
         return [[23], [23]]
+
+    def reshape(tensor, logical_shape, padded_shape=None):
+        module.calls.append(
+            {
+                "op": "reshape",
+                "tensor": tensor.name,
+                "logical_shape": list(logical_shape),
+                "padded_shape": (
+                    list(padded_shape) if padded_shape is not None else None
+                ),
+            }
+        )
+        return FakeTensor(f"reshape:{tensor.name}", list(logical_shape), tensor.dtype)
 
     def rms_norm(hidden, **kwargs):
         module.calls.append(
@@ -1477,6 +1506,8 @@ def _make_fake_ttnn(
     module.from_torch = from_torch
     if with_to_torch:
         module.to_torch = to_torch
+    if with_reshape:
+        module.reshape = reshape
     module.embedding = embedding
     module.rms_norm = rms_norm
     module.linear = linear

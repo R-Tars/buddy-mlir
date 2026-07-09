@@ -312,6 +312,8 @@ def run_smoke_decode_step(
                 parameters=parameters,
                 config=config,
                 layer_count=layer_count,
+                batch_size=batch_size,
+                cache_len=cache_len,
                 device=ttnn_device,
                 token_ids=token_ids,
                 page_table=page_table,
@@ -662,6 +664,8 @@ def profile_decode_step(
                 parameters=parameters,
                 config=config,
                 layer_count=layer_count,
+                batch_size=batch_size,
+                cache_len=cache_len,
                 device=ttnn_device,
                 token_ids=token_ids,
                 page_table=page_table,
@@ -799,6 +803,8 @@ def _run_generated_decode_step(
     parameters: Any,
     config: dict[str, Any],
     layer_count: int,
+    batch_size: int,
+    cache_len: int,
     device: Any,
     token_ids: Any,
     page_table: Any,
@@ -812,6 +818,8 @@ def _run_generated_decode_step(
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
     decode_config["num_layers"] = layer_count
+    decode_config["batch_size"] = batch_size
+    decode_config["max_cache_len"] = cache_len
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
@@ -1040,6 +1048,8 @@ def _run_generated_decode_profile(
     parameters: Any,
     config: dict[str, Any],
     layer_count: int,
+    batch_size: int,
+    cache_len: int,
     device: Any,
     token_ids: Any,
     page_table: Any,
@@ -1052,6 +1062,8 @@ def _run_generated_decode_profile(
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
     decode_config["num_layers"] = layer_count
+    decode_config["batch_size"] = batch_size
+    decode_config["max_cache_len"] = cache_len
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
@@ -1069,6 +1081,14 @@ def _run_generated_decode_profile(
     )
     for layer_id in range(layer_count):
         layer_start = time.perf_counter()
+        hidden, reshape_hidden_ms = _time_section(
+            lambda hidden=hidden: model.ops.reshape_decode_hidden_for_layer(
+                hidden,
+                op_name="reshape_hidden_decode",
+            ),
+            ttnn=ttnn,
+            device=device,
+        )
         residual = hidden
         hidden, attn_norm_ms = _time_section(
             lambda layer_id=layer_id, hidden=hidden: model.rmsnorm(
@@ -1131,6 +1151,7 @@ def _run_generated_decode_profile(
         layer_profiles.append(
             {
                 "layer_id": layer_id,
+                "reshape_hidden_ms": reshape_hidden_ms,
                 "rms_norm_attn_ms": attn_norm_ms,
                 "attention_ms": attention_ms,
                 "residual_add_attn_ms": attn_residual_ms,
@@ -2705,6 +2726,7 @@ def _empty_section_latency() -> dict[str, float]:
 def _planned_layer_profile(layer_id: int) -> dict[str, Any]:
     return {
         "layer_id": layer_id,
+        "reshape_hidden_ms": 0.0,
         "rms_norm_attn_ms": 0.0,
         "attention_ms": 0.0,
         "residual_add_attn_ms": 0.0,
@@ -2744,12 +2766,16 @@ def _bottleneck_summary(
     tensor_conversion_ms: float,
     trace_execute_ms: float,
 ) -> dict[str, Any]:
+    reshape_hidden_ms = sum(
+        float(layer.get("reshape_hidden_ms", 0.0)) for layer in layer_profiles
+    )
     attention_ms = sum(float(layer["attention_ms"]) for layer in layer_profiles)
     mlp_ms = sum(float(layer["mlp_ms"]) for layer in layer_profiles)
     layer_total_ms = sum(float(layer["total_ms"]) for layer in layer_profiles)
     sections = {
         "tensor_conversion_ms": tensor_conversion_ms,
         "embedding_ms": float(section_latency["embedding_ms"]),
+        "per_layer_reshape_hidden_ms": reshape_hidden_ms,
         "per_layer_attention_ms": attention_ms,
         "per_layer_mlp_ms": mlp_ms,
         "layer_stack_ms": layer_total_ms,
