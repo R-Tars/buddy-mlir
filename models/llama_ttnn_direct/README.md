@@ -1505,7 +1505,11 @@ depth diagnostics summarize the first failing decode step's shapes, reference
 op checks, error, and the prefill cache write shape/layout evidence. By default
 full-depth is reported when requested but not required to pass; use
 `--require-full-depth` when the full generated layer depth should be an
-acceptance gate.
+acceptance gate. If an early depth fails, later depths are skipped, but each
+skipped depth still gets a per-depth `generate_depth_<N>.json` report that
+records the blocking reason. The acceptance check
+`generate_depth_sweep.report_files` verifies that every record's report file
+exists, including skipped-depth stubs.
 
 `generate` now builds a `TTNNDirectRuntimeContext` for the whole run. The
 context owns the generated model instance, tensorized parameters, prefilled KV

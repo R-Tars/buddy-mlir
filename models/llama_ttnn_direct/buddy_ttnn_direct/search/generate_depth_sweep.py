@@ -56,19 +56,25 @@ def run_generate_depth_sweep(
         report_path = report_root / f"generate_depth_{depth}.json"
         if stop_after_failure:
             reason = "blocked by an earlier depth failure"
+            skipped = _skipped_generate_report(
+                depth=depth,
+                report_path=report_path,
+                program_root=program_root,
+                reason=reason,
+                max_new_tokens=max_new_tokens,
+                prefill_len=prefill_len,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                device=device,
+                device_id=device_id,
+                dtype_seed=dtype_seed,
+            )
             records.append(
-                {
-                    "depth": depth,
-                    "status": "skipped",
-                    "passed": False,
-                    "generate_report": str(report_path),
-                    "reason": reason,
-                    "failure_diagnostics": {
-                        "depth": depth,
-                        "status": "skipped",
-                        "reason": reason,
-                    },
-                }
+                _generate_record(
+                    depth=depth,
+                    generate=skipped,
+                    report_path=report_path,
+                )
             )
             continue
         try:
@@ -91,6 +97,7 @@ def run_generate_depth_sweep(
                 ttnn_module=ttnn_module,
                 torch_module=torch_module,
             )
+            _ensure_generate_report_written(report_path, generate)
             record = _generate_record(
                 depth=depth,
                 generate=generate,
@@ -101,25 +108,24 @@ def run_generate_depth_sweep(
             elif not record["passed"] and not dry_run:
                 stop_after_failure = True
         except Exception as exc:  # pragma: no cover - defensive CLI path.
-            record = {
-                "depth": depth,
-                "status": "fail",
-                "passed": False,
-                "generate_report": str(report_path),
-                "error": {
-                    "type": type(exc).__name__,
-                    "message": str(exc),
-                    "traceback": traceback.format_exc(),
-                },
-                "failure_diagnostics": {
-                    "depth": depth,
-                    "status": "exception",
-                    "error": {
-                        "type": type(exc).__name__,
-                        "message": str(exc),
-                    },
-                },
-            }
+            failed = _exception_generate_report(
+                depth=depth,
+                report_path=report_path,
+                program_root=program_root,
+                exception=exc,
+                max_new_tokens=max_new_tokens,
+                prefill_len=prefill_len,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                device=device,
+                device_id=device_id,
+                dtype_seed=dtype_seed,
+            )
+            record = _generate_record(
+                depth=depth,
+                generate=failed,
+                report_path=report_path,
+            )
             stop_after_failure = True
         records.append(record)
 
@@ -218,6 +224,8 @@ def _generate_record(
         "status": generate.get("status"),
         "passed": bool(generate.get("passed")),
         "generate_report": str(report_path),
+        "generate_report_exists": report_path.is_file(),
+        "reason": generate.get("reason"),
         "layers": generate.get("layers"),
         "batch_size": generate.get("batch_size"),
         "cache_len": generate.get("cache_len"),
@@ -429,8 +437,17 @@ def _generate_depth_acceptance(
             "name": "generate_depth_sweep.report_files",
             "passed": all(
                 record.get("generate_report") is not None
+                and bool(record.get("generate_report_exists"))
                 for record in records
             ),
+            "observed": [
+                {
+                    "depth": record.get("depth"),
+                    "path": record.get("generate_report"),
+                    "exists": bool(record.get("generate_report_exists")),
+                }
+                for record in records
+            ],
         }
     )
     checks.append(
@@ -497,6 +514,153 @@ def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
         value = str(value)
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _ensure_generate_report_written(
+    report_path: Path,
+    generate: dict[str, Any],
+) -> None:
+    if report_path.is_file():
+        return
+    _write_json(report_path, generate)
+
+
+def _skipped_generate_report(
+    *,
+    depth: int,
+    report_path: Path,
+    program_root: Path,
+    reason: str,
+    max_new_tokens: int,
+    prefill_len: int | None,
+    batch_size: int | None,
+    cache_len: int | None,
+    device: str,
+    device_id: int,
+    dtype_seed: str,
+) -> dict[str, Any]:
+    report = _base_depth_generate_report(
+        depth=depth,
+        report_path=report_path,
+        program_root=program_root,
+        status="skipped",
+        max_new_tokens=max_new_tokens,
+        prefill_len=prefill_len,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        dtype_seed=dtype_seed,
+    )
+    report.update(
+        {
+            "passed": False,
+            "reason": reason,
+            "error": reason,
+            "failure_diagnostics": {
+                "depth": depth,
+                "status": "skipped",
+                "reason": reason,
+            },
+        }
+    )
+    _write_json(report_path, report)
+    return report
+
+
+def _exception_generate_report(
+    *,
+    depth: int,
+    report_path: Path,
+    program_root: Path,
+    exception: Exception,
+    max_new_tokens: int,
+    prefill_len: int | None,
+    batch_size: int | None,
+    cache_len: int | None,
+    device: str,
+    device_id: int,
+    dtype_seed: str,
+) -> dict[str, Any]:
+    error = {
+        "type": type(exception).__name__,
+        "message": str(exception),
+        "traceback": traceback.format_exc(),
+    }
+    report = _base_depth_generate_report(
+        depth=depth,
+        report_path=report_path,
+        program_root=program_root,
+        status="fail",
+        max_new_tokens=max_new_tokens,
+        prefill_len=prefill_len,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=device,
+        device_id=device_id,
+        dtype_seed=dtype_seed,
+    )
+    report.update(
+        {
+            "passed": False,
+            "error": error,
+            "failure_diagnostics": {
+                "depth": depth,
+                "status": "exception",
+                "error": {
+                    "type": error["type"],
+                    "message": error["message"],
+                },
+            },
+        }
+    )
+    _write_json(report_path, report)
+    return report
+
+
+def _base_depth_generate_report(
+    *,
+    depth: int,
+    report_path: Path,
+    program_root: Path,
+    status: str,
+    max_new_tokens: int,
+    prefill_len: int | None,
+    batch_size: int | None,
+    cache_len: int | None,
+    device: str,
+    device_id: int,
+    dtype_seed: str,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "command": "generate",
+        "mode": "generate",
+        "status": status,
+        "passed": False,
+        "program_dir": str(program_root),
+        "report": str(report_path),
+        "layers": depth,
+        "max_new_tokens": int(max_new_tokens),
+        "prefill_len": prefill_len,
+        "batch_size": batch_size,
+        "cache_len": cache_len,
+        "device": device,
+        "device_id": device_id,
+        "dtype_seed": dtype_seed,
+        "generated_token_ids": [],
+        "generated_text": "",
+        "generated_text_by_user": [],
+        "generated_text_status": "not_run",
+        "prefill_status": status,
+        "kv_cache_source": "prefill",
+        "model_semantics": "prompt_conditioned_prefill_decode",
+        "decode_loop_runtime_owned": False,
+        "generate_runtime_owned": False,
+        "step_reports": [],
+        "prefill": {"status": status, "cache_population": []},
+        "throughput_summary": {},
+    }
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

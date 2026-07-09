@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.generate_depth_sweep import (
@@ -212,6 +213,122 @@ class GenerateDepthSweepTest(unittest.TestCase):
             )
             self.assertEqual(len(depth_two["prefill_cache_population"]), 2)
             self.assertTrue(Path(depth_two["generate_report"]).is_file())
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
+    def test_generate_depth_sweep_writes_skipped_depth_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_dir = root / "program"
+            reports_dir = root / "depth_reports"
+            report_json = root / "generate_depth_sweep.json"
+            program_dir.mkdir()
+            (program_dir / "config.json").write_text(
+                json.dumps({"num_layers": 2}) + "\n"
+            )
+
+            def fake_generate(*, out, layers, **_kwargs):
+                payload = {
+                    "schema_version": 1,
+                    "command": "generate",
+                    "mode": "generate",
+                    "status": "reference_mismatch",
+                    "passed": False,
+                    "layers": layers,
+                    "batch_size": 2,
+                    "cache_len": 16,
+                    "prefill_len": 8,
+                    "max_new_tokens": 3,
+                    "model_semantics": "prompt_conditioned_prefill_decode",
+                    "prefill_status": "passed",
+                    "kv_cache_source": "prefill",
+                    "decode_loop_runtime_owned": False,
+                    "generate_runtime_owned": False,
+                    "generated_text_status": "not_run",
+                    "generated_token_ids": [],
+                    "throughput_summary": {},
+                    "end_to_end_contract": {
+                        "status": "failed",
+                        "failed_checks": ["generate.decode_loop_runtime_owned"],
+                    },
+                    "prefill": {
+                        "status": "passed",
+                        "cache_population": [
+                            {
+                                "layer_id": 0,
+                                "status": "filled",
+                                "write_policy": "paged_fill_cache_per_user",
+                                "update_shape_layout": "batch_heads_seq_head_dim",
+                                "key_update_shape": [1, 2, 8, 4],
+                                "value_update_shape": [1, 2, 8, 4],
+                            }
+                        ],
+                    },
+                    "step_reports": [
+                        {
+                            "step_index": 0,
+                            "status": "reference_mismatch",
+                            "passed": False,
+                            "output_shapes": {"token": [1, 1, 2]},
+                            "reference": {
+                                "status": "failed",
+                                "failed_checks": ["output.token"],
+                            },
+                        }
+                    ],
+                    "error": "generate structural reference mismatch",
+                }
+                Path(out).parent.mkdir(parents=True, exist_ok=True)
+                Path(out).write_text(json.dumps(payload) + "\n")
+                return payload
+
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.search."
+                "generate_depth_sweep.run_generate",
+                side_effect=fake_generate,
+            ) as run_generate_mock:
+                report = run_generate_depth_sweep(
+                    out=report_json,
+                    program_dir=program_dir,
+                    depths=[1, 2],
+                    reports_dir=reports_dir,
+                    max_new_tokens=3,
+                    prefill_len=8,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                )
+
+            self.assertEqual(run_generate_mock.call_count, 1)
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status_counts"], {"reference_mismatch": 1, "skipped": 1})
+            self.assertEqual(report["failed_depths"], [1])
+            self.assertIn(
+                "generate_depth_sweep.depth_1_passed",
+                report["acceptance"]["failed_checks"],
+            )
+            self.assertNotIn(
+                "generate_depth_sweep.report_files",
+                report["acceptance"]["failed_checks"],
+            )
+            depth_one, depth_two = report["records"]
+            self.assertTrue(depth_one["generate_report_exists"])
+            self.assertTrue(depth_two["generate_report_exists"])
+            self.assertEqual(depth_two["status"], "skipped")
+            self.assertEqual(
+                depth_two["reason"],
+                "blocked by an earlier depth failure",
+            )
+            skipped_payload = json.loads(
+                Path(depth_two["generate_report"]).read_text()
+            )
+            self.assertEqual(skipped_payload["mode"], "generate")
+            self.assertEqual(skipped_payload["status"], "skipped")
+            self.assertEqual(skipped_payload["layers"], 2)
+            self.assertEqual(
+                skipped_payload["reason"],
+                "blocked by an earlier depth failure",
+            )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_generate_record_reports_failure_diagnostics(self) -> None:
