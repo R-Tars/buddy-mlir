@@ -13,8 +13,24 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.context import (
     TTNNDirectRuntimeContext,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
+    build_decode_kv_cache_runtime_state,
+    build_decode_rotary_runtime_state,
+    build_decode_runtime_state,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.profile import (
     GenerateSectionProfiler,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.tokenizer import (
+    detokenize_generated_token_ids,
+    tokenize_prompt_for_decode,
+    tokenize_prompt_for_prefill,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_inputs import (
+    build_decode_runtime_state as compat_build_decode_runtime_state,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_inputs import (
+    tokenize_prompt_for_prefill as compat_tokenize_prompt_for_prefill,
 )
 
 
@@ -71,6 +87,33 @@ class _FakeGeneratedModel:
     def lm_head_argmax(self) -> str:
         self.ops.argmax("logits")
         return "token"
+
+
+class _FakeTokenizer:
+    pad_token_id = 0
+    eos_token_id = 2
+
+    def __call__(self, prompt: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+        _ = add_special_tokens
+        return {"input_ids": [len(word) for word in prompt.split()]}
+
+    def batch_decode(
+        self,
+        rows: list[list[int]],
+        skip_special_tokens: bool = True,
+    ) -> list[str]:
+        _ = skip_special_tokens
+        return [" ".join(f"tok{token_id}" for token_id in row) for row in rows]
+
+
+class _FakeAutoTokenizer:
+    @staticmethod
+    def from_pretrained(_path: str) -> _FakeTokenizer:
+        return _FakeTokenizer()
+
+
+class _FakeTokenizerModule:
+    AutoTokenizer = _FakeAutoTokenizer
 
 
 class RuntimeModuleTest(unittest.TestCase):
@@ -143,6 +186,71 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(report["prefill_layer_profiles"][0]["layer_id"], 0)
         self.assertEqual(report["decode_layer_profiles"][0]["layer_id"], 0)
         self.assertGreaterEqual(report["sections_ms"]["argmax_ms"], 0.0)
+
+    def test_runtime_tokenizer_module_preserves_reports_and_compat_imports(self) -> None:
+        tokenization = tokenize_prompt_for_prefill(
+            prompt="hello ttnn direct",
+            batch_size=2,
+            prefill_len=5,
+            tokenizer_path="/tmp/tokenizer",
+            vocab_size=128,
+            tokenizer_module=_FakeTokenizerModule,
+        )
+
+        self.assertIs(compat_tokenize_prompt_for_prefill, tokenize_prompt_for_prefill)
+        self.assertEqual(tokenization.selected_token_id, 6)
+        self.assertEqual(tokenization.token_ids, [[5, 4, 6, 0, 0], [5, 4, 6, 0, 0]])
+        self.assertEqual(tokenization.to_report()["source"], "prompt_tokenizer_prefill")
+
+        decode_tokenization = tokenize_prompt_for_decode(
+            prompt="hello ttnn direct",
+            batch_size=2,
+            tokenizer_path="/tmp/tokenizer",
+            vocab_size=128,
+            tokenizer_module=_FakeTokenizerModule,
+        )
+        self.assertEqual(decode_tokenization.token_ids, [[6], [6]])
+
+        text = detokenize_generated_token_ids(
+            token_ids_by_user=[[4, 6], [5]],
+            tokenizer_path="/tmp/tokenizer",
+            tokenizer_module=_FakeTokenizerModule,
+        )
+        self.assertEqual(text["status"], "decoded")
+        self.assertEqual(text["generated_text_by_user"], ["tok4 tok6", "tok5"])
+
+    def test_runtime_inputs_module_preserves_reports_and_compat_imports(self) -> None:
+        runtime_state = build_decode_runtime_state(
+            batch_size=2,
+            cache_len=10,
+            page_block_size=4,
+            prompt_token_count=6,
+        )
+        self.assertIs(compat_build_decode_runtime_state, build_decode_runtime_state)
+        self.assertEqual(runtime_state.page_count, 3)
+        self.assertEqual(runtime_state.max_num_blocks, 6)
+        self.assertEqual(runtime_state.cache_position, [5, 5])
+        self.assertEqual(runtime_state.page_table, [[0, 1, 2], [3, 4, 5]])
+
+        rotary_state = build_decode_rotary_runtime_state(
+            layer_count=2,
+            batch_size=2,
+            head_dim=64,
+            cache_position_value=5,
+        )
+        self.assertEqual(rotary_state.tensor_count, 6)
+        self.assertEqual(rotary_state.to_report()["source"], "rotary_runtime_state")
+
+        kv_state = build_decode_kv_cache_runtime_state(
+            layer_count=2,
+            batch_size=2,
+            cache_len=10,
+            page_block_size=4,
+            num_kv_heads=8,
+            head_dim=64,
+        )
+        self.assertEqual(kv_state.physical_shape, [6, 8, 4, 64])
+        self.assertEqual(kv_state.logical_shape, [2, 10, 8, 64])
 
 
 if __name__ == "__main__":

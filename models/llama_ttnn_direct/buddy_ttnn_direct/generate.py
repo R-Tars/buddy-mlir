@@ -18,9 +18,9 @@ from .codegen.ttnn_tensorizer import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .runtime import GenerateSectionProfiler, TTNNDirectRuntimeContext
-from .runtime_inputs import (
+from .runtime.inputs import build_decode_runtime_state
+from .runtime.tokenizer import (
     PromptTokenizationError,
-    build_decode_runtime_state,
     detokenize_generated_token_ids,
     tokenize_prompt_for_prefill,
 )
