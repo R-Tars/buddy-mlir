@@ -84,13 +84,43 @@ from .validation import (
     validate_real_decode,
 )
 
+PRODUCT_COMMANDS = (
+    "build",
+    "generate",
+    "profile",
+    "validate",
+    "inspect",
+    "diagnose",
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="buddy-ttnn-direct",
         description="Buddy-TTNN Direct model tooling.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="{" + ",".join(PRODUCT_COMMANDS) + "}",
+    )
+    add_parser = subparsers.add_parser
+
+    def add_productized_parser(
+        name: str,
+        *args: object,
+        **kwargs: object,
+    ) -> argparse.ArgumentParser:
+        visible = name in PRODUCT_COMMANDS
+        if not visible:
+            kwargs["help"] = argparse.SUPPRESS
+        choices_before = len(subparsers._choices_actions)
+        command = add_parser(name, *args, **kwargs)
+        if not visible:
+            del subparsers._choices_actions[choices_before:]
+        return command
+
+    subparsers.add_parser = add_productized_parser  # type: ignore[method-assign]
 
     def add_prompt_runtime_args(command: argparse.ArgumentParser) -> None:
         command.add_argument(
@@ -1828,6 +1858,166 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     validate_real.set_defaults(func=_cmd_validate_real_decode)
+
+    build = subparsers.add_parser(
+        "build",
+        help="Build a TTNN Direct generated program bundle.",
+    )
+    build.add_argument(
+        "--model-path",
+        type=Path,
+        required=True,
+        help="Local HF Llama model directory or model id.",
+    )
+    build.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Template seed config JSON.",
+    )
+    build.add_argument(
+        "--out-dir",
+        type=Path,
+        required=True,
+        help="Output directory for the generated program bundle.",
+    )
+    build.set_defaults(func=_cmd_build_program)
+
+    product_profile = subparsers.add_parser(
+        "profile",
+        help="Profile prompt prefill plus decode generate.",
+    )
+    product_profile.add_argument("--program-dir", type=Path, required=True)
+    product_profile.add_argument("--model-path", type=Path, default=None)
+    add_prompt_runtime_args(product_profile)
+    product_profile.add_argument("--max-new-tokens", type=int, default=2)
+    product_profile.add_argument("--prefill-len", type=int, default=None)
+    product_profile.add_argument("--layers", type=int, default=1)
+    product_profile.add_argument("--device", default="p150a")
+    product_profile.add_argument("--device-id", type=int, default=0)
+    product_profile.add_argument("--batch-size", type=int, default=None)
+    product_profile.add_argument("--cache-len", type=int, default=None)
+    product_profile.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    product_profile.add_argument("--dry-run", action="store_true")
+    product_profile.add_argument("--generate-report", type=Path, default=None)
+    product_profile.add_argument("--out", type=Path, required=True)
+    product_profile.set_defaults(func=_cmd_profile_generate)
+
+    product_validate = subparsers.add_parser(
+        "validate",
+        help="Validate the main TTNN Direct workflow.",
+    )
+    product_validate.add_argument(
+        "--suite",
+        choices=("dryrun", "functional", "device", "performance"),
+        default="dryrun",
+    )
+    product_validate.add_argument("--program-dir", type=Path, default=None)
+    product_validate.add_argument("--model-path", type=Path, default=None)
+    product_validate.add_argument("--config", type=Path, default=None)
+    add_prompt_runtime_args(product_validate)
+    product_validate.add_argument("--out-dir", type=Path, required=True)
+    product_validate.add_argument("--max-new-tokens", type=int, default=2)
+    product_validate.add_argument("--prefill-len", type=int, default=None)
+    product_validate.add_argument("--layers", type=int, default=1)
+    product_validate.add_argument("--batch-size", type=int, default=None)
+    product_validate.add_argument("--cache-len", type=int, default=None)
+    product_validate.add_argument("--device", default="p150a")
+    product_validate.add_argument("--device-id", type=int, default=0)
+    product_validate.add_argument(
+        "--dtype-seed",
+        choices=("bf16", "fp32"),
+        default="bf16",
+    )
+    product_validate.add_argument("--dry-run", action="store_true")
+    product_validate.add_argument("--require-full-depth", action="store_true")
+    product_validate.add_argument(
+        "--metric",
+        default="tokens_per_second_per_user",
+    )
+    product_validate.add_argument(
+        "--official-template",
+        type=Path,
+        default=default_official_template_path(),
+    )
+    product_validate.add_argument(
+        "--official-config",
+        type=Path,
+        default=default_official_config_path(),
+    )
+    product_validate.add_argument(
+        "--search-space",
+        type=Path,
+        default=default_search_space_path(),
+    )
+    product_validate.add_argument(
+        "--decode-step-search-space",
+        type=Path,
+        default=default_decode_step_search_space_path(),
+    )
+    product_validate.add_argument(
+        "--performance-baselines",
+        type=Path,
+        default=default_performance_baselines_path(),
+    )
+    product_validate.set_defaults(func=_cmd_validate)
+
+    inspect = subparsers.add_parser(
+        "inspect",
+        help="Inspect a generated TTNN Direct program directory.",
+    )
+    inspect.add_argument("--program-dir", type=Path, required=True)
+    inspect.add_argument("--out", type=Path, default=None)
+    inspect.set_defaults(func=_cmd_inspect)
+
+    diagnose = subparsers.add_parser(
+        "diagnose",
+        help="Run development diagnostics hidden from the main workflow.",
+    )
+    diagnose.add_argument(
+        "--stage",
+        choices=(
+            "mlp",
+            "attention-primitive",
+            "attention-layer",
+            "prefill",
+            "decode-step",
+            "decode-loop-legacy",
+            "depth-sweep",
+            "generate-depth-sweep",
+        ),
+        required=True,
+    )
+    diagnose.add_argument("--program-dir", type=Path, default=None)
+    diagnose.add_argument("--model-path", type=Path, default=None)
+    add_prompt_runtime_args(diagnose)
+    diagnose.add_argument("--out", type=Path, required=True)
+    diagnose.add_argument("--device", default="p150a")
+    diagnose.add_argument("--device-id", type=int, default=0)
+    diagnose.add_argument("--batch-size", type=int, default=None)
+    diagnose.add_argument("--cache-len", type=int, default=None)
+    diagnose.add_argument("--layers", type=int, default=1)
+    diagnose.add_argument("--prefill-len", type=int, default=None)
+    diagnose.add_argument("--max-new-tokens", type=int, default=2)
+    diagnose.add_argument("--decode-steps", type=int, default=2)
+    diagnose.add_argument("--depths", default=None)
+    diagnose.add_argument("--primitive", choices=ATTENTION_PRIMITIVES)
+    diagnose.add_argument("--hidden-size", type=int, default=None)
+    diagnose.add_argument("--intermediate-size", type=int, default=None)
+    diagnose.add_argument("--num-heads", type=int, default=None)
+    diagnose.add_argument("--num-kv-heads", type=int, default=None)
+    diagnose.add_argument("--head-dim", type=int, default=None)
+    diagnose.add_argument("--max-cache-len", type=int, default=1024)
+    diagnose.add_argument("--dtype-seed", choices=("bf16", "fp32"), default="bf16")
+    diagnose.add_argument("--dry-run", action="store_true")
+    diagnose.add_argument("--trace", action="store_true")
+    diagnose.add_argument("--trace-iterations", type=int, default=1)
+    diagnose.add_argument("--require-full-depth", action="store_true")
+    diagnose.set_defaults(func=_cmd_diagnose)
     return parser
 
 
@@ -2675,6 +2865,414 @@ def _coerce_subprocess_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode(errors="replace")
     return str(value)
+
+
+def _cmd_validate(args: argparse.Namespace) -> int:
+    if args.suite == "dryrun":
+        if args.model_path is not None and args.config is not None:
+            return _cmd_validate_direct(
+                argparse.Namespace(
+                    model_path=args.model_path,
+                    config=args.config,
+                    out_dir=args.out_dir,
+                    official_template=args.official_template,
+                    official_config=args.official_config,
+                    search_space=args.search_space,
+                    decode_step_search_space=args.decode_step_search_space,
+                    metric=args.metric,
+                )
+            )
+        if args.program_dir is None:
+            print(
+                "validate --suite dryrun requires either "
+                "--model-path/--config or --program-dir",
+                file=sys.stderr,
+            )
+            return 1
+        return _cmd_validate_program_dryrun(args)
+
+    if args.program_dir is None or args.model_path is None:
+        print(
+            f"validate --suite {args.suite} requires --program-dir and "
+            "--model-path",
+            file=sys.stderr,
+        )
+        return 1
+    return _cmd_validate_real_decode(_validate_real_namespace(args))
+
+
+def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    generate_report = args.out_dir / "generate_dryrun.json"
+    profile_report = args.out_dir / "profile_dryrun.json"
+    underlying_generate_report = (
+        args.out_dir / "profile_underlying_generate_dryrun.json"
+    )
+    artifacts = _program_artifact_report(args.program_dir)
+    generate = run_generate(
+        out=generate_report,
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        max_new_tokens=args.max_new_tokens,
+        layers=args.layers,
+        prefill_len=args.prefill_len,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=True,
+    )
+    profile = run_profile_generate(
+        out=profile_report,
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        max_new_tokens=args.max_new_tokens,
+        layers=args.layers,
+        prefill_len=args.prefill_len,
+        device=args.device,
+        device_id=args.device_id,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        dtype_seed=args.dtype_seed,
+        dry_run=True,
+        generate_report=underlying_generate_report,
+    )
+    checks = [
+        {
+            "name": "validate.program_artifacts",
+            "passed": artifacts["passed"],
+            "observed": artifacts["files"],
+        },
+        {
+            "name": "validate.generate_dryrun",
+            "passed": bool(generate.get("passed")),
+            "observed": generate.get("status"),
+        },
+        {
+            "name": "validate.profile_dryrun",
+            "passed": bool(profile.get("passed")),
+            "observed": profile.get("status"),
+        },
+    ]
+    passed = all(check["passed"] for check in checks)
+    report = {
+        "schema_version": 1,
+        "command": "validate",
+        "suite": "dryrun",
+        "status": "pass" if passed else "fail",
+        "passed": passed,
+        "program_dir": str(args.program_dir),
+        "artifacts": artifacts,
+        "reports": {
+            "generate": str(generate_report),
+            "profile": str(profile_report),
+            "profile_underlying_generate": str(underlying_generate_report),
+        },
+        "checks": checks,
+        "failed_checks": [
+            check["name"] for check in checks if not check["passed"]
+        ],
+    }
+    report_path = args.out_dir / "validation_report.json"
+    _write_report_json(report_path, report)
+    print(f"wrote TTNN Direct validation report: {report_path}")
+    print(f"  status: {report['status']}")
+    return 0 if passed else 1
+
+
+def _validate_real_namespace(args: argparse.Namespace) -> argparse.Namespace:
+    suite = args.suite
+    return argparse.Namespace(
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        prompt=args.prompt,
+        tokenizer_path=args.tokenizer_path,
+        out_dir=args.out_dir,
+        decode_step_search_space=args.decode_step_search_space,
+        official_config=args.official_config,
+        layers=args.layers,
+        batch_size=args.batch_size,
+        cache_len=args.cache_len,
+        max_new_tokens=args.max_new_tokens,
+        prefill_len=args.prefill_len,
+        device=args.device,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+        trace=False,
+        trace_iterations=1,
+        metric=args.metric,
+        skip_autotune=True,
+        skip_profile_decode_step=(suite != "performance"),
+        guard_device_busy=False,
+        guard_device_health=False,
+        disable_device_isolation=True,
+        device_isolation_timeout_seconds=3600.0,
+        require_full_decode_step=False,
+        require_model_end_to_end=(suite in {"functional", "device", "performance"}),
+        require_official_performance_parity=False,
+        require_trace=False,
+        require_official_config_match=False,
+        require_full_depth=bool(args.require_full_depth),
+        require_program_runtime_shape=False,
+        require_batch32_decode_step=False,
+        min_tokens_per_second_per_user=None,
+        baseline_tokens_per_second_per_user=None,
+        performance_baselines=args.performance_baselines,
+        baseline_reference=None,
+        min_baseline_ratio=None,
+        decode_shell_pcc_threshold=0.99,
+        require_decode_shell_numeric_reference=False,
+        dry_run=bool(args.dry_run),
+        preflight_only=False,
+    )
+
+
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    report = {
+        "schema_version": 1,
+        "command": "inspect",
+        "program_dir": str(args.program_dir),
+        "artifacts": _program_artifact_report(args.program_dir),
+        "config": _read_json_if_present(args.program_dir / "config.json"),
+        "execution_plan": _read_json_if_present(
+            args.program_dir / "execution_plan.json"
+        ),
+    }
+    report["status"] = "pass" if report["artifacts"]["passed"] else "fail"
+    report["passed"] = report["status"] == "pass"
+    if args.out is not None:
+        _write_report_json(args.out, report)
+        print(f"wrote TTNN Direct inspect report: {args.out}")
+    else:
+        print(json.dumps(report, indent=2))
+    return 0 if report["passed"] else 1
+
+
+def _cmd_diagnose(args: argparse.Namespace) -> int:
+    try:
+        report = _run_diagnose_stage(args)
+    except ValueError as exc:
+        report = {
+            "schema_version": 1,
+            "command": "diagnose",
+            "stage": args.stage,
+            "status": "fail",
+            "passed": False,
+            "error": str(exc),
+        }
+        _write_report_json(args.out, report)
+        print(f"wrote diagnostics report: {args.out}")
+        print(f"  status: {report['status']}")
+        return 1
+    print(f"wrote diagnostics report: {args.out}")
+    if report.get("status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 0 if report.get("passed") else 1
+
+
+def _run_diagnose_stage(args: argparse.Namespace) -> dict[str, object]:
+    if args.stage == "mlp":
+        _require_diagnose_args(
+            args,
+            "batch_size",
+            "hidden_size",
+            "intermediate_size",
+        )
+        return run_smoke_mlp(
+            out=args.out,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            hidden_size=args.hidden_size,
+            intermediate_size=args.intermediate_size,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "attention-primitive":
+        _require_diagnose_args(
+            args,
+            "primitive",
+            "batch_size",
+            "hidden_size",
+            "num_heads",
+            "num_kv_heads",
+            "head_dim",
+        )
+        return run_smoke_attention_primitive(
+            out=args.out,
+            primitive=args.primitive,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            hidden_size=args.hidden_size,
+            num_heads=args.num_heads,
+            num_kv_heads=args.num_kv_heads,
+            head_dim=args.head_dim,
+            max_cache_len=args.max_cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "attention-layer":
+        _require_diagnose_args(args, "program_dir")
+        return run_smoke_attention_layer(
+            out=args.out,
+            program_dir=args.program_dir,
+            layer=max(0, int(args.layers) - 1),
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "prefill":
+        _require_diagnose_args(args, "program_dir")
+        return run_smoke_prefill(
+            out=args.out,
+            program_dir=args.program_dir,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "decode-step":
+        _require_diagnose_args(args, "program_dir")
+        return run_smoke_decode_step(
+            out=args.out,
+            program_dir=args.program_dir,
+            layers=args.layers,
+            model_path=args.model_path,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            trace=args.trace,
+            trace_iterations=args.trace_iterations,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "decode-loop-legacy":
+        _require_diagnose_args(args, "program_dir")
+        return run_prompt_decode_loop(
+            out=args.out,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            decode_steps=(
+                args.max_new_tokens
+                if args.max_new_tokens is not None
+                else args.decode_steps
+            ),
+            layers=args.layers,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "depth-sweep":
+        _require_diagnose_args(args, "program_dir")
+        return run_decode_depth_sweep(
+            out=args.out,
+            program_dir=args.program_dir,
+            depths=args.depths,
+            model_path=args.model_path,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            trace=args.trace,
+            trace_iterations=args.trace_iterations,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            dry_run=args.dry_run,
+            isolate_depth_steps=not args.dry_run,
+        )
+    if args.stage == "generate-depth-sweep":
+        _require_diagnose_args(args, "program_dir")
+        return run_generate_depth_sweep(
+            out=args.out,
+            program_dir=args.program_dir,
+            depths=args.depths,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            max_new_tokens=args.max_new_tokens,
+            prefill_len=args.prefill_len,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            device=args.device,
+            device_id=args.device_id,
+            dtype_seed=args.dtype_seed,
+            dry_run=args.dry_run,
+            require_full_depth=args.require_full_depth,
+            isolate_depth_steps=not args.dry_run,
+        )
+    raise ValueError(f"unsupported diagnose stage: {args.stage}")
+
+
+def _require_diagnose_args(args: argparse.Namespace, *names: str) -> None:
+    missing = [
+        "--" + name.replace("_", "-")
+        for name in names
+        if getattr(args, name, None) is None
+    ]
+    if missing:
+        raise ValueError(
+            f"diagnose --stage {args.stage} requires "
+            + ", ".join(missing)
+        )
+
+
+def _program_artifact_report(program_dir: Path) -> dict[str, object]:
+    required = [
+        "README.md",
+        "config.json",
+        "execution_plan.json",
+        "model.py",
+        "run_decode.py",
+        "semantic_graph.json",
+        "weights_manifest.json",
+    ]
+    files = {
+        name: {
+            "path": str(program_dir / name),
+            "exists": (program_dir / name).is_file(),
+        }
+        for name in required
+    }
+    return {
+        "program_dir": str(program_dir),
+        "files": files,
+        "missing": [name for name, item in files.items() if not item["exists"]],
+        "passed": all(item["exists"] for item in files.values()),
+    }
+
+
+def _read_json_if_present(path: Path) -> object | None:
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text())
+
+
+def _write_report_json(path: Path, report: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2) + "\n")
 
 
 def main(argv: list[str] | None = None) -> int:
