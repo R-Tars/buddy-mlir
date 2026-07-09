@@ -405,6 +405,41 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     return to_layout(tensor, tile_layout)
 
+                def reshape_decode_hidden_for_layer(
+                    self,
+                    hidden,
+                    *,
+                    op_name="reshape_hidden_decode",
+                ):
+                    shape = getattr(hidden, "shape", None)
+                    if shape is None:
+                        return hidden
+                    shape = [int(dim) for dim in shape]
+                    if len(shape) == 3 and shape[1] == 1:
+                        batch = shape[0]
+                        feature_dim = shape[2]
+                    elif (
+                        len(shape) == 4
+                        and shape[0] == 1
+                        and shape[1] != 1
+                        and shape[2] == 1
+                    ):
+                        batch = shape[1]
+                        feature_dim = shape[3]
+                    else:
+                        return hidden
+                    reshape = getattr(self.ttnn, "reshape", None)
+                    if reshape is None:
+                        return hidden
+                    logical_shape = (1, 1, batch, feature_dim)
+                    padded_batch = ((batch + 31) // 32) * 32
+                    padded_shape = (1, 1, padded_batch, feature_dim)
+                    self._record(op_name)
+                    try:
+                        return reshape(hidden, logical_shape, padded_shape)
+                    except TypeError:
+                        return reshape(hidden, logical_shape)
+
                 def reshape_decode_qkv_for_heads(
                     self,
                     qkv,
@@ -767,6 +802,29 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         return token
                     slice_op = getattr(self.ttnn, "slice", None)
                     squeeze_op = getattr(self.ttnn, "squeeze", None)
+                    reshape_op = getattr(self.ttnn, "reshape", None)
+                    if (
+                        len(shape) == 3
+                        and shape[0] == 1
+                        and shape[1] == 1
+                        and shape[2] == batch_size
+                    ):
+                        if callable(reshape_op):
+                            self._record(f"{{op_name}}.reshape")
+                            try:
+                                return reshape_op(
+                                    token,
+                                    (batch_size, 1),
+                                    (batch_size, 1),
+                                )
+                            except TypeError:
+                                return reshape_op(token, (batch_size, 1))
+                        if callable(squeeze_op):
+                            self._record(f"{{op_name}}.squeeze.0")
+                            token = squeeze_op(token, 0)
+                            self._record(f"{{op_name}}.squeeze.1")
+                            return squeeze_op(token, 0)
+                        return token
                     if (
                         callable(slice_op)
                         and len(shape) == 2
@@ -950,6 +1008,10 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     return token, kv_cache
 
                 def decode_layer(self, layer_id, hidden, page_table, cache_position, kv_cache):
+                    hidden = self.ops.reshape_decode_hidden_for_layer(
+                        hidden,
+                        op_name="reshape_hidden_decode",
+                    )
                     residual = hidden
                     hidden = self.rmsnorm(hidden, layer_id, kind="attn")
                     hidden = self.attention_decode(

@@ -584,6 +584,106 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 [0, 1],
             )
 
+    def test_generated_decode_hidden_normalizes_layer_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=2), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            source = (out_dir / "model.py").read_text()
+            self.assertIn("def reshape_decode_hidden_for_layer", source)
+            self.assertIn("reshape_hidden_decode", source)
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            ops = generated.TTNNCompatOps(fake_ttnn)
+            hidden_3d = _FakeTensor(
+                "hidden_3d",
+                shape=(32, 1, 4096),
+            )
+            hidden_4d = _FakeTensor(
+                "hidden_4d",
+                shape=(1, 32, 1, 4096),
+            )
+
+            normalized_3d = ops.reshape_decode_hidden_for_layer(hidden_3d)
+            normalized_4d = ops.reshape_decode_hidden_for_layer(hidden_4d)
+
+            self.assertEqual(normalized_3d.shape, (1, 1, 32, 4096))
+            self.assertEqual(normalized_4d.shape, (1, 1, 32, 4096))
+            self.assertEqual(
+                [call["op"] for call in fake_ttnn.calls[-2:]],
+                ["reshape", "reshape"],
+            )
+            self.assertEqual(
+                fake_ttnn.calls[-2]["logical_shape"],
+                (1, 1, 32, 4096),
+            )
+            self.assertEqual(
+                fake_ttnn.calls[-1]["padded_shape"],
+                (1, 1, 32, 4096),
+            )
+
+    def test_generated_argmax_token_normalizes_decode_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            plan_json = root / "plan.json"
+            out_dir = root / "generated"
+            dump_execution_plan(_fake_plan(num_layers=2), plan_json)
+            self.assertEqual(
+                main(
+                    [
+                        "codegen-python",
+                        "--plan-json",
+                        str(plan_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            source = (out_dir / "model.py").read_text()
+            self.assertIn('self._record(f"{op_name}.reshape")', source)
+
+            fake_ttnn = _make_fake_ttnn_module()
+            sys.modules["ttnn"] = fake_ttnn
+            try:
+                generated = _load_generated_model(out_dir / "model.py")
+            finally:
+                sys.modules.pop("ttnn", None)
+
+            ops = generated.TTNNCompatOps(fake_ttnn)
+            token = _FakeTensor(
+                "argmax_token",
+                shape=(1, 1, 32),
+            )
+
+            normalized = ops.normalize_decode_token(token, batch_size=32)
+
+            self.assertEqual(normalized.shape, (32, 1))
+            self.assertEqual(fake_ttnn.calls[-1]["op"], "reshape")
+            self.assertEqual(fake_ttnn.calls[-1]["logical_shape"], (32, 1))
+            self.assertEqual(fake_ttnn.calls[-1]["padded_shape"], (32, 1))
+
     def test_generated_prefill_cache_fill_slices_each_batch_user(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
