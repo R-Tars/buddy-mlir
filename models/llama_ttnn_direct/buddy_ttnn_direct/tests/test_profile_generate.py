@@ -172,6 +172,7 @@ class ProfileGenerateTest(unittest.TestCase):
             )
             self.assertEqual(report["parameter_source"], "hf_model")
             self.assertEqual(report["input_source"], "prompt_prefill")
+            self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertTrue(report["generate_runtime_owned"])
             self.assertTrue(report["decode_loop_runtime_owned"])
             self.assertIsNotNone(report["prefill_ms"])

@@ -67,6 +67,7 @@ from .templates.ttnn_ops import UnsupportedTTNNOp
 PROMPT_CONDITIONED_GENERATE_SEMANTICS = (
     "prompt_conditioned_prefill_decode"
 )
+GENERATE_RUNTIME_OWNER = "TTNNDirectRuntimeContext"
 PROFILE_GENERATE_OFFICIAL_BASELINE_ID = "tt_metal_official_llama31_8b_b32"
 PROFILE_GENERATE_OFFICIAL_TPS_PER_USER = 33.1
 PROFILE_GENERATE_OFFICIAL_BATCH_SIZE = 32
@@ -508,6 +509,7 @@ def run_generate(
                 "decode_loop_runtime_owned": False,
                 "planned_decode_loop_runtime_owned": True,
                 "kv_cache_source": "prefill",
+                "runtime_owner": GENERATE_RUNTIME_OWNER,
                 "generated_token_ids": [],
                 "generated_text": "",
                 "generated_text_by_user": [],
@@ -1026,7 +1028,7 @@ def run_generate(
                     "generate_runtime_owned": passed,
                     "kv_cache_source": "prefill",
                     "input_source": "prompt_prefill",
-                    "runtime_owner": "generate",
+                    "runtime_owner": GENERATE_RUNTIME_OWNER,
                     "parameter_source": context.parameter_source,
                     "parameter_setup": parameter_setup,
                     "prompt_tokenization": context.prefill_tokenization,
@@ -2443,7 +2445,9 @@ def _profile_generate_sections(
     unavailable = {
         "status": "unavailable",
         "value_ms": None,
-        "reason": "generate path does not yet collect section-level timers",
+        "reason": (
+            "section-level timers were not measured for this generate run"
+        ),
     }
     measured_sections = section_profile.get("sections_ms")
     if not isinstance(measured_sections, dict):
@@ -2599,8 +2603,7 @@ def _profile_generate_per_layer(generate: dict[str, Any]) -> dict[str, Any]:
         "attention_ms": None,
         "mlp_ms": None,
         "reason": (
-            "profile-generate currently reports whole prefill and decode-step "
-            "timings; per-layer attribution is the next profiling refinement"
+            "per-layer section timers were not measured for this generate run"
         ),
     }
 

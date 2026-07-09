@@ -1548,11 +1548,14 @@ The report includes `prefill_ms`, `decode_step_ms_mean`,
 `tokens_per_second_per_user`, `aggregate_tokens_per_second`, `sections`, and
 `per_layer`, and carries
 `model_semantics=prompt_conditioned_prefill_decode` from the underlying
-generate report. Section-level timers such as `embedding_ms`, `attention_ms`,
-`mlp_ms`, `lm_head_ms`, and `argmax_ms` are explicitly marked unavailable until
-the generated model records finer-grained timers. The acceptance block only
-requires that the generated model can run and reports positive tokens/s/user in
-non-dry-run mode; `official_performance_parity_claimed=false`. It also writes
+generate report. Non-dry-run reports install generated model wrappers that
+record section timers for `embedding_ms`, `prefill_attention_ms`,
+`decode_attention_ms`, `mlp_ms`, `lm_head_ms`, `argmax_ms`, `host_copy_ms`,
+and per-layer prefill/decode attention/MLP totals. Dry-run and no-run reports
+preserve the same schema with `not_run` or `unavailable` section status. The
+acceptance block only requires that the generated model can run and reports
+positive tokens/s/user in non-dry-run mode;
+`official_performance_parity_claimed=false`. It also writes
 `performance_milestones`, a PR-7 milestone ladder for M0-M6:
 
 ```text

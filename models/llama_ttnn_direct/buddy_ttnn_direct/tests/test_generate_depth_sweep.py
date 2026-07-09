@@ -198,6 +198,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
             self.assertEqual(depth_two["prefill_status"], "passed")
             self.assertEqual(depth_two["kv_cache_source"], "prefill")
             self.assertTrue(depth_two["decode_loop_runtime_owned"])
+            self.assertEqual(depth_two["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertEqual(depth_two["parameter_tensorization_count_per_generate"], 1)
             self.assertEqual(depth_two["parameter_tensorization_count_per_decode_step"], 0)
             self.assertFalse(depth_two["kv_cache_reinitialized_per_step"])

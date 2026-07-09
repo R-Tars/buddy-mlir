@@ -108,6 +108,7 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertTrue(report["planned_decode_loop_runtime_owned"])
             self.assertFalse(report["decode_loop_runtime_owned"])
+            self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["generated_token_ids"], [])
             self.assertEqual(report["generated_text"], "")
             self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
@@ -204,6 +205,7 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertTrue(report["generate_runtime_owned"])
             self.assertTrue(report["decode_loop_runtime_owned"])
+            self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["decode_steps"], 2)
             self.assertEqual(
                 report["generated_token_budget"]["total_planned_generated_tokens"],
