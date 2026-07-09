@@ -1528,6 +1528,13 @@ The first generate implementation still materializes the last prefill token on
 host before decode; the persistent context prevents weight/KV reinitialization
 from being hidden inside that bring-up path.
 
+A compact local P150A functional evidence record from 2026-07-09 is tracked in
+`buddy_ttnn_direct/reference/p150a_generate_depth_evidence_20260709.json`.
+It records prompt-conditioned generate passes for depths `1,2,4,8,16,full`
+with `--require-full-depth`, batch 32, prefill length 128, cache length 1024,
+and two generated tokens per user. This is functional bring-up evidence only;
+official tt-metal performance parity is not claimed by that record.
+
 `profile-generate` is the first profile view for the prompt prefill plus decode
 path. It runs `generate`, preserves the underlying generate report, and emits
 latency/throughput fields without claiming official parity:
