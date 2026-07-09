@@ -13,6 +13,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.context import (
     TTNNDirectRuntimeContext,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime import (
+    reports as runtime_reports,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_kv_cache_runtime_state,
     build_decode_rotary_runtime_state,
@@ -251,6 +254,59 @@ class RuntimeModuleTest(unittest.TestCase):
         )
         self.assertEqual(kv_state.physical_shape, [6, 8, 4, 64])
         self.assertEqual(kv_state.logical_shape, [2, 10, 8, 64])
+
+    def test_runtime_reports_helpers_preserve_generate_report_fields(self) -> None:
+        budget = runtime_reports.generated_token_budget(
+            max_new_tokens=3,
+            decode_steps=2,
+        )
+        self.assertEqual(budget["prefill_first_token_count"], 1)
+        self.assertEqual(budget["total_planned_generated_tokens"], 3)
+
+        cache_summary = runtime_reports.cache_population_summary(
+            [
+                {
+                    "status": "passed",
+                    "layer_id": 0,
+                    "write_policy": "paged_fill_cache_per_user",
+                    "update_shape_layout": "tile",
+                    "key_cache_shape": [2, 4],
+                    "value_cache_shape": [2, 4],
+                    "filled_user_count": 2,
+                    "planned_user_count": 2,
+                }
+            ]
+        )
+        self.assertEqual(cache_summary["status_counts"], {"passed": 1})
+        self.assertEqual(
+            cache_summary["write_policies"],
+            ["paged_fill_cache_per_user"],
+        )
+        self.assertEqual(cache_summary["filled_user_count_total"], 2)
+
+        host_copy = runtime_reports.host_copy_profile(
+            first_token_materialization_ms=1.5,
+            step_reports=[
+                {"token_materialization_ms": "2.5"},
+                {"token_materialization_ms": None},
+            ],
+        )
+        self.assertEqual(host_copy["status"], "measured")
+        self.assertEqual(host_copy["total_ms"], 4.0)
+        self.assertFalse(host_copy["runtime_host_roundtrip_present"])
+
+        throughput = runtime_reports.generate_throughput_summary(
+            latency_ms=100.0,
+            batch_size=2,
+            max_new_tokens=3,
+        )
+        self.assertEqual(throughput["status"], "measured")
+        self.assertEqual(throughput["tokens_per_second_per_user"], 30.0)
+        self.assertEqual(throughput["aggregate_tokens_per_second"], 60.0)
+
+        fallback_profile = runtime_reports.section_profile_not_run("dry_run")
+        self.assertEqual(fallback_profile["status"], "not_run")
+        self.assertIn("argmax_ms", fallback_profile["sections_ms"])
 
 
 if __name__ == "__main__":
