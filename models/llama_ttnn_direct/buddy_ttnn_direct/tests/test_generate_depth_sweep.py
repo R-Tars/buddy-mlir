@@ -331,6 +331,68 @@ class GenerateDepthSweepTest(unittest.TestCase):
             )
             self.assertEqual(json.loads(report_json.read_text()), report)
 
+    def test_generate_depth_sweep_writes_exception_depth_reports(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_dir = root / "program"
+            reports_dir = root / "depth_reports"
+            report_json = root / "generate_depth_sweep.json"
+            program_dir.mkdir()
+            (program_dir / "config.json").write_text(
+                json.dumps({"num_layers": 2}) + "\n"
+            )
+
+            def fake_generate(**_kwargs):
+                raise RuntimeError("synthetic depth failure")
+
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.search."
+                "generate_depth_sweep.run_generate",
+                side_effect=fake_generate,
+            ) as run_generate_mock:
+                report = run_generate_depth_sweep(
+                    out=report_json,
+                    program_dir=program_dir,
+                    depths=[1, 2],
+                    reports_dir=reports_dir,
+                    max_new_tokens=3,
+                    prefill_len=8,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                )
+
+            self.assertEqual(run_generate_mock.call_count, 1)
+            self.assertEqual(report["status"], "fail")
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status_counts"], {"fail": 1, "skipped": 1})
+            self.assertEqual(report["failed_depths"], [1])
+            self.assertNotIn(
+                "generate_depth_sweep.report_files",
+                report["acceptance"]["failed_checks"],
+            )
+            depth_one, depth_two = report["records"]
+            self.assertTrue(depth_one["generate_report_exists"])
+            self.assertTrue(depth_two["generate_report_exists"])
+            self.assertEqual(depth_one["status"], "fail")
+            self.assertEqual(depth_two["status"], "skipped")
+            diagnostics = report["failed_depth_diagnostics"][0]
+            self.assertEqual(diagnostics["depth"], 1)
+            self.assertEqual(diagnostics["status"], "fail")
+            self.assertEqual(diagnostics["generate_report"], depth_one["generate_report"])
+            self.assertEqual(diagnostics["error"]["type"], "RuntimeError")
+            exception_payload = json.loads(
+                Path(depth_one["generate_report"]).read_text()
+            )
+            self.assertEqual(exception_payload["status"], "fail")
+            self.assertEqual(exception_payload["error"]["type"], "RuntimeError")
+            self.assertIn("synthetic depth failure", exception_payload["error"]["message"])
+            skipped_payload = json.loads(
+                Path(depth_two["generate_report"]).read_text()
+            )
+            self.assertEqual(skipped_payload["status"], "skipped")
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
     def test_generate_record_reports_failure_diagnostics(self) -> None:
         generate = {
             "status": "reference_mismatch",
@@ -412,6 +474,10 @@ class GenerateDepthSweepTest(unittest.TestCase):
         )
         diagnostics = record["failure_diagnostics"]
         self.assertEqual(diagnostics["depth"], 2)
+        self.assertEqual(
+            diagnostics["generate_report"],
+            "/tmp/generate_depth_2.json",
+        )
         self.assertEqual(diagnostics["error"], "generate reference mismatch")
         self.assertEqual(
             diagnostics["prefill"]["cache_population"][0][

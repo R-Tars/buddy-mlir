@@ -272,6 +272,7 @@ def _generate_record(
         "failure_diagnostics": _generate_failure_diagnostics(
             depth=depth,
             generate=generate,
+            report_path=report_path,
         ),
     }
 
@@ -280,6 +281,7 @@ def _generate_failure_diagnostics(
     *,
     depth: int,
     generate: dict[str, Any],
+    report_path: Path,
 ) -> dict[str, Any] | None:
     if bool(generate.get("passed")):
         return None
@@ -303,6 +305,7 @@ def _generate_failure_diagnostics(
     return {
         "depth": depth,
         "status": generate.get("status"),
+        "generate_report": str(report_path),
         "error": generate.get("error"),
         "model_semantics": generate.get("model_semantics"),
         "layers": generate.get("layers"),
