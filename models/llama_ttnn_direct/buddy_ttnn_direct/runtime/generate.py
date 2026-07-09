@@ -22,14 +22,12 @@ from ..decode_loop import (
 )
 from ..runtime_environment import collect_ttnn_environment
 from ..smoke_decode_shell import (
-    _dry_run_reference,
     _dtype,
     _shape,
     _to_namespace,
 )
 from ..smoke_mlp import NoTTNNDeviceError
 from ..smoke_prefill import (
-    _planned_cache_population,
     _prefill_plan,
 )
 from ..smoke_single_layer_decode import (
@@ -62,14 +60,13 @@ from .reports import (
     cache_population_summary as _cache_population_summary,
     default_generate_report_path as _default_generate_report_path,
     generate_base_report as _generate_base_report,
+    generate_dry_run_report as _generate_dry_run_report,
     generate_end_to_end_contract as _generate_end_to_end_contract,
     generate_failed_report as _generate_failed_report,
     generate_no_device_report as _generate_no_device_report,
     generate_reference_summary as _generate_reference_summary,
     generate_throughput_summary as _generate_throughput_summary,
-    host_copy_not_run_profile as _host_copy_not_run_profile,
     host_copy_profile as _host_copy_profile,
-    section_profile_not_run as _section_profile_not_run,
 )
 from .tokenizer import (
     PromptTokenizationError,
@@ -269,8 +266,7 @@ def run_generate(
     decode_step_count = max(0, token_count - 1)
 
     if dry_run:
-        prefill_cache_population = _planned_cache_population(prefill_plan)
-        report = _generate_base_report(
+        report = _generate_dry_run_report(
             program_dir=program_root,
             program_num_layers=num_layers,
             layers=layer_count,
@@ -282,78 +278,9 @@ def run_generate(
             batch_size=batch_size,
             cache_len=cache_len,
             dtype_seed=dtype_seed,
-            dry_run=True,
             decode_plan=decode_plan,
             prefill_plan=prefill_plan,
         )
-        report.update(
-            {
-                "passed": True,
-                "status": "dry_run",
-                "runtime_status": "dry_run",
-                "prefill_status": "dry_run",
-                "decode_loop_runtime_owned": False,
-                "planned_decode_loop_runtime_owned": True,
-                "kv_cache_source": "prefill",
-                "runtime_owner": GENERATE_RUNTIME_OWNER,
-                "generated_token_ids": [],
-                "generated_text": "",
-                "generated_text_by_user": [],
-                "generated_text_status": "not_run",
-                "generated_text_source": "dry_run",
-                "prefill": {
-                    "status": "dry_run",
-                    "cache_population": prefill_cache_population,
-                },
-                "prefill_cache_population": prefill_cache_population,
-                "prefill_cache_population_summary": (
-                    _cache_population_summary(prefill_cache_population)
-                ),
-                "step_reports": [],
-                "per_step_token_metadata": [],
-                "tensor_conversion_count": (
-                    prefill_plan["tensor_conversion_count"]
-                    + decode_plan["tensor_conversion_count"]
-                ),
-                "runtime_context": {
-                    "class": "TTNNDirectRuntimeContext",
-                    "status": "planned",
-                    "owns": [
-                        "parameters",
-                        "kv_cache",
-                        "page_table",
-                        "rotary_state",
-                        "tokenizer",
-                        "generated_model",
-                    ],
-                    "parameter_tensorization_count_per_generate": 1,
-                    "parameter_tensorization_count_per_decode_step": 0,
-                    "kv_cache_initialization_count_per_generate": 1,
-                    "kv_cache_reinitialized_per_step": False,
-                    "decode_token_runtime_handoff": "device_tensor_direct",
-                    "decode_token_host_roundtrip_per_step": False,
-                    "host_token_materialization_for_reporting_only": True,
-                    "decode_step_count": decode_step_count,
-                },
-                "parameter_tensorization_count_per_generate": 1,
-                "parameter_tensorization_count_per_decode_step": 0,
-                "kv_cache_initialization_count_per_generate": 1,
-                "kv_cache_reinitialized_per_step": False,
-                "decode_token_runtime_handoff": "device_tensor_direct",
-                "decode_token_host_roundtrip_per_step": False,
-                "host_token_materialization_for_reporting_only": True,
-                "synthetic_runtime_input_tensor_count": 0,
-                "synthetic_rotary_tensor_count": 0,
-                "synthetic_kv_cache_tensor_count": 0,
-                "host_copy_profile": _host_copy_not_run_profile("dry_run"),
-                "section_profile": _section_profile_not_run("dry_run"),
-                "trace": _trace_report(requested=False, status="disabled"),
-                "reference": _dry_run_reference("generate"),
-                "error": None,
-                "message": "Dry run only; TTNN device is not required.",
-            }
-        )
-        report["end_to_end_contract"] = _generate_end_to_end_contract(report)
         _write_report(out, report)
         return report
 

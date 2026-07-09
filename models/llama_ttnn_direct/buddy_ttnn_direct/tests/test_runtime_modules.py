@@ -612,6 +612,42 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(fallback_profile["status"], "not_run")
         self.assertIn("argmax_ms", fallback_profile["sections_ms"])
 
+        dry_run_report = runtime_reports.generate_dry_run_report(
+            program_dir=Path("/tmp/program"),
+            program_num_layers=1,
+            layers=1,
+            max_new_tokens=2,
+            decode_steps=1,
+            prefill_len=8,
+            device="p150a",
+            device_id=0,
+            batch_size=2,
+            cache_len=16,
+            dtype_seed="bf16",
+            decode_plan={
+                "tensor_conversion_count": 5,
+                "op_sequence": ["decode"],
+            },
+            prefill_plan={
+                "layers": 1,
+                "batch_size": 2,
+                "tensor_conversion_count": 7,
+                "op_sequence": ["prefill"],
+                "expected_output_shapes": {
+                    "key_cache": [2, 8, 16],
+                    "value_cache": [2, 8, 16],
+                },
+            },
+        )
+        self.assertEqual(dry_run_report["status"], "dry_run")
+        self.assertTrue(dry_run_report["passed"])
+        self.assertEqual(dry_run_report["tensor_conversion_count"], 12)
+        self.assertEqual(
+            dry_run_report["prefill_cache_population_summary"]["layer_count"],
+            1,
+        )
+        self.assertTrue(dry_run_report["end_to_end_contract"]["passed"])
+
     def test_runtime_decode_helpers_preserve_token_handoff_reports(self) -> None:
         prefill_token = [[11], [12]]
         handoff = prefill_token_direct_handoff(prefill_token=prefill_token)
