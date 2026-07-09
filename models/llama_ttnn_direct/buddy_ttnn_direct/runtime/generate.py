@@ -10,11 +10,11 @@ from ..codegen.ttnn_tensorizer import (
 )
 from ..smoke_single_layer_decode import (
     DECODE_PARAMETER_ROLES,
-    _build_prompt_decode_kv_cache_tensors,
     _materialization_summary,
     _tensorization_summary,
 )
 from .context import TTNNDirectRuntimeContext
+from .kv_cache import build_prompt_decode_kv_cache_tensors
 from .prefill import (
     attach_prefill_rotary_parameters,
     build_prefill_page_table_tensor,
@@ -77,7 +77,7 @@ def build_generate_state(
         page_block_size=int(prefill_plan["kv_cache"]["page_block_size"]),
         prompt_token_count=int(prefill_tokenization.effective_token_count),
     )
-    kv_runtime = _build_prompt_decode_kv_cache_tensors(
+    kv_runtime = build_prompt_decode_kv_cache_tensors(
         ttnn=ttnn,
         torch=torch,
         device=device,

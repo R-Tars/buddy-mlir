@@ -30,6 +30,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_rotary_runtime_state,
     build_decode_runtime_state,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.kv_cache import (
+    build_prompt_decode_kv_cache_tensors,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.profile import (
     GenerateSectionProfiler,
 )
@@ -189,6 +192,7 @@ class _FakeTTNNForPrefill:
     float32 = "ttnn.float32"
     ROW_MAJOR_LAYOUT = "row_major"
     TILE_LAYOUT = "tile"
+    DRAM_MEMORY_CONFIG = "dram_memory"
 
     def __init__(self) -> None:
         self.from_torch_calls: list[tuple[_FakeHostTensor, dict[str, object]]] = []
@@ -426,6 +430,44 @@ class RuntimeModuleTest(unittest.TestCase):
         second_rotary = parameters.layers[1].attention.rotary
         self.assertEqual(second_rotary.cos_matrix.source, "prefill.layers.1.rotary_cos")
         self.assertEqual(len(ttnn.from_torch_calls), 6)
+
+    def test_runtime_kv_cache_builds_paged_dram_cache_tensors(self) -> None:
+        ttnn = _FakeTTNNForPrefill()
+        result = build_prompt_decode_kv_cache_tensors(
+            ttnn=ttnn,
+            torch=_FakeTorchForPrefill(),
+            device="device0",
+            dtype_seed="bf16",
+            layer_count=2,
+            batch_size=2,
+            cache_len=10,
+            page_block_size=4,
+            num_kv_heads=8,
+            head_dim=64,
+        )
+
+        self.assertEqual(result.tensor_conversion_count, 4)
+        self.assertEqual(len(result.kv_cache), 2)
+        self.assertEqual(result.kv_cache[0].k.source, "runtime.layers.0.key_cache")
+        self.assertEqual(result.kv_cache[0].v.source, "runtime.layers.0.value_cache")
+        self.assertEqual(result.kv_cache[0].k.shape, [6, 8, 4, 64])
+        self.assertEqual(
+            result.kv_cache[0].k.kwargs,
+            {
+                "device": "device0",
+                "dtype": "ttnn.bfloat16",
+                "memory_config": "dram_memory",
+                "layout": "tile",
+            },
+        )
+        self.assertEqual(result.kv_cache_runtime_state["source"], "kv_cache_runtime_state")
+        self.assertEqual(result.kv_cache_runtime_state["physical_shape"], [6, 8, 4, 64])
+        self.assertEqual(result.kv_cache_runtime_state["logical_shape"], [2, 10, 8, 64])
+        self.assertEqual(result.kv_cache_runtime_state["memory_config"], "dram")
+        self.assertEqual(
+            result.kv_cache_runtime_state["ttnn_memory_config"],
+            "dram_memory",
+        )
 
     def test_runtime_reports_helpers_preserve_generate_report_fields(self) -> None:
         budget = runtime_reports.generated_token_budget(
