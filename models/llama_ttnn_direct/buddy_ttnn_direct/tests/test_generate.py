@@ -128,6 +128,28 @@ class GenerateTest(unittest.TestCase):
             self.assertFalse(
                 report["host_copy_profile"]["host_roundtrip_present"]
             )
+            self.assertEqual(
+                report["prefill_cache_population"],
+                report["prefill"]["cache_population"],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["status_counts"],
+                {"planned": 1},
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["layer_ids"],
+                [0],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["write_policies"],
+                ["fill_cache_per_user"],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"][
+                    "planned_user_count_total"
+                ],
+                2,
+            )
             self.assertEqual(report["section_profile"]["status"], "not_run")
             contract = report["end_to_end_contract"]
             self.assertEqual(contract["status"], "dry_run")
@@ -229,6 +251,28 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["prefill"]["cache_population"][0]["filled_user_count"],
+                2,
+            )
+            self.assertEqual(
+                report["prefill_cache_population"],
+                report["prefill"]["cache_population"],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["status_counts"],
+                {"filled": 1},
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["layer_ids"],
+                [0],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"]["write_policies"],
+                ["paged_fill_cache_per_user"],
+            )
+            self.assertEqual(
+                report["prefill_cache_population_summary"][
+                    "filled_user_count_total"
+                ],
                 2,
             )
             self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")

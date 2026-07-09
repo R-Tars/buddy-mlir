@@ -484,6 +484,7 @@ def run_generate(
     decode_step_count = max(0, token_count - 1)
 
     if dry_run:
+        prefill_cache_population = _planned_cache_population(prefill_plan)
         report = _generate_base_report(
             program_dir=program_root,
             program_num_layers=num_layers,
@@ -517,8 +518,12 @@ def run_generate(
                 "generated_text_source": "dry_run",
                 "prefill": {
                     "status": "dry_run",
-                    "cache_population": _planned_cache_population(prefill_plan),
+                    "cache_population": prefill_cache_population,
                 },
+                "prefill_cache_population": prefill_cache_population,
+                "prefill_cache_population_summary": (
+                    _cache_population_summary(prefill_cache_population)
+                ),
                 "step_reports": [],
                 "per_step_token_metadata": [],
                 "tensor_conversion_count": (
@@ -748,6 +753,11 @@ def run_generate(
                     for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
                 ],
             }
+            prefill_cache_population = _observed_cache_population(
+                plan=prefill_plan,
+                cache_reports=cache_reports,
+                output_shapes=prefill_output_shapes,
+            )
             prefill_reference = _prefill_reference(
                 plan=prefill_plan,
                 layer_count=layer_count,
@@ -1096,13 +1106,13 @@ def run_generate(
                                 .first_token_materialization_ms
                             ),
                         },
-                        "cache_population": _observed_cache_population(
-                            plan=prefill_plan,
-                            cache_reports=cache_reports,
-                            output_shapes=prefill_output_shapes,
-                        ),
+                        "cache_population": prefill_cache_population,
                         "reference": prefill_reference,
                     },
+                    "prefill_cache_population": prefill_cache_population,
+                    "prefill_cache_population_summary": (
+                        _cache_population_summary(prefill_cache_population)
+                    ),
                     "step_reports": step_reports,
                     "per_step_token_metadata": per_step_token_metadata,
                     "generated_token_ids": generated_token_ids_by_user,
@@ -1673,6 +1683,62 @@ def _generated_token_budget(
     }
 
 
+def _cache_population_summary(cache_population: Any) -> dict[str, Any]:
+    if not isinstance(cache_population, list):
+        return {
+            "layer_count": 0,
+            "layer_ids": [],
+            "status_counts": {},
+            "write_policies": [],
+            "update_shape_layouts": [],
+            "key_cache_shapes": [],
+            "value_cache_shapes": [],
+            "filled_user_count_total": 0,
+            "planned_user_count_total": 0,
+        }
+    status_counts: dict[str, int] = {}
+    layer_ids: list[int] = []
+    write_policies: set[str] = set()
+    update_shape_layouts: set[str] = set()
+    key_cache_shapes: list[list[int]] = []
+    value_cache_shapes: list[list[int]] = []
+    filled_user_count_total = 0
+    planned_user_count_total = 0
+    for entry in cache_population:
+        if not isinstance(entry, dict):
+            continue
+        status = str(entry.get("status") or "unknown")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        layer_id = entry.get("layer_id")
+        if layer_id is not None:
+            layer_ids.append(int(layer_id))
+        write_policy = entry.get("write_policy")
+        if write_policy:
+            write_policies.add(str(write_policy))
+        update_shape_layout = entry.get("update_shape_layout")
+        if update_shape_layout:
+            update_shape_layouts.add(str(update_shape_layout))
+        key_shape = entry.get("key_cache_shape")
+        if isinstance(key_shape, list):
+            key_cache_shapes.append(key_shape)
+        value_shape = entry.get("value_cache_shape")
+        if isinstance(value_shape, list):
+            value_cache_shapes.append(value_shape)
+        filled_user_count_total += int(entry.get("filled_user_count") or 0)
+        planned_user_count_total += int(entry.get("planned_user_count") or 0)
+    return {
+        "layer_count": len(layer_ids),
+        "layer_ids": layer_ids,
+        "status_counts": status_counts,
+        "write_policies": sorted(write_policies),
+        "update_shape_layouts": sorted(update_shape_layouts),
+        "key_cache_shapes": key_cache_shapes,
+        "value_cache_shapes": value_cache_shapes,
+        "filled_user_count_total": filled_user_count_total,
+        "planned_user_count_total": planned_user_count_total,
+    }
+
+
 def _generate_no_device_report(
     *,
     detail: str,
@@ -1707,6 +1773,7 @@ def _generate_failed_report(
     detail: str,
     ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
+    prefill_cache_population = _planned_cache_population(prefill_plan)
     report = _generate_base_report(
         program_dir=program_dir,
         program_num_layers=layers,
@@ -1738,8 +1805,12 @@ def _generate_failed_report(
             "generated_text_source": status,
             "prefill": {
                 "status": status,
-                "cache_population": _planned_cache_population(prefill_plan),
+                "cache_population": prefill_cache_population,
             },
+            "prefill_cache_population": prefill_cache_population,
+            "prefill_cache_population_summary": (
+                _cache_population_summary(prefill_cache_population)
+            ),
             "step_reports": [],
             "per_step_token_metadata": [],
             "tensor_conversion_count": 0,
