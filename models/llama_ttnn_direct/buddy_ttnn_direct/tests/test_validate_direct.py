@@ -67,6 +67,48 @@ class ValidateDirectTest(unittest.TestCase):
             "performance_baselines.json"
         ))
 
+    def test_decode_runtime_inputs_accept_shared_prompt_rotary(self) -> None:
+        step = {
+            "input_source": "prompt_runtime",
+            "input_shapes": {
+                "token_ids": [32, 1],
+                "page_table": [32, 32],
+                "cache_position": [32],
+                "key_cache": [1024, 8, 32, 128],
+                "value_cache": [1024, 8, 32, 128],
+            },
+            "kv_cache": {
+                "physical_shape": [1024, 8, 32, 128],
+                "logical_shape": [32, 1024, 8, 128],
+                "page_block_size": 32,
+                "page_count": 32,
+                "max_num_blocks": 1024,
+            },
+            "synthetic_runtime_input_tensor_count": 0,
+            "prompt_runtime_input_tensor_count": 1,
+            "decode_runtime_state_input_tensor_count": 2,
+            "rotary_runtime_input_tensor_count": 3,
+            "rotary_runtime_state": {
+                "shared_across_layers": True,
+                "tensor_count": 3,
+            },
+            "kv_cache_runtime_input_tensor_count": 64,
+            "synthetic_rotary_tensor_count": 0,
+        }
+
+        self.assertTrue(
+            validation_module._decode_runtime_inputs_complete(
+                step,
+                layer_count=32,
+                batch_size=32,
+                seq_len=1,
+                cache_len=1024,
+                num_kv_heads=8,
+                head_dim=128,
+                page_block_size=32,
+            )
+        )
+
     def test_validate_real_decode_official_performance_parity_requires_baseline(
         self,
     ) -> None:

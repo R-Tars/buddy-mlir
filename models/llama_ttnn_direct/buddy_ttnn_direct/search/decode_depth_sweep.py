@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import traceback
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,7 @@ def run_decode_depth_sweep(
     trace_iterations: int = 1,
     dry_run: bool = False,
     require_full_depth: bool = True,
+    isolate_depth_steps: bool = False,
     prompt: str | None = None,
     tokenizer_path: str | Path | None = None,
     tokenizer_module: Any | None = None,
@@ -69,6 +72,13 @@ def run_decode_depth_sweep(
     )
     profile_root.mkdir(parents=True, exist_ok=True)
     model_path_for_profile = Path(model_path) if model_path is not None else None
+    use_depth_isolation = (
+        bool(isolate_depth_steps)
+        and not dry_run
+        and tokenizer_module is None
+        and ttnn_module is None
+        and torch_module is None
+    )
 
     records = []
     stop_after_failure = False
@@ -86,25 +96,42 @@ def run_decode_depth_sweep(
             )
             continue
         try:
-            profile = profile_decode_step(
-                out=report_path,
-                program_dir=program_root,
-                layers=depth,
-                model_path=model_path_for_profile,
-                device=device,
-                device_id=device_id,
-                batch_size=batch_size,
-                cache_len=cache_len,
-                dtype_seed=dtype_seed,
-                trace=trace,
-                trace_iterations=trace_iterations,
-                dry_run=dry_run,
-                prompt=prompt,
-                tokenizer_path=tokenizer_path,
-                tokenizer_module=tokenizer_module,
-                ttnn_module=ttnn_module,
-                torch_module=torch_module,
-            )
+            if use_depth_isolation:
+                profile = _run_isolated_profile_depth(
+                    report_path=report_path,
+                    program_root=program_root,
+                    model_path=model_path_for_profile,
+                    depth=depth,
+                    device=device,
+                    device_id=device_id,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                    trace=trace,
+                    trace_iterations=trace_iterations,
+                    prompt=prompt,
+                    tokenizer_path=tokenizer_path,
+                )
+            else:
+                profile = profile_decode_step(
+                    out=report_path,
+                    program_dir=program_root,
+                    layers=depth,
+                    model_path=model_path_for_profile,
+                    device=device,
+                    device_id=device_id,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                    trace=trace,
+                    trace_iterations=trace_iterations,
+                    dry_run=dry_run,
+                    prompt=prompt,
+                    tokenizer_path=tokenizer_path,
+                    tokenizer_module=tokenizer_module,
+                    ttnn_module=ttnn_module,
+                    torch_module=torch_module,
+                )
             record = _profile_record(
                 depth=depth,
                 profile=profile,
@@ -155,6 +182,7 @@ def run_decode_depth_sweep(
         "passed": bool(acceptance["passed"]),
         "dry_run": bool(dry_run),
         "require_full_depth": bool(require_full_depth),
+        "isolate_depth_steps": bool(use_depth_isolation),
         "program_dir": str(program_root),
         "model_path": str(model_path_for_profile) if model_path_for_profile else None,
         "profiles_dir": str(profile_root),
@@ -326,7 +354,93 @@ def _profile_record(
             if isinstance(check, dict) and not check.get("passed")
         ],
         "error": profile.get("error"),
+        "isolated_subprocess": profile.get("isolated_subprocess"),
     }
+
+
+def _run_isolated_profile_depth(
+    *,
+    report_path: Path,
+    program_root: Path,
+    model_path: Path | None,
+    depth: int,
+    device: str,
+    device_id: int,
+    batch_size: int | None,
+    cache_len: int | None,
+    dtype_seed: str,
+    trace: bool,
+    trace_iterations: int,
+    prompt: str | None,
+    tokenizer_path: str | Path | None,
+) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        "-m",
+        "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+        "profile-decode-step",
+        "--program-dir",
+        str(program_root),
+        "--layers",
+        str(depth),
+        "--device",
+        device,
+        "--device-id",
+        str(device_id),
+        "--dtype-seed",
+        dtype_seed,
+        "--trace-iterations",
+        str(trace_iterations),
+        "--out",
+        str(report_path),
+    ]
+    if model_path is not None:
+        command.extend(["--model-path", str(model_path)])
+    if batch_size is not None:
+        command.extend(["--batch-size", str(batch_size)])
+    if cache_len is not None:
+        command.extend(["--cache-len", str(cache_len)])
+    if trace:
+        command.append("--trace")
+    if prompt is not None:
+        command.extend(["--prompt", prompt])
+    if tokenizer_path is not None:
+        command.extend(["--tokenizer-path", str(tokenizer_path)])
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    isolated = {
+        "enabled": True,
+        "returncode": result.returncode,
+        "command": command,
+        "stdout": _diagnostic_excerpt(result.stdout),
+        "stderr": _diagnostic_excerpt(result.stderr),
+    }
+    if report_path.is_file():
+        profile = json.loads(report_path.read_text())
+    else:
+        profile = {
+            "schema_version": 1,
+            "command": "profile-decode-step",
+            "status": "fail",
+            "passed": False,
+            "program_dir": str(program_root),
+            "model_path": str(model_path) if model_path else None,
+            "layers": depth,
+            "batch_size": batch_size,
+            "cache_len": cache_len,
+            "device": device,
+            "device_id": device_id,
+            "dtype_seed": dtype_seed,
+            "error": "isolated profile depth step did not write a report",
+        }
+        _write_json(report_path, profile)
+    profile["isolated_subprocess"] = isolated
+    return profile
 
 
 def _depth_sweep_acceptance(
@@ -604,6 +718,15 @@ def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
         key = str(value)
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def _diagnostic_excerpt(value: str | None, *, limit: int = 2000) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:

@@ -274,6 +274,7 @@ def _make_fake_ttnn():
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
     module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
+    module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     class UnaryOpType:
         SILU = "SILU"
@@ -325,6 +326,10 @@ def _make_fake_ttnn():
     def fill_cache(cache, update, **kwargs):
         module.calls.append({"op": "fill_cache", "kwargs": dict(kwargs)})
         return FakeTensor(cache.name, cache.shape)
+
+    def to_memory_config(tensor, **kwargs):
+        module.calls.append({"op": "to_memory_config", "kwargs": dict(kwargs)})
+        return FakeTensor(f"mem:{tensor.name}", tensor.shape)
 
     def paged_fill_cache(cache, update, page_table, **kwargs):
         module.calls.append(
@@ -383,6 +388,7 @@ def _make_fake_ttnn():
     module.embedding = embedding
     module.rms_norm = rms_norm
     module.linear = linear
+    module.to_memory_config = to_memory_config
     module.mul = mul
     module.add = add
     module.concat = concat

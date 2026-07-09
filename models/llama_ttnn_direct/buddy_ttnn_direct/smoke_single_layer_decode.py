@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import importlib
 import json
 import time
@@ -1616,6 +1617,8 @@ def _build_model_decode_state(
         layers=range(int(plan["layers"])),
         ttnn_module=ttnn,
     )
+    del host_params
+    gc.collect()
     assert result.parameters is not None
     synthetic_inputs = _build_synthetic_decode_inputs(
         ttnn=ttnn,
@@ -1962,6 +1965,9 @@ def _build_prompt_decode_runtime_state_tensors(
         prompt_token_count=prompt_token_count,
     )
     kwargs = {"device": device}
+    memory_config = _runtime_dram_memory_config(ttnn)
+    if memory_config is not None:
+        kwargs["memory_config"] = memory_config
     dtype = getattr(
         ttnn,
         "int32",
@@ -1988,11 +1994,14 @@ def _build_prompt_decode_runtime_state_tensors(
         ),
         **kwargs,
     )
+    decode_runtime_state = runtime_state.to_report()
+    decode_runtime_state["memory_config"] = "dram"
+    decode_runtime_state["ttnn_memory_config"] = _config_repr(memory_config)
     return SimpleNamespace(
         page_table=page_table,
         cache_position=cache_position,
         tensor_conversion_count=2,
-        decode_runtime_state=runtime_state.to_report(),
+        decode_runtime_state=decode_runtime_state,
     )
 
 
@@ -2024,6 +2033,9 @@ def _build_prompt_decode_token_ids(
         name="prompt_token_ids",
     )
     kwargs = {"device": device}
+    memory_config = _runtime_dram_memory_config(ttnn)
+    if memory_config is not None:
+        kwargs["memory_config"] = memory_config
     dtype = getattr(
         ttnn,
         "uint32",
@@ -2067,6 +2079,9 @@ def _build_prompt_decode_kv_cache_tensors(
         "device": device,
         "dtype": _ttnn_dtype(ttnn, dtype_seed),
     }
+    memory_config = _runtime_dram_memory_config(ttnn)
+    if memory_config is not None:
+        kwargs["memory_config"] = memory_config
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     if layout is not None:
         kwargs["layout"] = layout
@@ -2094,10 +2109,13 @@ def _build_prompt_decode_kv_cache_tensors(
             )
         )
 
+    kv_cache_runtime_state = runtime_state.to_report()
+    kv_cache_runtime_state["memory_config"] = "dram"
+    kv_cache_runtime_state["ttnn_memory_config"] = _config_repr(memory_config)
     return SimpleNamespace(
         kv_cache=kv_cache,
         tensor_conversion_count=tensor_count,
-        kv_cache_runtime_state=runtime_state.to_report(),
+        kv_cache_runtime_state=kv_cache_runtime_state,
     )
 
 
@@ -2209,34 +2227,56 @@ def _attach_runtime_rotary_parameters(
             **tensor_kwargs,
         )
 
+    shared_rotary = SimpleNamespace(
+        cos_matrix=runtime_tensor(
+            "runtime.shared.rotary_cos",
+            list(runtime_state.cos_sin_shape),
+            memory_config=rotary_cos_sin_memory_config,
+        ),
+        sin_matrix=runtime_tensor(
+            "runtime.shared.rotary_sin",
+            list(runtime_state.cos_sin_shape),
+            memory_config=rotary_cos_sin_memory_config,
+        ),
+        transformation_matrix=runtime_tensor(
+            "runtime.shared.rotary_transform",
+            list(runtime_state.transformation_shape),
+            memory_config=rotary_transform_memory_config,
+        ),
+    )
     for layer_id in range(layer_count):
         layer = parameters.layers[layer_id]
         attention = getattr(layer, "attention", None)
         if attention is None:
             attention = SimpleNamespace()
             layer.attention = attention
-        attention.rotary = SimpleNamespace(
-            cos_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_cos",
-                list(runtime_state.cos_sin_shape),
-                memory_config=rotary_cos_sin_memory_config,
-            ),
-            sin_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_sin",
-                list(runtime_state.cos_sin_shape),
-                memory_config=rotary_cos_sin_memory_config,
-            ),
-            transformation_matrix=runtime_tensor(
-                f"runtime.layers.{layer_id}.rotary_transform",
-                list(runtime_state.transformation_shape),
-                memory_config=rotary_transform_memory_config,
-            ),
-        )
+        attention.rotary = shared_rotary
 
+    rotary_runtime_state = runtime_state.to_report()
+    rotary_runtime_state["tensor_count"] = tensor_count
+    rotary_runtime_state["shared_across_layers"] = True
+    rotary_runtime_state["memory_config"] = "height_sharded"
+    rotary_runtime_state["ttnn_memory_config"] = _config_repr(
+        rotary_cos_sin_memory_config
+    )
+    rotary_runtime_state["transform_memory_config"] = "height_sharded"
+    rotary_runtime_state["transform_ttnn_memory_config"] = _config_repr(
+        rotary_transform_memory_config
+    )
     return SimpleNamespace(
         tensor_conversion_count=tensor_count,
-        rotary_runtime_state=runtime_state.to_report(),
+        rotary_runtime_state=rotary_runtime_state,
     )
+
+
+def _runtime_dram_memory_config(ttnn: Any) -> Any | None:
+    return getattr(ttnn, "DRAM_MEMORY_CONFIG", None)
+
+
+def _config_repr(value: Any | None) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _runtime_float_tensor(

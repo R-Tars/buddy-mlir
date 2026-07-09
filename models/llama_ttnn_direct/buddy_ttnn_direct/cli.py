@@ -2194,6 +2194,7 @@ def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
         prompt=args.prompt,
         tokenizer_path=args.tokenizer_path,
         dry_run=args.dry_run,
+        isolate_depth_steps=not args.dry_run,
     )
     print(f"wrote decode depth sweep report: {args.out}")
     if report.get("status") == "no_device":
@@ -2220,6 +2221,7 @@ def _cmd_generate_depth_sweep(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         dry_run=args.dry_run,
         require_full_depth=args.require_full_depth,
+        isolate_depth_steps=not args.dry_run,
     )
     print(f"wrote generate depth sweep report: {args.out}")
     if report.get("status") == "no_device":
@@ -2582,6 +2584,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         tokenizer_path=args.tokenizer_path,
         guard_device_busy=args.guard_device_busy,
         guard_device_health=args.guard_device_health,
+        isolate_runtime_steps=True,
     )
     print(
         "wrote TTNN Direct real decode validation report: "

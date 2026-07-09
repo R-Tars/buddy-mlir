@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import traceback
 from pathlib import Path
 from typing import Any
@@ -30,6 +32,7 @@ def run_generate_depth_sweep(
     dtype_seed: str = "bf16",
     dry_run: bool = False,
     require_full_depth: bool = False,
+    isolate_depth_steps: bool = False,
     tokenizer_module: Any | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
@@ -49,6 +52,13 @@ def run_generate_depth_sweep(
     )
     report_root.mkdir(parents=True, exist_ok=True)
     model_path_for_generate = Path(model_path) if model_path is not None else None
+    use_depth_isolation = (
+        bool(isolate_depth_steps)
+        and not dry_run
+        and tokenizer_module is None
+        and ttnn_module is None
+        and torch_module is None
+    )
 
     records = []
     stop_after_failure = False
@@ -78,25 +88,42 @@ def run_generate_depth_sweep(
             )
             continue
         try:
-            generate = run_generate(
-                out=report_path,
-                program_dir=program_root,
-                model_path=model_path_for_generate,
-                prompt=prompt,
-                tokenizer_path=tokenizer_path,
-                max_new_tokens=max_new_tokens,
-                layers=depth,
-                prefill_len=prefill_len,
-                device=device,
-                device_id=device_id,
-                batch_size=batch_size,
-                cache_len=cache_len,
-                dtype_seed=dtype_seed,
-                dry_run=dry_run,
-                tokenizer_module=tokenizer_module,
-                ttnn_module=ttnn_module,
-                torch_module=torch_module,
-            )
+            if use_depth_isolation:
+                generate = _run_isolated_generate_depth(
+                    report_path=report_path,
+                    program_root=program_root,
+                    model_path=model_path_for_generate,
+                    prompt=prompt,
+                    tokenizer_path=tokenizer_path,
+                    max_new_tokens=max_new_tokens,
+                    depth=depth,
+                    prefill_len=prefill_len,
+                    device=device,
+                    device_id=device_id,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                )
+            else:
+                generate = run_generate(
+                    out=report_path,
+                    program_dir=program_root,
+                    model_path=model_path_for_generate,
+                    prompt=prompt,
+                    tokenizer_path=tokenizer_path,
+                    max_new_tokens=max_new_tokens,
+                    layers=depth,
+                    prefill_len=prefill_len,
+                    device=device,
+                    device_id=device_id,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                    dry_run=dry_run,
+                    tokenizer_module=tokenizer_module,
+                    ttnn_module=ttnn_module,
+                    torch_module=torch_module,
+                )
             _ensure_generate_report_written(report_path, generate)
             record = _generate_record(
                 depth=depth,
@@ -156,6 +183,7 @@ def run_generate_depth_sweep(
         "passed": bool(acceptance["passed"]),
         "dry_run": bool(dry_run),
         "require_full_depth": bool(require_full_depth),
+        "isolate_depth_steps": bool(use_depth_isolation),
         "program_dir": str(program_root),
         "model_path": (
             str(model_path_for_generate) if model_path_for_generate else None
@@ -274,7 +302,99 @@ def _generate_record(
             generate=generate,
             report_path=report_path,
         ),
+        "isolated_subprocess": generate.get("isolated_subprocess"),
     }
+
+
+def _run_isolated_generate_depth(
+    *,
+    report_path: Path,
+    program_root: Path,
+    model_path: Path | None,
+    prompt: str | None,
+    tokenizer_path: str | Path | None,
+    max_new_tokens: int,
+    depth: int,
+    prefill_len: int | None,
+    device: str,
+    device_id: int,
+    batch_size: int | None,
+    cache_len: int | None,
+    dtype_seed: str,
+) -> dict[str, Any]:
+    command = [
+        sys.executable,
+        "-m",
+        "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+        "generate",
+        "--program-dir",
+        str(program_root),
+        "--max-new-tokens",
+        str(max_new_tokens),
+        "--layers",
+        str(depth),
+        "--device",
+        device,
+        "--device-id",
+        str(device_id),
+        "--dtype-seed",
+        dtype_seed,
+        "--out",
+        str(report_path),
+    ]
+    if model_path is not None:
+        command.extend(["--model-path", str(model_path)])
+    if prompt is not None:
+        command.extend(["--prompt", prompt])
+    if tokenizer_path is not None:
+        command.extend(["--tokenizer-path", str(tokenizer_path)])
+    if prefill_len is not None:
+        command.extend(["--prefill-len", str(prefill_len)])
+    if batch_size is not None:
+        command.extend(["--batch-size", str(batch_size)])
+    if cache_len is not None:
+        command.extend(["--cache-len", str(cache_len)])
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    isolated = {
+        "enabled": True,
+        "returncode": result.returncode,
+        "command": command,
+        "stdout": _diagnostic_excerpt(result.stdout),
+        "stderr": _diagnostic_excerpt(result.stderr),
+    }
+    if report_path.is_file():
+        generate = json.loads(report_path.read_text())
+    else:
+        generate = _base_depth_generate_report(
+            depth=depth,
+            report_path=report_path,
+            program_root=program_root,
+            status="fail",
+            max_new_tokens=max_new_tokens,
+            prefill_len=prefill_len,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            device=device,
+            device_id=device_id,
+            dtype_seed=dtype_seed,
+        )
+        generate.update(
+            {
+                "passed": False,
+                "error": (
+                    "isolated generate depth step did not write a report"
+                ),
+            }
+        )
+        _write_json(report_path, generate)
+    generate["isolated_subprocess"] = isolated
+    return generate
 
 
 def _generate_failure_diagnostics(
@@ -517,6 +637,15 @@ def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
         value = str(value)
         counts[value] = counts.get(value, 0) + 1
     return dict(sorted(counts.items()))
+
+
+def _diagnostic_excerpt(value: str | None, *, limit: int = 2000) -> str:
+    if not value:
+        return ""
+    text = str(value).strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...<truncated>"
 
 
 def _ensure_generate_report_written(

@@ -103,7 +103,8 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         },
         "rms_norm": {
             "eps": plan.get("rms_norm_eps"),
-            "output_memory_config": None,
+            "input_memory_config": "dram",
+            "output_memory_config": "dram",
             "output_dtype": None,
         },
         "attention": {
@@ -269,6 +270,26 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                 def _record(self, op_name):
                     self.op_log.append(op_name)
 
+                def resolve_memory_config(self, memory_config):
+                    if memory_config is None:
+                        return None
+                    if not isinstance(memory_config, str):
+                        return memory_config
+                    value = memory_config
+                    if value in ("", "none", "None", "default"):
+                        return None
+                    if value.startswith("ttnn."):
+                        value = value.split(".", 1)[1]
+                    aliases = {{
+                        "dram": "DRAM_MEMORY_CONFIG",
+                        "l1": "L1_MEMORY_CONFIG",
+                        "l1_interleaved": "L1_MEMORY_CONFIG",
+                        "l1_width_sharded": "L1_MEMORY_CONFIG",
+                        "l1_height_sharded": "L1_MEMORY_CONFIG",
+                    }}
+                    attr = aliases.get(value, value)
+                    return getattr(self.ttnn, attr, memory_config)
+
                 def add(
                     self,
                     left,
@@ -281,7 +302,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     kwargs = {{}}
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     if dtype is not None:
                         kwargs["dtype"] = dtype
                     return self.ttnn.add(left, right, **kwargs)
@@ -300,7 +323,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     kwargs = {{}}
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     if program_config is not None:
                         kwargs["program_config"] = program_config
                     if compute_kernel_config is not None:
@@ -324,7 +349,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     if activation is not None:
                         kwargs["input_tensor_a_activations"] = [activation]
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     if dtype is not None:
                         kwargs["dtype"] = dtype
                     mul = getattr(self.ttnn, "mul", None)
@@ -362,7 +389,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         )
                     kwargs = {{}}
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     if dtype is not None:
                         kwargs["dtype"] = dtype
                     return op(token_ids, weight, **kwargs)
@@ -392,7 +421,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     )
                     kwargs = {{"weight": weight, "epsilon": epsilon}}
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     if dtype is not None:
                         kwargs["dtype"] = dtype
                     return op(hidden, **kwargs)
@@ -504,6 +535,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     memory_config=None,
                     op_name="to_memory_config",
                 ):
+                    memory_config = self.resolve_memory_config(memory_config)
                     if memory_config is None:
                         return tensor
                     op = getattr(self.ttnn, "to_memory_config", None)
@@ -560,7 +592,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         qkv,
                         num_heads=num_heads,
                         num_kv_heads=num_kv_heads,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                     )
 
                 def split_qkv_heads_prefill(
@@ -578,7 +610,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         qkv,
                         num_heads=num_heads,
                         num_kv_heads=num_kv_heads,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                     )
 
                 def rotary_embedding_decode(
@@ -666,7 +698,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         page_table,
                         cache_position,
                         scale=scale,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                         program_config=program_config,
                         compute_kernel_config=compute_kernel_config,
                     )
@@ -693,7 +725,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         value,
                         is_causal=is_causal,
                         scale=scale,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                         program_config=program_config,
                         compute_kernel_config=compute_kernel_config,
                         attention_mask=attention_mask,
@@ -752,7 +784,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                         self.ttnn,
                         attn,
                         num_heads=num_heads,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                     )
 
                 def concat_heads_prefill(
@@ -766,7 +798,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     return ttnn_ops.concat_heads_prefill(
                         self.ttnn,
                         attn,
-                        memory_config=memory_config,
+                        memory_config=self.resolve_memory_config(memory_config),
                     )
 
                 def concat(
@@ -780,7 +812,9 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     self._record(op_name)
                     kwargs = {{"dim": dim}}
                     if memory_config is not None:
-                        kwargs["memory_config"] = memory_config
+                        kwargs["memory_config"] = self.resolve_memory_config(
+                            memory_config
+                        )
                     return self.ttnn.concat(tensors, **kwargs)
 
                 def argmax(self, tensor, *, dim=-1, op_name="argmax_or_sampling"):
@@ -1076,6 +1110,13 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
                     rms_config = _optional_attr(self.config, "rms_norm", None)
                     epsilon = _optional_attr(
                         rms_config, "eps", GENERATED_RMS_NORM_EPS
+                    )
+                    hidden = self.ops.to_memory_config(
+                        hidden,
+                        memory_config=_optional_attr(
+                            rms_config, "input_memory_config"
+                        ),
+                        op_name=f"to_memory_config.{{op_name}}.input",
                     )
                     return self.ops.rms_norm(
                         hidden,

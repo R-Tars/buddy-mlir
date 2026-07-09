@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import gc
 import json
 import importlib
 import py_compile
 import shlex
+import subprocess
+import sys
 import traceback
 from collections.abc import Callable
 from pathlib import Path
@@ -2009,6 +2012,7 @@ def validate_real_decode(
     device_process_environment: dict[str, Any] | None = None,
     guard_device_health: bool = False,
     device_health_environment: dict[str, Any] | None = None,
+    isolate_runtime_steps: bool = False,
 ) -> dict[str, Any]:
     """Run the real-weight generated decode validation gates.
 
@@ -2553,6 +2557,54 @@ def validate_real_decode(
         mark_device_unhealthy(blocked_step)
         return True
 
+    def cleanup_step_memory() -> None:
+        if not dry_run:
+            gc.collect()
+
+    def use_runtime_step_isolation() -> bool:
+        return (
+            not dry_run
+            and isolate_runtime_steps
+            and ttnn_module is None
+            and torch_module is None
+            and tokenizer_module is None
+        )
+
+    def add_prompt_runtime_cli_args(command: list[str]) -> None:
+        if prompt is not None:
+            command.extend(["--prompt", prompt])
+        if tokenizer_path is not None:
+            command.extend(["--tokenizer-path", str(tokenizer_path)])
+
+    def isolated_cli_report(
+        *,
+        command: list[str],
+        report_path: Path,
+        fallback_report: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        isolated = {
+            "enabled": True,
+            "returncode": result.returncode,
+            "command": command,
+            "stdout": _diagnostic_excerpt(
+                _coerce_process_text(result.stdout),
+                limit=2000,
+            ),
+            "stderr": _diagnostic_excerpt(
+                _coerce_process_text(result.stderr),
+                limit=2000,
+            ),
+        }
+        if report_path.is_file():
+            return json.loads(report_path.read_text()), isolated
+        return fallback_report, isolated
+
     def run_step(
         name: str,
         action: Callable[[], dict[str, Any]],
@@ -2580,12 +2632,14 @@ def validate_real_decode(
             )
             report["status"] = "fail"
             persist()
+            cleanup_step_memory()
             return False
 
         status = str(detail.get("status", "pass"))
         report["results"][name] = status
         report["steps"][name] = detail
         persist()
+        cleanup_step_memory()
         if status in {"pass", "dry_run", "skipped"}:
             return True
 
@@ -2762,28 +2816,69 @@ def validate_real_decode(
         }
 
     def decode_shell_step() -> dict[str, Any]:
-        shell_report = run_smoke_decode_shell(
-            out=paths["decode_shell_report"],
-            program_dir=program_dir,
-            layers=layer_count,
-            disable_attention=True,
-            model_path=None if dry_run else model_path,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dry_run=dry_run,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-            pcc_threshold=decode_shell_pcc_threshold,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "smoke-decode-shell",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--layers",
+                str(layer_count),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--disable-attention",
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--pcc-threshold",
+                str(decode_shell_pcc_threshold),
+                "--out",
+                str(paths["decode_shell_report"]),
+            ]
+            add_prompt_runtime_cli_args(command)
+            shell_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["decode_shell_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated smoke-decode-shell did not write a report"
+                    ),
+                },
+            )
+        else:
+            shell_report = run_smoke_decode_shell(
+                out=paths["decode_shell_report"],
+                program_dir=program_dir,
+                layers=layer_count,
+                disable_attention=True,
+                model_path=None if dry_run else model_path,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dry_run=dry_run,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
+                pcc_threshold=decode_shell_pcc_threshold,
+            )
         numeric_reference = (
             shell_report.get("reference", {}).get("numeric_reference", {})
         )
-        return {
+        detail = {
             "status": _runtime_step_status(shell_report, dry_run=dry_run),
             "decode_shell_report": str(paths["decode_shell_report"]),
             "runtime_status": shell_report["status"],
@@ -2820,33 +2915,82 @@ def validate_real_decode(
             **decode_shell_tensorization_path_detail(shell_report),
             **_reference_summary(shell_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def attention_primitives_step() -> dict[str, Any]:
         primitive_reports = []
         for primitive in ATTENTION_PRIMITIVES:
             report_path = paths["attention_primitives_dir"] / f"{primitive}.json"
-            primitive_report = run_smoke_attention_primitive(
-                out=report_path,
-                primitive=primitive,
-                device=device,
-                device_id=device_id,
-                batch_size=resolved_batch_size,
-                hidden_size=program_hidden_size,
-                num_heads=program_num_attention_heads,
-                num_kv_heads=program_num_kv_heads,
-                head_dim=program_head_dim,
-                max_cache_len=resolved_cache_len,
-                dtype_seed=dtype_seed,
-                dry_run=dry_run,
-                ttnn_module=ttnn_module,
-                torch_module=torch_module,
-            )
-            primitive_reports.append(
-                {
-                    "report": str(report_path),
-                    **primitive_report,
-                }
-            )
+            isolated = None
+            if use_runtime_step_isolation():
+                command = [
+                    sys.executable,
+                    "-m",
+                    "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                    "smoke-attention-primitive",
+                    "--primitive",
+                    primitive,
+                    "--device",
+                    device,
+                    "--device-id",
+                    str(device_id),
+                    "--batch-size",
+                    str(resolved_batch_size),
+                    "--hidden-size",
+                    str(program_hidden_size),
+                    "--num-heads",
+                    str(program_num_attention_heads),
+                    "--num-kv-heads",
+                    str(program_num_kv_heads),
+                    "--head-dim",
+                    str(program_head_dim),
+                    "--max-cache-len",
+                    str(resolved_cache_len),
+                    "--dtype-seed",
+                    dtype_seed,
+                    "--out",
+                    str(report_path),
+                ]
+                primitive_report, isolated = isolated_cli_report(
+                    command=command,
+                    report_path=report_path,
+                    fallback_report={
+                        "schema_version": 1,
+                        "primitive": primitive,
+                        "status": "fail",
+                        "passed": False,
+                        "error": (
+                            "isolated smoke-attention-primitive did not "
+                            "write a report"
+                        ),
+                    },
+                )
+            else:
+                primitive_report = run_smoke_attention_primitive(
+                    out=report_path,
+                    primitive=primitive,
+                    device=device,
+                    device_id=device_id,
+                    batch_size=resolved_batch_size,
+                    hidden_size=program_hidden_size,
+                    num_heads=program_num_attention_heads,
+                    num_kv_heads=program_num_kv_heads,
+                    head_dim=program_head_dim,
+                    max_cache_len=resolved_cache_len,
+                    dtype_seed=dtype_seed,
+                    dry_run=dry_run,
+                    ttnn_module=ttnn_module,
+                    torch_module=torch_module,
+                )
+            primitive_detail = {
+                "report": str(report_path),
+                **primitive_report,
+            }
+            if isolated is not None:
+                primitive_detail["isolated_subprocess"] = isolated
+            primitive_reports.append(primitive_detail)
         return {
             "status": _attention_primitives_step_status(
                 primitive_reports,
@@ -2867,21 +3011,58 @@ def validate_real_decode(
         }
 
     def attention_layer_step() -> dict[str, Any]:
-        layer_report = run_smoke_attention_layer(
-            out=paths["attention_layer_report"],
-            program_dir=program_dir,
-            layer=0,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            dry_run=dry_run,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "smoke-attention-layer",
+                "--program-dir",
+                str(program_dir),
+                "--layer",
+                "0",
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--out",
+                str(paths["attention_layer_report"]),
+            ]
+            layer_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["attention_layer_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated smoke-attention-layer did not write a report"
+                    ),
+                },
+            )
+        else:
+            layer_report = run_smoke_attention_layer(
+                out=paths["attention_layer_report"],
+                program_dir=program_dir,
+                layer=0,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                dry_run=dry_run,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+            )
         primitive_reports = layer_report.get("primitive_reports") or []
-        return {
+        detail = {
             "status": _runtime_step_status(layer_report, dry_run=dry_run),
             "attention_layer_report": str(paths["attention_layer_report"]),
             "runtime_status": layer_report["status"],
@@ -2910,27 +3091,72 @@ def validate_real_decode(
             "ttnn_environment": layer_report.get("ttnn_environment"),
             **_reference_summary(layer_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def single_layer_decode_step() -> dict[str, Any]:
-        single_layer_report = run_smoke_single_layer_decode(
-            out=paths["single_layer_decode_report"],
-            program_dir=program_dir,
-            model_path=None if dry_run else model_path,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            trace=trace,
-            trace_iterations=trace_iterations,
-            dry_run=dry_run,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
-        return {
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "smoke-single-layer-decode",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--out",
+                str(paths["single_layer_decode_report"]),
+            ]
+            if trace:
+                command.append("--trace")
+                command.extend(["--trace-iterations", str(trace_iterations)])
+            add_prompt_runtime_cli_args(command)
+            single_layer_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["single_layer_decode_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated smoke-single-layer-decode did not write "
+                        "a report"
+                    ),
+                },
+            )
+        else:
+            single_layer_report = run_smoke_single_layer_decode(
+                out=paths["single_layer_decode_report"],
+                program_dir=program_dir,
+                model_path=None if dry_run else model_path,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
+                dry_run=dry_run,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+            )
+        detail = {
             "status": _runtime_step_status(
                 single_layer_report,
                 dry_run=dry_run,
@@ -2998,28 +3224,16 @@ def validate_real_decode(
             ),
             **_reference_summary(single_layer_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
-    def smoke_step() -> dict[str, Any]:
-        smoke_report = run_smoke_decode_step(
-            out=paths["smoke_report"],
-            program_dir=program_dir,
-            layers=layer_count,
-            model_path=None if dry_run else model_path,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            trace=trace,
-            trace_iterations=trace_iterations,
-            dry_run=dry_run,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-        )
-        return {
+    def smoke_step_detail(
+        smoke_report: dict[str, Any],
+        *,
+        isolated_subprocess: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        detail = {
             "status": _runtime_step_status(smoke_report, dry_run=dry_run),
             "smoke_report": str(paths["smoke_report"]),
             "runtime_status": smoke_report["status"],
@@ -3073,6 +3287,122 @@ def validate_real_decode(
             **tensorization_path_detail(smoke_report),
             **_reference_summary(smoke_report),
         }
+        if isolated_subprocess is not None:
+            detail["isolated_subprocess"] = isolated_subprocess
+        return detail
+
+    def smoke_step_subprocess_report() -> tuple[
+        dict[str, Any],
+        dict[str, Any],
+    ]:
+        command = [
+            sys.executable,
+            "-m",
+            "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+            "smoke-decode-step",
+            "--program-dir",
+            str(program_dir),
+            "--layers",
+            str(layer_count),
+            "--device",
+            device,
+            "--device-id",
+            str(device_id),
+            "--batch-size",
+            str(resolved_batch_size),
+            "--cache-len",
+            str(resolved_cache_len),
+            "--dtype-seed",
+            dtype_seed,
+            "--trace-iterations",
+            str(trace_iterations),
+            "--out",
+            str(paths["smoke_report"]),
+        ]
+        if model_path is not None:
+            command.extend(["--model-path", str(model_path)])
+        if trace:
+            command.append("--trace")
+        if prompt is not None:
+            command.extend(["--prompt", prompt])
+        if tokenizer_path is not None:
+            command.extend(["--tokenizer-path", str(tokenizer_path)])
+
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        isolated = {
+            "enabled": True,
+            "returncode": result.returncode,
+            "command": command,
+            "stdout": _diagnostic_excerpt(
+                _coerce_process_text(result.stdout),
+                limit=2000,
+            ),
+            "stderr": _diagnostic_excerpt(
+                _coerce_process_text(result.stderr),
+                limit=2000,
+            ),
+        }
+        if paths["smoke_report"].is_file():
+            return json.loads(paths["smoke_report"].read_text()), isolated
+
+        return (
+            {
+                "schema_version": 1,
+                "status": "fail",
+                "passed": False,
+                "error": "isolated smoke-decode-step did not write a report",
+                "detail": isolated,
+                "layers": layer_count,
+                "batch_size": resolved_batch_size,
+                "cache_len": resolved_cache_len,
+                "trace": _trace_report(
+                    requested=trace,
+                    status="unavailable" if trace else "disabled",
+                    iterations=trace_iterations if trace else 0,
+                ),
+            },
+            isolated,
+        )
+
+    def smoke_step() -> dict[str, Any]:
+        if (
+            not dry_run
+            and model_path is not None
+            and ttnn_module is None
+            and torch_module is None
+            and tokenizer_module is None
+        ):
+            smoke_report, isolated = smoke_step_subprocess_report()
+            return smoke_step_detail(
+                smoke_report,
+                isolated_subprocess=isolated,
+            )
+
+        smoke_report = run_smoke_decode_step(
+            out=paths["smoke_report"],
+            program_dir=program_dir,
+            layers=layer_count,
+            model_path=None if dry_run else model_path,
+            device=device,
+            device_id=device_id,
+            batch_size=resolved_batch_size,
+            cache_len=resolved_cache_len,
+            dtype_seed=dtype_seed,
+            trace=trace,
+            trace_iterations=trace_iterations,
+            dry_run=dry_run,
+            ttnn_module=ttnn_module,
+            torch_module=torch_module,
+            prompt=prompt,
+            tokenizer_path=tokenizer_path,
+            tokenizer_module=tokenizer_module,
+        )
+        return smoke_step_detail(smoke_report)
 
     def profile_step() -> dict[str, Any]:
         if skip_profile_decode_step:
@@ -3105,27 +3435,71 @@ def validate_real_decode(
                 "trace": {"status": "skipped"},
             }
 
-        profile_report = profile_decode_step(
-            out=paths["profile_report"],
-            program_dir=program_dir,
-            layers=layer_count,
-            model_path=None if dry_run else model_path,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            trace=trace,
-            trace_iterations=trace_iterations,
-            dry_run=dry_run,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "profile-decode-step",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--layers",
+                str(layer_count),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--trace-iterations",
+                str(trace_iterations),
+                "--out",
+                str(paths["profile_report"]),
+            ]
+            if trace:
+                command.append("--trace")
+            add_prompt_runtime_cli_args(command)
+            profile_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["profile_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated profile-decode-step did not write a report"
+                    ),
+                },
+            )
+        else:
+            profile_report = profile_decode_step(
+                out=paths["profile_report"],
+                program_dir=program_dir,
+                layers=layer_count,
+                model_path=None if dry_run else model_path,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
+                dry_run=dry_run,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
+            )
         bottleneck = profile_report.get("bottleneck_summary", {})
-        return {
+        detail = {
             "status": _runtime_step_status(profile_report, dry_run=dry_run),
             "profile_report": str(paths["profile_report"]),
             "runtime_status": profile_report["status"],
@@ -3191,6 +3565,9 @@ def validate_real_decode(
             **tensorization_path_detail(profile_report),
             **_reference_summary(profile_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def prompt_decode_loop_step() -> dict[str, Any]:
         if not dry_run and prompt is None:
@@ -3203,28 +3580,70 @@ def validate_real_decode(
                 "decode_loop_runtime_owned": False,
                 "input_source": None,
             }
-        loop_report = run_prompt_decode_loop(
-            out=paths["prompt_decode_loop_report"],
-            program_dir=program_dir,
-            model_path=None if dry_run else model_path,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            decode_steps=2,
-            layers=layer_count,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            dry_run=dry_run,
-            tokenizer_module=tokenizer_module,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "prompt-decode-loop",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--decode-steps",
+                "2",
+                "--layers",
+                str(layer_count),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--out",
+                str(paths["prompt_decode_loop_report"]),
+            ]
+            add_prompt_runtime_cli_args(command)
+            loop_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["prompt_decode_loop_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated prompt-decode-loop did not write a report"
+                    ),
+                },
+            )
+        else:
+            loop_report = run_prompt_decode_loop(
+                out=paths["prompt_decode_loop_report"],
+                program_dir=program_dir,
+                model_path=None if dry_run else model_path,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                decode_steps=2,
+                layers=layer_count,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                dry_run=dry_run,
+                tokenizer_module=tokenizer_module,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+            )
         report["decode_loop_runtime_owned"] = bool(
             loop_report.get("decode_loop_runtime_owned")
         )
-        return {
+        detail = {
             "status": _runtime_step_status(loop_report, dry_run=dry_run),
             "prompt_decode_loop_report": str(
                 paths["prompt_decode_loop_report"]
@@ -3280,6 +3699,9 @@ def validate_real_decode(
             **tensorization_path_detail(loop_report),
             **_reference_summary(loop_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def generate_prefill_decode_step() -> dict[str, Any]:
         if not dry_run and prompt is None:
@@ -3294,25 +3716,67 @@ def validate_real_decode(
                 "kv_cache_source": None,
                 "input_source": None,
             }
-        generate_report = run_generate(
-            out=paths["generate_report"],
-            program_dir=program_dir,
-            model_path=None if dry_run else model_path,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            max_new_tokens=max_new_token_count,
-            layers=layer_count,
-            prefill_len=prefill_token_count,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            dry_run=dry_run,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-            tokenizer_module=tokenizer_module,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "generate",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--max-new-tokens",
+                str(max_new_token_count),
+                "--layers",
+                str(layer_count),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--out",
+                str(paths["generate_report"]),
+            ]
+            if prefill_token_count is not None:
+                command.extend(["--prefill-len", str(prefill_token_count)])
+            add_prompt_runtime_cli_args(command)
+            generate_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["generate_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": "isolated generate did not write a report",
+                },
+            )
+        else:
+            generate_report = run_generate(
+                out=paths["generate_report"],
+                program_dir=program_dir,
+                model_path=None if dry_run else model_path,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                max_new_tokens=max_new_token_count,
+                layers=layer_count,
+                prefill_len=prefill_token_count,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                dry_run=dry_run,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+                tokenizer_module=tokenizer_module,
+            )
         report["generate_runtime_owned"] = bool(
             generate_report.get("generate_runtime_owned")
         )
@@ -3333,7 +3797,7 @@ def validate_real_decode(
         kv_cache_runtime_count = None
         if isinstance(kv_cache_state, dict):
             kv_cache_runtime_count = kv_cache_state.get("tensor_count")
-        return {
+        detail = {
             "status": _runtime_step_status(generate_report, dry_run=dry_run),
             "generate_report": str(paths["generate_report"]),
             "runtime_status": generate_report.get("runtime_status"),
@@ -3448,6 +3912,9 @@ def validate_real_decode(
             **tensorization_path_detail(generate_report),
             **_reference_summary(generate_report),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def profile_generate_step() -> dict[str, Any]:
         if skip_profile_decode_step:
@@ -3515,31 +3982,77 @@ def validate_real_decode(
                 "official_performance_parity_claimed": False,
             }
 
-        profile_report = run_profile_generate(
-            out=paths["profile_generate_report"],
-            program_dir=program_dir,
-            model_path=None if dry_run else model_path,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            max_new_tokens=max_new_token_count,
-            layers=layer_count,
-            prefill_len=prefill_token_count,
-            device=device,
-            device_id=device_id,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            dtype_seed=dtype_seed,
-            dry_run=dry_run,
-            generate_report=paths["profile_generate_underlying_report"],
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-            tokenizer_module=tokenizer_module,
-        )
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "profile-generate",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--max-new-tokens",
+                str(max_new_token_count),
+                "--layers",
+                str(layer_count),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--generate-report",
+                str(paths["profile_generate_underlying_report"]),
+                "--out",
+                str(paths["profile_generate_report"]),
+            ]
+            if prefill_token_count is not None:
+                command.extend(["--prefill-len", str(prefill_token_count)])
+            add_prompt_runtime_cli_args(command)
+            profile_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["profile_generate_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated profile-generate did not write a report"
+                    ),
+                },
+            )
+        else:
+            profile_report = run_profile_generate(
+                out=paths["profile_generate_report"],
+                program_dir=program_dir,
+                model_path=None if dry_run else model_path,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                max_new_tokens=max_new_token_count,
+                layers=layer_count,
+                prefill_len=prefill_token_count,
+                device=device,
+                device_id=device_id,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                dtype_seed=dtype_seed,
+                dry_run=dry_run,
+                generate_report=paths["profile_generate_underlying_report"],
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+                tokenizer_module=tokenizer_module,
+            )
         profile_generate_rotary_count = _sum_present_counts(
             profile_report.get("prefill_rotary_runtime_input_tensor_count"),
             profile_report.get("decode_rotary_runtime_input_tensor_count"),
         )
-        return {
+        detail = {
             "status": _runtime_step_status(
                 profile_report,
                 dry_run=dry_run,
@@ -3652,6 +4165,9 @@ def validate_real_decode(
             "error": profile_report.get("error"),
             "ttnn_environment": profile_report.get("ttnn_environment"),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def generate_depth_sweep_step() -> dict[str, Any]:
         if not dry_run and prompt is None:
@@ -3692,28 +4208,79 @@ def validate_real_decode(
             program_num_layers=program_num_layers,
             require_full_depth=require_full_depth,
         )
-        sweep_report = run_generate_depth_sweep(
-            program_dir=program_dir,
-            out=paths["generate_depth_sweep_report"],
-            depths=sweep_depths,
-            model_path=None if dry_run else model_path,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            reports_dir=paths["generate_depth_reports_dir"],
-            max_new_tokens=max_new_token_count,
-            prefill_len=prefill_token_count,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            device=device,
-            device_id=device_id,
-            dtype_seed=dtype_seed,
-            dry_run=dry_run,
-            require_full_depth=require_full_depth,
-            tokenizer_module=tokenizer_module,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
-        return {
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "generate-depth-sweep",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--depths",
+                ",".join(str(depth) for depth in sweep_depths),
+                "--reports-dir",
+                str(paths["generate_depth_reports_dir"]),
+                "--max-new-tokens",
+                str(max_new_token_count),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--dtype-seed",
+                dtype_seed,
+                "--out",
+                str(paths["generate_depth_sweep_report"]),
+            ]
+            if prefill_token_count is not None:
+                command.extend(["--prefill-len", str(prefill_token_count)])
+            if require_full_depth:
+                command.append("--require-full-depth")
+            add_prompt_runtime_cli_args(command)
+            sweep_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["generate_depth_sweep_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated generate-depth-sweep did not write a report"
+                    ),
+                    "depths": sweep_depths,
+                    "depth_count": len(sweep_depths),
+                    "records": [],
+                },
+            )
+        else:
+            sweep_report = run_generate_depth_sweep(
+                program_dir=program_dir,
+                out=paths["generate_depth_sweep_report"],
+                depths=sweep_depths,
+                model_path=None if dry_run else model_path,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                reports_dir=paths["generate_depth_reports_dir"],
+                max_new_tokens=max_new_token_count,
+                prefill_len=prefill_token_count,
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                device=device,
+                device_id=device_id,
+                dtype_seed=dtype_seed,
+                dry_run=dry_run,
+                require_full_depth=require_full_depth,
+                tokenizer_module=tokenizer_module,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+            )
+        detail = {
             "status": _generate_depth_sweep_step_status(
                 sweep_report,
                 dry_run=dry_run,
@@ -3749,6 +4316,9 @@ def validate_real_decode(
             "records": sweep_report.get("records", []),
             "acceptance": sweep_report.get("acceptance"),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def decode_depth_sweep_step() -> dict[str, Any]:
         if skip_profile_decode_step:
@@ -3789,28 +4359,77 @@ def validate_real_decode(
             program_num_layers=program_num_layers,
             require_full_depth=require_full_depth,
         )
-        sweep_report = run_decode_depth_sweep(
-            program_dir=program_dir,
-            out=paths["decode_depth_sweep_report"],
-            depths=sweep_depths,
-            model_path=None if dry_run else model_path,
-            profiles_dir=paths["decode_depth_profiles_dir"],
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            device=device,
-            device_id=device_id,
-            dtype_seed=dtype_seed,
-            trace=trace,
-            trace_iterations=trace_iterations,
-            dry_run=dry_run,
-            require_full_depth=require_full_depth,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
-        return {
+        isolated = None
+        if use_runtime_step_isolation():
+            command = [
+                sys.executable,
+                "-m",
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "decode-depth-sweep",
+                "--program-dir",
+                str(program_dir),
+                "--model-path",
+                str(model_path),
+                "--depths",
+                ",".join(str(depth) for depth in sweep_depths),
+                "--profiles-dir",
+                str(paths["decode_depth_profiles_dir"]),
+                "--device",
+                device,
+                "--device-id",
+                str(device_id),
+                "--batch-size",
+                str(resolved_batch_size),
+                "--cache-len",
+                str(resolved_cache_len),
+                "--dtype-seed",
+                dtype_seed,
+                "--trace-iterations",
+                str(trace_iterations),
+                "--out",
+                str(paths["decode_depth_sweep_report"]),
+            ]
+            if trace:
+                command.append("--trace")
+            add_prompt_runtime_cli_args(command)
+            sweep_report, isolated = isolated_cli_report(
+                command=command,
+                report_path=paths["decode_depth_sweep_report"],
+                fallback_report={
+                    "schema_version": 1,
+                    "status": "fail",
+                    "passed": False,
+                    "error": (
+                        "isolated decode-depth-sweep did not write a report"
+                    ),
+                    "depths": sweep_depths,
+                    "depth_count": len(sweep_depths),
+                    "records": [],
+                },
+            )
+        else:
+            sweep_report = run_decode_depth_sweep(
+                program_dir=program_dir,
+                out=paths["decode_depth_sweep_report"],
+                depths=sweep_depths,
+                model_path=None if dry_run else model_path,
+                profiles_dir=paths["decode_depth_profiles_dir"],
+                batch_size=resolved_batch_size,
+                cache_len=resolved_cache_len,
+                device=device,
+                device_id=device_id,
+                dtype_seed=dtype_seed,
+                trace=trace,
+                trace_iterations=trace_iterations,
+                dry_run=dry_run,
+                require_full_depth=require_full_depth,
+                prompt=prompt,
+                tokenizer_path=tokenizer_path,
+                tokenizer_module=tokenizer_module,
+                ttnn_module=ttnn_module,
+                torch_module=torch_module,
+            )
+        detail = {
             "status": _decode_depth_sweep_step_status(
                 sweep_report,
                 dry_run=dry_run,
@@ -3835,6 +4454,9 @@ def validate_real_decode(
             "records": sweep_report.get("records", []),
             "acceptance": sweep_report.get("acceptance"),
         }
+        if isolated is not None:
+            detail["isolated_subprocess"] = isolated
+        return detail
 
     def autotune_step() -> dict[str, Any]:
         if skip_autotune or skip_profile_decode_step:
@@ -11066,7 +11688,10 @@ def _decode_runtime_inputs_complete(
         expected_synthetic_runtime_count = 0
         expected_prompt_runtime_count = 1
         expected_decode_runtime_state_count = 2
-        expected_rotary_runtime_count = expected_synthetic_rotary_count
+        expected_rotary_runtime_count = _expected_prompt_rotary_runtime_count(
+            step,
+            fallback=expected_synthetic_rotary_count,
+        )
         expected_kv_cache_runtime_count = expected[
             "kv_cache_runtime_input_tensor_count"
         ]
@@ -11130,6 +11755,20 @@ def _decode_runtime_inputs_complete(
             expected_synthetic_rotary_count,
         )
     )
+
+
+def _expected_prompt_rotary_runtime_count(
+    step: dict[str, Any],
+    *,
+    fallback: Any,
+) -> Any:
+    rotary_state = step.get("rotary_runtime_state")
+    if not isinstance(rotary_state, dict):
+        return fallback
+    tensor_count = _safe_int(rotary_state.get("tensor_count"))
+    if rotary_state.get("shared_across_layers") is True:
+        return tensor_count if tensor_count is not None else 3
+    return tensor_count if tensor_count is not None else fallback
 
 
 def _runtime_input_source_supported(step: Any) -> bool:

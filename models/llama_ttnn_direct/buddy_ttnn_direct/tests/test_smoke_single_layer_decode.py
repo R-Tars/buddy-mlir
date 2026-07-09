@@ -5,6 +5,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_single_layer_decode import (
@@ -191,6 +192,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 [call["op"] for call in fake_ttnn.calls],
                 [
                     "embedding",
+                    "to_memory_config",
                     "rms_norm",
                     "linear",
                     "nlp_create_qkv_heads_decode",
@@ -199,15 +201,18 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "paged_update_cache",
                     "paged_update_cache",
                     "paged_scaled_dot_product_attention_decode",
+                    "to_memory_config",
                     "nlp_concat_heads_decode",
                     "linear",
                     "add",
+                    "to_memory_config",
                     "rms_norm",
                     "linear",
                     "linear",
                     "mul",
                     "linear",
                     "add",
+                    "to_memory_config",
                     "rms_norm",
                     "linear",
                     "linear",
@@ -220,6 +225,29 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "concat",
                     "argmax",
                 ],
+            )
+            rms_input_moves = [
+                call
+                for call in fake_ttnn.calls
+                if call["op"] == "to_memory_config"
+                and call["kwargs"]["memory_config"] == "ttnn.DRAM_MEMORY_CONFIG"
+            ]
+            self.assertEqual(len(rms_input_moves), 3)
+            self.assertTrue(
+                all(
+                    call["kwargs"]["memory_config"] == "ttnn.DRAM_MEMORY_CONFIG"
+                    for call in rms_input_moves
+                )
+            )
+            rms_norm_calls = [
+                call for call in fake_ttnn.calls if call["op"] == "rms_norm"
+            ]
+            self.assertEqual(len(rms_norm_calls), 3)
+            self.assertTrue(
+                all(
+                    call["kwargs"]["memory_config"] == "ttnn.DRAM_MEMORY_CONFIG"
+                    for call in rms_norm_calls
+                )
             )
 
     def test_decode_step_accepts_full_logits_output(self) -> None:
@@ -362,19 +390,24 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             )
 
             fake_ttnn = _make_fake_ttnn()
-            with _fake_torch_and_safetensors():
-                report = run_smoke_single_layer_decode(
-                    out=report_json,
-                    program_dir=program_dir,
-                    model_path=model_dir,
-                    device="p150a",
-                    batch_size=2,
-                    cache_len=16,
-                    ttnn_module=fake_ttnn,
-                    torch_module=_fake_torch(),
-                )
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct."
+                "smoke_single_layer_decode.gc.collect"
+            ) as collect:
+                with _fake_torch_and_safetensors():
+                    report = run_smoke_single_layer_decode(
+                        out=report_json,
+                        program_dir=program_dir,
+                        model_path=model_dir,
+                        device="p150a",
+                        batch_size=2,
+                        cache_len=16,
+                        ttnn_module=fake_ttnn,
+                        torch_module=_fake_torch(),
+                    )
 
             self.assertTrue(report["passed"])
+            collect.assert_called()
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["parameter_source"], "hf_model")
             self.assertEqual(report["input_source"], "synthetic")
@@ -578,6 +611,14 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 2,
             )
             self.assertEqual(
+                report["decode_runtime_state"]["memory_config"],
+                "dram",
+            )
+            self.assertEqual(
+                report["decode_runtime_state"]["ttnn_memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
+            )
+            self.assertEqual(
                 report["rotary_runtime_state"]["matrix_shape"],
                 [1, 2, 1, 4],
             )
@@ -597,6 +638,17 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 report["rotary_runtime_state"]["tensor_count"],
                 3,
             )
+            self.assertTrue(
+                report["rotary_runtime_state"]["shared_across_layers"],
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["memory_config"],
+                "height_sharded",
+            )
+            self.assertEqual(
+                report["rotary_runtime_state"]["ttnn_memory_config"],
+                "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+            )
             self.assertEqual(
                 report["kv_cache_runtime_state"]["physical_shape"],
                 [2, 2, 32, 4],
@@ -608,6 +660,14 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 report["kv_cache_runtime_state"]["tensor_count"],
                 2,
+            )
+            self.assertEqual(
+                report["kv_cache_runtime_state"]["memory_config"],
+                "dram",
+            )
+            self.assertEqual(
+                report["kv_cache_runtime_state"]["ttnn_memory_config"],
+                "ttnn.DRAM_MEMORY_CONFIG",
             )
             prompt_and_state_calls = [
                 call
@@ -1158,6 +1218,9 @@ def _make_fake_ttnn(
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
     module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
+    module.L1_HEIGHT_SHARDED_MEMORY_CONFIG = (
+        "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
+    )
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
 
     class UnaryOpType:

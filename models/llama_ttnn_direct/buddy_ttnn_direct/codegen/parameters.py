@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import importlib
 import json
 from collections.abc import Iterable, Mapping, Sequence
@@ -227,6 +228,8 @@ def materialize_parameters_from_program(
         model_path=model_path,
         program_dir=program_dir,
     )
+    del params
+    gc.collect()
     if out is not None:
         write_json(out, report)
     return report

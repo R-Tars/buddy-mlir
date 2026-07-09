@@ -9,11 +9,13 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
     TensorMetadataReference,
     load_llama_parameters_from_manifests,
+    materialize_parameters_from_program,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
@@ -237,6 +239,49 @@ class ParameterMaterializerTest(unittest.TestCase):
                 report["tensors"]["lm_head.splits.0.weight"]["shape"],
                 [16, 16],
             )
+
+    def test_materialize_parameters_releases_host_tensor_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            report_json = root / "parameter_report.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors(), patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.codegen."
+                "parameters.gc.collect",
+                return_value=0,
+            ) as collect_mock:
+                report = materialize_parameters_from_program(
+                    model_path=model_dir,
+                    program_dir=program_dir,
+                    backend="torch",
+                    layers=[0],
+                    out=report_json,
+                )
+
+            collect_mock.assert_called_once()
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(report["tensor_count"], 21)
+            self.assertEqual(json.loads(report_json.read_text()), report)
 
     def test_cli_tensorize_parameters_dry_run_reports_dtype_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

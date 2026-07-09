@@ -63,6 +63,14 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(generated_config["kv_cache"]["max_cache_len"], 1024)
             self.assertEqual(generated_config["kv_cache"]["num_kv_heads"], 2)
             self.assertEqual(generated_config["kv_cache"]["head_dim"], 4)
+            self.assertEqual(
+                generated_config["rms_norm"]["input_memory_config"],
+                "dram",
+            )
+            self.assertEqual(
+                generated_config["rms_norm"]["output_memory_config"],
+                "dram",
+            )
 
             semantic = json.loads((out_dir / "semantic_graph.json").read_text())
             self.assertEqual(semantic["model_name"], "fake-build-program")
@@ -100,6 +108,8 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("ttnn_ops.scaled_dot_product_attention", source)
             self.assertIn("ttnn_ops.fill_cache", source)
             self.assertIn("def normalize_decode_token", source)
+            self.assertIn("def resolve_memory_config", source)
+            self.assertIn("to_memory_config.{op_name}.input", source)
             self.assertIn("[0, shape[1] - 1]", source)
             self.assertIn("[batch_size, shape[1]]", source)
 
