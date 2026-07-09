@@ -15,6 +15,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.context import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime import (
     decode as runtime_decode,
+    prefill as runtime_prefill,
     reports as runtime_reports,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
@@ -40,6 +41,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill import (
     attach_prefill_rotary_parameters,
     build_prefill_page_table_tensor,
     prefill_token_ids_tensor,
+    run_prefill_prompt,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.tokenizer import (
     detokenize_generated_token_ids,
@@ -107,6 +109,25 @@ class _FakeGeneratedModel:
     def lm_head_argmax(self) -> str:
         self.ops.argmax("logits")
         return "token"
+
+
+class _FakePrefillModel:
+    def __init__(self) -> None:
+        self.prefill_args: tuple[object, ...] | None = None
+        self.prefill_token = _FakeTensor((2, 1))
+        self.kv_cache = [
+            types.SimpleNamespace(k=_FakeTensor((4, 8)), v=_FakeTensor((4, 8)))
+        ]
+        self.cache_reports = [{"layer_id": 0, "status": "filled"}]
+
+    def prefill_prompt(
+        self,
+        prefill_token_ids: object,
+        kv_cache: object,
+        prefill_page_table: object,
+    ) -> tuple[object, list[object], list[dict[str, object]]]:
+        self.prefill_args = (prefill_token_ids, kv_cache, prefill_page_table)
+        return self.prefill_token, self.kv_cache, self.cache_reports
 
 
 class _FakeTokenizer:
@@ -430,6 +451,74 @@ class RuntimeModuleTest(unittest.TestCase):
         second_rotary = parameters.layers[1].attention.rotary
         self.assertEqual(second_rotary.cos_matrix.source, "prefill.layers.1.rotary_cos")
         self.assertEqual(len(ttnn.from_torch_calls), 6)
+
+    def test_runtime_prefill_prompt_helper_updates_context_and_event(self) -> None:
+        original_cache_population = runtime_prefill._observed_cache_population
+        original_prefill_reference = runtime_prefill._prefill_reference
+        original_observed_ops = runtime_prefill._generated_observed_op_sequence
+        model = _FakePrefillModel()
+        context = types.SimpleNamespace(
+            generated_model=model,
+            prefill_token_ids="prefill-token-ids",
+            kv_cache=["old-cache"],
+            prefill_page_table="prefill-page-table",
+            prefill_tokenization={"effective_token_count": 4},
+        )
+
+        def update_kv_cache(kv_cache: object) -> None:
+            context.kv_cache = kv_cache
+
+        def update_decode_token(token_ids: object) -> None:
+            context.token_ids = token_ids
+
+        context.update_kv_cache = update_kv_cache
+        context.update_decode_token = update_decode_token
+
+        try:
+            runtime_prefill._observed_cache_population = (
+                lambda **_: [{"layer_id": 0, "status": "filled"}]
+            )
+            runtime_prefill._prefill_reference = (
+                lambda **_: {"status": "passed", "passed": True}
+            )
+            runtime_prefill._generated_observed_op_sequence = (
+                lambda *_: ["prefill_prompt"]
+            )
+            result = run_prefill_prompt(
+                context=context,
+                ttnn=_FakeTTNN(),
+                device="device0",
+                prefill_plan={"layers": 1},
+                layer_count=1,
+            )
+        finally:
+            runtime_prefill._observed_cache_population = original_cache_population
+            runtime_prefill._prefill_reference = original_prefill_reference
+            runtime_prefill._generated_observed_op_sequence = original_observed_ops
+
+        self.assertEqual(
+            model.prefill_args,
+            ("prefill-token-ids", ["old-cache"], "prefill-page-table"),
+        )
+        self.assertIs(context.kv_cache, model.kv_cache)
+        self.assertIs(context.token_ids, model.prefill_token)
+        self.assertEqual(result.output_shapes["token"], [2, 1])
+        self.assertEqual(result.cache_population, [{"layer_id": 0, "status": "filled"}])
+        self.assertEqual(result.reference, {"status": "passed", "passed": True})
+        self.assertEqual(result.first_token.runtime_handoff, "device_tensor_direct")
+        self.assertEqual(
+            result.generated_token_events,
+            [
+                {
+                    "step_index": "prefill",
+                    "token": model.prefill_token,
+                    "runtime_handoff": "device_tensor_direct",
+                    "runtime_host_roundtrip": False,
+                    "cache_position_value": 3,
+                    "token_shape": [2, 1],
+                }
+            ],
+        )
 
     def test_runtime_kv_cache_builds_paged_dram_cache_tensors(self) -> None:
         ttnn = _FakeTTNNForPrefill()

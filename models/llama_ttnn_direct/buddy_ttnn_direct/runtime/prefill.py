@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
+from .decode import prefill_token_direct_handoff
 from .inputs import build_decode_runtime_state
-from ..smoke_decode_shell import _runtime_int_tensor
-from ..smoke_single_layer_decode import _synthetic_tensor_factory
+from ..smoke_decode_shell import _dtype, _runtime_int_tensor, _shape
+from ..smoke_prefill import _observed_cache_population, _prefill_reference
+from ..smoke_single_layer_decode import (
+    _generated_observed_op_sequence,
+    _synthetic_tensor_factory,
+)
 
 
 def build_prefill_page_table_tensor(
@@ -113,3 +119,83 @@ def attach_prefill_rotary_parameters(
             ),
         )
     return SimpleNamespace(tensor_conversion_count=tensor_count())
+
+
+def run_prefill_prompt(
+    *,
+    context: Any,
+    ttnn: Any,
+    device: Any,
+    prefill_plan: dict[str, Any],
+    layer_count: int,
+) -> SimpleNamespace:
+    prefill_start = time.perf_counter()
+    prefill_token, kv_cache, cache_reports = (
+        context.generated_model.prefill_prompt(
+            context.prefill_token_ids,
+            context.kv_cache,
+            context.prefill_page_table,
+        )
+    )
+    context.update_kv_cache(kv_cache)
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
+    latency_ms = (time.perf_counter() - prefill_start) * 1000.0
+    output_shapes = {
+        "token": _shape(prefill_token),
+        "key_cache": _shape(kv_cache[0].k),
+        "value_cache": _shape(kv_cache[0].v),
+        "kv_cache_layers": [
+            {
+                "layer_id": layer_id,
+                "key_cache": _shape(layer_cache.k),
+                "value_cache": _shape(layer_cache.v),
+            }
+            for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
+        ],
+    }
+    cache_population = _observed_cache_population(
+        plan=prefill_plan,
+        cache_reports=cache_reports,
+        output_shapes=output_shapes,
+    )
+    reference = _prefill_reference(
+        plan=prefill_plan,
+        layer_count=layer_count,
+        output_shapes=output_shapes,
+        output={
+            "kind": "token",
+            "shape": _shape(prefill_token),
+            "dtype": _dtype(prefill_token),
+        },
+        observed_ops=_generated_observed_op_sequence(
+            context.generated_model,
+            ttnn,
+        ),
+    )
+    first_token = prefill_token_direct_handoff(prefill_token=prefill_token)
+    context.update_decode_token(first_token.token_ids)
+    generated_token_events = [
+        {
+            "step_index": "prefill",
+            "token": first_token.token_ids,
+            "runtime_handoff": first_token.runtime_handoff,
+            "runtime_host_roundtrip": first_token.runtime_host_roundtrip,
+            "cache_position_value": (
+                context.prefill_tokenization["effective_token_count"] - 1
+            ),
+            "token_shape": _shape(first_token.token_ids),
+        }
+    ]
+    return SimpleNamespace(
+        prefill_token=prefill_token,
+        kv_cache=kv_cache,
+        cache_reports=cache_reports,
+        latency_ms=latency_ms,
+        output_shapes=output_shapes,
+        cache_population=cache_population,
+        reference=reference,
+        first_token=first_token,
+        generated_token_events=generated_token_events,
+    )

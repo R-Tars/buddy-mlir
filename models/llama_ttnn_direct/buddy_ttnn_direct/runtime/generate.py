@@ -31,10 +31,8 @@ from ..smoke_decode_shell import (
 )
 from ..smoke_mlp import NoTTNNDeviceError
 from ..smoke_prefill import (
-    _observed_cache_population,
     _planned_cache_population,
     _prefill_plan,
-    _prefill_reference,
 )
 from ..smoke_single_layer_decode import (
     DECODE_PARAMETER_ROLES,
@@ -53,13 +51,13 @@ from .context import TTNNDirectRuntimeContext
 from .decode import (
     build_decode_runtime_for_position as _build_decode_runtime_for_position,
     materialize_generate_token_events as _materialize_generate_token_events,
-    prefill_token_direct_handoff as _prefill_token_direct_handoff,
 )
 from .kv_cache import build_prompt_decode_kv_cache_tensors
 from .prefill import (
     attach_prefill_rotary_parameters,
     build_prefill_page_table_tensor,
     prefill_token_ids_tensor,
+    run_prefill_prompt,
 )
 from .profile import (
     GenerateSectionProfiler,
@@ -519,69 +517,21 @@ def run_generate(
             )
 
             total_start = time.perf_counter()
-            prefill_start = time.perf_counter()
-            prefill_token, kv_cache, cache_reports = (
-                context.generated_model.prefill_prompt(
-                    context.prefill_token_ids,
-                    context.kv_cache,
-                    context.prefill_page_table,
-                )
-            )
-            context.update_kv_cache(kv_cache)
-            synchronize = getattr(ttnn, "synchronize_device", None)
-            if callable(synchronize):
-                synchronize(ttnn_device)
-            prefill_latency_ms = (time.perf_counter() - prefill_start) * 1000.0
-            prefill_output_shapes = {
-                "token": _shape(prefill_token),
-                "key_cache": _shape(kv_cache[0].k),
-                "value_cache": _shape(kv_cache[0].v),
-                "kv_cache_layers": [
-                    {
-                        "layer_id": layer_id,
-                        "key_cache": _shape(layer_cache.k),
-                        "value_cache": _shape(layer_cache.v),
-                    }
-                    for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
-                ],
-            }
-            prefill_cache_population = _observed_cache_population(
-                plan=prefill_plan,
-                cache_reports=cache_reports,
-                output_shapes=prefill_output_shapes,
-            )
-            prefill_reference = _prefill_reference(
-                plan=prefill_plan,
+            prefill_result = run_prefill_prompt(
+                context=context,
+                ttnn=ttnn,
+                device=ttnn_device,
+                prefill_plan=prefill_plan,
                 layer_count=layer_count,
-                output_shapes=prefill_output_shapes,
-                output={
-                    "kind": "token",
-                    "shape": _shape(prefill_token),
-                    "dtype": _dtype(prefill_token),
-                },
-                observed_ops=_generated_observed_op_sequence(
-                    context.generated_model,
-                    ttnn,
-                ),
             )
-            first_token = _prefill_token_direct_handoff(
-                prefill_token=prefill_token
-            )
-            context.update_decode_token(first_token.token_ids)
-            generated_token_events = [
-                {
-                    "step_index": "prefill",
-                    "token": first_token.token_ids,
-                    "runtime_handoff": first_token.runtime_handoff,
-                    "runtime_host_roundtrip": (
-                        first_token.runtime_host_roundtrip
-                    ),
-                    "cache_position_value": (
-                        context.prefill_tokenization["effective_token_count"] - 1
-                    ),
-                    "token_shape": _shape(first_token.token_ids),
-                }
-            ]
+            prefill_token = prefill_result.prefill_token
+            kv_cache = prefill_result.kv_cache
+            prefill_latency_ms = prefill_result.latency_ms
+            prefill_output_shapes = prefill_result.output_shapes
+            prefill_cache_population = prefill_result.cache_population
+            prefill_reference = prefill_result.reference
+            first_token = prefill_result.first_token
+            generated_token_events = list(prefill_result.generated_token_events)
 
             decode_runtime = _build_decode_runtime_for_position(
                 ttnn=ttnn,
