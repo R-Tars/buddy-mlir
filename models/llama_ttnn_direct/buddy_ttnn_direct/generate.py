@@ -23,7 +23,11 @@ from .runtime.decode import (
     materialize_generate_token_events as _materialize_generate_token_events,
     prefill_token_direct_handoff as _prefill_token_direct_handoff,
 )
-from .runtime.inputs import build_decode_runtime_state
+from .runtime.prefill import (
+    attach_prefill_rotary_parameters as _attach_prefill_rotary_parameters,
+    build_prefill_page_table_tensor as _build_prefill_page_table_tensor,
+    prefill_token_ids_tensor as _prefill_token_ids_tensor,
+)
 from .runtime.reports import (
     cache_population_summary as _cache_population_summary,
     default_generate_report_path as _default_generate_report_path,
@@ -45,7 +49,6 @@ from .runtime.tokenizer import (
 from .smoke_decode_shell import (
     _dry_run_reference,
     _dtype,
-    _runtime_int_tensor,
     _shape,
     _to_namespace,
 )
@@ -64,7 +67,6 @@ from .smoke_single_layer_decode import (
     _generated_observed_op_sequence,
     _load_generated_model,
     _materialization_summary,
-    _synthetic_tensor_factory,
     _tensorization_summary,
     _time_decode_step,
     _trace_report,
@@ -1096,113 +1098,6 @@ def _build_generate_state(
         tokenizer_path=tokenizer_path,
         tokenizer_module=tokenizer_module,
     )
-
-
-def _build_prefill_page_table_tensor(
-    *,
-    ttnn: Any,
-    torch: Any,
-    device: Any,
-    batch_size: int,
-    cache_len: int,
-    page_block_size: int,
-    prompt_token_count: int,
-) -> SimpleNamespace:
-    runtime_state = build_decode_runtime_state(
-        batch_size=batch_size,
-        cache_len=cache_len,
-        page_block_size=page_block_size,
-        prompt_token_count=prompt_token_count,
-    )
-    kwargs = {"device": device}
-    dtype = getattr(
-        ttnn,
-        "int32",
-        getattr(ttnn, "uint32", getattr(ttnn, "bfloat16", None)),
-    )
-    if dtype is not None:
-        kwargs["dtype"] = dtype
-    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
-    if layout is not None:
-        kwargs["layout"] = layout
-    page_table = ttnn.from_torch(
-        _runtime_int_tensor(
-            torch,
-            runtime_state.page_table,
-            name="prefill_page_table",
-        ),
-        **kwargs,
-    )
-    report = runtime_state.to_report()
-    report["source"] = "prefill_page_table_runtime_state"
-    return SimpleNamespace(
-        page_table=page_table,
-        tensor_conversion_count=1,
-        prefill_page_table_runtime_state=report,
-    )
-
-
-def _prefill_token_ids_tensor(
-    *,
-    ttnn: Any,
-    torch: Any,
-    device: Any,
-    token_ids: list[list[int]],
-) -> Any:
-    kwargs = {"device": device}
-    dtype = getattr(
-        ttnn,
-        "uint32",
-        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
-    )
-    if dtype is not None:
-        kwargs["dtype"] = dtype
-    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
-    if layout is not None:
-        kwargs["layout"] = layout
-    return ttnn.from_torch(
-        _runtime_int_tensor(torch, token_ids, name="prefill_prompt_token_ids"),
-        **kwargs,
-    )
-
-
-def _attach_prefill_rotary_parameters(
-    *,
-    parameters: Any,
-    ttnn: Any,
-    torch: Any,
-    device: Any,
-    dtype_seed: str,
-    prefill_plan: dict[str, Any],
-) -> SimpleNamespace:
-    tensor, tensor_count = _synthetic_tensor_factory(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-    )
-    shapes = prefill_plan["layer_parameter_shapes"]
-    for layer_id in range(int(prefill_plan["layers"])):
-        layer = parameters.layers[layer_id]
-        attention = getattr(layer, "attention", None)
-        if attention is None:
-            attention = SimpleNamespace()
-            layer.attention = attention
-        attention.rotary = SimpleNamespace(
-            cos_matrix=tensor(
-                shapes["rotary_cos_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_cos",
-            ),
-            sin_matrix=tensor(
-                shapes["rotary_sin_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_sin",
-            ),
-            transformation_matrix=tensor(
-                shapes["rotary_transformation_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_transform",
-            ),
-        )
-    return SimpleNamespace(tensor_conversion_count=tensor_count())
 
 
 def _generate_base_report(

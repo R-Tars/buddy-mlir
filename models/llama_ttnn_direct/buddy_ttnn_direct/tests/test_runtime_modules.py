@@ -30,6 +30,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.profile import (
     GenerateSectionProfiler,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill import (
+    attach_prefill_rotary_parameters,
+    build_prefill_page_table_tensor,
+    prefill_token_ids_tensor,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.tokenizer import (
     detokenize_generated_token_ids,
     tokenize_prompt_for_decode,
@@ -123,6 +128,77 @@ class _FakeAutoTokenizer:
 
 class _FakeTokenizerModule:
     AutoTokenizer = _FakeAutoTokenizer
+
+
+class _FakeHostTensor:
+    def __init__(
+        self,
+        values: object | None = None,
+        *,
+        shape: tuple[int, ...] | None = None,
+        dtype: object | None = None,
+    ) -> None:
+        self.values = values
+        self.shape = shape if shape is not None else self._infer_shape(values)
+        self.dtype = dtype
+        self.name: str | None = None
+
+    @classmethod
+    def _infer_shape(cls, values: object | None) -> tuple[int, ...]:
+        if isinstance(values, list):
+            if values and isinstance(values[0], list):
+                return (len(values), *cls._infer_shape(values[0]))
+            return (len(values),)
+        return ()
+
+
+class _FakeTorchForPrefill:
+    int32 = "torch.int32"
+    bfloat16 = "torch.bfloat16"
+    float32 = "torch.float32"
+
+    def tensor(
+        self,
+        values: object,
+        dtype: object | None = None,
+    ) -> _FakeHostTensor:
+        return _FakeHostTensor(values, dtype=dtype)
+
+    def zeros(
+        self,
+        shape: tuple[int, ...],
+        dtype: object | None = None,
+    ) -> _FakeHostTensor:
+        return _FakeHostTensor(shape=shape, dtype=dtype)
+
+    def randn(
+        self,
+        shape: tuple[int, ...],
+        dtype: object | None = None,
+    ) -> _FakeHostTensor:
+        return _FakeHostTensor(shape=shape, dtype=dtype)
+
+
+class _FakeTTNNForPrefill:
+    int32 = "ttnn.int32"
+    uint32 = "ttnn.uint32"
+    bfloat16 = "ttnn.bfloat16"
+    float32 = "ttnn.float32"
+    ROW_MAJOR_LAYOUT = "row_major"
+    TILE_LAYOUT = "tile"
+
+    def __init__(self) -> None:
+        self.from_torch_calls: list[tuple[_FakeHostTensor, dict[str, object]]] = []
+
+    def from_torch(self, tensor: _FakeHostTensor, **kwargs: object) -> object:
+        self.from_torch_calls.append((tensor, kwargs))
+        return types.SimpleNamespace(
+            source=tensor.name,
+            shape=list(tensor.shape),
+            dtype=tensor.dtype,
+            values=tensor.values,
+            kwargs=kwargs,
+        )
 
 
 class RuntimeModuleTest(unittest.TestCase):
@@ -260,6 +336,92 @@ class RuntimeModuleTest(unittest.TestCase):
         )
         self.assertEqual(kv_state.physical_shape, [6, 8, 4, 64])
         self.assertEqual(kv_state.logical_shape, [2, 10, 8, 64])
+
+    def test_runtime_prefill_builds_page_table_tensor_report(self) -> None:
+        ttnn = _FakeTTNNForPrefill()
+        result = build_prefill_page_table_tensor(
+            ttnn=ttnn,
+            torch=_FakeTorchForPrefill(),
+            device="device0",
+            batch_size=2,
+            cache_len=10,
+            page_block_size=4,
+            prompt_token_count=6,
+        )
+
+        self.assertEqual(result.tensor_conversion_count, 1)
+        self.assertEqual(result.page_table.source, "prefill_page_table")
+        self.assertEqual(result.page_table.shape, [2, 3])
+        self.assertEqual(result.page_table.values, [[0, 1, 2], [3, 4, 5]])
+        self.assertEqual(
+            result.page_table.kwargs,
+            {"device": "device0", "dtype": "ttnn.int32", "layout": "row_major"},
+        )
+        self.assertEqual(
+            result.prefill_page_table_runtime_state["source"],
+            "prefill_page_table_runtime_state",
+        )
+        self.assertEqual(result.prefill_page_table_runtime_state["page_count"], 3)
+        self.assertEqual(
+            result.prefill_page_table_runtime_state["cache_position_value"],
+            5,
+        )
+
+    def test_runtime_prefill_token_ids_tensor_uses_runtime_int_tensor(self) -> None:
+        ttnn = _FakeTTNNForPrefill()
+        tensor = prefill_token_ids_tensor(
+            ttnn=ttnn,
+            torch=_FakeTorchForPrefill(),
+            device="device0",
+            token_ids=[[11, 12], [13, 14]],
+        )
+
+        self.assertEqual(tensor.source, "prefill_prompt_token_ids")
+        self.assertEqual(tensor.shape, [2, 2])
+        self.assertEqual(tensor.values, [[11, 12], [13, 14]])
+        self.assertEqual(
+            tensor.kwargs,
+            {"device": "device0", "dtype": "ttnn.uint32", "layout": "row_major"},
+        )
+
+    def test_runtime_prefill_attaches_rotary_parameters(self) -> None:
+        ttnn = _FakeTTNNForPrefill()
+        parameters = types.SimpleNamespace(
+            layers=[types.SimpleNamespace(), types.SimpleNamespace()],
+        )
+
+        result = attach_prefill_rotary_parameters(
+            parameters=parameters,
+            ttnn=ttnn,
+            torch=_FakeTorchForPrefill(),
+            device="device0",
+            dtype_seed="bf16",
+            prefill_plan={
+                "layers": 2,
+                "layer_parameter_shapes": {
+                    "rotary_cos_matrix": [1, 32, 128, 128],
+                    "rotary_sin_matrix": [1, 32, 128, 128],
+                    "rotary_transformation_matrix": [1, 1, 32, 32],
+                },
+            },
+        )
+
+        self.assertEqual(result.tensor_conversion_count, 6)
+        first_rotary = parameters.layers[0].attention.rotary
+        self.assertEqual(first_rotary.cos_matrix.source, "prefill.layers.0.rotary_cos")
+        self.assertEqual(first_rotary.sin_matrix.source, "prefill.layers.0.rotary_sin")
+        self.assertEqual(
+            first_rotary.transformation_matrix.source,
+            "prefill.layers.0.rotary_transform",
+        )
+        self.assertEqual(first_rotary.cos_matrix.shape, [1, 32, 128, 128])
+        self.assertEqual(
+            first_rotary.cos_matrix.kwargs,
+            {"device": "device0", "dtype": "ttnn.bfloat16", "layout": "tile"},
+        )
+        second_rotary = parameters.layers[1].attention.rotary
+        self.assertEqual(second_rotary.cos_matrix.source, "prefill.layers.1.rotary_cos")
+        self.assertEqual(len(ttnn.from_torch_calls), 6)
 
     def test_runtime_reports_helpers_preserve_generate_report_fields(self) -> None:
         budget = runtime_reports.generated_token_budget(
