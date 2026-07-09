@@ -14,7 +14,13 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.context import (
     TTNNDirectRuntimeContext,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime import (
+    decode as runtime_decode,
     reports as runtime_reports,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
+    build_decode_runtime_for_position,
+    materialize_generate_token_events,
+    prefill_token_direct_handoff,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_kv_cache_runtime_state,
@@ -307,6 +313,99 @@ class RuntimeModuleTest(unittest.TestCase):
         fallback_profile = runtime_reports.section_profile_not_run("dry_run")
         self.assertEqual(fallback_profile["status"], "not_run")
         self.assertIn("argmax_ms", fallback_profile["sections_ms"])
+
+    def test_runtime_decode_helpers_preserve_token_handoff_reports(self) -> None:
+        prefill_token = [[11], [12]]
+        handoff = prefill_token_direct_handoff(prefill_token=prefill_token)
+        self.assertEqual(handoff.status, "device_tensor_direct")
+        self.assertIs(handoff.token_ids, prefill_token)
+        self.assertFalse(handoff.runtime_host_roundtrip)
+
+        step_reports = [{"step_index": 0, "passed": True}]
+        materialized = materialize_generate_token_events(
+            [
+                {
+                    "step_index": "prefill",
+                    "token": [[11], [12]],
+                    "runtime_handoff": "device_tensor_direct",
+                    "runtime_host_roundtrip": False,
+                    "cache_position_value": 2,
+                    "page_table_shape": [2, 1],
+                    "token_shape": [2, 1],
+                },
+                {
+                    "step_index": 0,
+                    "token": [[13], [14]],
+                    "runtime_handoff": "device_tensor_direct",
+                    "runtime_host_roundtrip": False,
+                    "cache_position_value": 3,
+                    "page_table_shape": [2, 1],
+                    "token_shape": [2, 1],
+                },
+            ],
+            step_reports=step_reports,
+            ttnn=types.SimpleNamespace(),
+            batch_size=2,
+        )
+
+        self.assertEqual(materialized.generated_token_ids_by_user, [[11, 13], [12, 14]])
+        self.assertEqual(materialized.first_token_ids_by_user, [[11], [12]])
+        self.assertEqual(step_reports[0]["generated_token_ids"], [[13], [14]])
+        self.assertEqual(
+            step_reports[0]["token_materialization"]["source"],
+            "tensor_value",
+        )
+
+    def test_runtime_decode_builder_composes_runtime_state_helpers(self) -> None:
+        original_runtime_builder = (
+            runtime_decode._build_prompt_decode_runtime_state_tensors
+        )
+        original_rotary_builder = runtime_decode._attach_runtime_rotary_parameters
+
+        def fake_runtime_builder(**kwargs: object) -> types.SimpleNamespace:
+            self.assertEqual(kwargs["page_block_size"], 4)
+            self.assertEqual(kwargs["prompt_token_count"], 8)
+            return types.SimpleNamespace(
+                page_table="page-table",
+                cache_position="cache-position",
+                decode_runtime_state={"cache_position_value": 7},
+                tensor_conversion_count=2,
+            )
+
+        def fake_rotary_builder(**kwargs: object) -> types.SimpleNamespace:
+            self.assertEqual(kwargs["cache_position_value"], 7)
+            return types.SimpleNamespace(
+                rotary_runtime_state={"rotary": "ready"},
+                tensor_conversion_count=3,
+            )
+
+        try:
+            runtime_decode._build_prompt_decode_runtime_state_tensors = fake_runtime_builder
+            runtime_decode._attach_runtime_rotary_parameters = fake_rotary_builder
+            runtime_state = build_decode_runtime_for_position(
+                ttnn=object(),
+                torch=object(),
+                device=object(),
+                dtype_seed="bf16",
+                parameters=object(),
+                decode_plan={"kv_cache": {"page_block_size": 4}},
+                batch_size=2,
+                cache_len=16,
+                prefill_effective_token_count=6,
+                generated_token_index=1,
+            )
+        finally:
+            runtime_decode._build_prompt_decode_runtime_state_tensors = (
+                original_runtime_builder
+            )
+            runtime_decode._attach_runtime_rotary_parameters = original_rotary_builder
+
+        self.assertEqual(runtime_state.page_table, "page-table")
+        self.assertEqual(runtime_state.cache_position, "cache-position")
+        self.assertEqual(runtime_state.rotary_runtime_state, {"rotary": "ready"})
+        self.assertEqual(runtime_state.tensor_conversion_count, 5)
+        self.assertEqual(runtime_state.decode_runtime_state_input_tensor_count, 2)
+        self.assertEqual(runtime_state.rotary_runtime_input_tensor_count, 3)
 
 
 if __name__ == "__main__":
