@@ -4,18 +4,10 @@ import importlib
 import json
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-from .codegen.parameters import (
-    ParameterMaterializationError,
-    load_llama_parameters_from_manifests,
-)
-from .codegen.ttnn_tensorizer import (
-    TTNNTensorizationError,
-    load_parameter_config_from_program,
-    to_ttnn_parameters,
-)
+from .codegen.parameters import ParameterMaterializationError
+from .codegen.ttnn_tensorizer import TTNNTensorizationError
 from .runtime_environment import collect_ttnn_environment
 from .runtime import GenerateSectionProfiler, TTNNDirectRuntimeContext
 from .runtime.decode import (
@@ -23,13 +15,9 @@ from .runtime.decode import (
     materialize_generate_token_events as _materialize_generate_token_events,
     prefill_token_direct_handoff as _prefill_token_direct_handoff,
 )
+from .runtime.generate import build_generate_state as _build_generate_state
 from .runtime.profile import (
     profile_generate_from_generate_report as _profile_generate_from_generate_report,
-)
-from .runtime.prefill import (
-    attach_prefill_rotary_parameters as _attach_prefill_rotary_parameters,
-    build_prefill_page_table_tensor as _build_prefill_page_table_tensor,
-    prefill_token_ids_tensor as _prefill_token_ids_tensor,
 )
 from .runtime.reports import (
     cache_population_summary as _cache_population_summary,
@@ -47,7 +35,6 @@ from .runtime.reports import (
 from .runtime.tokenizer import (
     PromptTokenizationError,
     detokenize_generated_token_ids,
-    tokenize_prompt_for_prefill,
 )
 from .smoke_decode_shell import (
     _dry_run_reference,
@@ -63,14 +50,10 @@ from .smoke_prefill import (
     _prefill_reference,
 )
 from .smoke_single_layer_decode import (
-    DECODE_PARAMETER_ROLES,
-    _build_prompt_decode_kv_cache_tensors,
     _decode_step_plan,
     _decode_step_reference,
     _generated_observed_op_sequence,
     _load_generated_model,
-    _materialization_summary,
-    _tensorization_summary,
     _time_decode_step,
     _trace_report,
     _write_report,
@@ -966,134 +949,6 @@ def run_profile_generate(
     )
     _write_report(profile_path, report)
     return report
-
-
-def _build_generate_state(
-    *,
-    ttnn: Any,
-    torch: Any,
-    device: Any,
-    dtype_seed: str,
-    decode_plan: dict[str, Any],
-    prefill_plan: dict[str, Any],
-    program_dir: Path,
-    model_path: Path,
-    prompt: str,
-    tokenizer_path: str | Path,
-    tokenizer_module: Any | None,
-) -> SimpleNamespace:
-    host_params = load_llama_parameters_from_manifests(
-        model_path=model_path,
-        weights_manifest=program_dir / "weights_manifest.json",
-        config=program_dir / "config.json",
-        tensor_backend="torch",
-        layers=range(int(decode_plan["layers"])),
-    )
-    materialization_summary = _materialization_summary(host_params)
-    result = to_ttnn_parameters(
-        host_params,
-        device,
-        load_parameter_config_from_program(program_dir),
-        roles=DECODE_PARAMETER_ROLES,
-        layers=range(int(decode_plan["layers"])),
-        ttnn_module=ttnn,
-    )
-    assert result.parameters is not None
-    prefill_tokenization = tokenize_prompt_for_prefill(
-        prompt=prompt,
-        batch_size=int(prefill_plan["batch_size"]),
-        prefill_len=int(prefill_plan["prefill_len"]),
-        tokenizer_path=tokenizer_path,
-        vocab_size=prefill_plan.get("vocab_size"),
-        tokenizer_module=tokenizer_module,
-    )
-    prefill_token_ids = _prefill_token_ids_tensor(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        token_ids=prefill_tokenization.token_ids,
-    )
-    prefill_page_table = _build_prefill_page_table_tensor(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        batch_size=int(prefill_plan["batch_size"]),
-        cache_len=int(prefill_plan["cache_len"]),
-        page_block_size=int(prefill_plan["kv_cache"]["page_block_size"]),
-        prompt_token_count=int(prefill_tokenization.effective_token_count),
-    )
-    kv_runtime = _build_prompt_decode_kv_cache_tensors(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        layer_count=int(prefill_plan["layers"]),
-        batch_size=int(prefill_plan["batch_size"]),
-        cache_len=int(prefill_plan["cache_len"]),
-        page_block_size=int(prefill_plan["kv_cache"]["page_block_size"]),
-        num_kv_heads=int(prefill_plan["kv_cache"]["logical_shape"][2]),
-        head_dim=int(prefill_plan["kv_cache"]["logical_shape"][3]),
-    )
-    prefill_rotary = _attach_prefill_rotary_parameters(
-        parameters=result.parameters,
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        prefill_plan=prefill_plan,
-    )
-    tensorization_count = int(result.report["tensor_count"])
-    tensor_conversion_count = (
-        tensorization_count
-        + 1
-        + int(prefill_page_table.tensor_conversion_count)
-        + int(kv_runtime.tensor_conversion_count)
-        + int(prefill_rotary.tensor_conversion_count)
-    )
-    return TTNNDirectRuntimeContext(
-        parameters=result.parameters,
-        prefill_token_ids=prefill_token_ids,
-        prefill_page_table=prefill_page_table.page_table,
-        kv_cache=kv_runtime.kv_cache,
-        tensor_conversion_count=tensor_conversion_count,
-        parameter_source="hf_model",
-        input_source="prompt_prefill",
-        prefill_tokenization=prefill_tokenization.to_report(),
-        prefill_page_table_runtime_state=(
-            prefill_page_table.prefill_page_table_runtime_state
-        ),
-        kv_cache_runtime_state=kv_runtime.kv_cache_runtime_state,
-        prefill_prompt_runtime_input_tensor_count=1,
-        prefill_page_table_runtime_input_tensor_count=(
-            prefill_page_table.tensor_conversion_count
-        ),
-        prefill_rotary_runtime_input_tensor_count=(
-            prefill_rotary.tensor_conversion_count
-        ),
-        parameter_setup={
-            "materialization": materialization_summary,
-            "tensorization": _tensorization_summary(result.report),
-            "synthetic_runtime_input_tensor_count": 0,
-            "synthetic_rotary_tensor_count": 0,
-            "synthetic_kv_cache_tensor_count": 0,
-            "prefill_prompt_runtime_input_tensor_count": 1,
-            "prefill_page_table_runtime_input_tensor_count": (
-                prefill_page_table.tensor_conversion_count
-            ),
-            "prefill_page_table_runtime_state": (
-                prefill_page_table.prefill_page_table_runtime_state
-            ),
-            "prefill_rotary_runtime_input_tensor_count": (
-                prefill_rotary.tensor_conversion_count
-            ),
-            "kv_cache_runtime_input_tensor_count": (
-                kv_runtime.tensor_conversion_count
-            ),
-            "kv_cache_runtime_state": kv_runtime.kv_cache_runtime_state,
-        },
-        tokenizer_path=tokenizer_path,
-        tokenizer_module=tokenizer_module,
-    )
 
 
 class _maybe_generate_device:

@@ -22,6 +22,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
     materialize_generate_token_events,
     prefill_token_direct_handoff,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.generate import (
+    build_generate_state,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_kv_cache_runtime_state,
     build_decode_rotary_runtime_state,
@@ -207,6 +210,7 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertIs(GenerateCompatProfiler, GenerateSectionProfiler)
         self.assertTrue(callable(run_generate))
         self.assertTrue(callable(run_profile_generate))
+        self.assertTrue(callable(build_generate_state))
 
     def test_runtime_context_report_schema_is_preserved(self) -> None:
         context = TTNNDirectRuntimeContext(
