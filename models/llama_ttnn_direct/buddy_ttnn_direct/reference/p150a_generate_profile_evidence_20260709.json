@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-09T14:45:00+08:00",
+  "purpose": "PR-7 first full-depth P150A profile-generate evidence for prompt-conditioned prefill followed by decode.",
+  "device": "p150a",
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "tokenizer_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_pr2_20260709/llama31_decode_loop_demo_program_141623",
+  "artifact_root": "/wafer/zhuxinye/tmp/ttnn_direct_pr7_profile_full_20260709_144258",
+  "profile_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr7_profile_full_20260709_144258/generate_profile_report.json",
+  "underlying_generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr7_profile_full_20260709_144258/profile_generate_underlying_generate_report.json",
+  "prompt": "Hello from TTNN Direct",
+  "batch_size": 32,
+  "layers": 32,
+  "prefill_len": 128,
+  "cache_len": 1024,
+  "max_new_tokens": 2,
+  "dtype_seed": "bf16",
+  "status": "profiled",
+  "passed": true,
+  "model_semantics": "prompt_conditioned_prefill_decode",
+  "prefill_status": "passed",
+  "kv_cache_source": "prefill",
+  "official_performance_parity_claimed": false,
+  "throughput": {
+    "tokens_per_second_per_user": 0.1897960392015765,
+    "aggregate_tokens_per_second": 6.073473254450448,
+    "official_reference_tokens_per_second_per_user": 33.1,
+    "ratio_of_official_reference": 0.005734019311225876
+  },
+  "latency_ms": {
+    "generate_total": 10537.627699784935,
+    "prefill": 10340.662174858153,
+    "decode_step_mean": 194.58303321152925
+  },
+  "sections_ms": {
+    "embedding": 3.4191859886050224,
+    "prefill_attention": 359.4090612605214,
+    "decode_attention": 50.420105922967196,
+    "mlp_total": 681.0572221875191,
+    "prefill_mlp": 649.1610673256218,
+    "decode_mlp": 31.89615486189723,
+    "final_norm": 0.4902798682451248,
+    "lm_head": 11.97585416957736,
+    "argmax": 9348.338863346726,
+    "host_copy": 0.31005870550870895
+  },
+  "bottleneck_summary": {
+    "largest_section": "argmax",
+    "argmax_fraction_of_generate_latency": 0.8871388446886882,
+    "host_roundtrip_present": false,
+    "runtime_handoff": "device_tensor_direct",
+    "host_materialization_for_reporting": true
+  },
+  "performance_milestones": {
+    "highest_passed": "M1",
+    "next_milestone": "M2",
+    "next_milestone_requirement": "batch32 decode tokens/s/user > 1",
+    "m0_1_layer_generate_works": true,
+    "m1_full_depth_generate_works": true,
+    "m2_batch32_tokens_per_second_per_user_gt_1": false,
+    "m3_gt_10_percent_official": false,
+    "m4_gt_30_percent_official": false,
+    "m5_gt_60_percent_official": false,
+    "m6_gt_90_percent_official": false
+  },
+  "performance_note": "This is the first profile baseline after full-depth functional bring-up. It should guide optimization work, not be treated as official tt-metal parity."
+}

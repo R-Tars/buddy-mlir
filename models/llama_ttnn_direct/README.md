@@ -1581,6 +1581,15 @@ M6: >90% official
 
 Dry-run reports preserve the schema without marking any milestone passed.
 
+A compact full-depth P150A profile record from 2026-07-09 is tracked in
+`buddy_ttnn_direct/reference/p150a_generate_profile_evidence_20260709.json`.
+It records `profile-generate` for 32 layers, batch 32, prefill length 128, and
+two generated tokens per user. The observed throughput is about `0.1898 t/s/u`
+against the `33.1 t/s/u` official reference, with `highest_passed=M1` and
+`official_performance_parity_claimed=false`. The first dominant bottleneck in
+that profile is full-logits `argmax`, at about `88.7%` of measured generate
+latency.
+
 `validate-real-decode` runs the prompt decode loop step automatically when
 `--prompt` is provided. Without a prompt it is marked skipped; with
 `--require-model-end-to-end`, readiness also requires this loop to report
