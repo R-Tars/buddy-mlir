@@ -3,6 +3,21 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ..search.decode_step_autotune import DECODE_STEP_AUTOTUNE_KNOBS
+from .autotune import (
+    autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
+    autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
+    autotune_candidates_complete as _autotune_candidates_complete,
+    autotune_candidates_observed as _autotune_candidates_observed,
+    autotune_default_knobs_varied as _autotune_default_knobs_varied,
+    autotune_knob_coverage_complete as _autotune_knob_coverage_complete,
+    autotune_knob_coverage_observed as _autotune_knob_coverage_observed,
+    autotune_knob_variation_observed as _autotune_knob_variation_observed,
+    autotune_leaderboard_complete as _autotune_leaderboard_complete,
+    autotune_leaderboard_observed as _autotune_leaderboard_observed,
+    autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
+    autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
+)
 from .performance import (
     OFFICIAL_PERFORMANCE_PARITY_METRIC,
     PROFILE_GENERATE_MILESTONE_IDS,
@@ -912,17 +927,12 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
 
     VALIDATION_STEPS = validation.VALIDATION_STEPS
     ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
-    DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
     _attention_primitives_dry_run_complete = validation._attention_primitives_dry_run_complete
     _attention_primitives_dry_run_observed = validation._attention_primitives_dry_run_observed
-    _autotune_knob_coverage_complete = validation._autotune_knob_coverage_complete
-    _autotune_knob_coverage_observed = validation._autotune_knob_coverage_observed
     _required_validate_direct_artifacts_exist = validation._required_validate_direct_artifacts_exist
     _validate_direct_artifact_observed = validation._validate_direct_artifact_observed
-    _autotune_default_knobs_varied = validation._autotune_default_knobs_varied
-    _autotune_knob_variation_observed = validation._autotune_knob_variation_observed
 
     steps = report.get("steps", {})
     results = report.get("results", {})
@@ -1197,7 +1207,6 @@ def real_decode_acceptance(
     ATTENTION_LAYER_OPS = validation.ATTENTION_LAYER_OPS
     ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
     DECODE_PARAMETER_ROLES = validation.DECODE_PARAMETER_ROLES
-    DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
     PARITY_SECTIONS = validation.PARITY_SECTIONS
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
@@ -1207,18 +1216,6 @@ def real_decode_acceptance(
     _attention_layer_primitive_reports_observed = validation._attention_layer_primitive_reports_observed
     _attention_primitive_reports_complete = validation._attention_primitive_reports_complete
     _attention_primitive_reports_observed = validation._attention_primitive_reports_observed
-    _autotune_best_candidate_summary_complete = validation._autotune_best_candidate_summary_complete
-    _autotune_best_candidate_summary_observed = validation._autotune_best_candidate_summary_observed
-    _autotune_candidates_complete = validation._autotune_candidates_complete
-    _autotune_candidates_observed = validation._autotune_candidates_observed
-    _autotune_default_knobs_varied = validation._autotune_default_knobs_varied
-    _autotune_knob_coverage_complete = validation._autotune_knob_coverage_complete
-    _autotune_knob_coverage_observed = validation._autotune_knob_coverage_observed
-    _autotune_knob_variation_observed = validation._autotune_knob_variation_observed
-    _autotune_leaderboard_complete = validation._autotune_leaderboard_complete
-    _autotune_leaderboard_observed = validation._autotune_leaderboard_observed
-    _autotune_output_kind_counts_complete = validation._autotune_output_kind_counts_complete
-    _autotune_output_kind_counts_observed = validation._autotune_output_kind_counts_observed
     _config_gap_summary_complete = validation._config_gap_summary_complete
     _config_gap_summary_observed = validation._config_gap_summary_observed
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete

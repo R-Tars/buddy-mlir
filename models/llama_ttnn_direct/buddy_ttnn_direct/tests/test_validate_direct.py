@@ -10,6 +10,9 @@ from unittest.mock import patch
 from models.llama_ttnn_direct.buddy_ttnn_direct import (
     validation as validation_module,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
+    autotune as autotune_reports,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     PARITY_SECTIONS,
@@ -520,6 +523,37 @@ class ValidateDirectTest(unittest.TestCase):
         )
         for compatibility_export, report_helper in pairs:
             self.assertIs(compatibility_export, report_helper)
+
+    def test_validation_autotune_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module.DECODE_STEP_AUTOTUNE_KNOBS,
+            autotune_reports.DECODE_STEP_AUTOTUNE_KNOBS,
+        )
+        names = (
+            "autotune_best_candidate_summary_complete",
+            "autotune_best_candidate_summary_observed",
+            "autotune_candidate_complete",
+            "autotune_candidate_ids",
+            "autotune_candidate_summaries",
+            "autotune_candidates_complete",
+            "autotune_candidates_observed",
+            "autotune_default_knobs_varied",
+            "autotune_expected_output_kinds",
+            "autotune_knob_coverage_complete",
+            "autotune_knob_coverage_observed",
+            "autotune_knob_variation_observed",
+            "autotune_leaderboard_complete",
+            "autotune_leaderboard_entry_complete",
+            "autotune_leaderboard_observed",
+            "autotune_missing_varied_knobs",
+            "autotune_output_kind_counts_complete",
+            "autotune_output_kind_counts_observed",
+        )
+        for name in names:
+            self.assertIs(
+                getattr(validation_module, f"_{name}"),
+                getattr(autotune_reports, name),
+            )
 
     def test_performance_baseline_reference_resolves(self) -> None:
         baseline = validation_module.resolve_performance_baseline(
