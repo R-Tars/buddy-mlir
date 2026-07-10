@@ -4,10 +4,20 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import (
     build_parser,
     main,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
+    PROFILE_GENERATE_SECTION_KEYS,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
+    validate_device,
+    validate_dryrun,
+    validate_functional,
+    validate_performance,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_decode_shell import (
     _write_fake_model_config,
@@ -136,6 +146,95 @@ class ProductCliTest(unittest.TestCase):
             self.assertTrue((out_dir / "generate_dryrun.json").is_file())
             self.assertTrue((out_dir / "profile_dryrun.json").is_file())
 
+    def test_product_validation_suites_use_compact_reports(self) -> None:
+        artifacts = {"passed": True, "files": {"model.py": True}}
+        dryrun = {"passed": True, "status": "dry_run", "dry_run": True}
+        self.assertTrue(
+            validate_dryrun(
+                artifacts=artifacts,
+                generate=dryrun,
+                profile=dryrun,
+            )["passed"]
+        )
+
+        generate = self._functional_generate_report()
+        self.assertTrue(
+            validate_functional(
+                artifacts=artifacts,
+                generate=generate,
+            )["passed"]
+        )
+        self.assertTrue(
+            validate_device(
+                artifacts=artifacts,
+                generate=generate,
+                require_full_depth=True,
+                expected_device="p150a",
+                expected_device_id=0,
+            )["passed"]
+        )
+
+        profile = {
+            "passed": True,
+            "status": "profiled",
+            "tokens_per_second_per_user": 1.0,
+            "layers": 2,
+            "program_num_layers": 2,
+            "sections": {
+                name: {"status": "measured"}
+                for name in PROFILE_GENERATE_SECTION_KEYS
+            },
+        }
+        self.assertTrue(
+            validate_performance(
+                artifacts=artifacts,
+                profile=profile,
+                require_full_depth=True,
+            )["passed"]
+        )
+
+        generate["generated_text"] = ""
+        failed = validate_functional(
+            artifacts=artifacts,
+            generate=generate,
+        )
+        self.assertFalse(failed["passed"])
+        self.assertEqual(failed["failed_checks"], ["validate.generated_text"])
+
+    def test_validate_functional_uses_product_generate_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_dir = self._build_program(root)
+            out_dir = root / "validate_functional"
+            generate = self._functional_generate_report()
+
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.cli.run_generate",
+                return_value=generate,
+            ) as run_generate:
+                exit_code = main(
+                    [
+                        "validate",
+                        "--suite",
+                        "functional",
+                        "--program-dir",
+                        str(program_dir),
+                        "--model-path",
+                        str(root / "fake_model"),
+                        "--prompt",
+                        "hello",
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            run_generate.assert_called_once()
+            report = json.loads((out_dir / "validation_report.json").read_text())
+            self.assertEqual(report["suite"], "functional")
+            self.assertEqual(report["status"], "pass")
+            self.assertNotIn("steps", report)
+
     def test_inspect_writes_program_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -205,6 +304,26 @@ class ProductCliTest(unittest.TestCase):
             0,
         )
         return program_dir
+
+    @staticmethod
+    def _functional_generate_report() -> dict[str, object]:
+        return {
+            "passed": True,
+            "status": "passed",
+            "prefill_status": "passed",
+            "model_semantics": "prompt_conditioned_prefill_decode",
+            "kv_cache_source": "prefill",
+            "generated_text": "hello from ttnn",
+            "generated_text_status": "decoded",
+            "device": "p150a",
+            "device_id": 0,
+            "layers": 2,
+            "program_num_layers": 2,
+            "ttnn_environment": {
+                "version": "test",
+                "module_file": "/tmp/ttnn.py",
+            },
+        }
 
 
 if __name__ == "__main__":

@@ -48,6 +48,13 @@ from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .decode_loop import run_prompt_decode_loop
 from .generate import run_generate, run_profile_generate
+from .reports.performance import default_performance_baselines_path
+from .reports.validation import (
+    validate_device,
+    validate_dryrun,
+    validate_functional,
+    validate_performance,
+)
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, run_smoke_mlp
 from .smoke_decode_shell import run_smoke_decode_shell
 from .smoke_attention_primitive import (
@@ -72,18 +79,6 @@ from .templates.diff import (
     dump_plan_diff,
     load_official_template,
 )
-from .validation import (
-    default_decode_step_search_space_path,
-    default_official_template_path,
-    default_performance_baselines_path,
-    default_search_space_path,
-    preflight_real_decode,
-    recover_real_decode_process_failure,
-    recover_real_decode_process_timeout,
-    validate_direct,
-    validate_real_decode,
-)
-
 PRODUCT_COMMANDS = (
     "build",
     "generate",
@@ -92,6 +87,32 @@ PRODUCT_COMMANDS = (
     "inspect",
     "diagnose",
 )
+
+
+def default_official_template_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "reference"
+        / "official_llama31_decode_template.json"
+    )
+
+
+def default_search_space_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "search"
+        / "spaces"
+        / "lm_head_minimal.json"
+    )
+
+
+def default_decode_step_search_space_path() -> Path:
+    return (
+        Path(__file__).resolve().parent
+        / "search"
+        / "spaces"
+        / "decode_step_minimal.json"
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1918,7 +1939,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_validate.add_argument("--program-dir", type=Path, default=None)
     product_validate.add_argument("--model-path", type=Path, default=None)
-    product_validate.add_argument("--config", type=Path, default=None)
     add_prompt_runtime_args(product_validate)
     product_validate.add_argument("--out-dir", type=Path, required=True)
     product_validate.add_argument("--max-new-tokens", type=int, default=2)
@@ -1933,37 +1953,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("bf16", "fp32"),
         default="bf16",
     )
-    product_validate.add_argument("--dry-run", action="store_true")
     product_validate.add_argument("--require-full-depth", action="store_true")
-    product_validate.add_argument(
-        "--metric",
-        default="tokens_per_second_per_user",
-    )
-    product_validate.add_argument(
-        "--official-template",
-        type=Path,
-        default=default_official_template_path(),
-    )
-    product_validate.add_argument(
-        "--official-config",
-        type=Path,
-        default=default_official_config_path(),
-    )
-    product_validate.add_argument(
-        "--search-space",
-        type=Path,
-        default=default_search_space_path(),
-    )
-    product_validate.add_argument(
-        "--decode-step-search-space",
-        type=Path,
-        default=default_decode_step_search_space_path(),
-    )
-    product_validate.add_argument(
-        "--performance-baselines",
-        type=Path,
-        default=default_performance_baselines_path(),
-    )
     product_validate.set_defaults(func=_cmd_validate)
 
     inspect = subparsers.add_parser(
@@ -2652,6 +2642,8 @@ def _close_ttnn_device(ttnn: object, device: object) -> None:
 
 
 def _cmd_validate_direct(args: argparse.Namespace) -> int:
+    from .validation import validate_direct
+
     report = validate_direct(
         model_path=args.model_path,
         config_path=args.config,
@@ -2671,6 +2663,8 @@ def _cmd_validate_direct(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
+    from .validation import preflight_real_decode, validate_real_decode
+
     if args.preflight_only:
         report = preflight_real_decode(
             program_dir=args.program_dir,
@@ -2814,6 +2808,8 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
+        from .validation import recover_real_decode_process_timeout
+
         stdout = getattr(exc, "stdout", None) or getattr(exc, "output", None)
         stderr = getattr(exc, "stderr", None)
         stdout_text = _coerce_subprocess_text(stdout)
@@ -2843,6 +2839,8 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
     if result.returncode in {0, 1, 2}:
         return int(result.returncode)
 
+    from .validation import recover_real_decode_process_failure
+
     report = recover_real_decode_process_failure(
         out_dir=args.out_dir,
         returncode=result.returncode,
@@ -2869,23 +2867,10 @@ def _coerce_subprocess_text(value: str | bytes | None) -> str:
 
 def _cmd_validate(args: argparse.Namespace) -> int:
     if args.suite == "dryrun":
-        if args.model_path is not None and args.config is not None:
-            return _cmd_validate_direct(
-                argparse.Namespace(
-                    model_path=args.model_path,
-                    config=args.config,
-                    out_dir=args.out_dir,
-                    official_template=args.official_template,
-                    official_config=args.official_config,
-                    search_space=args.search_space,
-                    decode_step_search_space=args.decode_step_search_space,
-                    metric=args.metric,
-                )
-            )
         if args.program_dir is None:
             print(
-                "validate --suite dryrun requires either "
-                "--model-path/--config or --program-dir",
+                "validate --suite dryrun requires --program-dir; run build "
+                "first",
                 file=sys.stderr,
             )
             return 1
@@ -2898,7 +2883,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    return _cmd_validate_real_decode(_validate_real_namespace(args))
+    return _cmd_validate_product_runtime(args)
 
 
 def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
@@ -2942,94 +2927,113 @@ def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
         dry_run=True,
         generate_report=underlying_generate_report,
     )
-    checks = [
+    report = validate_dryrun(
+        artifacts=artifacts,
+        generate=generate,
+        profile=profile,
+    )
+    report.update(
         {
-            "name": "validate.program_artifacts",
-            "passed": artifacts["passed"],
-            "observed": artifacts["files"],
-        },
-        {
-            "name": "validate.generate_dryrun",
-            "passed": bool(generate.get("passed")),
-            "observed": generate.get("status"),
-        },
-        {
-            "name": "validate.profile_dryrun",
-            "passed": bool(profile.get("passed")),
-            "observed": profile.get("status"),
-        },
-    ]
-    passed = all(check["passed"] for check in checks)
-    report = {
-        "schema_version": 1,
-        "command": "validate",
-        "suite": "dryrun",
-        "status": "pass" if passed else "fail",
-        "passed": passed,
-        "program_dir": str(args.program_dir),
-        "artifacts": artifacts,
-        "reports": {
-            "generate": str(generate_report),
-            "profile": str(profile_report),
-            "profile_underlying_generate": str(underlying_generate_report),
-        },
-        "checks": checks,
-        "failed_checks": [
-            check["name"] for check in checks if not check["passed"]
-        ],
-    }
+            "program_dir": str(args.program_dir),
+            "artifacts": artifacts,
+            "reports": {
+                "generate": str(generate_report),
+                "profile": str(profile_report),
+                "profile_underlying_generate": str(
+                    underlying_generate_report
+                ),
+            },
+        }
+    )
     report_path = args.out_dir / "validation_report.json"
     _write_report_json(report_path, report)
     print(f"wrote TTNN Direct validation report: {report_path}")
     print(f"  status: {report['status']}")
-    return 0 if passed else 1
+    return 0 if report["passed"] else 1
 
 
-def _validate_real_namespace(args: argparse.Namespace) -> argparse.Namespace:
-    suite = args.suite
-    return argparse.Namespace(
-        program_dir=args.program_dir,
-        model_path=args.model_path,
-        prompt=args.prompt,
-        tokenizer_path=args.tokenizer_path,
-        out_dir=args.out_dir,
-        decode_step_search_space=args.decode_step_search_space,
-        official_config=args.official_config,
-        layers=args.layers,
-        batch_size=args.batch_size,
-        cache_len=args.cache_len,
-        max_new_tokens=args.max_new_tokens,
-        prefill_len=args.prefill_len,
-        device=args.device,
-        device_id=args.device_id,
-        dtype_seed=args.dtype_seed,
-        trace=False,
-        trace_iterations=1,
-        metric=args.metric,
-        skip_autotune=True,
-        skip_profile_decode_step=(suite != "performance"),
-        guard_device_busy=False,
-        guard_device_health=False,
-        disable_device_isolation=True,
-        device_isolation_timeout_seconds=3600.0,
-        require_full_decode_step=False,
-        require_model_end_to_end=(suite in {"functional", "device", "performance"}),
-        require_official_performance_parity=False,
-        require_trace=False,
-        require_official_config_match=False,
-        require_full_depth=bool(args.require_full_depth),
-        require_program_runtime_shape=False,
-        require_batch32_decode_step=False,
-        min_tokens_per_second_per_user=None,
-        baseline_tokens_per_second_per_user=None,
-        performance_baselines=args.performance_baselines,
-        baseline_reference=None,
-        min_baseline_ratio=None,
-        decode_shell_pcc_threshold=0.99,
-        require_decode_shell_numeric_reference=False,
-        dry_run=bool(args.dry_run),
-        preflight_only=False,
+def _cmd_validate_product_runtime(args: argparse.Namespace) -> int:
+    args.out_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = _program_artifact_report(args.program_dir)
+    generate_report_path = args.out_dir / "generate.json"
+    reports = {"generate": str(generate_report_path)}
+
+    if args.suite == "performance":
+        profile_report_path = args.out_dir / "profile.json"
+        profile = run_profile_generate(
+            out=profile_report_path,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            max_new_tokens=args.max_new_tokens,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=False,
+            generate_report=generate_report_path,
+        )
+        report = validate_performance(
+            artifacts=artifacts,
+            profile=profile,
+            require_full_depth=bool(args.require_full_depth),
+        )
+        reports["profile"] = str(profile_report_path)
+        runtime_status = profile.get("generate_status")
+    else:
+        generate = run_generate(
+            out=generate_report_path,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            max_new_tokens=args.max_new_tokens,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            dry_run=False,
+        )
+        if args.suite == "functional":
+            report = validate_functional(
+                artifacts=artifacts,
+                generate=generate,
+            )
+        else:
+            report = validate_device(
+                artifacts=artifacts,
+                generate=generate,
+                require_full_depth=bool(args.require_full_depth),
+                expected_device=args.device,
+                expected_device_id=args.device_id,
+            )
+        runtime_status = generate.get("status")
+
+    report.update(
+        {
+            "program_dir": str(args.program_dir),
+            "model_path": str(args.model_path),
+            "artifacts": artifacts,
+            "reports": reports,
+        }
     )
+    report_path = args.out_dir / "validation_report.json"
+    _write_report_json(report_path, report)
+    print(f"wrote TTNN Direct validation report: {report_path}")
+    print(f"  status: {report['status']}")
+    if report["passed"]:
+        return 0
+    if runtime_status == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 1
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
