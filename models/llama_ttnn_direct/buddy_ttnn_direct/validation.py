@@ -43,6 +43,11 @@ from .runtime_environment import (
 )
 from .decode_loop import run_prompt_decode_loop
 from .generate import run_generate, run_profile_generate
+from .reports.evidence import (
+    artifact_evidence as _artifact_evidence,
+    artifact_index as _artifact_index,
+    step_names_with_status as _step_names_with_status,
+)
 from .reports.performance import (
     OFFICIAL_PERFORMANCE_PARITY_METRIC,
     default_performance_baselines_path,
@@ -356,10 +361,6 @@ def _real_decode_cli_args(
     if preflight_only:
         args.append("--preflight-only")
     return args
-
-
-def _artifact_index(paths: dict[str, Path]) -> dict[str, str]:
-    return {name: str(path) for name, path in paths.items()}
 
 
 def _real_decode_reproducibility(
@@ -7394,40 +7395,6 @@ def _final_acceptance_gate_matrix(
         "missing_gates": missing_gates,
         "gates": gate_entries,
     }
-
-
-def _artifact_evidence(name: str, path: Path) -> dict[str, Any]:
-    if path.is_file():
-        kind = "file"
-    elif path.is_dir():
-        kind = "directory"
-    else:
-        kind = "missing"
-    return {
-        "name": name,
-        "path": str(path),
-        "exists": path.exists(),
-        "kind": kind,
-    }
-
-
-def _step_names_with_status(
-    results: Any,
-    *,
-    status: str | None = None,
-    failing: bool = False,
-) -> list[str]:
-    if not isinstance(results, dict):
-        return []
-    names = []
-    passing_statuses = {"pass", "dry_run", "skipped", "pending"}
-    for name, value in results.items():
-        value = str(value)
-        if status is not None and value == status:
-            names.append(str(name))
-        elif failing and value not in passing_statuses:
-            names.append(str(name))
-    return names
 
 
 def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
