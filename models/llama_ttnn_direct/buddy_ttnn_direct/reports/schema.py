@@ -138,6 +138,16 @@ def int_list_contains(values: Any, expected: Any) -> bool:
     return expected_int in int_list(values)
 
 
+def expected_layer_ids(layers: Any) -> list[int]:
+    try:
+        layer_count = int(layers)
+    except (TypeError, ValueError):
+        return []
+    if layer_count <= 0:
+        return []
+    return list(range(layer_count))
+
+
 def safe_int(value: Any) -> int | None:
     try:
         return int(value)

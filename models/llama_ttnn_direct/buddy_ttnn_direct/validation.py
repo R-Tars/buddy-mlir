@@ -83,6 +83,7 @@ from .reports.schema import (
     acceptance_check as _acceptance_check,
     contains_all as _contains_all,
     decode_step_contract as _decode_step_contract,
+    expected_layer_ids as _expected_layer_ids,
     field_keys as _field_keys,
     has_nonnegative_fields as _has_nonnegative_fields,
     int_equal as _int_equal,
@@ -103,11 +104,23 @@ from .reports.schema import (
     status_count_matches_total as _status_count_matches_total,
 )
 from .reports.tensorization import (
+    decode_shell_linear_weight_transform_complete as _decode_shell_linear_weight_transform_complete,
+    decode_shell_linear_weight_transform_observed as _decode_shell_linear_weight_transform_observed,
+    decode_shell_linear_weight_transform_paths as _decode_shell_linear_weight_transform_paths,
+    embedding_norm_weight_transform_complete as _embedding_norm_weight_transform_complete,
+    embedding_norm_weight_transform_observed as _embedding_norm_weight_transform_observed,
+    embedding_norm_weight_transform_paths as _embedding_norm_weight_transform_paths,
     expected_tensorized_physical_shape as _expected_tensorized_physical_shape,
+    linear_weight_transform_complete as _linear_weight_transform_complete,
+    linear_weight_transform_observed as _linear_weight_transform_observed,
+    linear_weight_transform_paths as _linear_weight_transform_paths,
     lm_head_source_reference_complete as _lm_head_source_reference_complete,
     lm_head_source_reference_observed as _lm_head_source_reference_observed,
+    lm_head_transform_complete as _lm_head_transform_complete,
+    lm_head_transform_observed as _lm_head_transform_observed,
     step_tensorization_summary as _step_tensorization_summary,
     tensorized_physical_shape_mismatches as _tensorized_physical_shape_mismatches,
+    transformed_tensor_paths as _transformed_tensor_paths,
 )
 from .reports.validation import (
     REAL_DECODE_VALIDATION_STEPS,
@@ -5126,355 +5139,6 @@ def _lm_head_profile_observed(profile: Any) -> dict[str, Any]:
     }
 
 
-def _lm_head_transform_complete(
-    tensorization: Any,
-    split_count: Any,
-) -> bool:
-    if not isinstance(tensorization, dict):
-        return False
-    expected_count = _safe_int(split_count)
-    if expected_count is None or expected_count <= 0:
-        return False
-    counts = tensorization.get("transform_counts")
-    if not isinstance(counts, dict):
-        return False
-    observed_count = _safe_int(counts.get(LINEAR_WEIGHT_TRANSFORM))
-    if observed_count is None or observed_count < expected_count:
-        return False
-    expected_paths = {
-        f"lm_head.splits.{shard_id}.weight"
-        for shard_id in range(expected_count)
-    }
-    transformed_paths = _transformed_tensor_paths(
-        tensorization,
-        LINEAR_WEIGHT_TRANSFORM,
-    )
-    if transformed_paths and not expected_paths.issubset(transformed_paths):
-        return False
-    key_tensors = tensorization.get("key_tensors")
-    if not isinstance(key_tensors, dict):
-        return False
-    split0 = key_tensors.get("lm_head.splits.0.weight")
-    if not isinstance(split0, dict):
-        return False
-    shape = split0.get("shape")
-    return (
-        split0.get("transform") == LINEAR_WEIGHT_TRANSFORM
-        and isinstance(shape, list)
-        and len(shape) == 4
-    )
-
-
-def _embedding_norm_weight_transform_complete(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-) -> bool:
-    if not isinstance(tensorization, dict):
-        return False
-    paths = _embedding_norm_weight_transform_paths(layer_count)
-    embedding_paths = set(paths["embedding"])
-    norm_paths = set(paths["norm"])
-    if not embedding_paths or not norm_paths:
-        return False
-    embedding_transformed = _transformed_tensor_paths(
-        tensorization,
-        "reshape_embedding_weight_4d",
-    )
-    norm_transformed = _transformed_tensor_paths(
-        tensorization,
-        "reshape_norm_weight_4d",
-    )
-    if not embedding_paths.issubset(embedding_transformed):
-        return False
-    if not norm_paths.issubset(norm_transformed):
-        return False
-    key_tensors = tensorization.get("key_tensors")
-    if not isinstance(key_tensors, dict):
-        return False
-    for key_path in (
-        "embedding.weight",
-        "layers.0.input_norm.weight",
-        "layers.0.post_attention_norm.weight",
-        "final_norm.weight",
-    ):
-        tensor = key_tensors.get(key_path)
-        if isinstance(tensor, dict):
-            shape = tensor.get("shape")
-            if not isinstance(shape, list) or len(shape) != 4:
-                return False
-    return True
-
-
-def _embedding_norm_weight_transform_paths(layer_count: Any) -> dict[str, list[str]]:
-    norm_paths = ["final_norm.weight"]
-    for layer_id in _expected_layer_ids(layer_count):
-        norm_paths.extend(
-            [
-                f"layers.{layer_id}.input_norm.weight",
-                f"layers.{layer_id}.post_attention_norm.weight",
-            ]
-        )
-    return {
-        "embedding": ["embedding.weight"],
-        "norm": norm_paths,
-    }
-
-
-def _embedding_norm_weight_transform_observed(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-) -> dict[str, Any]:
-    if not isinstance(tensorization, dict):
-        return {}
-    expected_paths = _embedding_norm_weight_transform_paths(layer_count)
-    key_tensors = tensorization.get("key_tensors")
-    key_observed = {}
-    if isinstance(key_tensors, dict):
-        for path in expected_paths["embedding"] + expected_paths["norm"]:
-            tensor = key_tensors.get(path)
-            if isinstance(tensor, dict):
-                key_observed[path] = {
-                    "transform": tensor.get("transform"),
-                    "source_shape": tensor.get("source_shape"),
-                    "shape": tensor.get("shape"),
-                }
-    return {
-        "expected_paths": expected_paths,
-        "embedding_transformed_paths": sorted(
-            _transformed_tensor_paths(
-                tensorization,
-                "reshape_embedding_weight_4d",
-            )
-        ),
-        "norm_transformed_paths": sorted(
-            _transformed_tensor_paths(
-                tensorization,
-                "reshape_norm_weight_4d",
-            )
-        ),
-        "key_tensors": key_observed,
-    }
-
-
-def _linear_weight_transform_complete(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-) -> bool:
-    if not isinstance(tensorization, dict):
-        return False
-    expected_paths = set(_linear_weight_transform_paths(layer_count))
-    if not expected_paths:
-        return False
-    transformed_paths = _transformed_tensor_paths(
-        tensorization,
-        LINEAR_WEIGHT_TRANSFORM,
-    )
-    if not expected_paths.issubset(transformed_paths):
-        return False
-    key_tensors = tensorization.get("key_tensors")
-    if not isinstance(key_tensors, dict):
-        return False
-    for key_path in (
-        "layers.0.attention.wqkv_packed.weight",
-        "layers.0.attention.o_proj.weight",
-        "layers.0.mlp.gate_proj.weight",
-        "layers.0.mlp.down_proj.weight",
-    ):
-        tensor = key_tensors.get(key_path)
-        if isinstance(tensor, dict):
-            if tensor.get("transform") != LINEAR_WEIGHT_TRANSFORM:
-                return False
-            shape = tensor.get("shape")
-            if not isinstance(shape, list) or len(shape) != 4:
-                return False
-    return True
-
-
-def _linear_weight_transform_paths(layer_count: Any) -> list[str]:
-    paths: list[str] = []
-    for layer_id in _expected_layer_ids(layer_count):
-        paths.extend(
-            [
-                f"layers.{layer_id}.attention.wqkv_packed.weight",
-                f"layers.{layer_id}.attention.o_proj.weight",
-                f"layers.{layer_id}.mlp.gate_proj.weight",
-                f"layers.{layer_id}.mlp.up_proj.weight",
-                f"layers.{layer_id}.mlp.down_proj.weight",
-            ]
-        )
-    return paths
-
-
-def _decode_shell_linear_weight_transform_complete(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-    split_count: Any,
-) -> bool:
-    if not isinstance(tensorization, dict):
-        return False
-    expected_paths = set(
-        _decode_shell_linear_weight_transform_paths(
-            layer_count,
-            split_count,
-        )
-    )
-    if not expected_paths:
-        return False
-    transformed_paths = _transformed_tensor_paths(
-        tensorization,
-        LINEAR_WEIGHT_TRANSFORM,
-    )
-    if not expected_paths.issubset(transformed_paths):
-        return False
-    key_tensors = tensorization.get("key_tensors")
-    if not isinstance(key_tensors, dict):
-        return False
-    for key_path in (
-        "layers.0.mlp.gate_proj.weight",
-        "layers.0.mlp.up_proj.weight",
-        "layers.0.mlp.down_proj.weight",
-        "lm_head.splits.0.weight",
-    ):
-        tensor = key_tensors.get(key_path)
-        if isinstance(tensor, dict):
-            if tensor.get("transform") != LINEAR_WEIGHT_TRANSFORM:
-                return False
-            shape = tensor.get("shape")
-            if not isinstance(shape, list) or len(shape) != 4:
-                return False
-    return True
-
-
-def _decode_shell_linear_weight_transform_paths(
-    layer_count: Any,
-    split_count: Any,
-) -> list[str]:
-    paths: list[str] = []
-    for layer_id in _expected_layer_ids(layer_count):
-        paths.extend(
-            [
-                f"layers.{layer_id}.mlp.gate_proj.weight",
-                f"layers.{layer_id}.mlp.up_proj.weight",
-                f"layers.{layer_id}.mlp.down_proj.weight",
-            ]
-        )
-    split_count_int = _safe_int(split_count)
-    if split_count_int is not None and split_count_int > 0:
-        paths.extend(
-            f"lm_head.splits.{shard_id}.weight"
-            for shard_id in range(split_count_int)
-        )
-    return paths
-
-
-def _transformed_tensor_paths(
-    tensorization: dict[str, Any],
-    transform: str,
-) -> set[str]:
-    paths_by_kind = tensorization.get("transform_paths_by_kind")
-    if isinstance(paths_by_kind, dict):
-        paths = paths_by_kind.get(transform, [])
-        if isinstance(paths, list):
-            return {str(path) for path in paths}
-    key_tensors = tensorization.get("key_tensors")
-    if not isinstance(key_tensors, dict):
-        return set()
-    return {
-        str(path)
-        for path, tensor in key_tensors.items()
-        if isinstance(tensor, dict) and tensor.get("transform") == transform
-    }
-
-
-def _decode_shell_linear_weight_transform_observed(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-    split_count: Any,
-) -> dict[str, Any]:
-    if not isinstance(tensorization, dict):
-        return {}
-    expected_paths = _decode_shell_linear_weight_transform_paths(
-        layer_count,
-        split_count,
-    )
-    transformed_paths = sorted(
-        _transformed_tensor_paths(tensorization, LINEAR_WEIGHT_TRANSFORM)
-    )
-    key_tensors = tensorization.get("key_tensors")
-    key_observed = {}
-    if isinstance(key_tensors, dict):
-        for path in expected_paths:
-            tensor = key_tensors.get(path)
-            if isinstance(tensor, dict):
-                key_observed[path] = {
-                    "transform": tensor.get("transform"),
-                    "source_shape": tensor.get("source_shape"),
-                    "shape": tensor.get("shape"),
-                }
-    return {
-        "expected_paths": expected_paths,
-        "transformed_paths": transformed_paths,
-        "key_tensors": key_observed,
-    }
-
-
-def _linear_weight_transform_observed(
-    tensorization: Any,
-    *,
-    layer_count: Any,
-) -> dict[str, Any]:
-    if not isinstance(tensorization, dict):
-        return {}
-    expected_paths = _linear_weight_transform_paths(layer_count)
-    transformed_paths = sorted(
-        _transformed_tensor_paths(tensorization, LINEAR_WEIGHT_TRANSFORM)
-    )
-    key_tensors = tensorization.get("key_tensors")
-    key_observed = {}
-    if isinstance(key_tensors, dict):
-        for path in expected_paths:
-            tensor = key_tensors.get(path)
-            if isinstance(tensor, dict):
-                key_observed[path] = {
-                    "transform": tensor.get("transform"),
-                    "source_shape": tensor.get("source_shape"),
-                    "shape": tensor.get("shape"),
-                }
-    return {
-        "expected_paths": expected_paths,
-        "transformed_paths": transformed_paths,
-        "key_tensors": key_observed,
-    }
-
-
-def _lm_head_transform_observed(tensorization: Any) -> dict[str, Any]:
-    if not isinstance(tensorization, dict):
-        return {}
-    key_tensors = tensorization.get("key_tensors")
-    split0 = {}
-    if isinstance(key_tensors, dict):
-        maybe_split0 = key_tensors.get("lm_head.splits.0.weight")
-        if isinstance(maybe_split0, dict):
-            split0 = {
-                "transform": maybe_split0.get("transform"),
-                "source_shape": maybe_split0.get("source_shape"),
-                "shape": maybe_split0.get("shape"),
-            }
-    return {
-        "transform_counts": tensorization.get("transform_counts", {}),
-        "transform_paths_by_kind": tensorization.get(
-            "transform_paths_by_kind",
-            {},
-        ),
-        "lm_head.splits.0.weight": split0,
-    }
-
-
 def _trace_profile_complete(
     trace: Any,
     throughput: Any,
@@ -6116,16 +5780,6 @@ def _observed_ops_cover_planned(planned_ops: Any, observed_ops: Any) -> bool:
         ):
             planned_index += 1
     return planned_index == len(planned_ops)
-
-
-def _expected_layer_ids(layers: Any) -> list[int]:
-    try:
-        layer_count = int(layers)
-    except (TypeError, ValueError):
-        return []
-    if layer_count <= 0:
-        return []
-    return list(range(layer_count))
 
 
 def _decode_runtime_inputs_complete(

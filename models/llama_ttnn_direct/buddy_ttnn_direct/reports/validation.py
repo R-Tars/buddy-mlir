@@ -15,6 +15,7 @@ from .performance import (
 from .schema import (
     acceptance_check as _acceptance_check,
     contains_all as _contains_all,
+    expected_layer_ids as _expected_layer_ids,
     field_keys as _field_keys,
     has_nonnegative_fields as _has_nonnegative_fields,
     int_equal as _int_equal,
@@ -32,8 +33,18 @@ from .schema import (
     status_count_matches_total as _status_count_matches_total,
 )
 from .tensorization import (
+    decode_shell_linear_weight_transform_complete as _decode_shell_linear_weight_transform_complete,
+    decode_shell_linear_weight_transform_observed as _decode_shell_linear_weight_transform_observed,
+    embedding_norm_weight_transform_complete as _embedding_norm_weight_transform_complete,
+    embedding_norm_weight_transform_observed as _embedding_norm_weight_transform_observed,
+    embedding_norm_weight_transform_paths as _embedding_norm_weight_transform_paths,
+    linear_weight_transform_complete as _linear_weight_transform_complete,
+    linear_weight_transform_observed as _linear_weight_transform_observed,
+    linear_weight_transform_paths as _linear_weight_transform_paths,
     lm_head_source_reference_complete as _lm_head_source_reference_complete,
     lm_head_source_reference_observed as _lm_head_source_reference_observed,
+    lm_head_transform_complete as _lm_head_transform_complete,
+    lm_head_transform_observed as _lm_head_transform_observed,
     step_tensorization_summary as _step_tensorization_summary,
     tensorized_physical_shape_mismatches as _tensorized_physical_shape_mismatches,
 )
@@ -1200,28 +1211,17 @@ def real_decode_acceptance(
     _decode_output_shapes_complete = validation._decode_output_shapes_complete
     _decode_runtime_input_observed = validation._decode_runtime_input_observed
     _decode_runtime_inputs_complete = validation._decode_runtime_inputs_complete
-    _decode_shell_linear_weight_transform_complete = validation._decode_shell_linear_weight_transform_complete
-    _decode_shell_linear_weight_transform_observed = validation._decode_shell_linear_weight_transform_observed
     _decode_shell_numeric_reference_complete = validation._decode_shell_numeric_reference_complete
     _decode_shell_numeric_reference_observed = validation._decode_shell_numeric_reference_observed
     _decode_shell_runtime_inputs_accepted = validation._decode_shell_runtime_inputs_accepted
-    _embedding_norm_weight_transform_complete = validation._embedding_norm_weight_transform_complete
-    _embedding_norm_weight_transform_observed = validation._embedding_norm_weight_transform_observed
-    _embedding_norm_weight_transform_paths = validation._embedding_norm_weight_transform_paths
     _expected_attention_layer_output_shape_summary = validation._expected_attention_layer_output_shape_summary
     _expected_decode_output_shape_summary = validation._expected_decode_output_shape_summary
     _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
-    _expected_layer_ids = validation._expected_layer_ids
     _layer_profile_field_keys = validation._layer_profile_field_keys
     _layer_profile_ids = validation._layer_profile_ids
     _layer_profiles_have_nonnegative_fields = validation._layer_profiles_have_nonnegative_fields
-    _linear_weight_transform_complete = validation._linear_weight_transform_complete
-    _linear_weight_transform_observed = validation._linear_weight_transform_observed
-    _linear_weight_transform_paths = validation._linear_weight_transform_paths
     _lm_head_profile_complete = validation._lm_head_profile_complete
     _lm_head_profile_observed = validation._lm_head_profile_observed
-    _lm_head_transform_complete = validation._lm_head_transform_complete
-    _lm_head_transform_observed = validation._lm_head_transform_observed
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed

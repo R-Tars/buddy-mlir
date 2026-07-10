@@ -56,17 +56,30 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
     decode_step_contract,
+    expected_layer_ids,
     int_list,
     kv_cache_contract_from_template_config,
     path_exists,
     positive_number,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.tensorization import (
+    decode_shell_linear_weight_transform_complete,
+    decode_shell_linear_weight_transform_observed,
+    decode_shell_linear_weight_transform_paths,
+    embedding_norm_weight_transform_complete,
+    embedding_norm_weight_transform_observed,
+    embedding_norm_weight_transform_paths,
     expected_tensorized_physical_shape,
+    linear_weight_transform_complete,
+    linear_weight_transform_observed,
+    linear_weight_transform_paths,
     lm_head_source_reference_complete,
     lm_head_source_reference_observed,
+    lm_head_transform_complete,
+    lm_head_transform_observed,
     step_tensorization_summary,
     tensorized_physical_shape_mismatches,
+    transformed_tensor_paths,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     REAL_DECODE_VALIDATION_STEPS,
@@ -320,6 +333,7 @@ class ValidateDirectTest(unittest.TestCase):
             validation_module._kv_cache_contract_from_template_config,
             kv_cache_contract_from_template_config,
         )
+        self.assertIs(validation_module._expected_layer_ids, expected_layer_ids)
         self.assertIs(validation_module._acceptance_check, acceptance_check)
         self.assertIs(validation_module._path_exists, path_exists)
         self.assertIs(validation_module._positive_number, positive_number)
@@ -340,6 +354,30 @@ class ValidateDirectTest(unittest.TestCase):
 
     def test_validation_tensorization_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
+            validation_module._decode_shell_linear_weight_transform_complete,
+            decode_shell_linear_weight_transform_complete,
+        )
+        self.assertIs(
+            validation_module._decode_shell_linear_weight_transform_observed,
+            decode_shell_linear_weight_transform_observed,
+        )
+        self.assertIs(
+            validation_module._decode_shell_linear_weight_transform_paths,
+            decode_shell_linear_weight_transform_paths,
+        )
+        self.assertIs(
+            validation_module._embedding_norm_weight_transform_complete,
+            embedding_norm_weight_transform_complete,
+        )
+        self.assertIs(
+            validation_module._embedding_norm_weight_transform_observed,
+            embedding_norm_weight_transform_observed,
+        )
+        self.assertIs(
+            validation_module._embedding_norm_weight_transform_paths,
+            embedding_norm_weight_transform_paths,
+        )
+        self.assertIs(
             validation_module._expected_tensorized_physical_shape,
             expected_tensorized_physical_shape,
         )
@@ -352,12 +390,36 @@ class ValidateDirectTest(unittest.TestCase):
             lm_head_source_reference_observed,
         )
         self.assertIs(
+            validation_module._linear_weight_transform_complete,
+            linear_weight_transform_complete,
+        )
+        self.assertIs(
+            validation_module._linear_weight_transform_observed,
+            linear_weight_transform_observed,
+        )
+        self.assertIs(
+            validation_module._linear_weight_transform_paths,
+            linear_weight_transform_paths,
+        )
+        self.assertIs(
+            validation_module._lm_head_transform_complete,
+            lm_head_transform_complete,
+        )
+        self.assertIs(
+            validation_module._lm_head_transform_observed,
+            lm_head_transform_observed,
+        )
+        self.assertIs(
             validation_module._step_tensorization_summary,
             step_tensorization_summary,
         )
         self.assertIs(
             validation_module._tensorized_physical_shape_mismatches,
             tensorized_physical_shape_mismatches,
+        )
+        self.assertIs(
+            validation_module._transformed_tensor_paths,
+            transformed_tensor_paths,
         )
 
     def test_performance_baseline_reference_resolves(self) -> None:
