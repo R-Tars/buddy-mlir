@@ -101,6 +101,7 @@ from .reports.schema import (
     status_count_matches_total as _status_count_matches_total,
 )
 from .reports.validation import (
+    REAL_DECODE_VALIDATION_STEPS,
     acceptance_check_passed as _acceptance_check_passed,
     final_acceptance_gate_matrix as _final_acceptance_gate_matrix,
     generate_prefill_decode_ready as _generate_prefill_decode_ready,
@@ -108,6 +109,7 @@ from .reports.validation import (
     positive_scalar_count as _positive_scalar_count,
     real_decode_acceptance as _real_decode_acceptance,
     real_decode_acceptance_scope as _real_decode_acceptance_scope,
+    real_decode_final_acceptance_plan as _real_decode_final_acceptance_plan,
     runtime_input_scope as _runtime_input_scope,
     step_synthetic_rotary_tensor_count as _step_synthetic_rotary_tensor_count,
     step_synthetic_runtime_input_count as _step_synthetic_runtime_input_count,
@@ -168,23 +170,6 @@ VALIDATION_STEPS = (
     "search_dry_run",
     "decode_step_autotune_dry_run",
     "package_program",
-)
-
-REAL_DECODE_VALIDATION_STEPS = (
-    "official_config_diff",
-    "materialize_parameters",
-    "decode_shell",
-    "attention_primitives",
-    "attention_layer",
-    "single_layer_decode",
-    "smoke_decode_step",
-    "profile_decode_step",
-    "prompt_decode_loop",
-    "generate_prefill_decode",
-    "profile_generate",
-    "generate_depth_sweep",
-    "decode_depth_sweep",
-    "decode_step_autotune",
 )
 
 PROFILE_SECTION_LATENCY_KEYS = (
@@ -259,168 +244,6 @@ def default_decode_step_search_space_path() -> Path:
 
 def _same_path(lhs: Path, rhs: Path) -> bool:
     return lhs.resolve() == rhs.resolve()
-
-
-def _real_decode_final_acceptance_plan(
-    *,
-    metric: str,
-    skip_autotune: bool,
-    skip_profile_decode_step: bool,
-    require_full_decode_step: bool,
-    require_model_end_to_end: bool,
-    require_official_performance_parity: bool,
-    require_trace: bool,
-    require_official_config_match: bool,
-    require_full_depth: bool,
-    require_program_runtime_shape: bool,
-    require_batch32_decode_step: bool,
-    min_tokens_per_second_per_user: float | None,
-    baseline_tokens_per_second_per_user: float | None,
-    baseline_reference: str | None,
-    min_baseline_ratio: float | None,
-    decode_shell_pcc_threshold: float,
-    require_decode_shell_numeric_reference: bool,
-) -> dict[str, Any]:
-    if require_official_performance_parity:
-        target_scope = "official_performance_parity"
-    elif require_model_end_to_end:
-        target_scope = "model_end_to_end"
-    elif require_full_decode_step:
-        target_scope = "full_decode_step"
-    else:
-        target_scope = "bringup"
-
-    runtime_steps = [
-        step
-        for step in REAL_DECODE_VALIDATION_STEPS
-        if not (
-            (skip_autotune and step == "decode_step_autotune")
-            or (
-                skip_profile_decode_step
-                and step
-                in {
-                    "profile_decode_step",
-                    "profile_generate",
-                    "decode_depth_sweep",
-                    "decode_step_autotune",
-                }
-            )
-        )
-    ]
-    effective_requirements = {
-        "require_full_decode_step": bool(require_full_decode_step),
-        "require_model_end_to_end": bool(require_model_end_to_end),
-        "require_official_performance_parity": bool(
-            require_official_performance_parity
-        ),
-        "require_trace": bool(require_trace),
-        "require_official_config_match": bool(require_official_config_match),
-        "require_full_depth": bool(require_full_depth),
-        "require_program_runtime_shape": bool(
-            require_program_runtime_shape
-        ),
-        "require_batch32_decode_step": bool(require_batch32_decode_step),
-        "require_decode_shell_numeric_reference": bool(
-            require_decode_shell_numeric_reference
-        ),
-        "skip_profile_decode_step": bool(skip_profile_decode_step),
-    }
-    requested_flags = []
-    for flag, enabled in (
-        ("--require-full-decode-step", require_full_decode_step),
-        ("--require-model-end-to-end", require_model_end_to_end),
-        (
-            "--require-official-performance-parity",
-            require_official_performance_parity,
-        ),
-        ("--require-trace", require_trace),
-        ("--require-official-config-match", require_official_config_match),
-        ("--require-full-depth", require_full_depth),
-        ("--require-program-runtime-shape", require_program_runtime_shape),
-        ("--require-batch32-decode-step", require_batch32_decode_step),
-        (
-            "--require-decode-shell-numeric-reference",
-            require_decode_shell_numeric_reference,
-        ),
-    ):
-        if enabled:
-            requested_flags.append(flag)
-
-    full_decode_gate_names = []
-    if require_full_decode_step:
-        full_decode_gate_names = [
-            "validation.full_depth_layers",
-            "decode_depth_sweep.full_depth",
-            "validation.program_batch_size",
-            "validation.program_cache_len",
-            "decode_step_contract.batch32",
-            "single_layer_decode.trace_status",
-            "smoke_decode_step.trace_status",
-            "profile_decode_step.trace_status",
-            "profile_decode_step.trace_profile",
-            "decode_shell.numeric_reference",
-        ]
-
-    official_parity_gate_names = []
-    if require_official_performance_parity:
-        official_parity_gate_names = [
-            "model_end_to_end_readiness.ready",
-            "official_config_diff.official_reference_format",
-            "official_config_diff.match",
-            "profile_decode_step.baseline_reference",
-            "profile_decode_step.official_baseline_reference",
-            "profile_decode_step.official_min_baseline_ratio_positive",
-            "profile_decode_step.min_baseline_ratio",
-            "decode_step_autotune.metric",
-            "decode_step_autotune.status",
-            "decode_step_autotune.best_candidate_summary",
-        ]
-
-    model_end_to_end_gate_names = []
-    if require_model_end_to_end or require_official_performance_parity:
-        model_end_to_end_gate_names = [
-            "model_end_to_end_readiness.ready",
-        ]
-
-    optional_gate_names = []
-    if min_tokens_per_second_per_user is not None:
-        optional_gate_names.append(
-            "profile_decode_step.min_tokens_per_second_per_user"
-        )
-    if baseline_tokens_per_second_per_user is not None:
-        optional_gate_names.append(
-            "profile_decode_step.baseline_tokens_per_second_per_user"
-        )
-    if baseline_reference is not None and not require_official_performance_parity:
-        optional_gate_names.append("profile_decode_step.baseline_reference")
-    if min_baseline_ratio is not None and not require_official_performance_parity:
-        optional_gate_names.append("profile_decode_step.min_baseline_ratio")
-
-    return {
-        "target_scope": target_scope,
-        "required_runtime_steps": runtime_steps,
-        "effective_requirements": effective_requirements,
-        "requested_acceptance_flags": requested_flags,
-        "full_decode_step_gate_names": full_decode_gate_names,
-        "model_end_to_end_gate_names": model_end_to_end_gate_names,
-        "official_performance_parity_gate_names": official_parity_gate_names,
-        "optional_gate_names": optional_gate_names,
-        "metric": metric,
-        "thresholds": {
-            "min_tokens_per_second_per_user": (
-                min_tokens_per_second_per_user
-            ),
-            "min_baseline_ratio": min_baseline_ratio,
-            "decode_shell_pcc_threshold": decode_shell_pcc_threshold,
-        },
-        "baseline": {
-            "baseline_reference": baseline_reference,
-            "baseline_tokens_per_second_per_user": (
-                baseline_tokens_per_second_per_user
-            ),
-            "uses_reference_baseline": baseline_reference is not None,
-        },
-    }
 
 
 def validate_direct(

@@ -60,6 +60,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     positive_number,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
+    REAL_DECODE_VALIDATION_STEPS,
     acceptance_check_passed,
     final_acceptance_gate_matrix,
     generate_prefill_decode_ready,
@@ -67,6 +68,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     positive_scalar_count,
     real_decode_acceptance,
     real_decode_acceptance_scope,
+    real_decode_final_acceptance_plan,
     runtime_input_scope,
     step_synthetic_rotary_tensor_count,
     step_synthetic_runtime_input_count,
@@ -82,7 +84,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import
     ATTENTION_PRIMITIVES,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
-    REAL_DECODE_VALIDATION_STEPS,
     VALIDATION_STEPS,
     preflight_real_decode,
     recover_real_decode_process_failure,
@@ -145,12 +146,20 @@ class ValidateDirectTest(unittest.TestCase):
 
     def test_validation_gate_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
+            validation_module.REAL_DECODE_VALIDATION_STEPS,
+            REAL_DECODE_VALIDATION_STEPS,
+        )
+        self.assertIs(
             validation_module._real_decode_acceptance,
             real_decode_acceptance,
         )
         self.assertIs(
             validation_module._real_decode_acceptance_scope,
             real_decode_acceptance_scope,
+        )
+        self.assertIs(
+            validation_module._real_decode_final_acceptance_plan,
+            real_decode_final_acceptance_plan,
         )
         self.assertIs(
             validation_module._validate_direct_acceptance,
