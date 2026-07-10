@@ -3,7 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .performance import OFFICIAL_PERFORMANCE_PARITY_METRIC
+from .performance import (
+    OFFICIAL_PERFORMANCE_PARITY_METRIC,
+    PROFILE_GENERATE_MILESTONE_IDS,
+    official_performance_baseline_entry_complete as _official_performance_baseline_entry_complete,
+    performance_baseline_entry_complete as _performance_baseline_entry_complete,
+    performance_baseline_entry_summary as _performance_baseline_entry_summary,
+    profile_generate_milestones_complete as _profile_generate_milestones_complete,
+    throughput_baseline_summary as _throughput_baseline_summary,
+)
 from .schema import (
     acceptance_check as _acceptance_check,
     contains_all as _contains_all,
@@ -1155,7 +1163,6 @@ def real_decode_acceptance(
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
     PARITY_SECTIONS = validation.PARITY_SECTIONS
     PROFILE_BOTTLENECK_SECTION_KEYS = validation.PROFILE_BOTTLENECK_SECTION_KEYS
-    PROFILE_GENERATE_MILESTONE_IDS = validation.PROFILE_GENERATE_MILESTONE_IDS
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
     PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
     PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
@@ -1212,19 +1219,14 @@ def real_decode_acceptance(
     _lm_head_transform_complete = validation._lm_head_transform_complete
     _lm_head_transform_observed = validation._lm_head_transform_observed
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
-    _official_performance_baseline_entry_complete = validation._official_performance_baseline_entry_complete
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-    _performance_baseline_entry_complete = validation._performance_baseline_entry_complete
-    _performance_baseline_entry_summary = validation._performance_baseline_entry_summary
-    _profile_generate_milestones_complete = validation._profile_generate_milestones_complete
     _runtime_input_source_supported = validation._runtime_input_source_supported
     _step_tensorization_summary = validation._step_tensorization_summary
     _step_trace_summary = validation._step_trace_summary
     _step_ttnn_environment = validation._step_ttnn_environment
     _synthetic_runtime_inputs_accepted = validation._synthetic_runtime_inputs_accepted
     _tensorized_physical_shape_mismatches = validation._tensorized_physical_shape_mismatches
-    _throughput_baseline_summary = validation._throughput_baseline_summary
     _trace_profile_complete = validation._trace_profile_complete
     _trace_profile_observed = validation._trace_profile_observed
     _ttnn_runtime_identity_available = validation._ttnn_runtime_identity_available

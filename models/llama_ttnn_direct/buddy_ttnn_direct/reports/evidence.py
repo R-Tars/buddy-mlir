@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Any
 
 from ..codegen.artifacts import write_json
+from .performance import (
+    performance_baseline_entry_summary as _performance_baseline_entry_summary,
+    performance_gap_summary as _performance_gap_summary,
+    throughput_baseline_summary as _throughput_baseline_summary,
+    validate_real_generate_milestones as _validate_real_generate_milestones,
+)
 from .validation import (
     model_end_to_end_readiness,
     real_decode_acceptance_scope,
@@ -283,14 +289,10 @@ def real_decode_evidence_manifest(
     from .. import validation
 
     _final_acceptance_gate_matrix = validation._final_acceptance_gate_matrix
-    _performance_baseline_entry_summary = validation._performance_baseline_entry_summary
-    _performance_gap_summary = validation._performance_gap_summary
     _prefill_cache_population_diagnostics = validation._prefill_cache_population_diagnostics
     _real_decode_runtime_diagnostics = validation._real_decode_runtime_diagnostics
     _step_names_with_status = validation._step_names_with_status
     _tensorization_evidence = validation._tensorization_evidence
-    _throughput_baseline_summary = validation._throughput_baseline_summary
-    _validate_real_generate_milestones = validation._validate_real_generate_milestones
 
     steps = report.get("steps", {})
     official_config_diff = steps.get("official_config_diff", {})
