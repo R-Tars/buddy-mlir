@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..codegen.artifacts import write_json
+from .validation import model_end_to_end_readiness
 
 
 def artifact_index(paths: dict[str, Path]) -> dict[str, str]:
@@ -279,7 +280,6 @@ def real_decode_evidence_manifest(
     from .. import validation
 
     _final_acceptance_gate_matrix = validation._final_acceptance_gate_matrix
-    _model_end_to_end_readiness = validation._model_end_to_end_readiness
     _performance_baseline_entry_summary = validation._performance_baseline_entry_summary
     _performance_gap_summary = validation._performance_gap_summary
     _prefill_cache_population_diagnostics = validation._prefill_cache_population_diagnostics
@@ -320,7 +320,7 @@ def real_decode_evidence_manifest(
         status = "incomplete"
     results = report.get("results") or {}
     acceptance_scope = _real_decode_acceptance_scope(report, acceptance)
-    model_end_to_end_readiness = _model_end_to_end_readiness(
+    model_readiness = model_end_to_end_readiness(
         report,
         acceptance_scope,
     )
@@ -329,7 +329,7 @@ def real_decode_evidence_manifest(
         "schema_version": 1,
         "status": status,
         "acceptance_scope": acceptance_scope,
-        "model_end_to_end_readiness": model_end_to_end_readiness,
+        "model_end_to_end_readiness": model_readiness,
         "reproducibility": report.get("reproducibility"),
         "final_acceptance_plan": report.get("final_acceptance_plan"),
         "runtime_diagnostics": report.get("runtime_diagnostics")

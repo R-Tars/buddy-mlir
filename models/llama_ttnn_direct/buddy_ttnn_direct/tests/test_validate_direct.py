@@ -63,6 +63,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     acceptance_check_passed,
     final_acceptance_gate_matrix,
     generate_prefill_decode_ready,
+    model_end_to_end_readiness,
     positive_scalar_count,
     real_decode_acceptance,
     runtime_input_scope,
@@ -161,6 +162,10 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertIs(
             validation_module._generate_prefill_decode_ready,
             generate_prefill_decode_ready,
+        )
+        self.assertIs(
+            validation_module._model_end_to_end_readiness,
+            model_end_to_end_readiness,
         )
         self.assertIs(
             validation_module._positive_scalar_count,
