@@ -5,6 +5,9 @@ import time
 from pathlib import Path
 from typing import Any
 
+from ..smoke_single_layer_decode import _write_report
+from .reports import default_generate_report_path as _default_generate_report_path
+
 
 PROFILE_GENERATE_OFFICIAL_BASELINE_ID = "tt_metal_official_llama31_8b_b32"
 PROFILE_GENERATE_OFFICIAL_TPS_PER_USER = 33.1
@@ -383,6 +386,63 @@ def profile_generate_from_generate_report(
         "error": None if acceptance["passed"] else generate.get("error"),
         "ttnn_environment": generate.get("ttnn_environment"),
     }
+
+
+def run_profile_generate(
+    *,
+    out: str | Path,
+    program_dir: str | Path,
+    model_path: str | Path | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    max_new_tokens: int = 2,
+    layers: int = 1,
+    prefill_len: int | None = None,
+    device: str,
+    device_id: int = 0,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    dtype_seed: str = "bf16",
+    dry_run: bool = False,
+    generate_report: str | Path | None = None,
+    ttnn_module: Any | None = None,
+    torch_module: Any | None = None,
+    tokenizer_module: Any | None = None,
+) -> dict[str, Any]:
+    from .generate import run_generate
+
+    profile_path = Path(out)
+    generate_report_path = (
+        Path(generate_report)
+        if generate_report is not None
+        else _default_generate_report_path(profile_path)
+    )
+    generate_payload = run_generate(
+        out=generate_report_path,
+        program_dir=program_dir,
+        model_path=model_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
+        max_new_tokens=max_new_tokens,
+        layers=layers,
+        prefill_len=prefill_len,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        dry_run=dry_run,
+        ttnn_module=ttnn_module,
+        torch_module=torch_module,
+        tokenizer_module=tokenizer_module,
+    )
+    report = profile_generate_from_generate_report(
+        generate_payload,
+        profile_path=profile_path,
+        generate_report_path=generate_report_path,
+    )
+    _write_report(profile_path, report)
+    return report
 
 
 def _profile_generate_sections(
