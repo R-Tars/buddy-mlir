@@ -11,6 +11,10 @@ from .performance import (
     throughput_baseline_summary as _throughput_baseline_summary,
     validate_real_generate_milestones as _validate_real_generate_milestones,
 )
+from .tensorization import (
+    step_tensorization_summary,
+    tensorized_physical_shape_mismatches,
+)
 from .validation import (
     model_end_to_end_readiness,
     real_decode_acceptance_scope,
@@ -205,9 +209,7 @@ def step_names_with_status(
 
 
 def tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
-    from .. import validation
-
-    tensorization = validation._step_tensorization_summary(step)
+    tensorization = step_tensorization_summary(step)
     return {
         "status": tensorization.get("status"),
         "roles": tensorization.get("roles"),
@@ -236,7 +238,7 @@ def tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
             [],
         ),
         "physical_shape_mismatches": (
-            validation._tensorized_physical_shape_mismatches(tensorization)
+            tensorized_physical_shape_mismatches(tensorization)
         ),
         "key_paths": tensorization.get("key_paths", []),
         "key_tensors": tensorization.get("key_tensors", {}),

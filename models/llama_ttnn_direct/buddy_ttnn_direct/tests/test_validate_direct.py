@@ -61,6 +61,13 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     path_exists,
     positive_number,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.tensorization import (
+    expected_tensorized_physical_shape,
+    lm_head_source_reference_complete,
+    lm_head_source_reference_observed,
+    step_tensorization_summary,
+    tensorized_physical_shape_mismatches,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     REAL_DECODE_VALIDATION_STEPS,
     acceptance_check_passed,
@@ -330,6 +337,28 @@ class ValidateDirectTest(unittest.TestCase):
             },
         )
         self.assertEqual(validation_module._int_list(["1", 2]), [1, 2])
+
+    def test_validation_tensorization_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._expected_tensorized_physical_shape,
+            expected_tensorized_physical_shape,
+        )
+        self.assertIs(
+            validation_module._lm_head_source_reference_complete,
+            lm_head_source_reference_complete,
+        )
+        self.assertIs(
+            validation_module._lm_head_source_reference_observed,
+            lm_head_source_reference_observed,
+        )
+        self.assertIs(
+            validation_module._step_tensorization_summary,
+            step_tensorization_summary,
+        )
+        self.assertIs(
+            validation_module._tensorized_physical_shape_mismatches,
+            tensorized_physical_shape_mismatches,
+        )
 
     def test_performance_baseline_reference_resolves(self) -> None:
         baseline = validation_module.resolve_performance_baseline(

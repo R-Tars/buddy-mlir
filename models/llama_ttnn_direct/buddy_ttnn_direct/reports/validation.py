@@ -31,6 +31,12 @@ from .schema import (
     safe_int as _safe_int,
     status_count_matches_total as _status_count_matches_total,
 )
+from .tensorization import (
+    lm_head_source_reference_complete as _lm_head_source_reference_complete,
+    lm_head_source_reference_observed as _lm_head_source_reference_observed,
+    step_tensorization_summary as _step_tensorization_summary,
+    tensorized_physical_shape_mismatches as _tensorized_physical_shape_mismatches,
+)
 
 
 REAL_DECODE_VALIDATION_STEPS = (
@@ -1214,19 +1220,15 @@ def real_decode_acceptance(
     _linear_weight_transform_paths = validation._linear_weight_transform_paths
     _lm_head_profile_complete = validation._lm_head_profile_complete
     _lm_head_profile_observed = validation._lm_head_profile_observed
-    _lm_head_source_reference_complete = validation._lm_head_source_reference_complete
-    _lm_head_source_reference_observed = validation._lm_head_source_reference_observed
     _lm_head_transform_complete = validation._lm_head_transform_complete
     _lm_head_transform_observed = validation._lm_head_transform_observed
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
     _runtime_input_source_supported = validation._runtime_input_source_supported
-    _step_tensorization_summary = validation._step_tensorization_summary
     _step_trace_summary = validation._step_trace_summary
     _step_ttnn_environment = validation._step_ttnn_environment
     _synthetic_runtime_inputs_accepted = validation._synthetic_runtime_inputs_accepted
-    _tensorized_physical_shape_mismatches = validation._tensorized_physical_shape_mismatches
     _trace_profile_complete = validation._trace_profile_complete
     _trace_profile_observed = validation._trace_profile_observed
     _ttnn_runtime_identity_available = validation._ttnn_runtime_identity_available
