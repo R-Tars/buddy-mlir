@@ -26,9 +26,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     step_names_with_status,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
+    PROFILE_GENERATE_MILESTONE_IDS,
     performance_gap_summary,
+    profile_generate_milestones_complete,
     resolve_performance_baseline as resolve_report_performance_baseline,
     throughput_baseline_summary,
+    validate_real_generate_milestones,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
@@ -165,6 +168,62 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertTrue(throughput["passed"])
         self.assertEqual(gap["shortfall_to_baseline"], 4.0)
         self.assertEqual(gap["bottleneck"]["max_section_share"], 0.75)
+
+    def test_validation_generate_milestone_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._validate_real_generate_milestones,
+            validate_real_generate_milestones,
+        )
+        self.assertIs(
+            validation_module._profile_generate_milestones_complete,
+            profile_generate_milestones_complete,
+        )
+        self.assertEqual(
+            validation_module.PROFILE_GENERATE_MILESTONE_IDS,
+            PROFILE_GENERATE_MILESTONE_IDS,
+        )
+        profile_generate = {
+            "profile_generate_report": "/tmp/profile.json",
+            "generate_report": "/tmp/generate.json",
+            "performance_milestones": {
+                "official_reference": {"id": "official"},
+                "observed": {},
+                "milestones": [
+                    {
+                        "id": milestone_id,
+                        "name": milestone_id,
+                        "passed": milestone_id == "M0",
+                        "status": (
+                            "passed" if milestone_id == "M0" else "failed"
+                        ),
+                    }
+                    for milestone_id in PROFILE_GENERATE_MILESTONE_IDS
+                ],
+            },
+        }
+        generate_depth_sweep = {
+            "generate_depth_sweep_report": "/tmp/depth.json",
+            "status": "pass",
+            "covered_full_depth": True,
+            "max_depth": 32,
+            "passed_depth_count": 6,
+            "failed_depths": [],
+            "acceptance": {"passed": True},
+        }
+
+        summary = validation_module._validate_real_generate_milestones(
+            profile_generate,
+            generate_depth_sweep,
+        )
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary["highest_passed"], "M1")
+        self.assertEqual(summary["next_milestone"]["id"], "M2")
+        self.assertEqual(
+            summary["milestones"][1]["evidence_source"],
+            "generate_depth_sweep",
+        )
 
     def test_decode_runtime_inputs_accept_shared_prompt_rotary(self) -> None:
         step = {

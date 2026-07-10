@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import gc
 import json
 import importlib
@@ -50,14 +49,17 @@ from .reports.evidence import (
 )
 from .reports.performance import (
     OFFICIAL_PERFORMANCE_PARITY_METRIC,
+    PROFILE_GENERATE_MILESTONE_IDS,
     default_performance_baselines_path,
     load_performance_baselines,
     official_performance_baseline_entry_complete as _official_performance_baseline_entry_complete,
     performance_gap_summary as _performance_gap_summary,
     performance_baseline_entry_complete as _performance_baseline_entry_complete,
     performance_baseline_entry_summary as _performance_baseline_entry_summary,
+    profile_generate_milestones_complete as _profile_generate_milestones_complete,
     resolve_performance_baseline,
     throughput_baseline_summary as _throughput_baseline_summary,
+    validate_real_generate_milestones as _validate_real_generate_milestones,
 )
 from .reports.schema import (
     acceptance_check as _acceptance_check,
@@ -197,9 +199,6 @@ PROFILE_GENERATE_SECTION_KEYS = (
     "argmax_ms",
     "host_copy_ms",
 )
-
-PROFILE_GENERATE_MILESTONE_IDS = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
-
 
 def default_official_template_path() -> Path:
     return (
@@ -7434,116 +7433,6 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
         "key_paths": tensorization.get("key_paths", []),
         "key_tensors": tensorization.get("key_tensors", {}),
     }
-
-
-def _validate_real_generate_milestones(
-    profile_generate: dict[str, Any],
-    generate_depth_sweep: dict[str, Any],
-) -> dict[str, Any] | None:
-    profile_milestones = profile_generate.get("performance_milestones")
-    if not _profile_generate_milestones_complete(profile_milestones):
-        return None
-    summary = copy.deepcopy(profile_milestones)
-    summary["basis"] = (
-        "validate-real-decode PR-7 generate performance milestone evidence"
-    )
-    summary["sources"] = {
-        "profile_generate_report": profile_generate.get(
-            "profile_generate_report"
-        ),
-        "generate_report": profile_generate.get("generate_report"),
-        "generate_depth_sweep_report": generate_depth_sweep.get(
-            "generate_depth_sweep_report"
-        ),
-    }
-    observed = summary.setdefault("observed", {})
-    if isinstance(observed, dict):
-        observed["generate_depth_sweep"] = {
-            "status": generate_depth_sweep.get("status"),
-            "covered_full_depth": generate_depth_sweep.get(
-                "covered_full_depth"
-            ),
-            "max_depth": generate_depth_sweep.get("max_depth"),
-            "passed_depth_count": generate_depth_sweep.get(
-                "passed_depth_count"
-            ),
-            "failed_depths": generate_depth_sweep.get("failed_depths", []),
-        }
-
-    sweep_acceptance = generate_depth_sweep.get("acceptance")
-    full_depth_from_sweep = (
-        generate_depth_sweep.get("status") == "pass"
-        and generate_depth_sweep.get("covered_full_depth") is True
-        and isinstance(sweep_acceptance, dict)
-        and sweep_acceptance.get("passed") is True
-    )
-    milestones = summary.get("milestones")
-    if isinstance(milestones, list):
-        for milestone in milestones:
-            if not isinstance(milestone, dict):
-                continue
-            if milestone.get("id") != "M1":
-                continue
-            milestone.setdefault("observed", {})
-            if isinstance(milestone["observed"], dict):
-                milestone["observed"]["generate_depth_sweep"] = {
-                    "status": generate_depth_sweep.get("status"),
-                    "covered_full_depth": generate_depth_sweep.get(
-                        "covered_full_depth"
-                    ),
-                    "acceptance_passed": (
-                        sweep_acceptance.get("passed")
-                        if isinstance(sweep_acceptance, dict)
-                        else None
-                    ),
-                }
-            if not milestone.get("passed") and full_depth_from_sweep:
-                milestone["passed"] = True
-                milestone["status"] = "passed"
-                milestone["evidence_source"] = "generate_depth_sweep"
-                milestone.pop("reason", None)
-        _refresh_generate_milestone_summary(summary)
-    return summary
-
-
-def _refresh_generate_milestone_summary(summary: dict[str, Any]) -> None:
-    milestones = summary.get("milestones")
-    if not isinstance(milestones, list):
-        return
-    highest_passed = None
-    next_milestone = None
-    for milestone in milestones:
-        if not isinstance(milestone, dict):
-            continue
-        if milestone.get("passed") is True:
-            highest_passed = milestone.get("id")
-            continue
-        if next_milestone is None:
-            next_milestone = {
-                "id": milestone.get("id"),
-                "name": milestone.get("name"),
-                "reason": milestone.get("reason"),
-            }
-    summary["highest_passed"] = highest_passed
-    summary["next_milestone"] = next_milestone
-
-
-def _profile_generate_milestones_complete(value: Any) -> bool:
-    if not isinstance(value, dict):
-        return False
-    milestones = value.get("milestones")
-    if not isinstance(milestones, list):
-        return False
-    ids = [
-        milestone.get("id")
-        for milestone in milestones
-        if isinstance(milestone, dict)
-    ]
-    return (
-        ids == list(PROFILE_GENERATE_MILESTONE_IDS)
-        and isinstance(value.get("official_reference"), dict)
-        and isinstance(value.get("observed"), dict)
-    )
 
 
 def _kv_cache_contract_from_template_config(
