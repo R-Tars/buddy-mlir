@@ -24,8 +24,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
     prefill_token_direct_handoff,
     run_decode_loop,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.device import (
+    GenerateDeviceSession,
+    maybe_generate_device,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.generate import (
-    build_generate_state,
+    build_generate_state as compat_build_generate_state,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_kv_cache_runtime_state,
@@ -43,6 +47,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill import (
     build_prefill_page_table_tensor,
     prefill_token_ids_tensor,
     run_prefill_prompt,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.state import (
+    GENERATE_RUNTIME_OWNER,
+    build_generate_state,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.tokenizer import (
     detokenize_generated_token_ids,
@@ -236,7 +244,20 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertIs(GenerateCompatProfiler, GenerateSectionProfiler)
         self.assertTrue(callable(run_generate))
         self.assertTrue(callable(run_profile_generate))
+        self.assertIs(compat_build_generate_state, build_generate_state)
         self.assertTrue(callable(build_generate_state))
+        self.assertEqual(GENERATE_RUNTIME_OWNER, "TTNNDirectRuntimeContext")
+
+    def test_generate_device_session_uses_injected_device(self) -> None:
+        session = maybe_generate_device(
+            ttnn=object(),
+            device_id=7,
+            injected=object(),
+        )
+
+        self.assertIsInstance(session, GenerateDeviceSession)
+        with session as device:
+            self.assertEqual(device, "fake-device:7")
 
     def test_runtime_context_report_schema_is_preserved(self) -> None:
         context = TTNNDirectRuntimeContext(

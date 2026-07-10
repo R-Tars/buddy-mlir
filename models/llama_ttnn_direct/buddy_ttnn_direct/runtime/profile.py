@@ -5,8 +5,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from ..smoke_single_layer_decode import _write_report
-from .reports import default_generate_report_path as _default_generate_report_path
+from .reports import (
+    default_generate_report_path as _default_generate_report_path,
+    write_report as _write_report,
+)
 
 
 PROFILE_GENERATE_OFFICIAL_BASELINE_ID = "tt_metal_official_llama31_8b_b32"

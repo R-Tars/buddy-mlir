@@ -1,18 +1,105 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from ..runtime_environment import collect_ttnn_environment
-from ..smoke_decode_shell import _dry_run_reference
-from ..smoke_mlp import NO_TTNN_DEVICE_MESSAGE
-from ..smoke_prefill import _planned_cache_population
-from ..smoke_single_layer_decode import _trace_report
 
 
+NO_TTNN_DEVICE_MESSAGE = "No TTNN device detected. Use --dry-run or run on P150A."
+NUMERIC_REFERENCE_NOT_RUN_REASON = (
+    "No torch numeric reference is executed by this smoke path yet; "
+    "the reference evidence is limited to generated-path structure, "
+    "shape, and dtype checks."
+)
 PROMPT_CONDITIONED_GENERATE_SEMANTICS = (
     "prompt_conditioned_prefill_decode"
 )
+
+
+def write_report(out: str | Path, report: dict[str, Any]) -> None:
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    safe_report = _json_safe_report_value(report)
+    report.clear()
+    report.update(safe_report)
+    out_path.write_text(json.dumps(report, indent=2) + "\n")
+
+
+def _json_safe_report_value(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {
+            str(key): _json_safe_report_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_report_value(item) for item in value]
+    return {
+        "type": type(value).__name__,
+        "repr": repr(value),
+    }
+
+
+def dry_run_reference(kind: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "status": "dry_run",
+        "passed": None,
+        "numeric_reference": {
+            "status": "not_run",
+            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
+        },
+        "checks": [],
+    }
+
+
+def planned_cache_population(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "layer_id": layer_id,
+            "status": "planned",
+            "key_cache_shape": plan["expected_output_shapes"]["key_cache"],
+            "value_cache_shape": plan["expected_output_shapes"]["value_cache"],
+            "write_policy": "fill_cache_per_user",
+            "update_shape_layout": "batch_heads_seq_head_dim",
+            "planned_user_count": plan["batch_size"],
+        }
+        for layer_id in range(int(plan["layers"]))
+    ]
+
+
+def trace_report(
+    *,
+    requested: bool,
+    status: str,
+    iterations: int = 0,
+    trace_id: Any | None = None,
+    capture_latency_ms: float | None = None,
+    execute_latency_ms: float | None = None,
+    execute_samples_ms: list[float] | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    report: dict[str, Any] = {
+        "requested": requested,
+        "status": status,
+        "iterations": iterations,
+    }
+    if trace_id is not None:
+        report["trace_id"] = trace_id
+    if capture_latency_ms is not None:
+        report["capture_latency_ms"] = capture_latency_ms
+    if execute_latency_ms is not None:
+        report["execute_latency_ms"] = execute_latency_ms
+    if execute_samples_ms is not None:
+        report["execute_samples_ms"] = execute_samples_ms
+    if error is not None:
+        report["error"] = error
+    return report
 
 
 def generated_token_budget(
@@ -206,7 +293,7 @@ def generate_failed_report(
     detail: str,
     ttnn_module: Any | None = None,
 ) -> dict[str, Any]:
-    prefill_cache_population = _planned_cache_population(prefill_plan)
+    prefill_cache_population = planned_cache_population(prefill_plan)
     report = generate_base_report(
         program_dir=program_dir,
         program_num_layers=layers,
@@ -256,7 +343,7 @@ def generate_failed_report(
             "host_copy_profile": host_copy_not_run_profile(status),
             "section_profile": section_profile_not_run(status),
             "latency_ms": None,
-            "trace": _trace_report(requested=False, status="disabled"),
+            "trace": trace_report(requested=False, status="disabled"),
             "reference": {
                 "kind": "generate_prefill_then_decode",
                 "status": "not_run",
@@ -289,7 +376,7 @@ def generate_dry_run_report(
     decode_plan: dict[str, Any],
     prefill_plan: dict[str, Any],
 ) -> dict[str, Any]:
-    prefill_cache_population = _planned_cache_population(prefill_plan)
+    prefill_cache_population = planned_cache_population(prefill_plan)
     report = generate_base_report(
         program_dir=program_dir,
         program_num_layers=program_num_layers,
@@ -367,8 +454,8 @@ def generate_dry_run_report(
             "synthetic_kv_cache_tensor_count": 0,
             "host_copy_profile": host_copy_not_run_profile("dry_run"),
             "section_profile": section_profile_not_run("dry_run"),
-            "trace": _trace_report(requested=False, status="disabled"),
-            "reference": _dry_run_reference("generate"),
+            "trace": trace_report(requested=False, status="disabled"),
+            "reference": dry_run_reference("generate"),
             "error": None,
             "message": "Dry run only; TTNN device is not required.",
         }
