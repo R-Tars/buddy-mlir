@@ -25,6 +25,34 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 
 
 class ConfigDiffTest(unittest.TestCase):
+    def test_hf_correctness_reference_manifest_is_complete(self) -> None:
+        manifest_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "evidence"
+            / "hf_correctness_reference_manifest_20260710.json"
+        )
+        manifest = json.loads(manifest_path.read_text())
+
+        self.assertEqual(
+            manifest["kind"],
+            "hf_llama_correctness_reference_manifest",
+        )
+        self.assertFalse(manifest["tenstorrent_device_opened"])
+        self.assertFalse(manifest["ttnn_correctness_claimed"])
+        self.assertEqual(manifest["effective_token_count"], 6)
+        self.assertEqual(
+            [record["layers"] for record in manifest["records"]],
+            [1, 2, 4, 32],
+        )
+        for record in manifest["records"]:
+            self.assertEqual(
+                record["checkpoint_count"],
+                3 * record["layers"] + 2,
+            )
+            self.assertEqual(len(record["artifact_sha256"]), 64)
+            self.assertEqual(len(record["logits_sha256"]), 64)
+
     def test_normalized_parity_config_matches_itself(self) -> None:
         official = json.loads(default_official_config_path().read_text())
 
