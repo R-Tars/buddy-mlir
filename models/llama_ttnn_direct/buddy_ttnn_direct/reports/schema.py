@@ -155,6 +155,84 @@ def contains_all(observed: Any, expected: Any) -> bool:
     return set(expected).issubset(set(observed))
 
 
+def kv_cache_contract_from_template_config(
+    template_config: dict[str, Any],
+    *,
+    cache_len: int,
+    num_kv_heads: int,
+    head_dim: int,
+) -> dict[str, Any]:
+    template = template_config.get("kv_cache_template")
+    return {
+        "template": template,
+        "policy": "paged" if template == "paged_kv_cache" else None,
+        "page_block_size": 32,
+        "dtype": "bfloat8_b",
+        "max_cache_len": cache_len,
+        "num_kv_heads": num_kv_heads,
+        "head_dim": head_dim,
+    }
+
+
+def decode_step_contract(
+    *,
+    layer_count: int,
+    batch_size: int,
+    seq_len: int,
+    cache_len: int,
+    num_kv_heads: int,
+    head_dim: int,
+    kv_cache: dict[str, Any],
+    generation: dict[str, Any],
+) -> dict[str, Any]:
+    page_block_size = safe_int(kv_cache.get("page_block_size")) or 32
+    page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
+    max_num_blocks = batch_size * page_count
+    physical_kv_cache_shape = [
+        max_num_blocks,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    ]
+    logical_kv_cache_shape = [
+        batch_size,
+        cache_len,
+        num_kv_heads,
+        head_dim,
+    ]
+    kv_policy = kv_cache.get("policy")
+    kv_template = kv_cache.get("template")
+    generation_template = generation.get("template")
+    retain_logits = bool(generation.get("retain_logits", False))
+    output_kind = "logits" if retain_logits else "token"
+    return {
+        "schema_version": 1,
+        "source": "generated_program_config",
+        "layers": layer_count,
+        "batch_size": batch_size,
+        "decode_seq_len": seq_len,
+        "cache_len": cache_len,
+        "token_input_shape": [batch_size, seq_len],
+        "kv_cache_policy": kv_policy,
+        "kv_cache_template": kv_template,
+        "uses_paged_kv_cache": (
+            kv_policy == "paged" or kv_template == "paged_kv_cache"
+        ),
+        "kv_page_block_size": page_block_size,
+        "page_count": page_count,
+        "max_num_blocks": max_num_blocks,
+        "page_table_shape": [batch_size, page_count],
+        "cache_position_shape": [batch_size],
+        "kv_cache_shape": physical_kv_cache_shape,
+        "kv_cache_physical_shape": physical_kv_cache_shape,
+        "kv_cache_logical_shape": logical_kv_cache_shape,
+        "kv_cache_layer_ids": list(range(layer_count)),
+        "generation_template": generation_template,
+        "output_kind": output_kind,
+        "accepted_output_kinds": ["token", "logits"],
+    }
+
+
 def positive_count(counts: Any) -> bool:
     if not isinstance(counts, dict):
         return False

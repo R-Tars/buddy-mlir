@@ -55,7 +55,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
+    decode_step_contract,
     int_list,
+    kv_cache_contract_from_template_config,
     path_exists,
     positive_number,
 )
@@ -303,6 +305,14 @@ class ValidateDirectTest(unittest.TestCase):
         )
 
     def test_validation_schema_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._decode_step_contract,
+            decode_step_contract,
+        )
+        self.assertIs(
+            validation_module._kv_cache_contract_from_template_config,
+            kv_cache_contract_from_template_config,
+        )
         self.assertIs(validation_module._acceptance_check, acceptance_check)
         self.assertIs(validation_module._path_exists, path_exists)
         self.assertIs(validation_module._positive_number, positive_number)
