@@ -53,9 +53,11 @@ from .reports.performance import (
     default_performance_baselines_path,
     load_performance_baselines,
     official_performance_baseline_entry_complete as _official_performance_baseline_entry_complete,
+    performance_gap_summary as _performance_gap_summary,
     performance_baseline_entry_complete as _performance_baseline_entry_complete,
     performance_baseline_entry_summary as _performance_baseline_entry_summary,
     resolve_performance_baseline,
+    throughput_baseline_summary as _throughput_baseline_summary,
 )
 from .reports.schema import (
     acceptance_check as _acceptance_check,
@@ -7431,103 +7433,6 @@ def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
         ),
         "key_paths": tensorization.get("key_paths", []),
         "key_tensors": tensorization.get("key_tensors", {}),
-    }
-
-
-def _throughput_baseline_summary(
-    report: dict[str, Any],
-    profile: dict[str, Any],
-) -> dict[str, Any]:
-    throughput = profile.get("throughput_summary") or {}
-    observed = throughput.get("tokens_per_second_per_user")
-    baseline = report.get("baseline_tokens_per_second_per_user")
-    min_ratio = report.get("min_baseline_ratio")
-    ratio = None
-    if _positive_number(observed) and _positive_number(baseline):
-        ratio = float(observed) / float(baseline)
-    summary = {
-        "metric": "tokens_per_second_per_user",
-        "observed": observed,
-        "baseline": baseline,
-        "baseline_reference": report.get("baseline_reference"),
-        "baseline_reference_entry": _performance_baseline_entry_summary(
-            report.get("baseline_reference_entry")
-        ),
-        "ratio": ratio,
-        "min_ratio": min_ratio,
-    }
-    if min_ratio is not None:
-        summary["passed"] = _number_at_least(ratio, min_ratio)
-    return summary
-
-
-def _performance_gap_summary(
-    report: dict[str, Any],
-    profile: dict[str, Any],
-) -> dict[str, Any]:
-    baseline_summary = _throughput_baseline_summary(report, profile)
-    observed = baseline_summary.get("observed")
-    baseline = baseline_summary.get("baseline")
-    min_ratio = baseline_summary.get("min_ratio")
-    bottleneck = profile.get("bottleneck_summary") or {}
-    sections = bottleneck.get("sections_ms")
-    if not isinstance(sections, dict):
-        sections = {}
-    section_total = sum(
-        float(value)
-        for value in sections.values()
-        if isinstance(value, (int, float))
-    )
-    max_section = bottleneck.get("max_section")
-    max_section_ms = bottleneck.get("max_section_ms")
-    max_section_share = None
-    if _nonnegative_number(max_section_ms) and section_total > 0.0:
-        max_section_share = float(max_section_ms) / section_total
-
-    shortfall_to_baseline = None
-    speedup_to_baseline = None
-    if _positive_number(observed) and _positive_number(baseline):
-        shortfall_to_baseline = max(0.0, float(baseline) - float(observed))
-        speedup_to_baseline = float(baseline) / float(observed)
-
-    required_for_min_ratio = None
-    shortfall_to_min_ratio = None
-    speedup_to_min_ratio = None
-    if _positive_number(baseline) and min_ratio is not None:
-        required_for_min_ratio = float(baseline) * float(min_ratio)
-        if _positive_number(observed):
-            shortfall_to_min_ratio = max(
-                0.0,
-                required_for_min_ratio - float(observed),
-            )
-            speedup_to_min_ratio = (
-                required_for_min_ratio / float(observed)
-                if required_for_min_ratio > 0.0
-                else 0.0
-            )
-
-    return {
-        "metric": "tokens_per_second_per_user",
-        "status": (profile.get("throughput_summary") or {}).get("status"),
-        "observed": observed,
-        "baseline": baseline,
-        "baseline_reference": baseline_summary.get("baseline_reference"),
-        "ratio": baseline_summary.get("ratio"),
-        "min_ratio": min_ratio,
-        "passed_min_ratio": baseline_summary.get("passed"),
-        "shortfall_to_baseline": shortfall_to_baseline,
-        "required_speedup_to_baseline": speedup_to_baseline,
-        "required_tokens_per_second_per_user_for_min_ratio": (
-            required_for_min_ratio
-        ),
-        "shortfall_to_min_ratio": shortfall_to_min_ratio,
-        "required_speedup_to_min_ratio": speedup_to_min_ratio,
-        "bottleneck": {
-            "max_section": max_section,
-            "max_section_ms": max_section_ms,
-            "max_section_share": max_section_share,
-            "sections_ms": sections,
-        },
     }
 
 

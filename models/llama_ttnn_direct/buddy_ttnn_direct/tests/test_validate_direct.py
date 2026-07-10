@@ -26,7 +26,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     step_names_with_status,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
+    performance_gap_summary,
     resolve_performance_baseline as resolve_report_performance_baseline,
+    throughput_baseline_summary,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
@@ -122,6 +124,47 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertTrue(baseline["baseline_file"].endswith(
             "performance_baselines.json"
         ))
+
+    def test_validation_performance_summary_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._throughput_baseline_summary,
+            throughput_baseline_summary,
+        )
+        self.assertIs(
+            validation_module._performance_gap_summary,
+            performance_gap_summary,
+        )
+        report = {
+            "baseline_tokens_per_second_per_user": 10.0,
+            "baseline_reference": "sample",
+            "min_baseline_ratio": 0.5,
+            "baseline_reference_entry": {
+                "id": "sample",
+                "role": "official_8b_target",
+            },
+        }
+        profile = {
+            "throughput_summary": {
+                "status": "measured",
+                "tokens_per_second_per_user": 6.0,
+            },
+            "bottleneck_summary": {
+                "max_section": "argmax",
+                "max_section_ms": 3.0,
+                "sections_ms": {"argmax": 3.0, "decode": 1.0},
+            },
+        }
+
+        throughput = validation_module._throughput_baseline_summary(
+            report,
+            profile,
+        )
+        gap = validation_module._performance_gap_summary(report, profile)
+
+        self.assertEqual(throughput["ratio"], 0.6)
+        self.assertTrue(throughput["passed"])
+        self.assertEqual(gap["shortfall_to_baseline"], 4.0)
+        self.assertEqual(gap["bottleneck"]["max_section_share"], 0.75)
 
     def test_decode_runtime_inputs_accept_shared_prompt_rotary(self) -> None:
         step = {
