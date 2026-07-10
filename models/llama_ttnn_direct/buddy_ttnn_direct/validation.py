@@ -118,12 +118,25 @@ from .reports.profiling import (
 from .reports.runtime import (
     attention_layer_output_shape_observed as _attention_layer_output_shape_observed,
     attention_layer_output_shapes_complete as _attention_layer_output_shapes_complete,
+    decode_runtime_input_observed as _decode_runtime_input_observed,
+    decode_runtime_inputs_complete as _decode_runtime_inputs_complete,
+    decode_shell_numeric_reference_complete as _decode_shell_numeric_reference_complete,
+    decode_shell_numeric_reference_observed as _decode_shell_numeric_reference_observed,
+    decode_shell_runtime_inputs_accepted as _decode_shell_runtime_inputs_accepted,
     decode_output_shape_observed as _decode_output_shape_observed,
     decode_output_shapes_complete as _decode_output_shapes_complete,
     expected_attention_layer_output_shape_summary as _expected_attention_layer_output_shape_summary,
+    expected_decode_runtime_input_summary as _expected_decode_runtime_input_summary,
     expected_decode_output_shape_summary as _expected_decode_output_shape_summary,
+    expected_prompt_rotary_runtime_count as _expected_prompt_rotary_runtime_count,
+    observed_ops_cover_planned as _observed_ops_cover_planned,
     paged_kv_cache_shape as _paged_kv_cache_shape,
+    runtime_input_source_supported as _runtime_input_source_supported,
     shape_dict_has_int_lists as _shape_dict_has_int_lists,
+    step_ttnn_environment as _step_ttnn_environment,
+    synthetic_runtime_inputs_accepted as _synthetic_runtime_inputs_accepted,
+    ttnn_runtime_identity_available as _ttnn_runtime_identity_available,
+    ttnn_runtime_identity_observed as _ttnn_runtime_identity_observed,
 )
 from .reports.schema import (
     acceptance_check as _acceptance_check,
@@ -4816,42 +4829,6 @@ def _materialization_key_tensors(
     }
 
 
-def _decode_shell_numeric_reference_complete(
-    decode_shell: Any,
-    *,
-    expected_pcc_threshold: Any,
-) -> bool:
-    if not isinstance(decode_shell, dict):
-        return False
-    threshold = decode_shell.get("pcc_threshold")
-    return (
-        decode_shell.get("numeric_reference_status") == "passed"
-        and decode_shell.get("numeric_reference_kind") == "torch_decode_shell"
-        and decode_shell.get("numeric_reference_passed") is True
-        and _number_at_least(decode_shell.get("pcc"), threshold)
-        and _numbers_equal(threshold, expected_pcc_threshold)
-        and decode_shell.get("numeric_reference_failed_checks") == []
-    )
-
-
-def _decode_shell_numeric_reference_observed(
-    decode_shell: Any,
-) -> dict[str, Any]:
-    if not isinstance(decode_shell, dict):
-        return {}
-    return {
-        "status": decode_shell.get("numeric_reference_status"),
-        "kind": decode_shell.get("numeric_reference_kind"),
-        "passed": decode_shell.get("numeric_reference_passed"),
-        "pcc": decode_shell.get("pcc"),
-        "pcc_threshold": decode_shell.get("pcc_threshold"),
-        "failed_checks": decode_shell.get(
-            "numeric_reference_failed_checks",
-            [],
-        ),
-    }
-
-
 def _generate_prefill_decode_failure_diagnostics(
     generate_report: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -5140,293 +5117,6 @@ def _config_gap_summary_observed(summary: Any) -> dict[str, Any]:
         "top_issue_count": len(top_issue_paths)
         if isinstance(top_issue_paths, list)
         else None,
-    }
-
-
-def _observed_ops_cover_planned(planned_ops: Any, observed_ops: Any) -> bool:
-    if not isinstance(planned_ops, list) or not isinstance(observed_ops, list):
-        return False
-    planned_index = 0
-    for observed in observed_ops:
-        if (
-            planned_index < len(planned_ops)
-            and str(observed) == str(planned_ops[planned_index])
-        ):
-            planned_index += 1
-    return planned_index == len(planned_ops)
-
-
-def _decode_runtime_inputs_complete(
-    step: Any,
-    *,
-    layer_count: Any,
-    batch_size: Any,
-    seq_len: Any,
-    cache_len: Any,
-    num_kv_heads: Any,
-    head_dim: Any,
-    page_block_size: Any,
-) -> bool:
-    if not isinstance(step, dict):
-        return False
-    expected = _expected_decode_runtime_input_summary(
-        layer_count=layer_count,
-        batch_size=batch_size,
-        seq_len=seq_len,
-        cache_len=cache_len,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        page_block_size=page_block_size,
-    )
-    input_shapes = step.get("input_shapes")
-    kv_cache = step.get("kv_cache")
-    if not isinstance(input_shapes, dict) or not isinstance(kv_cache, dict):
-        return False
-    input_source = step.get("input_source")
-    expected_synthetic_runtime_count = expected[
-        "synthetic_runtime_input_tensor_count"
-    ]
-    expected_prompt_runtime_count = 0
-    expected_decode_runtime_state_count = 0
-    expected_rotary_runtime_count = 0
-    expected_kv_cache_runtime_count = 0
-    expected_synthetic_rotary_count = expected[
-        "synthetic_rotary_tensor_count"
-    ]
-    if input_source == "prompt_runtime":
-        expected_synthetic_runtime_count = 0
-        expected_prompt_runtime_count = 1
-        expected_decode_runtime_state_count = 2
-        expected_rotary_runtime_count = _expected_prompt_rotary_runtime_count(
-            step,
-            fallback=expected_synthetic_rotary_count,
-        )
-        expected_kv_cache_runtime_count = expected[
-            "kv_cache_runtime_input_tensor_count"
-        ]
-        expected_synthetic_rotary_count = 0
-    return (
-        _int_list(input_shapes.get("token_ids"))
-        == expected["token_ids"]
-        and _int_list(input_shapes.get("page_table"))
-        == expected["page_table"]
-        and _int_list(input_shapes.get("cache_position"))
-        == expected["cache_position"]
-        and _int_list(input_shapes.get("key_cache"))
-        == expected["kv_cache_shape"]
-        and _int_list(input_shapes.get("value_cache"))
-        == expected["kv_cache_shape"]
-        and _int_list(kv_cache.get("physical_shape"))
-        == expected["kv_cache_shape"]
-        and _int_list(kv_cache.get("logical_shape"))
-        == expected["kv_cache_logical_shape"]
-        and _int_equal(kv_cache.get("page_block_size"), page_block_size)
-        and _int_equal(kv_cache.get("page_count"), expected["page_count"])
-        and _int_equal(
-            kv_cache.get("max_num_blocks"),
-            expected["max_num_blocks"],
-        )
-        and _runtime_input_source_supported(step)
-        and _int_equal(
-            step.get("synthetic_runtime_input_tensor_count"),
-            expected_synthetic_runtime_count,
-        )
-        and (
-            input_source != "prompt_runtime"
-            or _int_equal(
-                step.get("prompt_runtime_input_tensor_count"),
-                expected_prompt_runtime_count,
-            )
-        )
-        and (
-            input_source != "prompt_runtime"
-            or _int_equal(
-                step.get("decode_runtime_state_input_tensor_count"),
-                expected_decode_runtime_state_count,
-            )
-        )
-        and (
-            input_source != "prompt_runtime"
-            or _int_equal(
-                step.get("rotary_runtime_input_tensor_count"),
-                expected_rotary_runtime_count,
-            )
-        )
-        and (
-            input_source != "prompt_runtime"
-            or _int_equal(
-                step.get("kv_cache_runtime_input_tensor_count"),
-                expected_kv_cache_runtime_count,
-            )
-        )
-        and _int_equal(
-            step.get("synthetic_rotary_tensor_count"),
-            expected_synthetic_rotary_count,
-        )
-    )
-
-
-def _expected_prompt_rotary_runtime_count(
-    step: dict[str, Any],
-    *,
-    fallback: Any,
-) -> Any:
-    rotary_state = step.get("rotary_runtime_state")
-    if not isinstance(rotary_state, dict):
-        return fallback
-    tensor_count = _safe_int(rotary_state.get("tensor_count"))
-    if rotary_state.get("shared_across_layers") is True:
-        return tensor_count if tensor_count is not None else 3
-    return tensor_count if tensor_count is not None else fallback
-
-
-def _runtime_input_source_supported(step: Any) -> bool:
-    return (
-        isinstance(step, dict)
-        and step.get("input_source") in {"synthetic", "prompt_runtime"}
-    )
-
-
-def _synthetic_runtime_inputs_accepted(step: Any) -> bool:
-    if not isinstance(step, dict):
-        return False
-    if step.get("input_source") == "prompt_runtime":
-        return _nonnegative_number(
-            step.get("synthetic_runtime_input_tensor_count")
-        )
-    return _positive_number(step.get("synthetic_runtime_input_tensor_count"))
-
-
-def _decode_shell_runtime_inputs_accepted(step: Any) -> bool:
-    if not isinstance(step, dict):
-        return False
-    source = step.get("input_source")
-    if source == "prompt_runtime":
-        return (
-            _int_equal(step.get("synthetic_runtime_input_tensor_count"), 0)
-            and _int_equal(step.get("runtime_input_tensor_count"), 0)
-            and _int_equal(step.get("prompt_runtime_input_tensor_count"), 1)
-        )
-    if source == "synthetic":
-        return _positive_number(step.get("runtime_input_tensor_count"))
-    return False
-
-
-def _expected_decode_runtime_input_summary(
-    *,
-    layer_count: Any,
-    batch_size: Any,
-    seq_len: Any,
-    cache_len: Any,
-    num_kv_heads: Any,
-    head_dim: Any,
-    page_block_size: Any,
-) -> dict[str, Any]:
-    batch = _safe_int(batch_size)
-    seq = _safe_int(seq_len)
-    cache = _safe_int(cache_len)
-    layers = _safe_int(layer_count)
-    block = _safe_int(page_block_size) or 32
-    page_count = None
-    max_num_blocks = None
-    if batch is not None and cache is not None and block > 0:
-        page_count = max(1, (cache + block - 1) // block)
-        max_num_blocks = batch * page_count
-    kv_shape = _paged_kv_cache_shape(
-        batch_size=batch_size,
-        cache_len=cache_len,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        page_block_size=page_block_size,
-    )
-    logical_shape = (
-        [batch, cache, _safe_int(num_kv_heads), _safe_int(head_dim)]
-        if None
-        not in (
-            batch,
-            cache,
-            _safe_int(num_kv_heads),
-            _safe_int(head_dim),
-        )
-        else []
-    )
-    return {
-        "token_ids": [batch, seq]
-        if None not in (batch, seq)
-        else [],
-        "page_table": [batch, page_count]
-        if None not in (batch, page_count)
-        else [],
-        "cache_position": [batch] if batch is not None else [],
-        "kv_cache_shape": kv_shape,
-        "kv_cache_logical_shape": logical_shape,
-        "page_count": page_count,
-        "max_num_blocks": max_num_blocks,
-        "synthetic_runtime_input_tensor_count": (
-            3 + 2 * layers if layers is not None else None
-        ),
-        "kv_cache_runtime_input_tensor_count": (
-            2 * layers if layers is not None else None
-        ),
-        "synthetic_rotary_tensor_count": (
-            3 * layers if layers is not None else None
-        ),
-    }
-
-
-def _decode_runtime_input_observed(step: Any) -> dict[str, Any]:
-    if not isinstance(step, dict):
-        return {}
-    input_shapes = step.get("input_shapes")
-    kv_cache = step.get("kv_cache")
-    return {
-        "input_source": step.get("input_source"),
-        "synthetic_runtime_input_tensor_count": step.get(
-            "synthetic_runtime_input_tensor_count"
-        ),
-        "prompt_runtime_input_tensor_count": step.get(
-            "prompt_runtime_input_tensor_count"
-        ),
-        "prompt_tokenization": step.get("prompt_tokenization"),
-        "decode_runtime_state_input_tensor_count": step.get(
-            "decode_runtime_state_input_tensor_count"
-        ),
-        "decode_runtime_state": step.get("decode_runtime_state"),
-        "rotary_runtime_input_tensor_count": step.get(
-            "rotary_runtime_input_tensor_count"
-        ),
-        "rotary_runtime_state": step.get("rotary_runtime_state"),
-        "kv_cache_runtime_input_tensor_count": step.get(
-            "kv_cache_runtime_input_tensor_count"
-        ),
-        "kv_cache_runtime_state": step.get("kv_cache_runtime_state"),
-        "synthetic_rotary_tensor_count": step.get(
-            "synthetic_rotary_tensor_count"
-        ),
-        "input_shapes": {
-            "token_ids": _int_list((input_shapes or {}).get("token_ids")),
-            "page_table": _int_list((input_shapes or {}).get("page_table")),
-            "cache_position": _int_list(
-                (input_shapes or {}).get("cache_position")
-            ),
-            "key_cache": _int_list((input_shapes or {}).get("key_cache")),
-            "value_cache": _int_list(
-                (input_shapes or {}).get("value_cache")
-            ),
-        }
-        if isinstance(input_shapes, dict)
-        else {},
-        "kv_cache": {
-            "page_block_size": (kv_cache or {}).get("page_block_size"),
-            "page_count": (kv_cache or {}).get("page_count"),
-            "max_num_blocks": (kv_cache or {}).get("max_num_blocks"),
-            "physical_shape": _int_list(
-                (kv_cache or {}).get("physical_shape")
-            ),
-            "logical_shape": _int_list((kv_cache or {}).get("logical_shape")),
-        }
-        if isinstance(kv_cache, dict)
-        else {},
     }
 
 
@@ -5834,28 +5524,6 @@ def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:
         return sorted(str(path) for path in key_tensors)
 
     return []
-
-
-def _step_ttnn_environment(step: dict[str, Any]) -> dict[str, Any]:
-    environment = step.get("ttnn_environment") or {}
-    return environment if isinstance(environment, dict) else {}
-
-
-def _ttnn_runtime_identity_available(environment: Any) -> bool:
-    if not isinstance(environment, dict):
-        return False
-    return _non_empty_string(environment.get("version")) or _non_empty_string(
-        environment.get("module_file")
-    )
-
-
-def _ttnn_runtime_identity_observed(environment: Any) -> dict[str, Any]:
-    if not isinstance(environment, dict):
-        return {}
-    return {
-        "version": environment.get("version"),
-        "module_file": environment.get("module_file"),
-    }
 
 
 def _require(value: Any, step: str) -> None:

@@ -75,12 +75,25 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.runtime import (
     attention_layer_output_shape_observed,
     attention_layer_output_shapes_complete,
+    decode_runtime_input_observed,
+    decode_runtime_inputs_complete,
+    decode_shell_numeric_reference_complete,
+    decode_shell_numeric_reference_observed,
+    decode_shell_runtime_inputs_accepted,
     decode_output_shape_observed,
     decode_output_shapes_complete,
     expected_attention_layer_output_shape_summary,
+    expected_decode_runtime_input_summary,
     expected_decode_output_shape_summary,
+    expected_prompt_rotary_runtime_count,
+    observed_ops_cover_planned,
     paged_kv_cache_shape,
+    runtime_input_source_supported,
     shape_dict_has_int_lists,
+    step_ttnn_environment,
+    synthetic_runtime_inputs_accepted,
+    ttnn_runtime_identity_available,
+    ttnn_runtime_identity_observed,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
@@ -508,17 +521,66 @@ class ValidateDirectTest(unittest.TestCase):
                 decode_output_shapes_complete,
             ),
             (
+                validation_module._decode_runtime_input_observed,
+                decode_runtime_input_observed,
+            ),
+            (
+                validation_module._decode_runtime_inputs_complete,
+                decode_runtime_inputs_complete,
+            ),
+            (
+                validation_module._decode_shell_numeric_reference_complete,
+                decode_shell_numeric_reference_complete,
+            ),
+            (
+                validation_module._decode_shell_numeric_reference_observed,
+                decode_shell_numeric_reference_observed,
+            ),
+            (
+                validation_module._decode_shell_runtime_inputs_accepted,
+                decode_shell_runtime_inputs_accepted,
+            ),
+            (
                 validation_module._expected_attention_layer_output_shape_summary,
                 expected_attention_layer_output_shape_summary,
+            ),
+            (
+                validation_module._expected_decode_runtime_input_summary,
+                expected_decode_runtime_input_summary,
             ),
             (
                 validation_module._expected_decode_output_shape_summary,
                 expected_decode_output_shape_summary,
             ),
+            (
+                validation_module._expected_prompt_rotary_runtime_count,
+                expected_prompt_rotary_runtime_count,
+            ),
+            (
+                validation_module._observed_ops_cover_planned,
+                observed_ops_cover_planned,
+            ),
             (validation_module._paged_kv_cache_shape, paged_kv_cache_shape),
+            (
+                validation_module._runtime_input_source_supported,
+                runtime_input_source_supported,
+            ),
             (
                 validation_module._shape_dict_has_int_lists,
                 shape_dict_has_int_lists,
+            ),
+            (validation_module._step_ttnn_environment, step_ttnn_environment),
+            (
+                validation_module._synthetic_runtime_inputs_accepted,
+                synthetic_runtime_inputs_accepted,
+            ),
+            (
+                validation_module._ttnn_runtime_identity_available,
+                ttnn_runtime_identity_available,
+            ),
+            (
+                validation_module._ttnn_runtime_identity_observed,
+                ttnn_runtime_identity_observed,
             ),
         )
         for compatibility_export, report_helper in pairs:

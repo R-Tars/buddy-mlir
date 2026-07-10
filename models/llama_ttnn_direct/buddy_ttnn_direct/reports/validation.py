@@ -43,10 +43,22 @@ from .profiling import (
 from .runtime import (
     attention_layer_output_shape_observed as _attention_layer_output_shape_observed,
     attention_layer_output_shapes_complete as _attention_layer_output_shapes_complete,
+    decode_runtime_input_observed as _decode_runtime_input_observed,
+    decode_runtime_inputs_complete as _decode_runtime_inputs_complete,
+    decode_shell_numeric_reference_complete as _decode_shell_numeric_reference_complete,
+    decode_shell_numeric_reference_observed as _decode_shell_numeric_reference_observed,
+    decode_shell_runtime_inputs_accepted as _decode_shell_runtime_inputs_accepted,
     decode_output_shape_observed as _decode_output_shape_observed,
     decode_output_shapes_complete as _decode_output_shapes_complete,
     expected_attention_layer_output_shape_summary as _expected_attention_layer_output_shape_summary,
+    expected_decode_runtime_input_summary as _expected_decode_runtime_input_summary,
     expected_decode_output_shape_summary as _expected_decode_output_shape_summary,
+    observed_ops_cover_planned as _observed_ops_cover_planned,
+    runtime_input_source_supported as _runtime_input_source_supported,
+    step_ttnn_environment as _step_ttnn_environment,
+    synthetic_runtime_inputs_accepted as _synthetic_runtime_inputs_accepted,
+    ttnn_runtime_identity_available as _ttnn_runtime_identity_available,
+    ttnn_runtime_identity_observed as _ttnn_runtime_identity_observed,
 )
 from .schema import (
     acceptance_check as _acceptance_check,
@@ -1220,20 +1232,8 @@ def real_decode_acceptance(
     _config_gap_summary_observed = validation._config_gap_summary_observed
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
     _decode_depth_sweep_records_observed = validation._decode_depth_sweep_records_observed
-    _decode_runtime_input_observed = validation._decode_runtime_input_observed
-    _decode_runtime_inputs_complete = validation._decode_runtime_inputs_complete
-    _decode_shell_numeric_reference_complete = validation._decode_shell_numeric_reference_complete
-    _decode_shell_numeric_reference_observed = validation._decode_shell_numeric_reference_observed
-    _decode_shell_runtime_inputs_accepted = validation._decode_shell_runtime_inputs_accepted
-    _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
-    _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-    _runtime_input_source_supported = validation._runtime_input_source_supported
-    _step_ttnn_environment = validation._step_ttnn_environment
-    _synthetic_runtime_inputs_accepted = validation._synthetic_runtime_inputs_accepted
-    _ttnn_runtime_identity_available = validation._ttnn_runtime_identity_available
-    _ttnn_runtime_identity_observed = validation._ttnn_runtime_identity_observed
 
     if report.get("dry_run"):
         return {
