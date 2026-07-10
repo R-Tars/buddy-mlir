@@ -46,9 +46,11 @@ device.
 ### Planning and code generation
 
 `buddy_ttnn_direct/templates/` maps semantic operations to official-like TTNN
-templates. `buddy_ttnn_direct/codegen/` builds the program bundle, emits
-normalized config and parameter metadata, materializes weights, tensorizes
-parameters, and writes generated Python.
+templates. `buddy_ttnn_direct/compiler/` validates plans, builds generated
+config, renders generated Python source, and writes compiler artifacts.
+`buddy_ttnn_direct/codegen/` retains artifact, parameter, tensorization, and
+package helpers; `codegen/python_ttnn.py` is a compatibility facade for the
+canonical compiler modules.
 
 The generated bundle contains at least:
 
@@ -133,10 +135,12 @@ and must never be imported by runtime code.
 
 ## Remaining Refactor Work
 
-The runtime split and report split are complete enough for the product path,
-but two large compatibility areas remain:
+The runtime, report, compatibility, and compiler entry-point splits are
+complete enough for the product path, but two large compatibility areas
+remain:
 
-- `codegen/python_ttnn.py` still combines generated source and TTNN wrappers;
+- `compiler/source_templates.py` still contains one large generated-model
+  source template that can be divided by attention, MLP, norm, and LM-head;
 - legacy validation and diagnostic implementations remain available for
   compatibility.
 

@@ -13,7 +13,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
     default_official_config_path,
     diff_official_config,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.python_ttnn import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.config import (
     build_codegen_config,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (

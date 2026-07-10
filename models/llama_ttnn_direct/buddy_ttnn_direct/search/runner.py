@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ..codegen.python_ttnn import write_python_ttnn_skeleton
+from ..compiler.codegen import write_python_ttnn_skeleton
 from ..semantic.graph import LlamaModelGraph
 from ..templates.registry import build_execution_plan, dump_execution_plan
 from .space import enumerate_candidate_configs

@@ -1,19 +1,31 @@
-"""Code generation helpers for Buddy-TTNN Direct."""
+"""Legacy code generation helpers for Buddy-TTNN Direct."""
 
-from .python_ttnn import (
-    CustomFusedRegionNotImplemented,
-    build_codegen_config,
-    dry_run_report,
-    render_python_ttnn_model,
-    validate_execution_plan_for_codegen,
-    write_python_ttnn_skeleton,
-)
+from typing import Any
+
 from .config_emit import (
     dump_parameter_config,
     emit_parameter_config,
     load_parameter_config,
     parameter_config_dry_run_report,
 )
+
+
+_COMPILER_EXPORTS = {
+    "CustomFusedRegionNotImplemented",
+    "build_codegen_config",
+    "dry_run_report",
+    "render_python_ttnn_model",
+    "validate_execution_plan_for_codegen",
+    "write_python_ttnn_skeleton",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name not in _COMPILER_EXPORTS:
+        raise AttributeError(name)
+    from .. import compiler
+
+    return getattr(compiler, name)
 
 __all__ = [
     "CustomFusedRegionNotImplemented",

@@ -28,7 +28,7 @@ from .codegen.parameters import (
     materialize_parameters_from_program,
     parse_layer_ids,
 )
-from .codegen.python_ttnn import dry_run_report, write_python_ttnn_skeleton
+from .compiler.codegen import dry_run_report, write_python_ttnn_skeleton
 from .codegen.program import write_decode_program_bundle
 from .codegen.ttnn_tensorizer import (
     TTNNTensorizationError,

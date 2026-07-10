@@ -1,15 +1,12 @@
-"""Compatibility facade for the TTNN Direct compiler modules."""
+"""TTNN Direct generated-program compiler."""
 
-from ..compiler.codegen import dry_run_report, write_python_ttnn_skeleton
-from ..compiler.config import (
+from .codegen import dry_run_report, write_python_ttnn_skeleton
+from .config import (
     CustomFusedRegionNotImplemented,
     build_codegen_config,
     validate_execution_plan_for_codegen,
 )
-from ..compiler.source_templates import (
-    render_codegen_readme,
-    render_python_ttnn_model,
-)
+from .source_templates import render_codegen_readme, render_python_ttnn_model
 
 __all__ = [
     "CustomFusedRegionNotImplemented",
