@@ -1,0 +1,29 @@
+# Numerical Correctness
+
+TTNN Direct treats functional execution and numerical correctness as separate
+claims. A generated string or a structurally valid KV cache is not numerical
+evidence.
+
+The correctness artifact schema records:
+
+- the model config digest, tokenizer, prompt digest, input token IDs, layer
+  count, and reference dtype;
+- the final prompt position after each selected decoder layer;
+- the final normalized hidden state and complete LM-head logits;
+- deterministic key/value cache coordinates across heads, prompt positions,
+  and channels;
+- SHA-256 digests of float32-normalized samples.
+
+The comparison report computes PCC, cosine similarity, maximum and mean
+absolute error, and RMSE. Top-token equality is reported independently because
+a high logits PCC does not guarantee the same greedy token.
+
+HF references use the first `N` model layers followed by the model's final norm
+and LM-head. This matches TTNN Direct depth validation semantics for
+`N = 1, 2, 4, 32`. Reference capture uses only effective prompt tokens; TTNN
+prefill may retain right-side shape padding, but only the final valid prompt
+position is compared.
+
+The product `correctness` suite remains incomplete until TTNN observations are
+captured and compared on P150A. HF artifacts alone are reference inputs, not a
+passing correctness result.

@@ -95,6 +95,11 @@ device and do not execute model stages.
 - `attention.py`, `depth.py`, `autotune.py`: diagnostics report checks.
 - `config.py`, `artifacts.py`: config coverage and artifact checks.
 
+`buddy_ttnn_direct/correctness/` owns numerical reference artifacts and
+comparison metrics. HF reference capture runs on CPU, supports a truncated
+layer count, and records deterministic samples for layer hidden states,
+final hidden state, logits, and prefill KV cache.
+
 The product CLI uses four compact suites:
 
 - `dryrun`: required bundle artifacts plus generate/profile dry-runs.

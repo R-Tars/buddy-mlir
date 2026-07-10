@@ -10,6 +10,14 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import (
     build_parser,
     main,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.artifacts import (
+    kv_cache_snapshot,
+    tensor_snapshot,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.metrics import (
+    compare_snapshots,
+    compare_top_token,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
     PROFILE_GENERATE_SECTION_KEYS,
 )
@@ -26,6 +34,75 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 
 
 class ProductCliTest(unittest.TestCase):
+    def test_correctness_snapshots_and_metrics_are_deterministic(self) -> None:
+        import torch
+
+        reference = tensor_snapshot(
+            "hidden",
+            torch.tensor([1.0, 2.0, 4.0, 8.0]),
+        )
+        identical = tensor_snapshot(
+            "hidden",
+            torch.tensor([1.0, 2.0, 4.0, 8.0]),
+        )
+        shifted = tensor_snapshot(
+            "hidden",
+            torch.tensor([1.1, 2.1, 4.1, 8.1]),
+        )
+
+        self.assertEqual(reference["sha256"], identical["sha256"])
+        exact = compare_snapshots(
+            identical,
+            reference,
+            pcc_threshold=0.999,
+            atol=0.0,
+        )
+        self.assertTrue(exact["passed"])
+        self.assertEqual(exact["pcc"], 1.0)
+        self.assertEqual(exact["max_abs_error"], 0.0)
+
+        tolerance_failure = compare_snapshots(
+            shifted,
+            reference,
+            pcc_threshold=0.999,
+            atol=0.05,
+        )
+        self.assertFalse(tolerance_failure["passed"])
+        self.assertGreaterEqual(tolerance_failure["pcc"], 0.999)
+        self.assertTrue(compare_top_token(42, 42)["passed"])
+        self.assertFalse(compare_top_token(42, 7)["passed"])
+
+    def test_kv_cache_snapshot_records_reproducible_coordinates(self) -> None:
+        import torch
+
+        cache = torch.arange(2 * 4 * 10 * 16, dtype=torch.float32).reshape(
+            2,
+            4,
+            10,
+            16,
+        )
+        snapshot = kv_cache_snapshot(
+            "prefill.layer.0.key_cache",
+            cache,
+            max_heads=2,
+            max_positions=3,
+            max_channels=4,
+        )
+
+        self.assertEqual(snapshot["logical_shape"], [2, 4, 10, 16])
+        self.assertEqual(snapshot["sample_shape"], [2, 3, 4])
+        self.assertEqual(snapshot["sample_count"], 24)
+        self.assertEqual(
+            snapshot["sample_policy"],
+            {
+                "kind": "kv_coordinates",
+                "batch_id": 0,
+                "head_ids": [0, 3],
+                "position_ids": [0, 4, 9],
+                "channel_ids": [0, 5, 10, 15],
+            },
+        )
+
     def test_top_level_help_shows_product_commands_only(self) -> None:
         help_text = build_parser().format_help()
 
