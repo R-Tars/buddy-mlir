@@ -4,7 +4,25 @@ from pathlib import Path
 from typing import Any
 
 from .performance import OFFICIAL_PERFORMANCE_PARITY_METRIC
-from .schema import safe_int
+from .schema import (
+    acceptance_check as _acceptance_check,
+    contains_all as _contains_all,
+    field_keys as _field_keys,
+    has_nonnegative_fields as _has_nonnegative_fields,
+    int_equal as _int_equal,
+    int_list as _int_list,
+    int_list_contains as _int_list_contains,
+    non_empty_string as _non_empty_string,
+    nonnegative_number as _nonnegative_number,
+    number_at_least as _number_at_least,
+    numbers_equal as _numbers_equal,
+    path_exists as _path_exists,
+    paths_exist as _paths_exist,
+    positive_count as _positive_count,
+    positive_number as _positive_number,
+    safe_int as _safe_int,
+    status_count_matches_total as _status_count_matches_total,
+)
 
 
 REAL_DECODE_VALIDATION_STEPS = (
@@ -127,7 +145,7 @@ def step_synthetic_rotary_tensor_count(step: dict[str, Any]) -> Any:
 
 
 def positive_scalar_count(value: Any) -> bool:
-    numeric = safe_int(value)
+    numeric = _safe_int(value)
     return numeric is not None and numeric > 0
 
 
@@ -849,19 +867,12 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
     VALIDATION_STEPS = validation.VALIDATION_STEPS
     ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
     DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
-    _acceptance_check = validation._acceptance_check
-    _paths_exist = validation._paths_exist
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-    _positive_number = validation._positive_number
-    _contains_all = validation._contains_all
     _attention_primitives_dry_run_complete = validation._attention_primitives_dry_run_complete
     _attention_primitives_dry_run_observed = validation._attention_primitives_dry_run_observed
-    _non_empty_string = validation._non_empty_string
     _autotune_knob_coverage_complete = validation._autotune_knob_coverage_complete
     _autotune_knob_coverage_observed = validation._autotune_knob_coverage_observed
-    _status_count_matches_total = validation._status_count_matches_total
-    _path_exists = validation._path_exists
     _required_validate_direct_artifacts_exist = validation._required_validate_direct_artifacts_exist
     _validate_direct_artifact_observed = validation._validate_direct_artifact_observed
     _autotune_default_knobs_varied = validation._autotune_default_knobs_varied
@@ -1148,7 +1159,6 @@ def real_decode_acceptance(
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
     PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
     PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
-    _acceptance_check = validation._acceptance_check
     _attention_layer_output_shape_observed = validation._attention_layer_output_shape_observed
     _attention_layer_output_shapes_complete = validation._attention_layer_output_shapes_complete
     _attention_layer_primitive_reports_complete = validation._attention_layer_primitive_reports_complete
@@ -1171,7 +1181,6 @@ def real_decode_acceptance(
     _bottleneck_summary_observed = validation._bottleneck_summary_observed
     _config_gap_summary_complete = validation._config_gap_summary_complete
     _config_gap_summary_observed = validation._config_gap_summary_observed
-    _contains_all = validation._contains_all
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
     _decode_depth_sweep_records_observed = validation._decode_depth_sweep_records_observed
     _decode_output_shape_observed = validation._decode_output_shape_observed
@@ -1190,11 +1199,6 @@ def real_decode_acceptance(
     _expected_decode_output_shape_summary = validation._expected_decode_output_shape_summary
     _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
     _expected_layer_ids = validation._expected_layer_ids
-    _field_keys = validation._field_keys
-    _has_nonnegative_fields = validation._has_nonnegative_fields
-    _int_equal = validation._int_equal
-    _int_list = validation._int_list
-    _int_list_contains = validation._int_list_contains
     _layer_profile_field_keys = validation._layer_profile_field_keys
     _layer_profile_ids = validation._layer_profile_ids
     _layer_profiles_have_nonnegative_fields = validation._layer_profiles_have_nonnegative_fields
@@ -1207,21 +1211,14 @@ def real_decode_acceptance(
     _lm_head_source_reference_observed = validation._lm_head_source_reference_observed
     _lm_head_transform_complete = validation._lm_head_transform_complete
     _lm_head_transform_observed = validation._lm_head_transform_observed
-    _non_empty_string = validation._non_empty_string
-    _nonnegative_number = validation._nonnegative_number
-    _number_at_least = validation._number_at_least
-    _numbers_equal = validation._numbers_equal
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_performance_baseline_entry_complete = validation._official_performance_baseline_entry_complete
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
     _performance_baseline_entry_complete = validation._performance_baseline_entry_complete
     _performance_baseline_entry_summary = validation._performance_baseline_entry_summary
-    _positive_count = validation._positive_count
-    _positive_number = validation._positive_number
     _profile_generate_milestones_complete = validation._profile_generate_milestones_complete
     _runtime_input_source_supported = validation._runtime_input_source_supported
-    _safe_int = validation._safe_int
     _step_tensorization_summary = validation._step_tensorization_summary
     _step_trace_summary = validation._step_trace_summary
     _step_ttnn_environment = validation._step_ttnn_environment
