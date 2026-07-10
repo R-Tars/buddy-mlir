@@ -10,22 +10,10 @@ from ..templates.attention_prefill import (
     official_prefill_attention_op_sequence,
 )
 from ..templates.lm_head import build_lm_head_split_ranges
-from ..templates.registry import find_custom_fused_templates
-
-
-class CustomFusedRegionNotImplemented(NotImplementedError):
-    """Raised when codegen encounters a reserved custom fused template."""
 
 
 def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
     errors: list[str] = []
-    custom_templates = find_custom_fused_templates(plan)
-    if custom_templates:
-        joined = ", ".join(custom_templates)
-        raise CustomFusedRegionNotImplemented(
-            "CustomFusedRegionNotImplemented: codegen for reserved custom "
-            f"fused template(s) is not implemented: {joined}"
-        )
     if plan.get("schema_version") != 1:
         errors.append("schema_version must be 1")
     if plan.get("mode") != "decode":

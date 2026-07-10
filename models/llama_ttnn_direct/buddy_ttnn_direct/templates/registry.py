@@ -24,27 +24,14 @@ REQUIRED_CONFIG_KEYS = {
     "dtype_recipe",
 }
 
-CUSTOM_FUSED_MLP_TEMPLATE = "custom_buddy_fused_mlp_decode"
-CUSTOM_FUSED_LM_HEAD_TEMPLATE = "custom_buddy_lmhead_argmax_decode"
-CUSTOM_FUSED_REGION_TEMPLATES = {
-    CUSTOM_FUSED_MLP_TEMPLATE,
-    CUSTOM_FUSED_LM_HEAD_TEMPLATE,
-}
-
 OFFICIAL_PREFILL_ATTENTION_TEMPLATE = "official_prefill_attention"
 OFFICIAL_GATED_MLP_PREFILL_TEMPLATE = "official_gated_mlp_prefill"
 
 ALLOWED_ATTENTION_TEMPLATES = {"official_paged_attention_decode"}
 ALLOWED_PREFILL_ATTENTION_TEMPLATES = {OFFICIAL_PREFILL_ATTENTION_TEMPLATE}
-ALLOWED_MLP_TEMPLATES = {
-    "official_gated_mlp_decode",
-    CUSTOM_FUSED_MLP_TEMPLATE,
-}
+ALLOWED_MLP_TEMPLATES = {"official_gated_mlp_decode"}
 ALLOWED_PREFILL_MLP_TEMPLATES = {OFFICIAL_GATED_MLP_PREFILL_TEMPLATE}
-ALLOWED_LM_HEAD_TEMPLATES = {
-    "official_split_lm_head",
-    CUSTOM_FUSED_LM_HEAD_TEMPLATE,
-}
+ALLOWED_LM_HEAD_TEMPLATES = {"official_split_lm_head"}
 ALLOWED_KV_CACHE_TEMPLATES = {"paged_kv_cache"}
 ALLOWED_GENERATION_TEMPLATES = {
     "device_argmax_greedy",
@@ -216,18 +203,6 @@ def dump_execution_plan(plan: dict[str, Any], out: str | Path) -> None:
 
 def load_execution_plan(path: str | Path) -> dict[str, Any]:
     return json.loads(Path(path).read_text())
-
-
-def find_custom_fused_templates(plan: dict[str, Any]) -> list[str]:
-    found: list[str] = []
-    for layer in plan.get("layers", []):
-        for template in layer.get("templates", []):
-            if template in CUSTOM_FUSED_REGION_TEMPLATES:
-                found.append(template)
-    for template in plan.get("final", []):
-        if template in CUSTOM_FUSED_REGION_TEMPLATES:
-            found.append(template)
-    return sorted(set(found))
 
 
 def _check_allowed(

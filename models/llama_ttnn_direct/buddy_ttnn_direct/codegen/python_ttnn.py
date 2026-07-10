@@ -2,7 +2,6 @@
 
 from ..compiler.codegen import dry_run_report, write_python_ttnn_skeleton
 from ..compiler.config import (
-    CustomFusedRegionNotImplemented,
     build_codegen_config,
     validate_execution_plan_for_codegen,
 )
@@ -12,7 +11,6 @@ from ..compiler.source_templates import (
 )
 
 __all__ = [
-    "CustomFusedRegionNotImplemented",
     "build_codegen_config",
     "dry_run_report",
     "render_codegen_readme",

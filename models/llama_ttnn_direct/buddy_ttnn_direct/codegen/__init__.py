@@ -11,7 +11,6 @@ from .config_emit import (
 
 
 _COMPILER_EXPORTS = {
-    "CustomFusedRegionNotImplemented",
     "build_codegen_config",
     "dry_run_report",
     "render_python_ttnn_model",
@@ -28,7 +27,6 @@ def __getattr__(name: str) -> Any:
     return getattr(compiler, name)
 
 __all__ = [
-    "CustomFusedRegionNotImplemented",
     "build_codegen_config",
     "dump_parameter_config",
     "dry_run_report",
