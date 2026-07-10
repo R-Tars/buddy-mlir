@@ -1,7 +1,7 @@
 # TTNN Direct Refactor Baseline
 
 This baseline freezes the state before the product cleanup refactor described
-in `/wafer/zhuxinye/推进文档4.mc`.
+in `/wafer/zhuxinye/推进文档4.md`.
 
 ## Functional Baseline
 
