@@ -202,6 +202,32 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --out-dir /tmp/ttnn_direct_validate_performance
 ```
 
+### Correctness suite
+
+Runs a CPU Hugging Face reference followed by the same truncated layer count
+on P150A. It compares the top token, complete last-position logits, per-layer
+last-position hidden states, and deterministic prefill KV-cache coordinates:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
+  --suite correctness \
+  --program-dir "$PROGRAM" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --prompt "Hello from TTNN Direct" \
+  --layers 1 \
+  --batch-size 32 \
+  --prefill-len 128 \
+  --cache-len 1024 \
+  --check top_token,logits_pcc,hidden_pcc,kv_cache_pcc \
+  --pcc-threshold 0.99 \
+  --out-dir /tmp/ttnn_direct_validate_correctness_l1
+```
+
+Repeat with `--layers 2`, `4`, and `32`. The output directory contains the
+compact comparison report plus separate `hf_reference.json`,
+`ttnn_observations.json`, and `generate.json` evidence files.
+
 ## Diagnose
 
 Diagnostics are explicit development tools and are not part of the product

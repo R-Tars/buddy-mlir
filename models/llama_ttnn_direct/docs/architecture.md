@@ -100,7 +100,7 @@ comparison metrics. HF reference capture runs on CPU, supports a truncated
 layer count, and records deterministic samples for layer hidden states,
 final hidden state, logits, and prefill KV cache.
 
-The product CLI uses four compact suites:
+The product CLI uses five compact suites:
 
 - `dryrun`: required bundle artifacts plus generate/profile dry-runs.
 - `functional`: successful prefill/decode, prefilled KV cache, and generated
@@ -108,6 +108,8 @@ The product CLI uses four compact suites:
 - `device`: functional checks plus TTNN identity and optional full depth.
 - `performance`: positive throughput and complete profile sections, with
   optional full depth.
+- `correctness`: HF top-token, logits, hidden-state, and sampled prefill
+  KV-cache comparisons against observations captured from P150A.
 
 Legacy phase gates remain reachable only through hidden compatibility commands
 and diagnostics. Their orchestration lives in

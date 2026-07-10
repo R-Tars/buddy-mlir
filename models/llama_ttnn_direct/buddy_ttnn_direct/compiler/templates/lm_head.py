@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 _SOURCE = """\
-    def lm_head_argmax(self, hidden):
+    def lm_head_argmax(self, hidden, stage="decode"):
         # Template: official_split_lm_head + __GENERATION_TEMPLATE__
         lm_head_config = self.config.lm_head
         split_count = int(
@@ -56,6 +56,7 @@ _SOURCE = """\
             ),
             op_name="split_lm_head.concat",
         )
+        self._observe(f"{stage}.logits", logits)
         generation_config = _optional_attr(
             self.config, "generation", None
         )

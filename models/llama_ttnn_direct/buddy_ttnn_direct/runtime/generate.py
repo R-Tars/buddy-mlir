@@ -66,6 +66,7 @@ def run_generate(
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
+    observer: Any | None = None,
 ) -> dict[str, Any]:
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
@@ -268,6 +269,7 @@ def run_generate(
                 device=ttnn_device,
                 parameters=context.parameters,
                 config=_to_namespace(generate_config),
+                observer=observer,
             )
             section_profiler = GenerateSectionProfiler(
                 ttnn=ttnn,
@@ -295,6 +297,18 @@ def run_generate(
             prefill_reference = prefill_result.reference
             first_token = prefill_result.first_token
             generated_token_events = list(prefill_result.generated_token_events)
+            observe_kv_cache = getattr(
+                observer,
+                "observe_prefill_kv_cache",
+                None,
+            )
+            if callable(observe_kv_cache):
+                observe_kv_cache(
+                    kv_cache,
+                    effective_token_count=context.prefill_tokenization[
+                        "effective_token_count"
+                    ],
+                )
 
             decode_loop = run_decode_loop(
                 context=context,
@@ -382,6 +396,9 @@ def run_generate(
                 section_profiler=section_profiler,
                 ttnn_module=ttnn,
             )
+            observation_summary = getattr(observer, "summary", None)
+            if callable(observation_summary):
+                report["correctness_observations"] = observation_summary()
     except NoTTNNDeviceError as err:
         report = _generate_no_device_report(
             program_dir=program_root,

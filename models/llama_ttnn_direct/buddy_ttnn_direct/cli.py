@@ -1934,7 +1934,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_validate.add_argument(
         "--suite",
-        choices=("dryrun", "functional", "device", "performance"),
+        choices=(
+            "dryrun",
+            "functional",
+            "device",
+            "performance",
+            "correctness",
+        ),
         default="dryrun",
     )
     product_validate.add_argument("--program-dir", type=Path, default=None)
@@ -1954,6 +1960,25 @@ def build_parser() -> argparse.ArgumentParser:
         default="bf16",
     )
     product_validate.add_argument("--require-full-depth", action="store_true")
+    product_validate.add_argument(
+        "--check",
+        action="append",
+        default=None,
+        help=(
+            "Correctness checks, comma separated: top_token, logits_pcc, "
+            "hidden_pcc, kv_cache_pcc. May be repeated."
+        ),
+    )
+    product_validate.add_argument(
+        "--pcc-threshold",
+        type=float,
+        default=0.99,
+    )
+    product_validate.add_argument(
+        "--reference-dtype",
+        choices=("bfloat16", "float32"),
+        default="bfloat16",
+    )
     product_validate.set_defaults(func=_cmd_validate)
 
     inspect = subparsers.add_parser(
@@ -2962,6 +2987,8 @@ def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
 def _cmd_validate_product_runtime(args: argparse.Namespace) -> int:
     args.out_dir.mkdir(parents=True, exist_ok=True)
     artifacts = _program_artifact_report(args.program_dir)
+    if args.suite == "correctness":
+        return _cmd_validate_correctness(args, artifacts)
     generate_report_path = args.out_dir / "generate.json"
     reports = {"generate": str(generate_report_path)}
 
@@ -3041,6 +3068,79 @@ def _cmd_validate_product_runtime(args: argparse.Namespace) -> int:
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
     return 1
+
+
+def _cmd_validate_correctness(
+    args: argparse.Namespace,
+    artifacts: dict[str, Any],
+) -> int:
+    from .correctness.run import DEFAULT_CHECKS, run_correctness
+
+    if args.prompt is None:
+        print(
+            "validate --suite correctness requires --prompt",
+            file=sys.stderr,
+        )
+        return 1
+    config = json.loads((args.program_dir / "config.json").read_text())
+    prefill_len = int(
+        args.prefill_len
+        or (config.get("prefill") or {}).get("seq_len")
+        or config.get("seq_len", 1)
+    )
+    batch_size = int(args.batch_size or config["batch_size"])
+    cache_len = int(args.cache_len or config["max_cache_len"])
+    checks = _correctness_checks(args.check, default=DEFAULT_CHECKS)
+    report = run_correctness(
+        out_dir=args.out_dir,
+        program_dir=args.program_dir,
+        model_path=args.model_path,
+        tokenizer_path=args.tokenizer_path or args.model_path,
+        prompt=args.prompt,
+        layers=args.layers,
+        prefill_len=prefill_len,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        device=args.device,
+        device_id=args.device_id,
+        dtype_seed=args.dtype_seed,
+        reference_dtype=args.reference_dtype,
+        checks=checks,
+        pcc_threshold=args.pcc_threshold,
+    )
+    report["artifacts"] = artifacts
+    if not artifacts.get("passed"):
+        report["passed"] = False
+        report["status"] = "fail"
+        report["failed_checks"] = [
+            "program_artifacts",
+            *report.get("failed_checks", []),
+        ]
+    report_path = args.out_dir / "validation_report.json"
+    _write_report_json(report_path, report)
+    print(f"wrote TTNN Direct correctness report: {report_path}")
+    print(f"  status: {report['status']}")
+    if report["passed"]:
+        return 0
+    if report.get("runtime_status") == "no_device":
+        print(NO_TTNN_DEVICE_MESSAGE)
+        return 2
+    return 1
+
+
+def _correctness_checks(
+    values: list[str] | None,
+    *,
+    default: tuple[str, ...],
+) -> tuple[str, ...]:
+    if not values:
+        return default
+    return tuple(
+        check.strip()
+        for value in values
+        for check in value.split(",")
+        if check.strip()
+    )
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:

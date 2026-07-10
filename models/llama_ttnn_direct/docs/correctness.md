@@ -24,6 +24,7 @@ and LM-head. This matches TTNN Direct depth validation semantics for
 prefill may retain right-side shape padding, but only the final valid prompt
 position is compared.
 
-The product `correctness` suite remains incomplete until TTNN observations are
-captured and compared on P150A. HF artifacts alone are reference inputs, not a
+The product `correctness` suite captures both sides and only passes when the
+requested comparisons meet their gates. This path has not yet been validated
+on P150A after the refactor; HF artifacts alone remain reference inputs, not a
 passing correctness result.

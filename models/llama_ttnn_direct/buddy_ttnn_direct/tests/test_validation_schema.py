@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -18,8 +19,14 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.metrics import (
     compare_snapshots,
     compare_top_token,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.run import (
+    run_correctness,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
     PROFILE_GENERATE_SECTION_KEYS,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.observations import (
+    TTNNObservationCollector,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     validate_device,
@@ -34,6 +41,127 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 
 
 class ProductCliTest(unittest.TestCase):
+    def test_correctness_runner_compares_captured_artifacts(self) -> None:
+        import torch
+
+        hidden = tensor_snapshot("prefill.layer.0.hidden", torch.arange(8.0))
+        logits = tensor_snapshot("prefill.logits", torch.arange(16.0))
+        reference = {
+            "schema_version": 1,
+            "kind": "hf_llama_correctness_reference",
+            "status": "captured",
+            "passed": True,
+            "top_token": 15,
+            "checkpoints": {
+                "prefill.layer.0.hidden": hidden,
+                "prefill.logits": logits,
+            },
+        }
+
+        def fake_generate(**kwargs):
+            kwargs["observer"].checkpoints.update(reference["checkpoints"])
+            return {
+                "passed": True,
+                "status": "passed",
+                "generated_token_ids": [[15]],
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.correctness.run.capture_hf_reference",
+                return_value=reference,
+            ), patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.correctness.run.run_generate",
+                side_effect=fake_generate,
+            ):
+                report = run_correctness(
+                    out_dir=tmpdir,
+                    program_dir="/tmp/program",
+                    model_path="/tmp/model",
+                    tokenizer_path="/tmp/model",
+                    prompt="hello",
+                    layers=1,
+                    prefill_len=8,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    checks=("top_token", "logits_pcc", "hidden_pcc"),
+                    ttnn_module=types.SimpleNamespace(),
+                    torch_module=torch,
+                )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["status"], "pass")
+            self.assertEqual(len(report["comparisons"]), 3)
+            self.assertEqual(report["failed_checks"], [])
+            self.assertTrue((Path(tmpdir) / "hf_reference.json").is_file())
+            self.assertTrue((Path(tmpdir) / "ttnn_observations.json").is_file())
+            self.assertTrue((Path(tmpdir) / "validation_report.json").is_file())
+
+    def test_correctness_observer_samples_hidden_logits_and_paged_kv(self) -> None:
+        import torch
+
+        class FakeOps:
+            @staticmethod
+            def select_sequence_position(tensor, position, **_kwargs):
+                return tensor[:, position : position + 1, :]
+
+            @staticmethod
+            def slice_batch_user(tensor, user_id, **_kwargs):
+                return tensor[user_id : user_id + 1]
+
+        def slice_op(tensor, starts, ends, steps):
+            return tensor[
+                tuple(
+                    slice(start, end, step)
+                    for start, end, step in zip(
+                        starts,
+                        ends,
+                        steps,
+                        strict=True,
+                    )
+                )
+            ]
+
+        ttnn = types.SimpleNamespace(to_torch=lambda tensor: tensor, slice=slice_op)
+        collector = TTNNObservationCollector(ttnn=ttnn, torch=torch)
+        hidden = torch.arange(2 * 6 * 8, dtype=torch.float32).reshape(2, 6, 8)
+        logits = torch.arange(2 * 1 * 16, dtype=torch.float32).reshape(2, 1, 16)
+        collector.observe(
+            "prefill.layer.0.hidden",
+            hidden,
+            ops=FakeOps(),
+            valid_seq_len=4,
+        )
+        collector.observe("prefill.logits", logits, ops=FakeOps())
+        cache = torch.arange(4 * 2 * 4 * 8, dtype=torch.float32).reshape(
+            4,
+            2,
+            4,
+            8,
+        )
+        collector.observe_prefill_kv_cache(
+            [types.SimpleNamespace(k=cache, v=cache + 1)],
+            effective_token_count=6,
+        )
+
+        report = collector.to_report()
+        self.assertEqual(report["checkpoint_count"], 4)
+        self.assertEqual(
+            report["checkpoints"]["prefill.layer.0.hidden"]["values"],
+            hidden[0, 3].tolist(),
+        )
+        self.assertEqual(
+            report["checkpoints"]["prefill.logits"]["sample_count"],
+            16,
+        )
+        self.assertEqual(
+            report["checkpoints"]["prefill.layer.0.key_cache"][
+                "logical_shape"
+            ],
+            [1, 2, 6, 8],
+        )
+
     def test_correctness_snapshots_and_metrics_are_deterministic(self) -> None:
         import torch
 
@@ -222,6 +350,60 @@ class ProductCliTest(unittest.TestCase):
             self.assertEqual(report["failed_checks"], [])
             self.assertTrue((out_dir / "generate_dryrun.json").is_file())
             self.assertTrue((out_dir / "profile_dryrun.json").is_file())
+
+    def test_validate_correctness_wires_product_runner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            program_dir = self._build_program(root)
+            out_dir = root / "correctness"
+            result = {
+                "schema_version": 1,
+                "command": "validate",
+                "suite": "correctness",
+                "status": "pass",
+                "passed": True,
+                "runtime_status": "passed",
+                "comparisons": [],
+                "failed_checks": [],
+            }
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.correctness.run.run_correctness",
+                return_value=result,
+            ) as runner:
+                exit_code = main(
+                    [
+                        "validate",
+                        "--suite",
+                        "correctness",
+                        "--program-dir",
+                        str(program_dir),
+                        "--model-path",
+                        str(root / "fake_model"),
+                        "--prompt",
+                        "hello",
+                        "--layers",
+                        "1",
+                        "--batch-size",
+                        "2",
+                        "--prefill-len",
+                        "8",
+                        "--cache-len",
+                        "16",
+                        "--check",
+                        "top_token,hidden_pcc",
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                runner.call_args.kwargs["checks"],
+                ("top_token", "hidden_pcc"),
+            )
+            report = json.loads((out_dir / "validation_report.json").read_text())
+            self.assertTrue(report["passed"])
+            self.assertTrue(report["artifacts"]["passed"])
 
     def test_product_validation_suites_use_compact_reports(self) -> None:
         artifacts = {"passed": True, "files": {"model.py": True}}

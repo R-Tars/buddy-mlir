@@ -114,7 +114,8 @@ The user-facing CLI exposes only:
 - `build`: create the generated TTNN program bundle.
 - `generate`: run or dry-run prompt prefill followed by decode.
 - `profile`: profile generate and emit section/throughput data.
-- `validate`: run `dryrun`, `functional`, `device`, or `performance` gates.
+- `validate`: run `dryrun`, `functional`, `device`, `performance`, or
+  `correctness` gates.
 - `inspect`: inspect required program artifacts and normalized config.
 - `diagnose`: run explicitly selected development diagnostics.
 

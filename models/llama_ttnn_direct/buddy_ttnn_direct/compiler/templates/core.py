@@ -3,11 +3,21 @@ from __future__ import annotations
 
 _SOURCE = """\
 class BuddyLlama31TTNN:
-    def __init__(self, device, parameters, config):
+    def __init__(self, device, parameters, config, observer=None):
         self.device = device
         self.parameters = parameters
         self.config = config
         self.ops = TTNNCompatOps(ttnn)
+        self.observer = observer
+
+    def _observe(self, name, tensor, **metadata):
+        if self.observer is None:
+            return
+        observe = getattr(self.observer, "observe", None)
+        if callable(observe):
+            observe(name, tensor, ops=self.ops, **metadata)
+        elif callable(self.observer):
+            self.observer(name, tensor, ops=self.ops, **metadata)
 
     def _attention_heads_memory_config(self):
         return self._height_sharded_memory_config(
@@ -98,6 +108,12 @@ class BuddyLlama31TTNN:
                 page_table,
             )
             cache_reports.append(cache_report)
+            self._observe(
+                f"prefill.layer.{layer_id}.hidden",
+                hidden,
+                layer_id=layer_id,
+                valid_seq_len=valid_seq_len,
+            )
         if valid_seq_len is not None:
             hidden = self.ops.select_sequence_position(
                 hidden,
@@ -105,7 +121,8 @@ class BuddyLlama31TTNN:
                 op_name="select_last_prompt_hidden",
             )
         hidden = self.final_norm(hidden)
-        token = self.lm_head_argmax(hidden)
+        self._observe("prefill.final_hidden", hidden)
+        token = self.lm_head_argmax(hidden, stage="prefill")
         return token, kv_cache, cache_reports
 
     def prefill_layer(self, layer_id, hidden, kv_cache, page_table=None):
@@ -142,8 +159,14 @@ class BuddyLlama31TTNN:
                 cache_position,
                 kv_cache,
             )
+            self._observe(
+                f"decode.layer.{layer_id}.hidden",
+                hidden,
+                layer_id=layer_id,
+            )
         hidden = self.final_norm(hidden)
-        token = self.lm_head_argmax(hidden)
+        self._observe("decode.final_hidden", hidden)
+        token = self.lm_head_argmax(hidden, stage="decode")
         return token, kv_cache
 
     def decode_layer(self, layer_id, hidden, page_table, cache_position, kv_cache):
