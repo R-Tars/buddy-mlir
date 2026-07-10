@@ -2642,7 +2642,7 @@ def _close_ttnn_device(ttnn: object, device: object) -> None:
 
 
 def _cmd_validate_direct(args: argparse.Namespace) -> int:
-    from .validation import validate_direct
+    from .diagnostics.validation_workflow import validate_direct
 
     report = validate_direct(
         model_path=args.model_path,
@@ -2663,7 +2663,10 @@ def _cmd_validate_direct(args: argparse.Namespace) -> int:
 
 
 def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
-    from .validation import preflight_real_decode, validate_real_decode
+    from .diagnostics.validation_workflow import (
+        preflight_real_decode,
+        validate_real_decode,
+    )
 
     if args.preflight_only:
         report = preflight_real_decode(
@@ -2808,7 +2811,9 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
             timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as exc:
-        from .validation import recover_real_decode_process_timeout
+        from .diagnostics.validation_workflow import (
+            recover_real_decode_process_timeout,
+        )
 
         stdout = getattr(exc, "stdout", None) or getattr(exc, "output", None)
         stderr = getattr(exc, "stderr", None)
@@ -2839,7 +2844,9 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
     if result.returncode in {0, 1, 2}:
         return int(result.returncode)
 
-    from .validation import recover_real_decode_process_failure
+    from .diagnostics.validation_workflow import (
+        recover_real_decode_process_failure,
+    )
 
     report = recover_real_decode_process_failure(
         out_dir=args.out_dir,

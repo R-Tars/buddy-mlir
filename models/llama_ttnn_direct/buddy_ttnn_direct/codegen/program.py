@@ -389,7 +389,7 @@ def main(argv=None):
     if args.model_path is None and not args.dry_run:
         raise SystemExit("--model-path is required for --mode validate-real")
     _ensure_repo_import_path()
-    from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
+    from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.validation_workflow import (
         preflight_real_decode,
         recover_real_decode_process_failure,
         validate_real_decode,

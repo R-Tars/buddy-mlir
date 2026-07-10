@@ -6,7 +6,7 @@ from typing import Any
 
 
 def _validation_api() -> Any:
-    from .. import validation
+    from . import validation_workflow as validation
 
     return validation
 

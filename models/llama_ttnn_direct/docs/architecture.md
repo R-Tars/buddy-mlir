@@ -104,8 +104,10 @@ The product CLI uses four compact suites:
   optional full depth.
 
 Legacy phase gates remain reachable only through hidden compatibility commands
-and diagnostics. Importing or parsing the product CLI does not load the legacy
-`validation.py` module.
+and diagnostics. Their orchestration lives in
+`diagnostics/validation_workflow.py`; the package-root `validation.py` is a
+compatibility module alias. Importing or parsing the product CLI does not load
+the legacy workflow.
 
 ### Diagnostics
 
@@ -141,8 +143,8 @@ remain:
 
 - `compiler/source_templates.py` still contains one large generated-model
   source template that can be divided by attention, MLP, norm, and LM-head;
-- legacy validation and diagnostic implementations remain available for
-  compatibility.
+- legacy validation remains available under diagnostics for compatibility but
+  is not part of product validation or default tests.
 
 These are isolated from the visible product workflow and can be simplified
 without changing the command or report contracts described here.

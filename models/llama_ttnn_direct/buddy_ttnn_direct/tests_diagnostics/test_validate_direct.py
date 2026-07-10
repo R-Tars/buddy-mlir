@@ -8,7 +8,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct import (
-    validation as validation_module,
+    validation as legacy_validation_module,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import (
+    validation_workflow as validation_module,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
     attention as attention_reports,
@@ -153,7 +156,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
     ATTENTION_PRIMITIVES,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.validation import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.validation_workflow import (
     VALIDATION_STEPS,
     preflight_real_decode,
     recover_real_decode_process_failure,
@@ -175,6 +178,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_sin
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_legacy_validation_module_aliases_diagnostics_workflow(self) -> None:
+        self.assertIs(legacy_validation_module, validation_module)
+
     def test_runtime_diagnostics_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
             validation_module._real_decode_runtime_diagnostics,

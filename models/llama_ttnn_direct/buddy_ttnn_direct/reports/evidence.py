@@ -288,7 +288,7 @@ def real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
 ) -> dict[str, Any]:
-    from .. import validation
+    from ..diagnostics import validation_workflow as validation
 
     _final_acceptance_gate_matrix = validation._final_acceptance_gate_matrix
     _prefill_cache_population_diagnostics = validation._prefill_cache_population_diagnostics
