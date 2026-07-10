@@ -366,3 +366,2246 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
         ],
         "checks": checks,
     }
+
+
+def real_decode_acceptance(
+    report: dict[str, Any],
+    *,
+    require_trace: bool,
+    require_official_config_match: bool,
+    require_full_depth: bool,
+    require_program_runtime_shape: bool,
+    require_batch32_decode_step: bool,
+    require_model_end_to_end: bool,
+    min_tokens_per_second_per_user: float | None,
+    baseline_tokens_per_second_per_user: float | None,
+    min_baseline_ratio: float | None,
+    require_decode_shell_numeric_reference: bool,
+) -> dict[str, Any]:
+    from .. import validation
+
+    ATTENTION_LAYER_OPS = validation.ATTENTION_LAYER_OPS
+    ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
+    DECODE_PARAMETER_ROLES = validation.DECODE_PARAMETER_ROLES
+    DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
+    LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
+    OFFICIAL_PERFORMANCE_PARITY_METRIC = validation.OFFICIAL_PERFORMANCE_PARITY_METRIC
+    PARITY_SECTIONS = validation.PARITY_SECTIONS
+    PROFILE_BOTTLENECK_SECTION_KEYS = validation.PROFILE_BOTTLENECK_SECTION_KEYS
+    PROFILE_GENERATE_MILESTONE_IDS = validation.PROFILE_GENERATE_MILESTONE_IDS
+    PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
+    PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
+    PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
+    _acceptance_check = validation._acceptance_check
+    _attention_layer_output_shape_observed = validation._attention_layer_output_shape_observed
+    _attention_layer_output_shapes_complete = validation._attention_layer_output_shapes_complete
+    _attention_layer_primitive_reports_complete = validation._attention_layer_primitive_reports_complete
+    _attention_layer_primitive_reports_observed = validation._attention_layer_primitive_reports_observed
+    _attention_primitive_reports_complete = validation._attention_primitive_reports_complete
+    _attention_primitive_reports_observed = validation._attention_primitive_reports_observed
+    _autotune_best_candidate_summary_complete = validation._autotune_best_candidate_summary_complete
+    _autotune_best_candidate_summary_observed = validation._autotune_best_candidate_summary_observed
+    _autotune_candidates_complete = validation._autotune_candidates_complete
+    _autotune_candidates_observed = validation._autotune_candidates_observed
+    _autotune_default_knobs_varied = validation._autotune_default_knobs_varied
+    _autotune_knob_coverage_complete = validation._autotune_knob_coverage_complete
+    _autotune_knob_coverage_observed = validation._autotune_knob_coverage_observed
+    _autotune_knob_variation_observed = validation._autotune_knob_variation_observed
+    _autotune_leaderboard_complete = validation._autotune_leaderboard_complete
+    _autotune_leaderboard_observed = validation._autotune_leaderboard_observed
+    _autotune_output_kind_counts_complete = validation._autotune_output_kind_counts_complete
+    _autotune_output_kind_counts_observed = validation._autotune_output_kind_counts_observed
+    _bottleneck_summary_complete = validation._bottleneck_summary_complete
+    _bottleneck_summary_observed = validation._bottleneck_summary_observed
+    _config_gap_summary_complete = validation._config_gap_summary_complete
+    _config_gap_summary_observed = validation._config_gap_summary_observed
+    _contains_all = validation._contains_all
+    _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
+    _decode_depth_sweep_records_observed = validation._decode_depth_sweep_records_observed
+    _decode_output_shape_observed = validation._decode_output_shape_observed
+    _decode_output_shapes_complete = validation._decode_output_shapes_complete
+    _decode_runtime_input_observed = validation._decode_runtime_input_observed
+    _decode_runtime_inputs_complete = validation._decode_runtime_inputs_complete
+    _decode_shell_linear_weight_transform_complete = validation._decode_shell_linear_weight_transform_complete
+    _decode_shell_linear_weight_transform_observed = validation._decode_shell_linear_weight_transform_observed
+    _decode_shell_numeric_reference_complete = validation._decode_shell_numeric_reference_complete
+    _decode_shell_numeric_reference_observed = validation._decode_shell_numeric_reference_observed
+    _decode_shell_runtime_inputs_accepted = validation._decode_shell_runtime_inputs_accepted
+    _embedding_norm_weight_transform_complete = validation._embedding_norm_weight_transform_complete
+    _embedding_norm_weight_transform_observed = validation._embedding_norm_weight_transform_observed
+    _embedding_norm_weight_transform_paths = validation._embedding_norm_weight_transform_paths
+    _expected_attention_layer_output_shape_summary = validation._expected_attention_layer_output_shape_summary
+    _expected_decode_output_shape_summary = validation._expected_decode_output_shape_summary
+    _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
+    _expected_layer_ids = validation._expected_layer_ids
+    _field_keys = validation._field_keys
+    _generate_prefill_decode_ready = validation._generate_prefill_decode_ready
+    _has_nonnegative_fields = validation._has_nonnegative_fields
+    _int_equal = validation._int_equal
+    _int_list = validation._int_list
+    _int_list_contains = validation._int_list_contains
+    _layer_profile_field_keys = validation._layer_profile_field_keys
+    _layer_profile_ids = validation._layer_profile_ids
+    _layer_profiles_have_nonnegative_fields = validation._layer_profiles_have_nonnegative_fields
+    _linear_weight_transform_complete = validation._linear_weight_transform_complete
+    _linear_weight_transform_observed = validation._linear_weight_transform_observed
+    _linear_weight_transform_paths = validation._linear_weight_transform_paths
+    _lm_head_profile_complete = validation._lm_head_profile_complete
+    _lm_head_profile_observed = validation._lm_head_profile_observed
+    _lm_head_source_reference_complete = validation._lm_head_source_reference_complete
+    _lm_head_source_reference_observed = validation._lm_head_source_reference_observed
+    _lm_head_transform_complete = validation._lm_head_transform_complete
+    _lm_head_transform_observed = validation._lm_head_transform_observed
+    _non_empty_string = validation._non_empty_string
+    _nonnegative_number = validation._nonnegative_number
+    _number_at_least = validation._number_at_least
+    _numbers_equal = validation._numbers_equal
+    _observed_ops_cover_planned = validation._observed_ops_cover_planned
+    _official_performance_baseline_entry_complete = validation._official_performance_baseline_entry_complete
+    _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
+    _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
+    _performance_baseline_entry_complete = validation._performance_baseline_entry_complete
+    _performance_baseline_entry_summary = validation._performance_baseline_entry_summary
+    _positive_count = validation._positive_count
+    _positive_number = validation._positive_number
+    _profile_generate_milestones_complete = validation._profile_generate_milestones_complete
+    _runtime_input_scope = validation._runtime_input_scope
+    _runtime_input_source_supported = validation._runtime_input_source_supported
+    _safe_int = validation._safe_int
+    _step_tensorization_summary = validation._step_tensorization_summary
+    _step_trace_summary = validation._step_trace_summary
+    _step_ttnn_environment = validation._step_ttnn_environment
+    _synthetic_runtime_inputs_accepted = validation._synthetic_runtime_inputs_accepted
+    _tensorized_physical_shape_mismatches = validation._tensorized_physical_shape_mismatches
+    _throughput_baseline_summary = validation._throughput_baseline_summary
+    _trace_profile_complete = validation._trace_profile_complete
+    _trace_profile_observed = validation._trace_profile_observed
+    _ttnn_runtime_identity_available = validation._ttnn_runtime_identity_available
+    _ttnn_runtime_identity_observed = validation._ttnn_runtime_identity_observed
+
+    if report.get("dry_run"):
+        return {
+            "status": "dry_run",
+            "passed": True,
+            "require_official_config_match": require_official_config_match,
+            "require_full_depth": require_full_depth,
+            "require_program_runtime_shape": require_program_runtime_shape,
+            "require_batch32_decode_step": require_batch32_decode_step,
+            "require_full_decode_step": bool(
+                report.get("require_full_decode_step")
+            ),
+            "require_model_end_to_end": bool(
+                report.get("require_model_end_to_end")
+            ),
+            "require_official_performance_parity": bool(
+                report.get("require_official_performance_parity")
+            ),
+            "require_trace": require_trace,
+            "min_tokens_per_second_per_user": (
+                min_tokens_per_second_per_user
+            ),
+            "baseline_tokens_per_second_per_user": (
+                baseline_tokens_per_second_per_user
+            ),
+            "baseline_reference": report.get("baseline_reference"),
+            "baseline_reference_entry": (
+                _performance_baseline_entry_summary(
+                    report.get("baseline_reference_entry")
+                )
+            ),
+            "min_baseline_ratio": min_baseline_ratio,
+            "require_decode_shell_numeric_reference": (
+                require_decode_shell_numeric_reference
+            ),
+            "checks": [],
+            "message": "Dry run only; runtime acceptance was not evaluated.",
+        }
+
+    steps = report.get("steps", {})
+    official_config_diff = steps.get("official_config_diff", {})
+    materialize = steps.get("materialize_parameters", {})
+    decode_shell = steps.get("decode_shell", {})
+    attention_primitives = steps.get("attention_primitives", {})
+    attention_layer = steps.get("attention_layer", {})
+    single_layer = steps.get("single_layer_decode", {})
+    smoke = steps.get("smoke_decode_step", {})
+    profile = steps.get("profile_decode_step", {})
+    prompt_loop = steps.get("prompt_decode_loop", {})
+    generate_step = steps.get("generate_prefill_decode", {})
+    profile_generate = steps.get("profile_generate", {})
+    depth_sweep = steps.get("decode_depth_sweep", {})
+    autotune = steps.get("decode_step_autotune", {})
+    decode_contract = report.get("decode_step_contract") or {}
+    single_layer_tensorization = _step_tensorization_summary(single_layer)
+    decode_shell_tensorization = _step_tensorization_summary(decode_shell)
+    smoke_tensorization = _step_tensorization_summary(smoke)
+    profile_tensorization = _step_tensorization_summary(profile)
+    attention_primitives_environment = _step_ttnn_environment(
+        attention_primitives
+    )
+    attention_layer_environment = _step_ttnn_environment(attention_layer)
+    single_layer_environment = _step_ttnn_environment(single_layer)
+    smoke_environment = _step_ttnn_environment(smoke)
+    profile_environment = _step_ttnn_environment(profile)
+    single_layer_trace = _step_trace_summary(single_layer)
+    smoke_trace = _step_trace_summary(smoke)
+    profile_trace = _step_trace_summary(profile)
+    expected_layers = report.get("layers")
+    expected_layer_ids = _expected_layer_ids(expected_layers)
+    program_num_layers = report.get("program_num_layers")
+    program_batch_size = report.get("program_batch_size")
+    program_cache_len = report.get("program_cache_len")
+    program_seq_len = report.get("program_seq_len")
+    program_hidden_size = report.get("program_hidden_size")
+    program_num_attention_heads = report.get("program_num_attention_heads")
+    program_num_kv_heads = report.get("program_num_key_value_heads")
+    program_head_dim = report.get("program_head_dim")
+    expected_batch_size = report.get("batch_size")
+    expected_cache_len = report.get("cache_len")
+    expected_trace_iterations = report.get("trace_iterations")
+    expected_output_kind = decode_contract.get("output_kind")
+    lm_head_split_count = _safe_int(materialize.get("lm_head_split_count"))
+    expected_token_input_shape = [expected_batch_size, 1]
+    expected_page_table_shape = [
+        expected_batch_size,
+        decode_contract.get("page_count"),
+    ]
+    expected_cache_position_shape = [expected_batch_size]
+    expected_max_num_blocks = (
+        expected_batch_size * decode_contract.get("page_count")
+        if isinstance(expected_batch_size, int)
+        and isinstance(decode_contract.get("page_count"), int)
+        else None
+    )
+    expected_kv_cache_shape = [
+        expected_max_num_blocks,
+        program_num_kv_heads,
+        decode_contract.get("kv_page_block_size"),
+        program_head_dim,
+    ]
+    expected_logical_kv_cache_shape = [
+        expected_batch_size,
+        expected_cache_len,
+        program_num_kv_heads,
+        program_head_dim,
+    ]
+    throughput = profile.get("throughput_summary") or {}
+    throughput_baseline = _throughput_baseline_summary(report, profile)
+    profile_section_latency = profile.get("section_latency_ms")
+    profile_lm_head = profile.get("lm_head_profile")
+    profile_layer_profiles = profile.get("layer_profiles")
+    profile_bottleneck = profile.get("bottleneck_summary")
+    profile_generate_status = profile_generate.get("status")
+    profile_generate_evaluated = profile_generate_status not in {
+        None,
+        "skipped",
+    }
+    skip_autotune = bool(report.get("skip_autotune"))
+    checks = [
+        _acceptance_check(
+            "official_config_diff.status",
+            official_config_diff.get("status") == "pass",
+            observed=official_config_diff.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "official_config_diff.diff_status",
+            official_config_diff.get("diff_status")
+            in {"match", "diff_found"},
+            observed=official_config_diff.get("diff_status"),
+            expected=["match", "diff_found"],
+        ),
+        _acceptance_check(
+            "official_config_diff.issue_count",
+            _nonnegative_number(official_config_diff.get("issue_count")),
+            observed=official_config_diff.get("issue_count"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "official_config_diff.sections",
+            _contains_all(
+                official_config_diff.get("sections"),
+                list(PARITY_SECTIONS),
+            ),
+            observed=official_config_diff.get("sections"),
+            expected=list(PARITY_SECTIONS),
+        ),
+        _acceptance_check(
+            "official_config_diff.gap_summary",
+            _config_gap_summary_complete(
+                official_config_diff.get("gap_summary")
+            ),
+            observed=_config_gap_summary_observed(
+                official_config_diff.get("gap_summary")
+            ),
+            expected=list(PARITY_SECTIONS),
+        ),
+        _acceptance_check(
+            "official_config_diff.official_required_fields",
+            _official_required_field_coverage_complete(
+                official_config_diff.get("official_required_field_coverage")
+            ),
+            observed=_official_required_field_coverage_observed(
+                official_config_diff.get("official_required_field_coverage")
+            ),
+            expected="complete",
+        ),
+        _acceptance_check(
+            "materialize_parameters.tensor_count",
+            _positive_number(materialize.get("tensor_count")),
+            observed=materialize.get("tensor_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "materialize_parameters.layer_ids",
+            materialize.get("materialized_layer_ids") == expected_layer_ids,
+            observed=materialize.get("materialized_layer_ids"),
+            expected=expected_layer_ids,
+        ),
+        _acceptance_check(
+            "materialize_parameters.lm_head_split_count",
+            _positive_number(materialize.get("lm_head_split_count")),
+            observed=materialize.get("lm_head_split_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "materialize_parameters.required_tensor_paths",
+            materialize.get("missing_required_tensor_paths") == [],
+            observed=materialize.get("missing_required_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "materialize_parameters.tensor_shapes",
+            materialize.get("materialized_tensor_shape_mismatches") == [],
+            observed=materialize.get("materialized_tensor_shape_mismatches"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "materialize_parameters.lm_head_source_reference",
+            _lm_head_source_reference_complete(materialize),
+            observed=_lm_head_source_reference_observed(materialize),
+            expected={
+                "lm_head.weight.materialization": "metadata_reference",
+                "lm_head.weight.materialized": False,
+                "lm_head.splits.0.weight.source_read": "sliced_tensor",
+            },
+        ),
+        _acceptance_check(
+            "decode_step_contract.decode_seq_len",
+            _int_equal(decode_contract.get("decode_seq_len"), 1),
+            observed=decode_contract.get("decode_seq_len"),
+            expected=1,
+        ),
+        _acceptance_check(
+            "decode_step_contract.token_input_shape",
+            _int_list(decode_contract.get("token_input_shape"))
+            == expected_token_input_shape,
+            observed=decode_contract.get("token_input_shape"),
+            expected=expected_token_input_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.paged_kv_cache",
+            decode_contract.get("uses_paged_kv_cache") is True,
+            observed={
+                "uses_paged_kv_cache": decode_contract.get(
+                    "uses_paged_kv_cache"
+                ),
+                "kv_cache_policy": decode_contract.get("kv_cache_policy"),
+                "kv_cache_template": decode_contract.get(
+                    "kv_cache_template"
+                ),
+            },
+            expected=True,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_page_block_size",
+            _positive_number(decode_contract.get("kv_page_block_size")),
+            observed=decode_contract.get("kv_page_block_size"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "decode_step_contract.max_num_blocks",
+            _int_equal(
+                decode_contract.get("max_num_blocks"),
+                expected_max_num_blocks,
+            ),
+            observed=decode_contract.get("max_num_blocks"),
+            expected=expected_max_num_blocks,
+        ),
+        _acceptance_check(
+            "decode_step_contract.page_table_shape",
+            _int_list(decode_contract.get("page_table_shape"))
+            == expected_page_table_shape,
+            observed=decode_contract.get("page_table_shape"),
+            expected=expected_page_table_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.cache_position_shape",
+            _int_list(decode_contract.get("cache_position_shape"))
+            == expected_cache_position_shape,
+            observed=decode_contract.get("cache_position_shape"),
+            expected=expected_cache_position_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_shape",
+            _int_list(decode_contract.get("kv_cache_shape"))
+            == expected_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_shape"),
+            expected=expected_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_physical_shape",
+            _int_list(decode_contract.get("kv_cache_physical_shape"))
+            == expected_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_physical_shape"),
+            expected=expected_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.kv_cache_logical_shape",
+            _int_list(decode_contract.get("kv_cache_logical_shape"))
+            == expected_logical_kv_cache_shape,
+            observed=decode_contract.get("kv_cache_logical_shape"),
+            expected=expected_logical_kv_cache_shape,
+        ),
+        _acceptance_check(
+            "decode_step_contract.output_kind",
+            decode_contract.get("output_kind") in {"token", "logits"},
+            observed=decode_contract.get("output_kind"),
+            expected=["token", "logits"],
+        ),
+        _acceptance_check(
+            "decode_shell.layers",
+            _int_equal(decode_shell.get("layers"), expected_layers),
+            observed=decode_shell.get("layers"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "decode_shell.parameter_source",
+            decode_shell.get("parameter_source") == "hf_model",
+            observed=decode_shell.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "decode_shell.input_source",
+            _runtime_input_source_supported(decode_shell),
+            observed=decode_shell.get("input_source"),
+            expected=["synthetic", "prompt_runtime"],
+        ),
+        _acceptance_check(
+            "decode_shell.runtime_input_tensor_count",
+            _decode_shell_runtime_inputs_accepted(decode_shell),
+            observed={
+                "input_source": decode_shell.get("input_source"),
+                "runtime_input_tensor_count": decode_shell.get(
+                    "runtime_input_tensor_count"
+                ),
+                "synthetic_runtime_input_tensor_count": decode_shell.get(
+                    "synthetic_runtime_input_tensor_count"
+                ),
+                "prompt_runtime_input_tensor_count": decode_shell.get(
+                    "prompt_runtime_input_tensor_count"
+                ),
+            },
+            expected=(
+                "synthetic token_ids or one prompt token_ids tensor with no "
+                "synthetic shell runtime input"
+            ),
+        ),
+        _acceptance_check(
+            "decode_shell.runtime_status",
+            decode_shell.get("runtime_status") == "passed",
+            observed=decode_shell.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "decode_shell.reference_status",
+            decode_shell.get("reference_status") == "passed",
+            observed=decode_shell.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "decode_shell.reference_failed_checks",
+            decode_shell.get("reference_failed_checks") == [],
+            observed=decode_shell.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "decode_shell.observed_op_sequence",
+            _observed_ops_cover_planned(
+                decode_shell.get("reference_planned_ops"),
+                decode_shell.get("reference_observed_ops"),
+            ),
+            observed=decode_shell.get("reference_observed_ops"),
+            expected=decode_shell.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "decode_shell.tensorization_status",
+            decode_shell_tensorization.get("status") == "pass",
+            observed=decode_shell_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "decode_shell.tensorization_roles",
+            decode_shell_tensorization.get("roles")
+            == ["embedding", "norm", "mlp", "lm_head"],
+            observed=decode_shell_tensorization.get("roles"),
+            expected=["embedding", "norm", "mlp", "lm_head"],
+        ),
+        _acceptance_check(
+            "decode_shell.required_tensorized_tensor_paths",
+            decode_shell.get("missing_required_tensorized_tensor_paths") == [],
+            observed=decode_shell.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "decode_shell.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(
+                decode_shell_tensorization
+            )
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                decode_shell_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "decode_shell.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+            ),
+        ),
+        _acceptance_check(
+            "decode_shell.linear_weight_transforms",
+            _decode_shell_linear_weight_transform_complete(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+                split_count=materialize.get("lm_head_split_count"),
+            ),
+            observed=_decode_shell_linear_weight_transform_observed(
+                decode_shell_tensorization,
+                layer_count=expected_layers,
+                split_count=materialize.get("lm_head_split_count"),
+            ),
+        ),
+        _acceptance_check(
+            "attention_primitives.primitive_count",
+            _int_equal(
+                attention_primitives.get("primitive_count"),
+                len(ATTENTION_PRIMITIVES),
+            ),
+            observed=attention_primitives.get("primitive_count"),
+            expected=len(ATTENTION_PRIMITIVES),
+        ),
+        _acceptance_check(
+            "attention_primitives.primitive_sequence",
+            attention_primitives.get("primitive_sequence")
+            == list(ATTENTION_PRIMITIVES),
+            observed=attention_primitives.get("primitive_sequence"),
+            expected=list(ATTENTION_PRIMITIVES),
+        ),
+        _acceptance_check(
+            "attention_primitives.status",
+            attention_primitives.get("status") == "pass",
+            observed=attention_primitives.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "attention_primitives.runtime_status_counts",
+            attention_primitives.get("runtime_status_counts")
+            == {"passed": len(ATTENTION_PRIMITIVES)},
+            observed=attention_primitives.get("runtime_status_counts"),
+            expected={"passed": len(ATTENTION_PRIMITIVES)},
+        ),
+        _acceptance_check(
+            "attention_primitives.ttnn_module_available",
+            attention_primitives_environment.get("module_available") is True,
+            observed=attention_primitives_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "attention_primitives.ttnn_version",
+            _ttnn_runtime_identity_available(
+                attention_primitives_environment
+            ),
+            observed=_ttnn_runtime_identity_observed(
+                attention_primitives_environment
+            ),
+            expected="non-empty version or importable source module path",
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_primitives.tt_metal_git_commit",
+            _non_empty_string(
+                attention_primitives_environment.get("tt_metal_git_commit")
+            ),
+            observed=attention_primitives_environment.get(
+                "tt_metal_git_commit"
+            ),
+            source=attention_primitives_environment.get(
+                "tt_metal_git_commit_source"
+            ),
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_primitives.primitive_reports",
+            _attention_primitive_reports_complete(
+                attention_primitives.get("primitive_reports"),
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                hidden_size=program_hidden_size,
+                num_heads=program_num_attention_heads,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+            ),
+            observed=_attention_primitive_reports_observed(
+                attention_primitives.get("primitive_reports")
+            ),
+            expected=list(ATTENTION_PRIMITIVES),
+        ),
+        _acceptance_check(
+            "attention_layer.layer",
+            _int_equal(attention_layer.get("layer"), 0),
+            observed=attention_layer.get("layer"),
+            expected=0,
+        ),
+        _acceptance_check(
+            "attention_layer.batch_size",
+            _int_equal(attention_layer.get("batch_size"), expected_batch_size),
+            observed=attention_layer.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "attention_layer.cache_len",
+            _int_equal(attention_layer.get("cache_len"), expected_cache_len),
+            observed=attention_layer.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "attention_layer.hidden_size",
+            _int_equal(attention_layer.get("hidden_size"), program_hidden_size),
+            observed=attention_layer.get("hidden_size"),
+            expected=program_hidden_size,
+        ),
+        _acceptance_check(
+            "attention_layer.num_kv_heads",
+            _int_equal(
+                attention_layer.get("num_kv_heads"),
+                program_num_kv_heads,
+            ),
+            observed=attention_layer.get("num_kv_heads"),
+            expected=program_num_kv_heads,
+        ),
+        _acceptance_check(
+            "attention_layer.head_dim",
+            _int_equal(attention_layer.get("head_dim"), program_head_dim),
+            observed=attention_layer.get("head_dim"),
+            expected=program_head_dim,
+        ),
+        _acceptance_check(
+            "attention_layer.latency_ms",
+            _nonnegative_number(attention_layer.get("latency_ms")),
+            observed=attention_layer.get("latency_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "attention_layer.tensor_conversion_count",
+            _positive_number(attention_layer.get("tensor_conversion_count")),
+            observed=attention_layer.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "attention_layer.memory_config_conversion_count",
+            _positive_number(
+                attention_layer.get("memory_config_conversion_count")
+            ),
+            observed=attention_layer.get("memory_config_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "attention_layer.runtime_status",
+            attention_layer.get("runtime_status") == "passed",
+            observed=attention_layer.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "attention_layer.ttnn_module_available",
+            attention_layer_environment.get("module_available") is True,
+            observed=attention_layer_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "attention_layer.ttnn_version",
+            _ttnn_runtime_identity_available(attention_layer_environment),
+            observed=_ttnn_runtime_identity_observed(
+                attention_layer_environment
+            ),
+            expected="non-empty version or importable source module path",
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_layer.tt_metal_git_commit",
+            _non_empty_string(
+                attention_layer_environment.get("tt_metal_git_commit")
+            ),
+            observed=attention_layer_environment.get(
+                "tt_metal_git_commit"
+            ),
+            source=attention_layer_environment.get(
+                "tt_metal_git_commit_source"
+            ),
+            required=True,
+        ),
+        _acceptance_check(
+            "attention_layer.reference_status",
+            attention_layer.get("reference_status") == "passed",
+            observed=attention_layer.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "attention_layer.reference_failed_checks",
+            attention_layer.get("reference_failed_checks") == [],
+            observed=attention_layer.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "attention_layer.primitive_sequence",
+            attention_layer.get("primitive_sequence")
+            == list(ATTENTION_LAYER_OPS),
+            observed=attention_layer.get("primitive_sequence"),
+            expected=list(ATTENTION_LAYER_OPS),
+        ),
+        _acceptance_check(
+            "attention_layer.primitive_reports",
+            _attention_layer_primitive_reports_complete(
+                attention_layer.get("primitive_reports")
+            ),
+            observed=_attention_layer_primitive_reports_observed(
+                attention_layer.get("primitive_reports")
+            ),
+            expected=list(ATTENTION_LAYER_OPS),
+        ),
+        _acceptance_check(
+            "attention_layer.output_shapes",
+            _attention_layer_output_shapes_complete(
+                attention_layer.get("output_shapes"),
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                hidden_size=program_hidden_size,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_attention_layer_output_shape_observed(
+                attention_layer.get("output_shapes")
+            ),
+            expected=_expected_attention_layer_output_shape_summary(
+                batch_size=expected_batch_size,
+                cache_len=expected_cache_len,
+                hidden_size=program_hidden_size,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "attention_layer.observed_op_sequence",
+            _observed_ops_cover_planned(
+                attention_layer.get("reference_planned_observed_ops"),
+                attention_layer.get("reference_observed_ops"),
+            ),
+            observed=attention_layer.get("reference_observed_ops"),
+            expected=attention_layer.get("reference_planned_observed_ops"),
+        ),
+        _acceptance_check(
+            "single_layer_decode.parameter_source",
+            single_layer.get("parameter_source") == "hf_model",
+            observed=single_layer.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "single_layer_decode.input_source",
+            _runtime_input_source_supported(single_layer),
+            observed=single_layer.get("input_source"),
+            expected=["synthetic", "prompt_runtime"],
+        ),
+        _acceptance_check(
+            "single_layer_decode.synthetic_runtime_inputs",
+            _synthetic_runtime_inputs_accepted(single_layer),
+            observed=single_layer.get(
+                "synthetic_runtime_input_tensor_count"
+            ),
+            input_source=single_layer.get("input_source"),
+        ),
+        _acceptance_check(
+            "single_layer_decode.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                single_layer,
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(single_layer),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "single_layer_decode.layers",
+            _int_equal(single_layer.get("layers"), 1),
+            observed=single_layer.get("layers"),
+            expected=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.batch_size",
+            _int_equal(single_layer.get("batch_size"), expected_batch_size),
+            observed=single_layer.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "single_layer_decode.cache_len",
+            _int_equal(single_layer.get("cache_len"), expected_cache_len),
+            observed=single_layer.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensor_conversion_count",
+            _positive_number(single_layer.get("tensor_conversion_count")),
+            observed=single_layer.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.runtime_status",
+            single_layer.get("runtime_status") == "passed",
+            observed=single_layer.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "single_layer_decode.ttnn_module_available",
+            single_layer_environment.get("module_available") is True,
+            observed=single_layer_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.ttnn_version",
+            _ttnn_runtime_identity_available(single_layer_environment),
+            observed=_ttnn_runtime_identity_observed(
+                single_layer_environment
+            ),
+            expected="non-empty version or importable source module path",
+            required=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tt_metal_git_commit",
+            _non_empty_string(
+                single_layer_environment.get("tt_metal_git_commit")
+            ),
+            observed=single_layer_environment.get("tt_metal_git_commit"),
+            source=single_layer_environment.get(
+                "tt_metal_git_commit_source"
+            ),
+            required=True,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_status",
+            single_layer_tensorization.get("status") == "pass",
+            observed=single_layer_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_roles",
+            _contains_all(
+                single_layer_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=single_layer_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "single_layer_decode.required_tensorized_tensor_paths",
+            single_layer.get("missing_required_tensorized_tensor_paths")
+            == [],
+            observed=single_layer.get(
+                "missing_required_tensorized_tensor_paths"
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(
+                single_layer_tensorization
+            )
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                single_layer_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_memory_configs",
+            _positive_count(
+                single_layer_tensorization.get("memory_config_counts")
+            ),
+            observed=single_layer_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.tensorization_ttnn_memory_configs",
+            _positive_count(
+                single_layer_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=single_layer_tensorization.get(
+                "ttnn_memory_config_counts"
+            ),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "single_layer_decode.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(1),
+            },
+        ),
+        _acceptance_check(
+            "single_layer_decode.linear_weight_transforms",
+            _linear_weight_transform_complete(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            observed=_linear_weight_transform_observed(
+                single_layer_tensorization,
+                layer_count=1,
+            ),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "paths": _linear_weight_transform_paths(1),
+            },
+        ),
+        _acceptance_check(
+            "single_layer_decode.lm_head_transform",
+            _lm_head_transform_complete(
+                single_layer_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(single_layer_tensorization),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "count": lm_head_split_count,
+            },
+        ),
+        _acceptance_check(
+            "single_layer_decode.reference_status",
+            single_layer.get("reference_status") == "passed",
+            observed=single_layer.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "single_layer_decode.reference_failed_checks",
+            single_layer.get("reference_failed_checks") == [],
+            observed=single_layer.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "single_layer_decode.output_shapes",
+            _decode_output_shapes_complete(
+                single_layer.get("output_shapes"),
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_output_shape_observed(
+                single_layer.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=1,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "single_layer_decode.observed_op_sequence",
+            _observed_ops_cover_planned(
+                single_layer.get("reference_planned_ops"),
+                single_layer.get("reference_observed_ops"),
+            ),
+            observed=single_layer.get("reference_observed_ops"),
+            expected=single_layer.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.parameter_source",
+            smoke.get("parameter_source") == "hf_model",
+            observed=smoke.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.input_source",
+            _runtime_input_source_supported(smoke),
+            observed=smoke.get("input_source"),
+            expected=["synthetic", "prompt_runtime"],
+        ),
+        _acceptance_check(
+            "smoke_decode_step.synthetic_runtime_inputs",
+            _synthetic_runtime_inputs_accepted(smoke),
+            observed=smoke.get("synthetic_runtime_input_tensor_count"),
+            input_source=smoke.get("input_source"),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                smoke,
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(smoke),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.layers",
+            _int_equal(smoke.get("layers"), expected_layers),
+            observed=smoke.get("layers"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.batch_size",
+            _int_equal(smoke.get("batch_size"), expected_batch_size),
+            observed=smoke.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.cache_len",
+            _int_equal(smoke.get("cache_len"), expected_cache_len),
+            observed=smoke.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensor_conversion_count",
+            _positive_number(smoke.get("tensor_conversion_count")),
+            observed=smoke.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.runtime_status",
+            smoke.get("runtime_status") == "passed",
+            observed=smoke.get("runtime_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.ttnn_module_available",
+            smoke_environment.get("module_available") is True,
+            observed=smoke_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.ttnn_version",
+            _ttnn_runtime_identity_available(smoke_environment),
+            observed=_ttnn_runtime_identity_observed(smoke_environment),
+            expected="non-empty version or importable source module path",
+            required=True,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tt_metal_git_commit",
+            _non_empty_string(
+                smoke_environment.get("tt_metal_git_commit")
+            ),
+            observed=smoke_environment.get("tt_metal_git_commit"),
+            source=smoke_environment.get("tt_metal_git_commit_source"),
+            required=True,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_status",
+            smoke_tensorization.get("status") == "pass",
+            observed=smoke_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_roles",
+            _contains_all(
+                smoke_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=smoke_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.required_tensorized_tensor_paths",
+            smoke.get("missing_required_tensorized_tensor_paths") == [],
+            observed=smoke.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(smoke_tensorization) == [],
+            observed=_tensorized_physical_shape_mismatches(
+                smoke_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_memory_configs",
+            _positive_count(smoke_tensorization.get("memory_config_counts")),
+            observed=smoke_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.tensorization_ttnn_memory_configs",
+            _positive_count(
+                smoke_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=smoke_tensorization.get("ttnn_memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "smoke_decode_step.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(
+                    expected_layers
+                ),
+            },
+        ),
+        _acceptance_check(
+            "smoke_decode_step.linear_weight_transforms",
+            _linear_weight_transform_complete(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_linear_weight_transform_observed(
+                smoke_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "paths": _linear_weight_transform_paths(expected_layers),
+            },
+        ),
+        _acceptance_check(
+            "smoke_decode_step.lm_head_transform",
+            _lm_head_transform_complete(
+                smoke_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(smoke_tensorization),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "count": lm_head_split_count,
+            },
+        ),
+        _acceptance_check(
+            "smoke_decode_step.reference_status",
+            smoke.get("reference_status") == "passed",
+            observed=smoke.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "smoke_decode_step.reference_failed_checks",
+            smoke.get("reference_failed_checks") == [],
+            observed=smoke.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "smoke_decode_step.output_shapes",
+            _decode_output_shapes_complete(
+                smoke.get("output_shapes"),
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_output_shape_observed(
+                smoke.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "smoke_decode_step.observed_op_sequence",
+            _observed_ops_cover_planned(
+                smoke.get("reference_planned_ops"),
+                smoke.get("reference_observed_ops"),
+            ),
+            observed=smoke.get("reference_observed_ops"),
+            expected=smoke.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "profile_decode_step.parameter_source",
+            profile.get("parameter_source") == "hf_model",
+            observed=profile.get("parameter_source"),
+            expected="hf_model",
+        ),
+        _acceptance_check(
+            "profile_decode_step.input_source",
+            _runtime_input_source_supported(profile),
+            observed=profile.get("input_source"),
+            expected=["synthetic", "prompt_runtime"],
+        ),
+        _acceptance_check(
+            "profile_decode_step.synthetic_runtime_inputs",
+            _synthetic_runtime_inputs_accepted(profile),
+            observed=profile.get("synthetic_runtime_input_tensor_count"),
+            input_source=profile.get("input_source"),
+        ),
+        _acceptance_check(
+            "profile_decode_step.runtime_inputs",
+            _decode_runtime_inputs_complete(
+                profile,
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_runtime_input_observed(profile),
+            expected=_expected_decode_runtime_input_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "profile_decode_step.layers",
+            _int_equal(profile.get("layers"), expected_layers),
+            observed=profile.get("layers"),
+            expected=expected_layers,
+        ),
+        _acceptance_check(
+            "profile_decode_step.batch_size",
+            _int_equal(profile.get("batch_size"), expected_batch_size),
+            observed=profile.get("batch_size"),
+            expected=expected_batch_size,
+        ),
+        _acceptance_check(
+            "profile_decode_step.cache_len",
+            _int_equal(profile.get("cache_len"), expected_cache_len),
+            observed=profile.get("cache_len"),
+            expected=expected_cache_len,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensor_conversion_count",
+            _positive_number(profile.get("tensor_conversion_count")),
+            observed=profile.get("tensor_conversion_count"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensor_conversion_ms",
+            _nonnegative_number(profile.get("tensor_conversion_ms")),
+            observed=profile.get("tensor_conversion_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.runtime_status",
+            profile.get("runtime_status") == "profiled",
+            observed=profile.get("runtime_status"),
+            expected="profiled",
+        ),
+        _acceptance_check(
+            "profile_decode_step.ttnn_module_available",
+            profile_environment.get("module_available") is True,
+            observed=profile_environment.get("module_available"),
+            expected=True,
+        ),
+        _acceptance_check(
+            "profile_decode_step.ttnn_version",
+            _ttnn_runtime_identity_available(profile_environment),
+            observed=_ttnn_runtime_identity_observed(profile_environment),
+            expected="non-empty version or importable source module path",
+            required=True,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tt_metal_git_commit",
+            _non_empty_string(
+                profile_environment.get("tt_metal_git_commit")
+            ),
+            observed=profile_environment.get("tt_metal_git_commit"),
+            source=profile_environment.get("tt_metal_git_commit_source"),
+            required=True,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_status",
+            profile_tensorization.get("status") == "pass",
+            observed=profile_tensorization.get("status"),
+            expected="pass",
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_roles",
+            _contains_all(
+                profile_tensorization.get("roles"),
+                DECODE_PARAMETER_ROLES,
+            ),
+            observed=profile_tensorization.get("roles"),
+            expected=list(DECODE_PARAMETER_ROLES),
+        ),
+        _acceptance_check(
+            "profile_decode_step.required_tensorized_tensor_paths",
+            profile.get("missing_required_tensorized_tensor_paths") == [],
+            observed=profile.get("missing_required_tensorized_tensor_paths"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorized_physical_shapes",
+            _tensorized_physical_shape_mismatches(profile_tensorization)
+            == [],
+            observed=_tensorized_physical_shape_mismatches(
+                profile_tensorization
+            ),
+            expected=[],
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_memory_configs",
+            _positive_count(profile_tensorization.get("memory_config_counts")),
+            observed=profile_tensorization.get("memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tensorization_ttnn_memory_configs",
+            _positive_count(
+                profile_tensorization.get("ttnn_memory_config_counts")
+            ),
+            observed=profile_tensorization.get("ttnn_memory_config_counts"),
+            minimum=1,
+        ),
+        _acceptance_check(
+            "profile_decode_step.embedding_norm_weight_transforms",
+            _embedding_norm_weight_transform_complete(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_embedding_norm_weight_transform_observed(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "embedding_transform": "reshape_embedding_weight_4d",
+                "norm_transform": "reshape_norm_weight_4d",
+                "paths": _embedding_norm_weight_transform_paths(
+                    expected_layers
+                ),
+            },
+        ),
+        _acceptance_check(
+            "profile_decode_step.linear_weight_transforms",
+            _linear_weight_transform_complete(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            observed=_linear_weight_transform_observed(
+                profile_tensorization,
+                layer_count=expected_layers,
+            ),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "paths": _linear_weight_transform_paths(expected_layers),
+            },
+        ),
+        _acceptance_check(
+            "profile_decode_step.lm_head_transform",
+            _lm_head_transform_complete(
+                profile_tensorization,
+                lm_head_split_count,
+            ),
+            observed=_lm_head_transform_observed(profile_tensorization),
+            expected={
+                "transform": LINEAR_WEIGHT_TRANSFORM,
+                "count": lm_head_split_count,
+            },
+        ),
+        _acceptance_check(
+            "profile_decode_step.reference_status",
+            profile.get("reference_status") == "passed",
+            observed=profile.get("reference_status"),
+            expected="passed",
+        ),
+        _acceptance_check(
+            "profile_decode_step.reference_failed_checks",
+            profile.get("reference_failed_checks") == [],
+            observed=profile.get("reference_failed_checks"),
+            expected=[],
+        ),
+        _acceptance_check(
+            "profile_decode_step.output_shapes",
+            _decode_output_shapes_complete(
+                profile.get("output_shapes"),
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+            observed=_decode_output_shape_observed(
+                profile.get("output_shapes")
+            ),
+            expected=_expected_decode_output_shape_summary(
+                layer_count=expected_layers,
+                batch_size=expected_batch_size,
+                seq_len=program_seq_len,
+                cache_len=expected_cache_len,
+                vocab_size=report.get("program_vocab_size"),
+                num_kv_heads=program_num_kv_heads,
+                head_dim=program_head_dim,
+                output_kind=expected_output_kind,
+                page_block_size=decode_contract.get("kv_page_block_size"),
+            ),
+        ),
+        _acceptance_check(
+            "profile_decode_step.lm_head_profile",
+            _lm_head_profile_complete(
+                profile_lm_head,
+                output_kind=expected_output_kind,
+            ),
+            observed=_lm_head_profile_observed(profile_lm_head),
+            expected={
+                "split_count": "positive",
+                "lm_head_ms": "nonnegative",
+                "argmax_ms": "nonnegative",
+                "argmax_status": (
+                    "skipped"
+                    if expected_output_kind == "logits"
+                    else "profiled"
+                ),
+            },
+        ),
+        _acceptance_check(
+            "profile_decode_step.observed_op_sequence",
+            _observed_ops_cover_planned(
+                profile.get("reference_planned_ops"),
+                profile.get("reference_observed_ops"),
+            ),
+            observed=profile.get("reference_observed_ops"),
+            expected=profile.get("reference_planned_ops"),
+        ),
+        _acceptance_check(
+            "profile_decode_step.section_latency_ms",
+            _has_nonnegative_fields(
+                profile_section_latency,
+                PROFILE_SECTION_LATENCY_KEYS,
+            ),
+            observed=_field_keys(profile_section_latency),
+            expected=list(PROFILE_SECTION_LATENCY_KEYS),
+        ),
+        _acceptance_check(
+            "profile_decode_step.layer_profile_count",
+            _layer_profile_ids(profile_layer_profiles) == expected_layer_ids,
+            observed=_layer_profile_ids(profile_layer_profiles),
+            expected=expected_layer_ids,
+        ),
+        _acceptance_check(
+            "profile_decode_step.layer_profile_sections",
+            _layer_profiles_have_nonnegative_fields(
+                profile_layer_profiles,
+                PROFILE_LAYER_LATENCY_KEYS,
+            ),
+            observed=_layer_profile_field_keys(profile_layer_profiles),
+            expected=list(PROFILE_LAYER_LATENCY_KEYS),
+        ),
+        _acceptance_check(
+            "profile_decode_step.bottleneck_summary",
+            _bottleneck_summary_complete(profile_bottleneck),
+            observed=_bottleneck_summary_observed(profile_bottleneck),
+            expected=list(PROFILE_BOTTLENECK_SECTION_KEYS),
+        ),
+        _acceptance_check(
+            "profile_decode_step.throughput_status",
+            throughput.get("status") == "measured",
+            observed=throughput.get("status"),
+            expected="measured",
+        ),
+        _acceptance_check(
+            "profile_decode_step.latency_ms",
+            _positive_number(throughput.get("latency_ms")),
+            observed=throughput.get("latency_ms"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.tokens_per_second_per_user",
+            _positive_number(
+                throughput.get("tokens_per_second_per_user")
+            ),
+            observed=throughput.get("tokens_per_second_per_user"),
+            minimum=0,
+        ),
+        _acceptance_check(
+            "profile_decode_step.aggregate_tokens_per_second",
+            _positive_number(
+                throughput.get("aggregate_tokens_per_second")
+            ),
+            observed=throughput.get("aggregate_tokens_per_second"),
+            minimum=0,
+        ),
+    ]
+    if profile_generate_evaluated:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "profile_generate.full_generated_model_can_run",
+                    profile_generate.get("generate_passed") is True,
+                    observed={
+                        "status": profile_generate.get("status"),
+                        "runtime_status": profile_generate.get(
+                            "runtime_status"
+                        ),
+                        "generate_status": profile_generate.get(
+                            "generate_status"
+                        ),
+                        "generate_passed": profile_generate.get(
+                            "generate_passed"
+                        ),
+                    },
+                    expected="generate_passed=true",
+                ),
+                _acceptance_check(
+                    "profile_generate.tokens_per_second_per_user_positive",
+                    _positive_number(
+                        profile_generate.get("tokens_per_second_per_user")
+                    ),
+                    observed=profile_generate.get(
+                        "tokens_per_second_per_user"
+                    ),
+                    minimum=0,
+                ),
+                _acceptance_check(
+                    "profile_generate.aggregate_tokens_per_second_positive",
+                    _positive_number(
+                        profile_generate.get("aggregate_tokens_per_second")
+                    ),
+                    observed=profile_generate.get(
+                        "aggregate_tokens_per_second"
+                    ),
+                    minimum=0,
+                ),
+                _acceptance_check(
+                    "profile_generate.no_official_parity_claim",
+                    (
+                        profile_generate.get(
+                            "official_performance_parity_claimed"
+                        )
+                        is False
+                    ),
+                    observed=profile_generate.get(
+                        "official_performance_parity_claimed"
+                    ),
+                    expected=False,
+                ),
+                _acceptance_check(
+                    "profile_generate.profile_fields",
+                    (
+                        _contains_all(
+                            _field_keys(profile_generate.get("sections")),
+                            list(PROFILE_GENERATE_SECTION_KEYS),
+                        )
+                        and isinstance(
+                            profile_generate.get("per_layer"),
+                            dict,
+                        )
+                    ),
+                    observed={
+                        "sections": _field_keys(
+                            profile_generate.get("sections")
+                        ),
+                        "per_layer": _field_keys(
+                            profile_generate.get("per_layer")
+                        ),
+                    },
+                    expected={
+                        "sections": list(PROFILE_GENERATE_SECTION_KEYS),
+                        "per_layer": "dict",
+                    },
+                ),
+                _acceptance_check(
+                    "profile_generate.performance_milestones",
+                    _profile_generate_milestones_complete(
+                        profile_generate.get("performance_milestones")
+                    ),
+                    observed=[
+                        milestone.get("id")
+                        for milestone in (
+                            (
+                                profile_generate.get(
+                                    "performance_milestones"
+                                )
+                                or {}
+                            ).get("milestones", [])
+                        )
+                        if isinstance(milestone, dict)
+                    ],
+                    expected=list(PROFILE_GENERATE_MILESTONE_IDS),
+                ),
+            ]
+        )
+    checks.extend(
+        [
+            _acceptance_check(
+                "decode_depth_sweep.status",
+                depth_sweep.get("status") == "pass",
+                observed=depth_sweep.get("status"),
+                expected="pass",
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.acceptance",
+                (depth_sweep.get("acceptance") or {}).get("passed") is True,
+                observed=depth_sweep.get("acceptance"),
+                expected="passed",
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.requested_depth",
+                _int_list_contains(depth_sweep.get("depths"), expected_layers),
+                observed=depth_sweep.get("depths"),
+                expected=expected_layers,
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.passed_depth_count",
+                _int_equal(
+                    depth_sweep.get("passed_depth_count"),
+                    depth_sweep.get("depth_count"),
+                ),
+                observed=depth_sweep.get("passed_depth_count"),
+                expected=depth_sweep.get("depth_count"),
+            ),
+            _acceptance_check(
+                "decode_depth_sweep.records",
+                _decode_depth_sweep_records_complete(
+                    depth_sweep.get("records"),
+                    expected_depths=depth_sweep.get("depths"),
+                    batch_size=expected_batch_size,
+                    cache_len=expected_cache_len,
+                    seq_len=program_seq_len,
+                    vocab_size=report.get("program_vocab_size"),
+                    num_kv_heads=program_num_kv_heads,
+                    head_dim=program_head_dim,
+                    output_kind=expected_output_kind,
+                    page_block_size=decode_contract.get("kv_page_block_size"),
+                    require_trace=require_trace,
+                    trace_iterations=expected_trace_iterations,
+                ),
+                observed=_decode_depth_sweep_records_observed(
+                    depth_sweep.get("records")
+                ),
+                expected={
+                    "depths": depth_sweep.get("depths"),
+                    "batch_size": expected_batch_size,
+                    "cache_len": expected_cache_len,
+                    "reference_status": "passed",
+                    "throughput_status": "measured",
+                    "trace_status": (
+                        "captured_and_executed" if require_trace else None
+                    ),
+                },
+            ),
+        ]
+    )
+    if require_decode_shell_numeric_reference:
+        checks.append(
+            _acceptance_check(
+                "decode_shell.numeric_reference",
+                _decode_shell_numeric_reference_complete(
+                    decode_shell,
+                    expected_pcc_threshold=report.get(
+                        "decode_shell_pcc_threshold"
+                    ),
+                ),
+                observed=_decode_shell_numeric_reference_observed(
+                    decode_shell
+                ),
+                expected={
+                    "status": "passed",
+                    "kind": "torch_decode_shell",
+                    "passed": True,
+                    "pcc": f">= {decode_shell.get('pcc_threshold')}",
+                    "pcc_threshold": report.get(
+                        "decode_shell_pcc_threshold"
+                    ),
+                    "failed_checks": [],
+                },
+            )
+        )
+    if require_official_config_match:
+        checks.append(
+            _acceptance_check(
+                "official_config_diff.official_reference_format",
+                official_config_diff.get("official_source_format")
+                == "normalized_parity_config",
+                observed={
+                    "source_format": official_config_diff.get(
+                        "official_source_format"
+                    ),
+                    "source": official_config_diff.get("official_source"),
+                },
+                expected="normalized_parity_config",
+            )
+        )
+        checks.append(
+            _acceptance_check(
+                "official_config_diff.match",
+                official_config_diff.get("diff_status") == "match",
+                observed=official_config_diff.get("diff_status"),
+                expected="match",
+                issue_count=official_config_diff.get("issue_count"),
+            )
+        )
+    if require_full_depth:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "validation.full_depth_layers",
+                    _int_equal(expected_layers, program_num_layers),
+                    observed=expected_layers,
+                    expected=program_num_layers,
+                ),
+                _acceptance_check(
+                    "decode_depth_sweep.full_depth",
+                    depth_sweep.get("covered_full_depth") is True,
+                    observed=depth_sweep.get("max_depth"),
+                    expected=program_num_layers,
+                ),
+            ]
+        )
+    if require_program_runtime_shape:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "validation.program_batch_size",
+                    _int_equal(expected_batch_size, program_batch_size),
+                    observed=expected_batch_size,
+                    expected=program_batch_size,
+                ),
+                _acceptance_check(
+                    "validation.program_cache_len",
+                    _int_equal(expected_cache_len, program_cache_len),
+                    observed=expected_cache_len,
+                    expected=program_cache_len,
+                ),
+            ]
+        )
+    if require_batch32_decode_step:
+        checks.append(
+            _acceptance_check(
+                "decode_step_contract.batch32",
+                _int_equal(decode_contract.get("batch_size"), 32),
+                observed=decode_contract.get("batch_size"),
+                expected=32,
+            )
+        )
+    if require_model_end_to_end:
+        runtime_scope = _runtime_input_scope(report)
+        decode_loop_runtime_owned = bool(
+            report.get("decode_loop_runtime_owned")
+            or prompt_loop.get("decode_loop_runtime_owned")
+        )
+        generate_prefill_decode_ready = _generate_prefill_decode_ready(
+            generate_step
+        )
+        checks.append(
+            _acceptance_check(
+                "model_end_to_end_readiness.ready",
+                (
+                    not runtime_scope.get("uses_synthetic_runtime_inputs")
+                    and decode_loop_runtime_owned
+                    and generate_prefill_decode_ready
+                ),
+                observed={
+                    "status": runtime_scope.get("status"),
+                    "synthetic_runtime_input_steps": runtime_scope.get(
+                        "synthetic_runtime_input_steps"
+                    ),
+                    "runtime_input_sources": runtime_scope.get(
+                        "runtime_input_sources"
+                    ),
+                    "decode_loop_runtime_owned": (
+                        decode_loop_runtime_owned
+                    ),
+                    "generate_prefill_decode_ready": (
+                        generate_prefill_decode_ready
+                    ),
+                    "prefill_status": generate_step.get("prefill_status"),
+                    "kv_cache_source": generate_step.get("kv_cache_source"),
+                    "generated_text_status": generate_step.get(
+                        "generated_text_status"
+                    ),
+                },
+                expected=(
+                    "no synthetic runtime inputs, prompt decode loop "
+                    "ownership, and prefill+decode generate evidence"
+                ),
+            )
+        )
+    if require_trace:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "single_layer_decode.trace_status",
+                    single_layer.get("trace_status")
+                    == "captured_and_executed",
+                    observed=single_layer.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "single_layer_decode.trace_iterations",
+                    _int_equal(
+                        single_layer_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=single_layer_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "single_layer_decode.trace_execute_sample_count",
+                    _int_equal(
+                        single_layer_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=single_layer_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "smoke_decode_step.trace_status",
+                    smoke.get("trace_status") == "captured_and_executed",
+                    observed=smoke.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "smoke_decode_step.trace_iterations",
+                    _int_equal(
+                        smoke_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=smoke_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "smoke_decode_step.trace_execute_sample_count",
+                    _int_equal(
+                        smoke_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=smoke_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_status",
+                    profile.get("trace_status") == "captured_and_executed",
+                    observed=profile.get("trace_status"),
+                    expected="captured_and_executed",
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_iterations",
+                    _int_equal(
+                        profile_trace.get("iterations"),
+                        expected_trace_iterations,
+                    ),
+                    observed=profile_trace.get("iterations"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_execute_sample_count",
+                    _int_equal(
+                        profile_trace.get("execute_sample_count"),
+                        expected_trace_iterations,
+                    ),
+                    observed=profile_trace.get("execute_sample_count"),
+                    expected=expected_trace_iterations,
+                ),
+                _acceptance_check(
+                    "profile_decode_step.trace_profile",
+                    _trace_profile_complete(
+                        profile_trace,
+                        throughput,
+                        expected_iterations=expected_trace_iterations,
+                    ),
+                    observed=_trace_profile_observed(
+                        profile_trace,
+                        throughput,
+                    ),
+                    expected={
+                        "status": "captured_and_executed",
+                        "iterations": expected_trace_iterations,
+                        "execute_samples_ms": "positive",
+                        "capture_latency_ms": "nonnegative",
+                        "execute_latency_ms": "positive",
+                        "trace_execute_mean_ms": "positive",
+                        "trace_execute_tokens_per_second_per_user": (
+                            "positive"
+                        ),
+                        "trace_execute_aggregate_tokens_per_second": (
+                            "positive"
+                        ),
+                    },
+                ),
+                _acceptance_check(
+                    (
+                        "profile_decode_step."
+                        "trace_execute_tokens_per_second_per_user"
+                    ),
+                    _positive_number(
+                        throughput.get(
+                            "trace_execute_tokens_per_second_per_user"
+                        )
+                    ),
+                    observed=throughput.get(
+                        "trace_execute_tokens_per_second_per_user"
+                    ),
+                    minimum=0,
+                ),
+            ]
+        )
+
+    if min_tokens_per_second_per_user is not None:
+        observed = throughput.get("tokens_per_second_per_user")
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.min_tokens_per_second_per_user",
+                _number_at_least(observed, min_tokens_per_second_per_user),
+                observed=observed,
+                minimum=min_tokens_per_second_per_user,
+            )
+        )
+
+    if baseline_tokens_per_second_per_user is not None:
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.baseline_tokens_per_second_per_user",
+                _positive_number(baseline_tokens_per_second_per_user),
+                observed=baseline_tokens_per_second_per_user,
+                minimum=0,
+            )
+        )
+    if report.get("baseline_reference") is not None:
+        baseline_entry = report.get("baseline_reference_entry")
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.baseline_reference",
+                (
+                    _performance_baseline_entry_complete(baseline_entry)
+                    and _numbers_equal(
+                        baseline_tokens_per_second_per_user,
+                        (
+                            baseline_entry or {}
+                        ).get("decode_tokens_per_second_per_user"),
+                    )
+                ),
+                observed=_performance_baseline_entry_summary(baseline_entry),
+                expected=report.get("baseline_reference"),
+            )
+        )
+    if report.get("require_official_performance_parity"):
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.official_baseline_reference",
+                _official_performance_baseline_entry_complete(
+                    report.get("baseline_reference_entry")
+                ),
+                observed=_performance_baseline_entry_summary(
+                    report.get("baseline_reference_entry")
+                ),
+                expected={
+                    "role": "official_8b_target",
+                    "model": "Llama 3.1 8B",
+                    "batch_size": 32,
+                },
+            )
+        )
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.official_min_baseline_ratio_positive",
+                _positive_number(min_baseline_ratio),
+                observed=min_baseline_ratio,
+                expected="> 0.0",
+            )
+        )
+        checks.append(
+            _acceptance_check(
+                "decode_step_autotune.metric",
+                autotune.get("metric") == OFFICIAL_PERFORMANCE_PARITY_METRIC,
+                observed=autotune.get("metric"),
+                expected=OFFICIAL_PERFORMANCE_PARITY_METRIC,
+            )
+        )
+    if min_baseline_ratio is not None:
+        checks.append(
+            _acceptance_check(
+                "profile_decode_step.min_baseline_ratio",
+                _number_at_least(
+                    throughput_baseline.get("ratio"),
+                    min_baseline_ratio,
+                ),
+                observed=throughput_baseline.get("ratio"),
+                minimum=min_baseline_ratio,
+                baseline=baseline_tokens_per_second_per_user,
+                tokens_per_second_per_user=throughput.get(
+                    "tokens_per_second_per_user"
+                ),
+            )
+        )
+
+    if not skip_autotune:
+        checks.extend(
+            [
+                _acceptance_check(
+                    "decode_step_autotune.status",
+                    autotune.get("status") == "pass",
+                    observed=autotune.get("status"),
+                    expected="pass",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.candidate_count",
+                    _positive_number(autotune.get("candidate_count")),
+                    observed=autotune.get("candidate_count"),
+                    minimum=1,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.knob_coverage",
+                    _autotune_knob_coverage_complete(
+                        autotune.get("knob_coverage"),
+                        candidate_count=autotune.get("candidate_count"),
+                    ),
+                    observed=_autotune_knob_coverage_observed(
+                        autotune.get("knob_coverage")
+                    ),
+                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.output_kind_counts",
+                    _autotune_output_kind_counts_complete(
+                        autotune.get("output_kind_counts"),
+                        autotune.get("knob_coverage"),
+                    ),
+                    observed=_autotune_output_kind_counts_observed(
+                        autotune.get("output_kind_counts"),
+                        autotune.get("knob_coverage"),
+                    ),
+                    expected="output kinds implied by generation_template",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.candidates",
+                    _autotune_candidates_complete(
+                        autotune.get("candidate_summaries"),
+                        candidate_count=autotune.get("candidate_count"),
+                        layer_count=expected_layers,
+                        batch_size=expected_batch_size,
+                        seq_len=program_seq_len,
+                        cache_len=expected_cache_len,
+                        vocab_size=report.get("program_vocab_size"),
+                        num_kv_heads=program_num_kv_heads,
+                        head_dim=program_head_dim,
+                        page_block_size=decode_contract.get(
+                            "kv_page_block_size"
+                        ),
+                        out_dir=report.get("out_dir"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_candidates_observed(
+                        autotune.get("candidate_summaries")
+                    ),
+                    expected={
+                        "candidate_count": autotune.get("candidate_count"),
+                        "status": "profiled",
+                        "passed": True,
+                        "parameter_source": "hf_model",
+                        "reference_status": "passed",
+                        "trace_status": (
+                            "captured_and_executed"
+                            if require_trace
+                            else None
+                        ),
+                    },
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.leaderboard",
+                    _autotune_leaderboard_complete(
+                        autotune.get("leaderboard"),
+                        candidate_count=autotune.get("candidate_count"),
+                        candidate_summaries=autotune.get(
+                            "candidate_summaries"
+                        ),
+                        best=autotune.get("best"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_leaderboard_observed(
+                        autotune.get("leaderboard")
+                    ),
+                    expected={
+                        "candidate_count": autotune.get("candidate_count"),
+                        "best": autotune.get("best"),
+                    },
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_candidate_summary",
+                    _autotune_best_candidate_summary_complete(
+                        autotune.get("best_candidate_summary"),
+                        best=autotune.get("best"),
+                        require_trace=require_trace,
+                    ),
+                    observed=_autotune_best_candidate_summary_observed(
+                        autotune.get("best_candidate_summary")
+                    ),
+                    expected={
+                        "best": autotune.get("best"),
+                        "parameter_source": "hf_model",
+                        "reference_status": "passed",
+                    },
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.passed_candidate_count",
+                    _positive_number(autotune.get("passed_candidate_count")),
+                    observed=autotune.get("passed_candidate_count"),
+                    minimum=1,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best",
+                    _non_empty_string(autotune.get("best")),
+                    observed=autotune.get("best"),
+                    required=True,
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_reference_status",
+                    autotune.get("best_reference_status") == "passed",
+                    observed=autotune.get("best_reference_status"),
+                    expected="passed",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_parameter_source",
+                    autotune.get("best_parameter_source") == "hf_model",
+                    observed=autotune.get("best_parameter_source"),
+                    expected="hf_model",
+                ),
+                _acceptance_check(
+                    "decode_step_autotune.best_metric",
+                    _nonnegative_number(autotune.get("best_metric")),
+                    observed=autotune.get("best_metric"),
+                    minimum=0,
+                ),
+            ]
+        )
+        if report.get("decode_step_search_space_is_default"):
+            checks.append(
+                _acceptance_check(
+                    "decode_step_autotune.default_knob_variation",
+                    _autotune_default_knobs_varied(
+                        autotune.get("knob_coverage")
+                    ),
+                    observed=_autotune_knob_variation_observed(
+                        autotune.get("knob_coverage")
+                    ),
+                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
+                )
+            )
+        if require_trace:
+            checks.append(
+                _acceptance_check(
+                    "decode_step_autotune.best_trace_status",
+                    autotune.get("best_trace_status")
+                    == "captured_and_executed",
+                    observed=autotune.get("best_trace_status"),
+                    expected="captured_and_executed",
+                )
+            )
+
+    passed = all(check["passed"] for check in checks)
+    return {
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "require_official_config_match": require_official_config_match,
+        "require_full_depth": require_full_depth,
+        "require_program_runtime_shape": require_program_runtime_shape,
+        "require_batch32_decode_step": require_batch32_decode_step,
+        "require_full_decode_step": bool(report.get("require_full_decode_step")),
+        "require_model_end_to_end": bool(
+            report.get("require_model_end_to_end")
+        ),
+        "require_official_performance_parity": bool(
+            report.get("require_official_performance_parity")
+        ),
+        "require_trace": require_trace,
+        "min_tokens_per_second_per_user": min_tokens_per_second_per_user,
+        "baseline_tokens_per_second_per_user": (
+            baseline_tokens_per_second_per_user
+        ),
+        "baseline_reference": report.get("baseline_reference"),
+        "baseline_reference_entry": _performance_baseline_entry_summary(
+            report.get("baseline_reference_entry")
+        ),
+        "min_baseline_ratio": min_baseline_ratio,
+        "throughput_baseline": throughput_baseline,
+        "require_decode_shell_numeric_reference": (
+            require_decode_shell_numeric_reference
+        ),
+        "checks": checks,
+    }

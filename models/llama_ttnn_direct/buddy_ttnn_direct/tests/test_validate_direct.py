@@ -58,6 +58,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     acceptance_check_passed,
     final_acceptance_gate_matrix,
+    real_decode_acceptance,
     validate_direct_acceptance,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
@@ -132,6 +133,10 @@ class ValidateDirectTest(unittest.TestCase):
         )
 
     def test_validation_gate_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._real_decode_acceptance,
+            real_decode_acceptance,
+        )
         self.assertIs(
             validation_module._validate_direct_acceptance,
             validate_direct_acceptance,
