@@ -10,15 +10,7 @@ from ..codegen.parameters import ParameterMaterializationError
 from ..codegen.ttnn_tensorizer import (
     TTNNTensorizationError,
 )
-from ..decode_loop import (
-    _generated_token_id_source,
-    _generated_token_materialization_status,
-    _materialize_token_ids,
-)
-from ..runtime_environment import collect_ttnn_environment
 from ..smoke_decode_shell import (
-    _dtype,
-    _shape,
     _to_namespace,
 )
 from ..smoke_mlp import NoTTNNDeviceError
@@ -42,23 +34,17 @@ from .profile import (
     GenerateSectionProfiler,
 )
 from .reports import (
-    cache_population_summary as _cache_population_summary,
-    generate_base_report as _generate_base_report,
     generate_dry_run_report as _generate_dry_run_report,
-    generate_end_to_end_contract as _generate_end_to_end_contract,
     generate_failed_report as _generate_failed_report,
     generate_no_device_report as _generate_no_device_report,
-    generate_reference_summary as _generate_reference_summary,
-    generate_throughput_summary as _generate_throughput_summary,
-    host_copy_profile as _host_copy_profile,
-    trace_report as _trace_report,
+    generate_success_report as _generate_success_report,
     write_report as _write_report,
 )
 from .tokenizer import (
     PromptTokenizationError,
     detokenize_generated_token_ids,
 )
-from .state import GENERATE_RUNTIME_OWNER, build_generate_state
+from .state import build_generate_state
 
 
 def run_generate(
@@ -357,64 +343,7 @@ def run_generate(
                 tokenizer_path=tokenizer_path or model_path,
                 tokenizer_module=tokenizer_module,
             )
-            host_copy_profile = _host_copy_profile(
-                first_token_materialization_ms=(
-                    token_materialization.first_token_materialization_ms
-                ),
-                step_reports=step_reports,
-            )
-            decode_passed = all(step["passed"] for step in step_reports)
-            passed = bool(prefill_reference["passed"] and decode_passed)
-            parameter_setup = dict(context.parameter_setup)
-            parameter_setup.update(
-                {
-                    "generate_runtime_owned": passed,
-                    "decode_loop_runtime_owned": (
-                        decode_step_count == 0 or decode_passed
-                    ),
-                    "prefill_prompt_runtime_input_tensor_count": (
-                        context.prefill_prompt_runtime_input_tensor_count
-                    ),
-                    "prefill_rotary_runtime_input_tensor_count": (
-                        context.prefill_rotary_runtime_input_tensor_count
-                    ),
-                    "prefill_first_token_tensor_conversion_count": (
-                        first_token.tensor_conversion_count
-                    ),
-                    "decode_runtime_state_input_tensor_count": (
-                        decode_runtime_state_count
-                    ),
-                    "decode_rotary_runtime_input_tensor_count": (
-                        decode_rotary_runtime_count
-                    ),
-                    "decode_loop_step_count": decode_step_count,
-                    "synthetic_runtime_input_tensor_count": 0,
-                    "synthetic_rotary_tensor_count": 0,
-                    "synthetic_kv_cache_tensor_count": 0,
-                    "parameter_tensorization_count_per_generate": (
-                        context.parameter_tensorization_count_per_generate
-                    ),
-                    "parameter_tensorization_count_per_decode_step": (
-                        context.parameter_tensorization_count_per_decode_step
-                    ),
-                    "kv_cache_initialization_count_per_generate": (
-                        context.kv_cache_initialization_count_per_generate
-                    ),
-                    "kv_cache_reinitialized_per_step": (
-                        context.kv_cache_reinitialized_per_step
-                    ),
-                    "decode_token_runtime_handoff": (
-                        context.decode_token_runtime_handoff
-                    ),
-                    "decode_token_host_roundtrip_per_step": (
-                        context.decode_token_host_roundtrip_per_step
-                    ),
-                    "host_token_materialization_for_reporting_only": (
-                        context.host_token_materialization_for_reporting_only
-                    ),
-                }
-            )
-            report = _generate_base_report(
+            report = _generate_success_report(
                 program_dir=program_root,
                 program_num_layers=num_layers,
                 layers=layer_count,
@@ -426,155 +355,32 @@ def run_generate(
                 batch_size=batch_size,
                 cache_len=cache_len,
                 dtype_seed=dtype_seed,
-                dry_run=False,
                 decode_plan=decode_plan,
                 prefill_plan=prefill_plan,
-            )
-            report.update(
-                {
-                    "passed": passed,
-                    "status": "passed" if passed else "reference_mismatch",
-                    "runtime_status": (
-                        "passed" if passed else "reference_mismatch"
-                    ),
-                    "prefill_status": (
-                        "passed"
-                        if prefill_reference["passed"]
-                        else "reference_mismatch"
-                    ),
-                    "decode_loop_runtime_owned": (
-                        decode_step_count == 0 or decode_passed
-                    ),
-                    "generate_runtime_owned": passed,
-                    "kv_cache_source": "prefill",
-                    "input_source": "prompt_prefill",
-                    "runtime_owner": GENERATE_RUNTIME_OWNER,
-                    "parameter_source": context.parameter_source,
-                    "parameter_setup": parameter_setup,
-                    "prompt_tokenization": context.prefill_tokenization,
-                    "prefill_tokenization": context.prefill_tokenization,
-                    "decode_runtime_state": decode_runtime_state,
-                    "rotary_runtime_state": rotary_runtime_state,
-                    "kv_cache_runtime_state": context.kv_cache_runtime_state,
-                    "runtime_context": context.to_report(
-                        decode_step_count=decode_step_count
-                    ),
-                    "parameter_tensorization_count_per_generate": (
-                        context.parameter_tensorization_count_per_generate
-                    ),
-                    "parameter_tensorization_count_per_decode_step": (
-                        context.parameter_tensorization_count_per_decode_step
-                    ),
-                    "kv_cache_initialization_count_per_generate": (
-                        context.kv_cache_initialization_count_per_generate
-                    ),
-                    "kv_cache_reinitialized_per_step": (
-                        context.kv_cache_reinitialized_per_step
-                    ),
-                    "decode_token_runtime_handoff": (
-                        context.decode_token_runtime_handoff
-                    ),
-                    "decode_token_host_roundtrip_per_step": (
-                        context.decode_token_host_roundtrip_per_step
-                    ),
-                    "host_token_materialization_for_reporting_only": (
-                        context.host_token_materialization_for_reporting_only
-                    ),
-                    "prefill": {
-                        "status": (
-                            "passed"
-                            if prefill_reference["passed"]
-                            else "reference_mismatch"
-                        ),
-                        "latency_ms": prefill_latency_ms,
-                        "output_shapes": prefill_output_shapes,
-                        "output": {
-                            "kind": "token",
-                            "shape": _shape(prefill_token),
-                            "dtype": _dtype(prefill_token),
-                            "repr": repr(prefill_token),
-                        },
-                        "first_token": {
-                            "status": (
-                                token_materialization.first_token_status
-                            ),
-                            "source": (
-                                token_materialization.first_token_source
-                            ),
-                            "token_ids_by_user": (
-                                token_materialization.first_token_ids_by_user
-                            ),
-                            "token_shape": _shape(first_token.token_ids),
-                            "runtime_handoff": first_token.runtime_handoff,
-                            "runtime_host_roundtrip": (
-                                first_token.runtime_host_roundtrip
-                            ),
-                            "host_roundtrip": False,
-                            "host_materialization_for_reporting": True,
-                            "host_materialization_ms": (
-                                token_materialization
-                                .first_token_materialization_ms
-                            ),
-                        },
-                        "cache_population": prefill_cache_population,
-                        "reference": prefill_reference,
-                    },
-                    "prefill_cache_population": prefill_cache_population,
-                    "prefill_cache_population_summary": (
-                        _cache_population_summary(prefill_cache_population)
-                    ),
-                    "step_reports": step_reports,
-                    "per_step_token_metadata": per_step_token_metadata,
-                    "generated_token_ids": generated_token_ids_by_user,
-                    "generated_token_id_source": _generated_token_id_source(
-                        per_step_token_metadata
-                    ),
-                    "token_materialization_status": (
-                        _generated_token_materialization_status(
-                            per_step_token_metadata
-                        )
-                    ),
-                    "generated_text": text_report["generated_text"],
-                    "generated_text_by_user": (
-                        text_report["generated_text_by_user"]
-                    ),
-                    "generated_text_status": text_report["status"],
-                    "generated_text_source": text_report["source"],
-                    "generated_text_report": text_report,
-                    "output_shapes": (
-                        step_reports[-1]["output_shapes"]
-                        if step_reports
-                        else prefill_output_shapes
-                    ),
-                    "output": step_reports[-1]["output"] if step_reports else None,
-                    "tensor_conversion_count": tensor_conversion_count,
-                    "synthetic_runtime_input_tensor_count": 0,
-                    "synthetic_rotary_tensor_count": 0,
-                    "synthetic_kv_cache_tensor_count": 0,
-                    "host_copy_profile": host_copy_profile,
-                    "section_profile": section_profiler.to_report(
-                        host_copy_profile=host_copy_profile,
-                    ),
-                    "latency_ms": latency_ms,
-                    "throughput_summary": _generate_throughput_summary(
-                        latency_ms=latency_ms,
-                        batch_size=batch_size,
-                        max_new_tokens=token_count,
-                    ),
-                    "trace": _trace_report(requested=False, status="disabled"),
-                    "reference": _generate_reference_summary(
-                        prefill_reference=prefill_reference,
-                        step_reports=step_reports,
-                    ),
-                    "error": None
-                    if passed
-                    else "generate structural reference mismatch",
-                    "ttnn_version": getattr(ttnn, "__version__", None),
-                    "ttnn_environment": collect_ttnn_environment(ttnn),
-                }
-            )
-            report["end_to_end_contract"] = _generate_end_to_end_contract(
-                report
+                context=context,
+                prefill_token=prefill_token,
+                first_token=first_token,
+                prefill_latency_ms=prefill_latency_ms,
+                prefill_output_shapes=prefill_output_shapes,
+                prefill_cache_population=prefill_cache_population,
+                prefill_reference=prefill_reference,
+                step_reports=step_reports,
+                per_step_token_metadata=per_step_token_metadata,
+                generated_token_ids_by_user=generated_token_ids_by_user,
+                token_materialization=token_materialization,
+                text_report=text_report,
+                decode_runtime_state=decode_runtime_state,
+                rotary_runtime_state=rotary_runtime_state,
+                tensor_conversion_count=tensor_conversion_count,
+                decode_runtime_state_input_tensor_count=(
+                    decode_runtime_state_count
+                ),
+                decode_rotary_runtime_input_tensor_count=(
+                    decode_rotary_runtime_count
+                ),
+                latency_ms=latency_ms,
+                section_profiler=section_profiler,
+                ttnn_module=ttnn,
             )
     except NoTTNNDeviceError as err:
         report = _generate_no_device_report(

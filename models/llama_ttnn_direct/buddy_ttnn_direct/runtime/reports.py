@@ -102,6 +102,48 @@ def trace_report(
     return report
 
 
+def _shape(tensor: Any) -> list[int] | None:
+    shape = getattr(tensor, "shape", None)
+    if shape is None:
+        return None
+    return [int(dim) for dim in shape]
+
+
+def _dtype(tensor: Any) -> str | None:
+    dtype = getattr(tensor, "dtype", None)
+    return str(dtype) if dtype is not None else None
+
+
+def _generated_token_id_source(
+    per_step_token_metadata: list[dict[str, Any]],
+) -> str:
+    sources = {
+        str(step.get("token_materialization_source"))
+        for step in per_step_token_metadata
+    }
+    if not sources:
+        return "none"
+    if len(sources) == 1:
+        return next(iter(sources))
+    return "mixed"
+
+
+def _generated_token_materialization_status(
+    per_step_token_metadata: list[dict[str, Any]],
+) -> str:
+    statuses = {
+        str(step.get("token_materialization_status"))
+        for step in per_step_token_metadata
+    }
+    if not statuses:
+        return "not_run"
+    if statuses == {"materialized"}:
+        return "materialized"
+    if statuses == {"unavailable"}:
+        return "unavailable"
+    return "partial"
+
+
 def generated_token_budget(
     *,
     max_new_tokens: int,
@@ -458,6 +500,245 @@ def generate_dry_run_report(
             "reference": dry_run_reference("generate"),
             "error": None,
             "message": "Dry run only; TTNN device is not required.",
+        }
+    )
+    report["end_to_end_contract"] = generate_end_to_end_contract(report)
+    return report
+
+
+def generate_success_report(
+    *,
+    program_dir: Path,
+    program_num_layers: int,
+    layers: int,
+    max_new_tokens: int,
+    decode_steps: int,
+    prefill_len: int,
+    device: str,
+    device_id: int,
+    batch_size: int,
+    cache_len: int,
+    dtype_seed: str,
+    decode_plan: dict[str, Any],
+    prefill_plan: dict[str, Any],
+    context: Any,
+    prefill_token: Any,
+    first_token: Any,
+    prefill_latency_ms: float,
+    prefill_output_shapes: dict[str, Any],
+    prefill_cache_population: list[dict[str, Any]],
+    prefill_reference: dict[str, Any],
+    step_reports: list[dict[str, Any]],
+    per_step_token_metadata: list[dict[str, Any]],
+    generated_token_ids_by_user: list[list[int]],
+    token_materialization: Any,
+    text_report: dict[str, Any],
+    decode_runtime_state: dict[str, Any],
+    rotary_runtime_state: dict[str, Any],
+    tensor_conversion_count: int,
+    decode_runtime_state_input_tensor_count: int,
+    decode_rotary_runtime_input_tensor_count: int,
+    latency_ms: float,
+    section_profiler: Any,
+    ttnn_module: Any,
+) -> dict[str, Any]:
+    decode_passed = all(step["passed"] for step in step_reports)
+    passed = bool(prefill_reference["passed"] and decode_passed)
+    parameter_setup = dict(context.parameter_setup)
+    parameter_setup.update(
+        {
+            "generate_runtime_owned": passed,
+            "decode_loop_runtime_owned": decode_steps == 0 or decode_passed,
+            "prefill_prompt_runtime_input_tensor_count": (
+                context.prefill_prompt_runtime_input_tensor_count
+            ),
+            "prefill_rotary_runtime_input_tensor_count": (
+                context.prefill_rotary_runtime_input_tensor_count
+            ),
+            "prefill_first_token_tensor_conversion_count": (
+                first_token.tensor_conversion_count
+            ),
+            "decode_runtime_state_input_tensor_count": (
+                decode_runtime_state_input_tensor_count
+            ),
+            "decode_rotary_runtime_input_tensor_count": (
+                decode_rotary_runtime_input_tensor_count
+            ),
+            "decode_loop_step_count": decode_steps,
+            "synthetic_runtime_input_tensor_count": 0,
+            "synthetic_rotary_tensor_count": 0,
+            "synthetic_kv_cache_tensor_count": 0,
+            "parameter_tensorization_count_per_generate": (
+                context.parameter_tensorization_count_per_generate
+            ),
+            "parameter_tensorization_count_per_decode_step": (
+                context.parameter_tensorization_count_per_decode_step
+            ),
+            "kv_cache_initialization_count_per_generate": (
+                context.kv_cache_initialization_count_per_generate
+            ),
+            "kv_cache_reinitialized_per_step": (
+                context.kv_cache_reinitialized_per_step
+            ),
+            "decode_token_runtime_handoff": (
+                context.decode_token_runtime_handoff
+            ),
+            "decode_token_host_roundtrip_per_step": (
+                context.decode_token_host_roundtrip_per_step
+            ),
+            "host_token_materialization_for_reporting_only": (
+                context.host_token_materialization_for_reporting_only
+            ),
+        }
+    )
+    host_copy = host_copy_profile(
+        first_token_materialization_ms=(
+            token_materialization.first_token_materialization_ms
+        ),
+        step_reports=step_reports,
+    )
+    report = generate_base_report(
+        program_dir=program_dir,
+        program_num_layers=program_num_layers,
+        layers=layers,
+        max_new_tokens=max_new_tokens,
+        decode_steps=decode_steps,
+        prefill_len=prefill_len,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        dry_run=False,
+        decode_plan=decode_plan,
+        prefill_plan=prefill_plan,
+    )
+    report.update(
+        {
+            "passed": passed,
+            "status": "passed" if passed else "reference_mismatch",
+            "runtime_status": "passed" if passed else "reference_mismatch",
+            "prefill_status": (
+                "passed"
+                if prefill_reference["passed"]
+                else "reference_mismatch"
+            ),
+            "decode_loop_runtime_owned": decode_steps == 0 or decode_passed,
+            "generate_runtime_owned": passed,
+            "kv_cache_source": "prefill",
+            "input_source": "prompt_prefill",
+            "runtime_owner": "TTNNDirectRuntimeContext",
+            "parameter_source": context.parameter_source,
+            "parameter_setup": parameter_setup,
+            "prompt_tokenization": context.prefill_tokenization,
+            "prefill_tokenization": context.prefill_tokenization,
+            "decode_runtime_state": decode_runtime_state,
+            "rotary_runtime_state": rotary_runtime_state,
+            "kv_cache_runtime_state": context.kv_cache_runtime_state,
+            "runtime_context": context.to_report(decode_step_count=decode_steps),
+            "parameter_tensorization_count_per_generate": (
+                context.parameter_tensorization_count_per_generate
+            ),
+            "parameter_tensorization_count_per_decode_step": (
+                context.parameter_tensorization_count_per_decode_step
+            ),
+            "kv_cache_initialization_count_per_generate": (
+                context.kv_cache_initialization_count_per_generate
+            ),
+            "kv_cache_reinitialized_per_step": (
+                context.kv_cache_reinitialized_per_step
+            ),
+            "decode_token_runtime_handoff": (
+                context.decode_token_runtime_handoff
+            ),
+            "decode_token_host_roundtrip_per_step": (
+                context.decode_token_host_roundtrip_per_step
+            ),
+            "host_token_materialization_for_reporting_only": (
+                context.host_token_materialization_for_reporting_only
+            ),
+            "prefill": {
+                "status": (
+                    "passed"
+                    if prefill_reference["passed"]
+                    else "reference_mismatch"
+                ),
+                "latency_ms": prefill_latency_ms,
+                "output_shapes": prefill_output_shapes,
+                "output": {
+                    "kind": "token",
+                    "shape": _shape(prefill_token),
+                    "dtype": _dtype(prefill_token),
+                    "repr": repr(prefill_token),
+                },
+                "first_token": {
+                    "status": token_materialization.first_token_status,
+                    "source": token_materialization.first_token_source,
+                    "token_ids_by_user": (
+                        token_materialization.first_token_ids_by_user
+                    ),
+                    "token_shape": _shape(first_token.token_ids),
+                    "runtime_handoff": first_token.runtime_handoff,
+                    "runtime_host_roundtrip": first_token.runtime_host_roundtrip,
+                    "host_roundtrip": False,
+                    "host_materialization_for_reporting": True,
+                    "host_materialization_ms": (
+                        token_materialization.first_token_materialization_ms
+                    ),
+                },
+                "cache_population": prefill_cache_population,
+                "reference": prefill_reference,
+            },
+            "prefill_cache_population": prefill_cache_population,
+            "prefill_cache_population_summary": (
+                cache_population_summary(prefill_cache_population)
+            ),
+            "step_reports": step_reports,
+            "per_step_token_metadata": per_step_token_metadata,
+            "generated_token_ids": generated_token_ids_by_user,
+            "generated_token_id_source": _generated_token_id_source(
+                per_step_token_metadata
+            ),
+            "token_materialization_status": (
+                _generated_token_materialization_status(
+                    per_step_token_metadata
+                )
+            ),
+            "generated_text": text_report["generated_text"],
+            "generated_text_by_user": text_report["generated_text_by_user"],
+            "generated_text_status": text_report["status"],
+            "generated_text_source": text_report["source"],
+            "generated_text_report": text_report,
+            "output_shapes": (
+                step_reports[-1]["output_shapes"]
+                if step_reports
+                else prefill_output_shapes
+            ),
+            "output": step_reports[-1]["output"] if step_reports else None,
+            "tensor_conversion_count": tensor_conversion_count,
+            "synthetic_runtime_input_tensor_count": 0,
+            "synthetic_rotary_tensor_count": 0,
+            "synthetic_kv_cache_tensor_count": 0,
+            "host_copy_profile": host_copy,
+            "section_profile": section_profiler.to_report(
+                host_copy_profile=host_copy,
+            ),
+            "latency_ms": latency_ms,
+            "throughput_summary": generate_throughput_summary(
+                latency_ms=latency_ms,
+                batch_size=batch_size,
+                max_new_tokens=max_new_tokens,
+            ),
+            "trace": trace_report(requested=False, status="disabled"),
+            "reference": generate_reference_summary(
+                prefill_reference=prefill_reference,
+                step_reports=step_reports,
+            ),
+            "error": None
+            if passed
+            else "generate structural reference mismatch",
+            "ttnn_version": getattr(ttnn_module, "__version__", None),
+            "ttnn_environment": collect_ttnn_environment(ttnn_module),
         }
     )
     report["end_to_end_contract"] = generate_end_to_end_contract(report)
