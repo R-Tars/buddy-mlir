@@ -34,8 +34,7 @@ from .smoke_decode_shell import (
 )
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .runtime_environment import collect_ttnn_environment
-from .templates import ttnn_ops
-from .templates.ttnn_ops import UnsupportedTTNNOp
+from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
 
 ATTENTION_LAYER_OPS = [

@@ -93,7 +93,7 @@ class BuildProgramTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn(
-                "templates import ttnn_ops",
+                "ttnn_compat import ops as ttnn_ops",
                 source,
             )
             self.assertIn(

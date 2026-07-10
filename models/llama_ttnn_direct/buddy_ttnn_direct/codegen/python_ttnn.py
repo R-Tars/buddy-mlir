@@ -226,7 +226,7 @@ def render_python_ttnn_model(plan: dict[str, Any]) -> str:
             from types import SimpleNamespace
 
             import ttnn
-            from models.llama_ttnn_direct.buddy_ttnn_direct.templates import ttnn_ops
+            from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import ops as ttnn_ops
 
 
             def _to_namespace(value):

@@ -100,7 +100,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn("import ttnn", source)
-            self.assertIn("templates import ttnn_ops", source)
+            self.assertIn("ttnn_compat import ops as ttnn_ops", source)
             self.assertIn("class BuddyLlama31TTNN", source)
             self.assertIn("def decode_step", source)
             self.assertIn("def decode_layer", source)

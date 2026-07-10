@@ -55,7 +55,7 @@ from .smoke_decode_shell import (
     _value_check,
 )
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
-from .templates.ttnn_ops import UnsupportedTTNNOp
+from .ttnn_compat import UnsupportedTTNNOp
 
 
 DECODE_LAYER_OPS = [

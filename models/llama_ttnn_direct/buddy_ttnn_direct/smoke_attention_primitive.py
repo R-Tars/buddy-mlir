@@ -21,8 +21,7 @@ from .smoke_decode_shell import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import build_decode_runtime_state
-from .templates import ttnn_ops
-from .templates.ttnn_ops import UnsupportedTTNNOp
+from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
 
 ATTENTION_PRIMITIVES = (

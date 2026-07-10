@@ -21,7 +21,7 @@ from ..smoke_single_layer_decode import (
     _decode_step_plan,
     _load_generated_model,
 )
-from ..templates.ttnn_ops import UnsupportedTTNNOp
+from ..ttnn_compat import UnsupportedTTNNOp
 from .decode import (
     materialize_generate_token_events as _materialize_generate_token_events,
     run_decode_loop,

@@ -31,7 +31,7 @@ from .smoke_single_layer_decode import (
     _synthetic_tensor_factory,
     _write_report,
 )
-from .templates.ttnn_ops import UnsupportedTTNNOp
+from .ttnn_compat import UnsupportedTTNNOp
 
 
 PREFILL_LAYER_OPS = [

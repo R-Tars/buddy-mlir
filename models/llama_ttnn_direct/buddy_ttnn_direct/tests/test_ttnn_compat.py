@@ -3,9 +3,12 @@ from __future__ import annotations
 import types
 import unittest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.templates import ttnn_ops
-from models.llama_ttnn_direct.buddy_ttnn_direct.templates.ttnn_ops import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.templates import (
+    ttnn_ops as legacy_ttnn_ops,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import (
     UnsupportedTTNNOp,
+    ops as ttnn_ops,
 )
 
 
@@ -13,6 +16,14 @@ class TTNNOpsWrapperTest(unittest.TestCase):
     def test_module_import_does_not_require_ttnn(self) -> None:
         self.assertTrue(callable(ttnn_ops.nlp_create_qkv_heads_decode))
         self.assertTrue(issubclass(UnsupportedTTNNOp, RuntimeError))
+        self.assertIs(
+            legacy_ttnn_ops.nlp_create_qkv_heads_decode,
+            ttnn_ops.nlp_create_qkv_heads_decode,
+        )
+        self.assertIs(
+            legacy_ttnn_ops.UnsupportedTTNNOp,
+            UnsupportedTTNNOp,
+        )
 
     def test_qkv_heads_wrapper_calls_experimental_api(self) -> None:
         fake = _fake_ttnn()

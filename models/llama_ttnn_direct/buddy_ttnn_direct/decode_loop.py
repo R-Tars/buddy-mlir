@@ -32,7 +32,7 @@ from .smoke_single_layer_decode import (
     _write_report,
 )
 from .smoke_decode_shell import _dry_run_reference
-from .templates.ttnn_ops import UnsupportedTTNNOp
+from .ttnn_compat import UnsupportedTTNNOp
 
 
 def run_prompt_decode_loop(

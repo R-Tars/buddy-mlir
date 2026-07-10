@@ -1,7 +1,8 @@
-"""Compatibility facade for the former template-owned TTNN wrappers."""
+"""TTNN API compatibility wrappers used by generated programs."""
 
-from ..ttnn_compat.errors import UnsupportedTTNNOp
-from ..ttnn_compat.ops import (
+from . import ops
+from .errors import UnsupportedTTNNOp
+from .ops import (
     concat_heads_prefill,
     fill_cache,
     nlp_concat_heads_decode,
@@ -21,6 +22,7 @@ __all__ = [
     "fill_cache",
     "nlp_concat_heads_decode",
     "nlp_create_qkv_heads_decode",
+    "ops",
     "paged_fill_cache",
     "paged_sdpa_decode",
     "paged_update_cache",
