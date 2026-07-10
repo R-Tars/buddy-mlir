@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from ..codegen.ttnn_tensorizer import LINEAR_WEIGHT_TRANSFORM
 from ..search.decode_step_autotune import DECODE_STEP_AUTOTUNE_KNOBS
+from ..smoke_single_layer_decode import DECODE_PARAMETER_ROLES
 from .attention import (
     ATTENTION_LAYER_OPS,
     ATTENTION_PRIMITIVES,
@@ -13,6 +15,10 @@ from .attention import (
     attention_primitive_reports_observed as _attention_primitive_reports_observed,
     attention_primitives_dry_run_complete as _attention_primitives_dry_run_complete,
     attention_primitives_dry_run_observed as _attention_primitives_dry_run_observed,
+)
+from .artifacts import (
+    required_validate_direct_artifacts_exist as _required_validate_direct_artifacts_exist,
+    validate_direct_artifact_observed as _validate_direct_artifact_observed,
 )
 from .autotune import (
     autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
@@ -27,6 +33,13 @@ from .autotune import (
     autotune_leaderboard_observed as _autotune_leaderboard_observed,
     autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
     autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
+)
+from .config import (
+    PARITY_SECTIONS,
+    config_gap_summary_complete as _config_gap_summary_complete,
+    config_gap_summary_observed as _config_gap_summary_observed,
+    official_required_field_coverage_complete as _official_required_field_coverage_complete,
+    official_required_field_coverage_observed as _official_required_field_coverage_observed,
 )
 from .depth import (
     PROFILE_LAYER_LATENCY_KEYS,
@@ -45,6 +58,7 @@ from .performance import (
 )
 from .profiling import (
     PROFILE_BOTTLENECK_SECTION_KEYS,
+    PROFILE_GENERATE_SECTION_KEYS,
     bottleneck_summary_complete as _bottleneck_summary_complete,
     bottleneck_summary_observed as _bottleneck_summary_observed,
     layer_profile_field_keys as _layer_profile_field_keys,
@@ -113,6 +127,27 @@ from .tensorization import (
     tensorized_physical_shape_mismatches as _tensorized_physical_shape_mismatches,
 )
 
+
+VALIDATION_STEPS = (
+    "import_llama",
+    "plan",
+    "plan_diff",
+    "emit_config",
+    "prepare_artifacts",
+    "build_program",
+    "py_compile",
+    "official_config_diff",
+    "tensorize_parameters_dry_run",
+    "decode_shell_dry_run",
+    "attention_primitives_dry_run",
+    "attention_layer_dry_run",
+    "single_layer_decode_dry_run",
+    "decode_step_smoke_dry_run",
+    "decode_step_profile_dry_run",
+    "search_dry_run",
+    "decode_step_autotune_dry_run",
+    "package_program",
+)
 
 REAL_DECODE_VALIDATION_STEPS = (
     "official_config_diff",
@@ -951,14 +986,6 @@ def real_decode_acceptance_scope(
 
 
 def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
-    from .. import validation
-
-    VALIDATION_STEPS = validation.VALIDATION_STEPS
-    _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
-    _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-    _required_validate_direct_artifacts_exist = validation._required_validate_direct_artifacts_exist
-    _validate_direct_artifact_observed = validation._validate_direct_artifact_observed
-
     steps = report.get("steps", {})
     results = report.get("results", {})
     artifacts = report.get("artifacts", {})
@@ -1227,17 +1254,6 @@ def real_decode_acceptance(
     min_baseline_ratio: float | None,
     require_decode_shell_numeric_reference: bool,
 ) -> dict[str, Any]:
-    from .. import validation
-
-    DECODE_PARAMETER_ROLES = validation.DECODE_PARAMETER_ROLES
-    LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
-    PARITY_SECTIONS = validation.PARITY_SECTIONS
-    PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
-    _config_gap_summary_complete = validation._config_gap_summary_complete
-    _config_gap_summary_observed = validation._config_gap_summary_observed
-    _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
-    _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-
     if report.get("dry_run"):
         return {
             "status": "dry_run",

@@ -59,6 +59,10 @@ from .reports.attention import (
     attention_primitives_dry_run_complete as _attention_primitives_dry_run_complete,
     attention_primitives_dry_run_observed as _attention_primitives_dry_run_observed,
 )
+from .reports.artifacts import (
+    required_validate_direct_artifacts_exist as _required_validate_direct_artifacts_exist,
+    validate_direct_artifact_observed as _validate_direct_artifact_observed,
+)
 from .reports.autotune import (
     autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
     autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
@@ -78,6 +82,13 @@ from .reports.autotune import (
     autotune_missing_varied_knobs as _autotune_missing_varied_knobs,
     autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
     autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
+)
+from .reports.config import (
+    config_gap_issue_complete as _config_gap_issue_complete,
+    config_gap_summary_complete as _config_gap_summary_complete,
+    config_gap_summary_observed as _config_gap_summary_observed,
+    official_required_field_coverage_complete as _official_required_field_coverage_complete,
+    official_required_field_coverage_observed as _official_required_field_coverage_observed,
 )
 from .reports.depth import (
     PROFILE_LAYER_LATENCY_KEYS,
@@ -116,6 +127,7 @@ from .reports.performance import (
 )
 from .reports.profiling import (
     PROFILE_BOTTLENECK_SECTION_KEYS,
+    PROFILE_GENERATE_SECTION_KEYS,
     bottleneck_summary_complete as _bottleneck_summary_complete,
     bottleneck_summary_observed as _bottleneck_summary_observed,
     layer_profile_field_keys as _layer_profile_field_keys,
@@ -198,6 +210,7 @@ from .reports.tensorization import (
 )
 from .reports.validation import (
     REAL_DECODE_VALIDATION_STEPS,
+    VALIDATION_STEPS,
     acceptance_check_passed as _acceptance_check_passed,
     final_acceptance_gate_matrix as _final_acceptance_gate_matrix,
     generate_prefill_decode_ready as _generate_prefill_decode_ready,
@@ -246,40 +259,6 @@ from .templates.registry import (
     load_template_config,
 )
 
-
-VALIDATION_STEPS = (
-    "import_llama",
-    "plan",
-    "plan_diff",
-    "emit_config",
-    "prepare_artifacts",
-    "build_program",
-    "py_compile",
-    "official_config_diff",
-    "tensorize_parameters_dry_run",
-    "decode_shell_dry_run",
-    "attention_primitives_dry_run",
-    "attention_layer_dry_run",
-    "single_layer_decode_dry_run",
-    "decode_step_smoke_dry_run",
-    "decode_step_profile_dry_run",
-    "search_dry_run",
-    "decode_step_autotune_dry_run",
-    "package_program",
-)
-
-PROFILE_GENERATE_SECTION_KEYS = (
-    "prefill_ms",
-    "decode_total_ms",
-    "decode_step_ms_mean",
-    "embedding_ms",
-    "prefill_attention_ms",
-    "decode_attention_ms",
-    "mlp_ms",
-    "lm_head_ms",
-    "argmax_ms",
-    "host_copy_ms",
-)
 
 def default_official_template_path() -> Path:
     return (
@@ -4935,153 +4914,6 @@ def _sum_present_counts(*values: Any) -> int | None:
         total += numeric
         seen = True
     return total if seen else None
-
-
-def _required_validate_direct_artifacts_exist(artifacts: Any) -> bool:
-    required = [
-        "semantic_json",
-        "execution_plan",
-        "plan_diff",
-        "official_config_diff",
-        "parameter_config",
-        "program_dir",
-        "tensorize_report",
-        "decode_shell_report",
-        "attention_layer_report",
-        "single_layer_decode_report",
-        "decode_step_smoke_report",
-        "decode_step_profile_report",
-        "search_report",
-        "decode_step_autotune_report",
-        "package_dir",
-    ]
-    if not isinstance(artifacts, dict):
-        return False
-    return all(_path_exists(artifacts.get(name)) for name in required)
-
-
-def _validate_direct_artifact_observed(
-    artifacts: Any,
-) -> dict[str, bool]:
-    if not isinstance(artifacts, dict):
-        return {}
-    return {
-        str(name): _path_exists(path)
-        for name, path in sorted(artifacts.items())
-    }
-
-
-def _config_gap_summary_complete(summary: Any) -> bool:
-    if not isinstance(summary, dict):
-        return False
-    status = summary.get("status")
-    if status not in {"match", "diff_found"}:
-        return False
-    if not _int_equal(summary.get("section_count"), len(PARITY_SECTIONS)):
-        return False
-    counts = summary.get("issue_counts_by_section")
-    if not isinstance(counts, dict):
-        return False
-    if set(counts) != set(PARITY_SECTIONS):
-        return False
-    try:
-        issue_count = int(summary.get("issue_count"))
-        section_counts = {
-            section: int(counts[section])
-            for section in PARITY_SECTIONS
-        }
-    except (TypeError, ValueError):
-        return False
-    if issue_count < 0 or any(count < 0 for count in section_counts.values()):
-        return False
-    if sum(section_counts.values()) != issue_count:
-        return False
-    sections_with_issues = summary.get("sections_with_issues")
-    if not isinstance(sections_with_issues, list):
-        return False
-    if set(sections_with_issues) - set(PARITY_SECTIONS):
-        return False
-    expected_sections = [
-        section
-        for section in PARITY_SECTIONS
-        if section_counts[section] > 0
-    ]
-    if sections_with_issues != expected_sections:
-        return False
-    top_issue_paths = summary.get("top_issue_paths")
-    if not isinstance(top_issue_paths, list):
-        return False
-    if issue_count == 0:
-        return status == "match" and sections_with_issues == [] and top_issue_paths == []
-    return status == "diff_found" and bool(top_issue_paths) and all(
-        _config_gap_issue_complete(issue) for issue in top_issue_paths
-    )
-
-
-def _official_required_field_coverage_complete(coverage: Any) -> bool:
-    if not isinstance(coverage, dict):
-        return False
-    try:
-        required = int(coverage.get("required_field_count"))
-        present = int(coverage.get("present_required_count"))
-        missing = int(coverage.get("missing_required_count"))
-    except (TypeError, ValueError):
-        return False
-    missing_paths = coverage.get("missing_required_paths")
-    missing_sections = coverage.get("sections_missing_required_fields")
-    return (
-        coverage.get("status") == "complete"
-        and required > 0
-        and present == required
-        and missing == 0
-        and missing_paths == []
-        and missing_sections == []
-    )
-
-
-def _official_required_field_coverage_observed(
-    coverage: Any,
-) -> dict[str, Any]:
-    if not isinstance(coverage, dict):
-        return {}
-    return {
-        "status": coverage.get("status"),
-        "required_field_count": coverage.get("required_field_count"),
-        "present_required_count": coverage.get("present_required_count"),
-        "missing_required_count": coverage.get("missing_required_count"),
-        "missing_required_paths": coverage.get("missing_required_paths", []),
-        "sections_missing_required_fields": coverage.get(
-            "sections_missing_required_fields",
-            [],
-        ),
-    }
-
-
-def _config_gap_issue_complete(issue: Any) -> bool:
-    if not isinstance(issue, dict):
-        return False
-    return (
-        issue.get("kind") in {"missing", "mismatch", "extra"}
-        and issue.get("section") in PARITY_SECTIONS
-        and _non_empty_string(issue.get("path"))
-    )
-
-
-def _config_gap_summary_observed(summary: Any) -> dict[str, Any]:
-    if not isinstance(summary, dict):
-        return {}
-    counts = summary.get("issue_counts_by_section")
-    top_issue_paths = summary.get("top_issue_paths")
-    return {
-        "status": summary.get("status"),
-        "issue_count": summary.get("issue_count"),
-        "section_count": summary.get("section_count"),
-        "sections_with_issues": summary.get("sections_with_issues"),
-        "issue_count_sections": _field_keys(counts),
-        "top_issue_count": len(top_issue_paths)
-        if isinstance(top_issue_paths, list)
-        else None,
-    }
 
 
 def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:

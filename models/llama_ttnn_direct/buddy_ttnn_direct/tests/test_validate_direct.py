@@ -12,7 +12,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
     attention as attention_reports,
+    artifacts as artifact_reports,
     autotune as autotune_reports,
+    config as config_reports,
     depth as depth_reports,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
@@ -60,6 +62,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
     PROFILE_BOTTLENECK_SECTION_KEYS,
+    PROFILE_GENERATE_SECTION_KEYS,
     bottleneck_summary_complete,
     bottleneck_summary_observed,
     layer_profile_field_keys,
@@ -127,6 +130,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.tensorization import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     REAL_DECODE_VALIDATION_STEPS,
+    VALIDATION_STEPS as REPORT_VALIDATION_STEPS,
     acceptance_check_passed,
     final_acceptance_gate_matrix,
     generate_prefill_decode_ready,
@@ -211,6 +215,10 @@ class ValidateDirectTest(unittest.TestCase):
         )
 
     def test_validation_gate_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module.VALIDATION_STEPS,
+            REPORT_VALIDATION_STEPS,
+        )
         self.assertIs(
             validation_module.REAL_DECODE_VALIDATION_STEPS,
             REAL_DECODE_VALIDATION_STEPS,
@@ -471,6 +479,10 @@ class ValidateDirectTest(unittest.TestCase):
             validation_module.PROFILE_BOTTLENECK_SECTION_KEYS,
             PROFILE_BOTTLENECK_SECTION_KEYS,
         )
+        self.assertIs(
+            validation_module.PROFILE_GENERATE_SECTION_KEYS,
+            PROFILE_GENERATE_SECTION_KEYS,
+        )
         pairs = (
             (
                 validation_module._bottleneck_summary_complete,
@@ -660,6 +672,35 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIs(
                 getattr(validation_module, f"_{name}"),
                 getattr(depth_reports, name),
+            )
+
+    def test_validation_config_artifact_helpers_reexport_compatibly(
+        self,
+    ) -> None:
+        self.assertIs(
+            validation_module.PARITY_SECTIONS,
+            config_reports.PARITY_SECTIONS,
+        )
+        config_names = (
+            "config_gap_issue_complete",
+            "config_gap_summary_complete",
+            "config_gap_summary_observed",
+            "official_required_field_coverage_complete",
+            "official_required_field_coverage_observed",
+        )
+        for name in config_names:
+            self.assertIs(
+                getattr(validation_module, f"_{name}"),
+                getattr(config_reports, name),
+            )
+        artifact_names = (
+            "required_validate_direct_artifacts_exist",
+            "validate_direct_artifact_observed",
+        )
+        for name in artifact_names:
+            self.assertIs(
+                getattr(validation_module, f"_{name}"),
+                getattr(artifact_reports, name),
             )
 
     def test_performance_baseline_reference_resolves(self) -> None:

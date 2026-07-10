@@ -25,6 +25,19 @@ PROFILE_BOTTLENECK_SECTION_KEYS = (
     "trace_execute_ms",
 )
 
+PROFILE_GENERATE_SECTION_KEYS = (
+    "prefill_ms",
+    "decode_total_ms",
+    "decode_step_ms_mean",
+    "embedding_ms",
+    "prefill_attention_ms",
+    "decode_attention_ms",
+    "mlp_ms",
+    "lm_head_ms",
+    "argmax_ms",
+    "host_copy_ms",
+)
+
 
 def lm_head_profile_complete(
     profile: Any,
