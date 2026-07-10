@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import py_compile
 import subprocess
@@ -18,6 +19,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment import (
     collect_tenstorrent_device_environment,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
 
 class BuildProgramTest(unittest.TestCase):
@@ -93,25 +95,34 @@ class BuildProgramTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn(
-                "ttnn_compat import ops as ttnn_ops",
+                "ttnn_compat.model_ops import",
                 source,
             )
             self.assertIn(
-                "ttnn_ops.paged_sdpa_decode",
+                "self.ops.paged_sdpa_decode",
                 source,
             )
             self.assertIn(
-                "ttnn_ops.paged_update_cache",
+                "self.ops.paged_update_cache",
                 source,
             )
             self.assertIn("def prefill_prompt", source)
-            self.assertIn("ttnn_ops.scaled_dot_product_attention", source)
-            self.assertIn("ttnn_ops.fill_cache", source)
-            self.assertIn("def normalize_decode_token", source)
-            self.assertIn("def resolve_memory_config", source)
+            self.assertIn("self.ops.scaled_dot_product_attention", source)
+            self.assertIn("self.ops.fill_cache", source)
             self.assertIn("to_memory_config.{op_name}.input", source)
-            self.assertIn("[0, shape[1] - 1]", source)
-            self.assertIn("[batch_size, shape[1]]", source)
+
+            compat_source = inspect.getsource(TTNNCompatOps)
+            self.assertIn("ttnn_ops.paged_sdpa_decode", compat_source)
+            self.assertIn("ttnn_ops.paged_update_cache", compat_source)
+            self.assertIn(
+                "ttnn_ops.scaled_dot_product_attention",
+                compat_source,
+            )
+            self.assertIn("ttnn_ops.fill_cache", compat_source)
+            self.assertIn("def normalize_decode_token", compat_source)
+            self.assertIn("def resolve_memory_config", compat_source)
+            self.assertIn("[0, shape[1] - 1]", compat_source)
+            self.assertIn("[batch_size, shape[1]]", compat_source)
 
     def test_generated_run_decode_dry_run_prints_per_layer_ops(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

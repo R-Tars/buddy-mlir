@@ -135,16 +135,14 @@ Runtime reference data lives under `buddy_ttnn_direct/reference/` and may be
 loaded by product code. Historical run evidence lives under `docs/evidence/`
 and must never be imported by runtime code.
 
-## Remaining Refactor Work
+## Compatibility Boundaries
 
-The runtime, report, compatibility, and compiler entry-point splits are
-complete enough for the product path, but two large compatibility areas
-remain:
+Generated-model source fragments live under `compiler/templates/`, divided
+into preamble, model core, attention, MLP, LM-head, and constants. The small
+`compiler/source_templates.py` renderer composes those fragments. Generated
+programs import `TTNNCompatOps` from `ttnn_compat/model_ops.py` instead of
+embedding a private copy of the compatibility layer.
 
-- `compiler/source_templates.py` still contains one large generated-model
-  source template that can be divided by attention, MLP, norm, and LM-head;
-- legacy validation remains available under diagnostics for compatibility but
-  is not part of product validation or default tests.
-
-These are isolated from the visible product workflow and can be simplified
-without changing the command or report contracts described here.
+Legacy validation remains available under diagnostics for compatibility but
+is not part of product validation or default tests. It can be simplified
+without changing the visible command or report contracts described here.

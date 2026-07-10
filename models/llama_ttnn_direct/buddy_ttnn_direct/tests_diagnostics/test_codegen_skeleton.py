@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import importlib.util
+import inspect
 import json
 import py_compile
-import importlib.util
 import sys
 import tempfile
 import types
@@ -27,6 +28,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
     build_execution_plan,
     dump_execution_plan,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
 
 def _fake_plan(
@@ -110,12 +112,12 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             source = (out_dir / "model.py").read_text()
             self.assertIn("import ttnn", source)
-            self.assertIn("ttnn_compat import ops as ttnn_ops", source)
+            self.assertIn("ttnn_compat.model_ops import", source)
             self.assertIn("class BuddyLlama31TTNN", source)
             self.assertIn("def decode_step", source)
             self.assertIn("def decode_layer", source)
-            self.assertIn("class TTNNCompatOps", source)
-            self.assertIn("self.op_log = []", source)
+            self.assertNotIn("class TTNNCompatOps", source)
+            self.assertIn("self.op_log = []", inspect.getsource(TTNNCompatOps))
             self.assertIn('op_name="residual_add.attn"', source)
             self.assertIn('op_name="residual_add.mlp"', source)
             self.assertIn("self.ops.linear", source)
@@ -261,8 +263,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
     def test_generated_rms_norm_converts_hidden_to_tile_layout(self) -> None:
         plan = _fake_plan(num_layers=1)
         source = render_python_ttnn_model(plan)
-        self.assertIn("def ensure_tile_layout", source)
-        self.assertIn("to_layout.tile.{op_name}", source)
+        compat_source = inspect.getsource(TTNNCompatOps)
+        self.assertIn("def ensure_tile_layout", compat_source)
+        self.assertIn("to_layout.tile.{op_name}", compat_source)
 
         fake_ttnn = _make_fake_ttnn_module()
         fake_ttnn.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
@@ -599,8 +602,11 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             )
 
             source = (out_dir / "model.py").read_text()
-            self.assertIn("def reshape_decode_hidden_for_layer", source)
             self.assertIn("reshape_hidden_decode", source)
+            self.assertIn(
+                "def reshape_decode_hidden_for_layer",
+                inspect.getsource(TTNNCompatOps),
+            )
 
             fake_ttnn = _make_fake_ttnn_module()
             sys.modules["ttnn"] = fake_ttnn
@@ -609,6 +615,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             finally:
                 sys.modules.pop("ttnn", None)
 
+            self.assertIs(generated.TTNNCompatOps, TTNNCompatOps)
             ops = generated.TTNNCompatOps(fake_ttnn)
             hidden_3d = _FakeTensor(
                 "hidden_3d",
@@ -657,7 +664,11 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             )
 
             source = (out_dir / "model.py").read_text()
-            self.assertIn('self._record(f"{op_name}.reshape")', source)
+            self.assertIn("self.ops.normalize_decode_token", source)
+            self.assertIn(
+                'self._record(f"{op_name}.reshape")',
+                inspect.getsource(TTNNCompatOps),
+            )
 
             fake_ttnn = _make_fake_ttnn_module()
             sys.modules["ttnn"] = fake_ttnn

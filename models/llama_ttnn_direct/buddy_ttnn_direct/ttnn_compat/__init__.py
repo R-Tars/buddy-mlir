@@ -2,6 +2,7 @@
 
 from . import ops
 from .errors import UnsupportedTTNNOp
+from .model_ops import TTNNCompatOps
 from .ops import (
     concat_heads_prefill,
     fill_cache,
@@ -17,6 +18,7 @@ from .ops import (
 )
 
 __all__ = [
+    "TTNNCompatOps",
     "UnsupportedTTNNOp",
     "concat_heads_prefill",
     "fill_cache",
