@@ -20,6 +20,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
+    resolve_performance_baseline as resolve_report_performance_baseline,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
 )
@@ -56,6 +59,9 @@ class ValidateDirectTest(unittest.TestCase):
         baseline = validation_module.resolve_performance_baseline(
             "tt_metal_official_llama31_8b_b32"
         )
+        report_baseline = resolve_report_performance_baseline(
+            "tt_metal_official_llama31_8b_b32"
+        )
         self.assertEqual(baseline["model"], "Llama 3.1 8B")
         self.assertEqual(baseline["role"], "official_8b_target")
         self.assertEqual(baseline["batch_size"], 32)
@@ -63,6 +69,7 @@ class ValidateDirectTest(unittest.TestCase):
             baseline["decode_tokens_per_second_per_user"],
             33.1,
         )
+        self.assertEqual(report_baseline, baseline)
         self.assertTrue(baseline["baseline_file"].endswith(
             "performance_baselines.json"
         ))
