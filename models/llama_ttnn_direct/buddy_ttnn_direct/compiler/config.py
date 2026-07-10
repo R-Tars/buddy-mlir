@@ -86,6 +86,14 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "output_memory_config": "dram",
             "output_dtype": None,
         },
+        "rotary": {
+            "theta": plan.get("rope_theta", 10000.0),
+            "scaling": copy.deepcopy(plan.get("rope_scaling")),
+            "max_position_embeddings": plan.get(
+                "max_position_embeddings",
+                plan["max_cache_len"],
+            ),
+        },
         "attention": {
             "template": "official_paged_attention_decode",
             "op_sequence": official_paged_attention_decode_op_sequence(),

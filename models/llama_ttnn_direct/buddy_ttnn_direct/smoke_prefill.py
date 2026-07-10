@@ -326,7 +326,11 @@ def _run_generated_prefill(
     )
 
     start = time.perf_counter()
-    token, kv_cache, cache_reports = model.prefill_prompt(token_ids, kv_cache)
+    token, kv_cache, cache_reports = model.prefill_prompt(
+        token_ids,
+        kv_cache,
+        valid_seq_len=int(plan["prefill_len"]),
+    )
     synchronize = getattr(ttnn, "synchronize_device", None)
     if callable(synchronize):
         synchronize(device)
@@ -584,6 +588,7 @@ def _prefill_plan(
         "input_shapes": input_shapes,
         "parameter_shapes": parameter_shapes,
         "layer_parameter_shapes": layer_parameter_shapes,
+        "rotary": dict(config.get("rotary") or {}),
         "expected_intermediate_shapes": {
             "embedding": [batch_size, prefill_len, hidden_size],
             "qkv": [batch_size, prefill_len, qkv_size],
@@ -596,7 +601,7 @@ def _prefill_plan(
             "mlp_intermediate": [batch_size, prefill_len, intermediate_size],
         },
         "expected_output_shapes": {
-            "token": [batch_size, prefill_len],
+            "token": [batch_size, 1],
             "key_cache": kv_cache_shape,
             "value_cache": kv_cache_shape,
         },

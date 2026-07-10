@@ -31,6 +31,17 @@ def validate_llama_graph(graph: LlamaModelGraph) -> None:
         errors.append("seq_len must be positive")
     if graph.max_cache_len <= 0:
         errors.append("max_cache_len must be positive")
+    if graph.rope_theta <= 0:
+        errors.append("rope_theta must be positive")
+    if (
+        graph.max_position_embeddings is not None
+        and graph.max_position_embeddings <= 0
+    ):
+        errors.append("max_position_embeddings must be positive")
+    if graph.rope_scaling is not None and not isinstance(
+        graph.rope_scaling, dict
+    ):
+        errors.append("rope_scaling must be a mapping")
 
     expected_head_dim = graph.hidden_size // graph.num_attention_heads
     if graph.hidden_size % graph.num_attention_heads:

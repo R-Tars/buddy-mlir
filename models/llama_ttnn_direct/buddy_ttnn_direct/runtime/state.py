@@ -98,7 +98,7 @@ def build_generate_state(
         torch=torch,
         device=device,
         dtype_seed=dtype_seed,
-        prefill_plan=prefill_plan,
+        plan=prefill_plan,
     )
     tensorization_count = int(result.report["tensor_count"])
     tensor_conversion_count = (
@@ -143,6 +143,9 @@ def build_generate_state(
             ),
             "prefill_rotary_runtime_input_tensor_count": (
                 prefill_rotary.tensor_conversion_count
+            ),
+            "prefill_rotary_runtime_state": (
+                prefill_rotary.rotary_runtime_state
             ),
             "kv_cache_runtime_input_tensor_count": (
                 kv_runtime.tensor_conversion_count

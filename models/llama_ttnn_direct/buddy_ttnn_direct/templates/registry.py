@@ -170,6 +170,9 @@ def build_execution_plan(
         "head_dim": graph.head_dim,
         "vocab_size": graph.vocab_size,
         "rms_norm_eps": graph.rms_norm_eps,
+        "rope_theta": graph.rope_theta,
+        "rope_scaling": graph.rope_scaling,
+        "max_position_embeddings": graph.max_position_embeddings,
         "template_config": {
             "device": config["device"],
             "model": config["model"],

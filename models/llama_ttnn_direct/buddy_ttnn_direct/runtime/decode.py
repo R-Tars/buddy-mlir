@@ -11,12 +11,12 @@ from ..decode_loop import (
 )
 from ..smoke_decode_shell import _dtype, _shape
 from ..smoke_single_layer_decode import (
-    _attach_runtime_rotary_parameters,
     _build_prompt_decode_runtime_state_tensors,
     _decode_step_reference,
     _generated_observed_op_sequence,
     _time_decode_step,
 )
+from .rotary import attach_decode_rotary_parameters
 
 
 def prefill_token_direct_handoff(*, prefill_token: Any) -> SimpleNamespace:
@@ -56,7 +56,7 @@ def build_decode_runtime_for_position(
             + 1
         ),
     )
-    rotary_runtime = _attach_runtime_rotary_parameters(
+    rotary_runtime = attach_decode_rotary_parameters(
         parameters=parameters,
         ttnn=ttnn,
         torch=torch,

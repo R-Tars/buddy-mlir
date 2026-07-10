@@ -80,7 +80,25 @@ def import_hf_llama(
     rms_norm_eps = _config_float(
         config_obj, "rms_norm_eps", "norm_eps", default=1e-5
     )
-    rope_theta = _config_float(config_obj, "rope_theta", default=10000.0)
+    rope_scaling = _config_mapping(
+        config_obj,
+        "rope_scaling",
+        "rope_parameters",
+    )
+    rope_theta = float(
+        _config_value(
+            config_obj,
+            "rope_theta",
+            default=(rope_scaling or {}).get("rope_theta", 10000.0),
+        )
+    )
+    if rope_scaling is not None:
+        rope_scaling.pop("rope_theta", None)
+    max_position_embeddings = _config_int(
+        config_obj,
+        "max_position_embeddings",
+        default=max_cache_len,
+    )
 
     layers = [
         _import_layer(
@@ -138,6 +156,8 @@ def import_hf_llama(
         seq_len=seq_len,
         max_cache_len=max_cache_len,
         generation_mode=generation_mode,
+        max_position_embeddings=max_position_embeddings,
+        rope_scaling=rope_scaling,
     )
     validate_llama_graph(graph)
     return graph
@@ -398,6 +418,25 @@ def _config_float(
         joined = ", ".join(names)
         raise KeyError(f"missing required Llama config field: {joined}")
     return float(value)
+
+
+def _config_mapping(
+    config: Mapping[str, Any] | object,
+    *names: str,
+) -> dict[str, Any] | None:
+    value = _config_value(config, *names, default=None)
+    if value is None:
+        return None
+    if isinstance(value, Mapping):
+        return dict(value)
+    for method_name in ("model_dump", "to_dict"):
+        method = getattr(value, method_name, None)
+        if callable(method):
+            result = method()
+            if isinstance(result, Mapping):
+                return dict(result)
+    joined = ", ".join(names)
+    raise ValueError(f"Llama config field {joined} must be a mapping")
 
 
 def _config_value(

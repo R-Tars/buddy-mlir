@@ -81,7 +81,13 @@ class BuddyLlama31TTNN:
         except TypeError:
             return core_grid_type(grid_y, grid_x)
 
-    def prefill_prompt(self, token_ids, kv_cache, page_table=None):
+    def prefill_prompt(
+        self,
+        token_ids,
+        kv_cache,
+        page_table=None,
+        valid_seq_len=None,
+    ):
         hidden = self.embed(token_ids)
         cache_reports = []
         for layer_id in range(self.config.num_layers):
@@ -92,6 +98,12 @@ class BuddyLlama31TTNN:
                 page_table,
             )
             cache_reports.append(cache_report)
+        if valid_seq_len is not None:
+            hidden = self.ops.select_sequence_position(
+                hidden,
+                int(valid_seq_len) - 1,
+                op_name="select_last_prompt_hidden",
+            )
         hidden = self.final_norm(hidden)
         token = self.lm_head_argmax(hidden)
         return token, kv_cache, cache_reports

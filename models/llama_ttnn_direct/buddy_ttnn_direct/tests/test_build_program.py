@@ -73,6 +73,12 @@ class BuildProgramTest(unittest.TestCase):
                 generated_config["rms_norm"]["output_memory_config"],
                 "dram",
             )
+            self.assertEqual(generated_config["rotary"]["theta"], 500000.0)
+            self.assertIsNone(generated_config["rotary"]["scaling"])
+            self.assertEqual(
+                generated_config["rotary"]["max_position_embeddings"],
+                1024,
+            )
 
             semantic = json.loads((out_dir / "semantic_graph.json").read_text())
             self.assertEqual(semantic["model_name"], "fake-build-program")
@@ -107,6 +113,8 @@ class BuildProgramTest(unittest.TestCase):
                 source,
             )
             self.assertIn("def prefill_prompt", source)
+            self.assertIn("valid_seq_len=None", source)
+            self.assertIn("self.ops.select_sequence_position", source)
             self.assertIn("self.ops.scaled_dot_product_attention", source)
             self.assertIn("self.ops.fill_cache", source)
             self.assertIn("to_memory_config.{op_name}.input", source)

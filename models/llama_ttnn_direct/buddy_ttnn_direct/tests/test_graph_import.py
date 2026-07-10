@@ -27,6 +27,14 @@ def _fake_config(num_layers: int = 2) -> dict[str, object]:
         "vocab_size": 128,
         "rms_norm_eps": 1e-5,
         "rope_theta": 500000.0,
+        "max_position_embeddings": 131072,
+        "rope_scaling": {
+            "factor": 8.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+            "rope_type": "llama3",
+        },
         "tie_word_embeddings": False,
     }
 
@@ -77,6 +85,9 @@ class LlamaSemanticImporterTest(unittest.TestCase):
         self.assertEqual(graph.num_key_value_heads, 2)
         self.assertEqual(graph.head_dim, 4)
         self.assertEqual(graph.vocab_size, 128)
+        self.assertEqual(graph.rope_theta, 500000.0)
+        self.assertEqual(graph.max_position_embeddings, 131072)
+        self.assertEqual(graph.rope_scaling["rope_type"], "llama3")
         self.assertEqual(graph.mode, "decode")
         self.assertEqual(graph.batch_size, 32)
         self.assertEqual(graph.seq_len, 1)
@@ -167,6 +178,8 @@ class LlamaSemanticImporterTest(unittest.TestCase):
             self.assertEqual(dumped["num_attention_heads"], 4)
             self.assertEqual(dumped["num_key_value_heads"], 2)
             self.assertEqual(dumped["head_dim"], 4)
+            self.assertEqual(dumped["rope_theta"], 500000.0)
+            self.assertEqual(dumped["rope_scaling"]["factor"], 8.0)
             self.assertEqual(dumped["mode"], "decode")
             self.assertEqual(dumped["batch_size"], 32)
             self.assertEqual(dumped["seq_len"], 1)

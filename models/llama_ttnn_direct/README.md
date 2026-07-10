@@ -28,8 +28,10 @@ HF config and weights
   evidence, not performance parity.
 - Full-model numerical equivalence to the Hugging Face reference is not yet
   established.
-- Full-logits argmax is the dominant measured bottleneck. Split LM-head local
-  argmax plus global reduction is the next performance target.
+- The frozen profile's full-logits argmax was the dominant measured
+  bottleneck. The current path selects the final valid prompt position before
+  final norm and LM-head; a post-fix device profile is still pending. Split
+  LM-head local argmax plus global reduction remains the next decode target.
 
 See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 [docs/evidence/README.md](docs/evidence/README.md) for the frozen measurements.
@@ -139,6 +141,8 @@ imported by runtime code.
 
 - LM-head shards are concatenated into full logits before argmax.
 - There is no full-model logits, hidden-state, or KV-cache PCC gate yet.
+- Real Llama 3 RoPE values are generated from the HF config, but their
+  end-to-end device numerics have not yet passed a PCC gate.
 - The current profile mixes prefill and a short decode run; a steady-state
   decode benchmark is still needed for official comparison.
 - Official dtype, memory, program, and core-grid parity remains incomplete.

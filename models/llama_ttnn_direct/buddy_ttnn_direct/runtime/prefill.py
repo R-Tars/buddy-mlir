@@ -10,8 +10,8 @@ from ..smoke_decode_shell import _dtype, _runtime_int_tensor, _shape
 from ..smoke_prefill import _observed_cache_population, _prefill_reference
 from ..smoke_single_layer_decode import (
     _generated_observed_op_sequence,
-    _synthetic_tensor_factory,
 )
+from .rotary import attach_prefill_rotary_parameters
 
 
 def build_prefill_page_table_tensor(
@@ -82,45 +82,6 @@ def prefill_token_ids_tensor(
     )
 
 
-def attach_prefill_rotary_parameters(
-    *,
-    parameters: Any,
-    ttnn: Any,
-    torch: Any,
-    device: Any,
-    dtype_seed: str,
-    prefill_plan: dict[str, Any],
-) -> SimpleNamespace:
-    tensor, tensor_count = _synthetic_tensor_factory(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-    )
-    shapes = prefill_plan["layer_parameter_shapes"]
-    for layer_id in range(int(prefill_plan["layers"])):
-        layer = parameters.layers[layer_id]
-        attention = getattr(layer, "attention", None)
-        if attention is None:
-            attention = SimpleNamespace()
-            layer.attention = attention
-        attention.rotary = SimpleNamespace(
-            cos_matrix=tensor(
-                shapes["rotary_cos_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_cos",
-            ),
-            sin_matrix=tensor(
-                shapes["rotary_sin_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_sin",
-            ),
-            transformation_matrix=tensor(
-                shapes["rotary_transformation_matrix"],
-                name=f"prefill.layers.{layer_id}.rotary_transform",
-            ),
-        )
-    return SimpleNamespace(tensor_conversion_count=tensor_count())
-
-
 def run_prefill_prompt(
     *,
     context: Any,
@@ -135,6 +96,9 @@ def run_prefill_prompt(
             context.prefill_token_ids,
             context.kv_cache,
             context.prefill_page_table,
+            valid_seq_len=context.prefill_tokenization[
+                "effective_token_count"
+            ],
         )
     )
     context.update_kv_cache(kv_cache)

@@ -332,6 +332,47 @@ class TTNNCompatOps:
                 except TypeError:
                     raise err
 
+    def select_sequence_position(
+        self,
+        tensor,
+        position,
+        *,
+        op_name="select_sequence_position",
+    ):
+        shape = _tensor_shape(tensor)
+        if shape is None or len(shape) not in (3, 4):
+            return tensor
+        sequence_dim = 1 if len(shape) == 3 else 2
+        sequence_length = shape[sequence_dim]
+        position = int(position)
+        if position < 0 or position >= sequence_length:
+            raise ValueError(
+                f"sequence position {position} is outside length "
+                f"{sequence_length}"
+            )
+        slice_op = getattr(self.ttnn, "slice", None)
+        if not callable(slice_op):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "select_sequence_position",
+                (("slice",),),
+            )
+        starts = [0 for _ in shape]
+        ends = list(shape)
+        steps = [1 for _ in shape]
+        starts[sequence_dim] = position
+        ends[sequence_dim] = position + 1
+        self._record(op_name)
+        try:
+            return slice_op(tensor, starts, ends, steps)
+        except TypeError as err:
+            try:
+                return slice_op(tensor, starts, ends, steps=steps)
+            except TypeError:
+                try:
+                    return slice_op(tensor, starts, ends)
+                except TypeError:
+                    raise err
+
     def nlp_create_qkv_heads_decode(
         self,
         qkv,

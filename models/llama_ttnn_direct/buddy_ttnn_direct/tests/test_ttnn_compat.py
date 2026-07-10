@@ -27,6 +27,25 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             UnsupportedTTNNOp,
         )
 
+    def test_model_ops_selects_requested_sequence_position(self) -> None:
+        calls = []
+
+        def slice_op(tensor, starts, ends, steps):
+            calls.append((tensor, starts, ends, steps))
+            return "selected"
+
+        ops = TTNNCompatOps(types.SimpleNamespace(slice=slice_op))
+        tensor = types.SimpleNamespace(shape=(2, 8, 16))
+
+        result = ops.select_sequence_position(tensor, 2)
+
+        self.assertEqual(result, "selected")
+        self.assertEqual(
+            calls,
+            [(tensor, [0, 2, 0], [2, 3, 16], [1, 1, 1])],
+        )
+        self.assertEqual(ops.op_log, ["select_sequence_position"])
+
     def test_qkv_heads_wrapper_calls_experimental_api(self) -> None:
         fake = _fake_ttnn()
 

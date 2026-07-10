@@ -2346,6 +2346,7 @@ def _decode_step_plan(
         "input_shapes": input_shapes,
         "parameter_shapes": parameter_shapes,
         "layer_parameter_shapes": layer_parameter_shapes,
+        "rotary": dict(config.get("rotary") or {}),
         "expected_intermediate_shapes": {
             "embedding": _decode_hidden_shape(batch_size, hidden_size),
             "qkv": _decode_hidden_shape(batch_size, qkv_size),

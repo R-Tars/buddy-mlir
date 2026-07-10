@@ -134,8 +134,15 @@ class _FakePrefillModel:
         prefill_token_ids: object,
         kv_cache: object,
         prefill_page_table: object,
+        *,
+        valid_seq_len: int | None = None,
     ) -> tuple[object, list[object], list[dict[str, object]]]:
-        self.prefill_args = (prefill_token_ids, kv_cache, prefill_page_table)
+        self.prefill_args = (
+            prefill_token_ids,
+            kv_cache,
+            prefill_page_table,
+            valid_seq_len,
+        )
         return self.prefill_token, self.kv_cache, self.cache_reports
 
 
@@ -447,32 +454,44 @@ class RuntimeModuleTest(unittest.TestCase):
             torch=_FakeTorchForPrefill(),
             device="device0",
             dtype_seed="bf16",
-            prefill_plan={
+            plan={
                 "layers": 2,
+                "prefill_len": 128,
+                "rotary": {
+                    "theta": 500000.0,
+                    "scaling": None,
+                },
                 "layer_parameter_shapes": {
-                    "rotary_cos_matrix": [1, 32, 128, 128],
-                    "rotary_sin_matrix": [1, 32, 128, 128],
+                    "rotary_cos_matrix": [1, 1, 128, 128],
+                    "rotary_sin_matrix": [1, 1, 128, 128],
                     "rotary_transformation_matrix": [1, 1, 32, 32],
                 },
             },
         )
 
-        self.assertEqual(result.tensor_conversion_count, 6)
+        self.assertEqual(result.tensor_conversion_count, 3)
+        self.assertEqual(result.rotary_runtime_state["source"], "hf_rope_config")
         first_rotary = parameters.layers[0].attention.rotary
-        self.assertEqual(first_rotary.cos_matrix.source, "prefill.layers.0.rotary_cos")
-        self.assertEqual(first_rotary.sin_matrix.source, "prefill.layers.0.rotary_sin")
+        self.assertEqual(
+            first_rotary.cos_matrix.source,
+            "runtime.shared.prefill_rotary_cos",
+        )
+        self.assertEqual(
+            first_rotary.sin_matrix.source,
+            "runtime.shared.prefill_rotary_sin",
+        )
         self.assertEqual(
             first_rotary.transformation_matrix.source,
-            "prefill.layers.0.rotary_transform",
+            "runtime.shared.prefill_rotary_transform",
         )
-        self.assertEqual(first_rotary.cos_matrix.shape, [1, 32, 128, 128])
+        self.assertEqual(first_rotary.cos_matrix.shape, [1, 1, 128, 128])
         self.assertEqual(
             first_rotary.cos_matrix.kwargs,
             {"device": "device0", "dtype": "ttnn.bfloat16", "layout": "tile"},
         )
         second_rotary = parameters.layers[1].attention.rotary
-        self.assertEqual(second_rotary.cos_matrix.source, "prefill.layers.1.rotary_cos")
-        self.assertEqual(len(ttnn.from_torch_calls), 6)
+        self.assertIs(second_rotary, first_rotary)
+        self.assertEqual(len(ttnn.from_torch_calls), 3)
 
     def test_runtime_prefill_prompt_helper_updates_context_and_event(self) -> None:
         original_cache_population = runtime_prefill._observed_cache_population
@@ -520,7 +539,12 @@ class RuntimeModuleTest(unittest.TestCase):
 
         self.assertEqual(
             model.prefill_args,
-            ("prefill-token-ids", ["old-cache"], "prefill-page-table"),
+            (
+                "prefill-token-ids",
+                ["old-cache"],
+                "prefill-page-table",
+                4,
+            ),
         )
         self.assertIs(context.kv_cache, model.kv_cache)
         self.assertIs(context.token_ids, model.prefill_token)
@@ -715,7 +739,7 @@ class RuntimeModuleTest(unittest.TestCase):
         original_runtime_builder = (
             runtime_decode._build_prompt_decode_runtime_state_tensors
         )
-        original_rotary_builder = runtime_decode._attach_runtime_rotary_parameters
+        original_rotary_builder = runtime_decode.attach_decode_rotary_parameters
 
         def fake_runtime_builder(**kwargs: object) -> types.SimpleNamespace:
             self.assertEqual(kwargs["page_block_size"], 4)
@@ -736,7 +760,7 @@ class RuntimeModuleTest(unittest.TestCase):
 
         try:
             runtime_decode._build_prompt_decode_runtime_state_tensors = fake_runtime_builder
-            runtime_decode._attach_runtime_rotary_parameters = fake_rotary_builder
+            runtime_decode.attach_decode_rotary_parameters = fake_rotary_builder
             runtime_state = build_decode_runtime_for_position(
                 ttnn=object(),
                 torch=object(),
@@ -753,7 +777,7 @@ class RuntimeModuleTest(unittest.TestCase):
             runtime_decode._build_prompt_decode_runtime_state_tensors = (
                 original_runtime_builder
             )
-            runtime_decode._attach_runtime_rotary_parameters = original_rotary_builder
+            runtime_decode.attach_decode_rotary_parameters = original_rotary_builder
 
         self.assertEqual(runtime_state.page_table, "page-table")
         self.assertEqual(runtime_state.cache_position, "cache-position")

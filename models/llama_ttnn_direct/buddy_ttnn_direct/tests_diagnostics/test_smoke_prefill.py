@@ -135,7 +135,7 @@ class SmokePrefillTest(unittest.TestCase):
             self.assertEqual(report["status"], "passed")
             self.assertEqual(report["prefill_status"], "passed")
             self.assertEqual(report["kv_cache_source"], "prefill")
-            self.assertEqual(report["output_shapes"]["token"], [2, 8])
+            self.assertEqual(report["output_shapes"]["token"], [2, 1])
             self.assertEqual(report["output_shapes"]["key_cache"], [2, 2, 32, 4])
             self.assertEqual(report["cache_population"][0]["status"], "filled")
             self.assertEqual(
@@ -174,7 +174,7 @@ class SmokePrefillTest(unittest.TestCase):
             )
             self.assertEqual(
                 len([call for call in fake_ttnn.calls if call["op"] == "slice"]),
-                4,
+                5,
             )
             self.assertEqual(report["reference"]["status"], "passed")
             self.assertIn(

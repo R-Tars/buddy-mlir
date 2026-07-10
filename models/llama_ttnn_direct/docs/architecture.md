@@ -71,6 +71,7 @@ weights_manifest.json
 - `context.py`: `TTNNDirectRuntimeContext` and persistent runtime ownership.
 - `tokenizer.py`: prompt tokenization and generated text decoding.
 - `inputs.py`: token, page-table, cache-position, and rotary inputs.
+- `rotary.py`: HF-compatible Llama RoPE values and TTNN tensor placement.
 - `kv_cache.py`: paged KV-cache allocation and metadata.
 - `prefill.py`: prompt prefill orchestration.
 - `decode.py`: decode-step and token handoff orchestration.
@@ -126,6 +127,8 @@ The intended invariants are:
 - parameters are tensorized once per generate call;
 - the paged KV cache is initialized once and filled by prefill;
 - decode steps reuse the same KV cache;
+- prefill and decode RoPE tensors are derived from the HF model configuration;
+- prefill selects the last valid prompt position before final norm and LM-head;
 - generated token tensors are handed directly to the next decode step;
 - host token materialization is limited to reporting and detokenization.
 

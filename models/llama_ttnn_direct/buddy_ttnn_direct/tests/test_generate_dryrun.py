@@ -8,6 +8,10 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.generate import run_generate
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.rotary import (
+    build_decode_rotary_host_tensors,
+    build_prefill_rotary_host_tensors,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
@@ -30,6 +34,70 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_sin
 
 
 class GenerateTest(unittest.TestCase):
+    def test_rotary_host_tensors_contain_real_position_values(self) -> None:
+        import torch
+
+        prefill = build_prefill_rotary_host_tensors(
+            torch=torch,
+            seq_len=2,
+            head_dim=4,
+            theta=10000.0,
+            scaling=None,
+            dtype_seed="float32",
+        )
+
+        self.assertEqual(list(prefill.cos.shape), [1, 1, 2, 4])
+        self.assertEqual(list(prefill.sin.shape), [1, 1, 2, 4])
+        self.assertEqual(prefill.cos[0, 0, 0].tolist(), [1.0] * 4)
+        self.assertEqual(prefill.sin[0, 0, 0].tolist(), [0.0] * 4)
+        self.assertAlmostEqual(
+            prefill.cos[0, 0, 1, 0].item(),
+            0.5403023,
+            places=6,
+        )
+        self.assertAlmostEqual(
+            prefill.sin[0, 0, 1, 0].item(),
+            0.8414710,
+            places=6,
+        )
+        self.assertEqual(prefill.transformation[0, 0, 0, 1].item(), 1.0)
+        self.assertEqual(prefill.transformation[0, 0, 1, 0].item(), -1.0)
+
+        decode = build_decode_rotary_host_tensors(
+            torch=torch,
+            positions=[3, 7],
+            head_dim=4,
+            theta=10000.0,
+            scaling=None,
+            dtype_seed="float32",
+        )
+        self.assertEqual(list(decode.cos.shape), [1, 2, 1, 4])
+        self.assertEqual(list(decode.transformation.shape), [1, 1, 64, 32])
+        self.assertNotEqual(
+            decode.cos[0, 0, 0, 0].item(),
+            decode.cos[0, 1, 0, 0].item(),
+        )
+
+        llama3 = build_prefill_rotary_host_tensors(
+            torch=torch,
+            seq_len=2,
+            head_dim=8,
+            theta=500000.0,
+            scaling={
+                "factor": 8.0,
+                "low_freq_factor": 1.0,
+                "high_freq_factor": 4.0,
+                "original_max_position_embeddings": 8192,
+                "rope_type": "llama3",
+            },
+            dtype_seed="float32",
+        )
+        self.assertAlmostEqual(
+            llama3.sin[0, 0, 1, -1].item(),
+            6.6478697e-6,
+            places=11,
+        )
+
     def test_cli_generate_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

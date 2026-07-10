@@ -24,6 +24,8 @@ class LlamaModelGraph:
     seq_len: int
     max_cache_len: int
     generation_mode: str
+    max_position_embeddings: int | None = None
+    rope_scaling: dict[str, Any] | None = None
 
 
 @dataclass
@@ -139,6 +141,8 @@ def graph_from_dict(data: dict[str, Any]) -> LlamaModelGraph:
         seq_len=data["seq_len"],
         max_cache_len=data["max_cache_len"],
         generation_mode=data["generation_mode"],
+        max_position_embeddings=data.get("max_position_embeddings"),
+        rope_scaling=data.get("rope_scaling"),
     )
 
 
