@@ -20,6 +20,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.legacy_validation import (
+    recover_real_decode_process_failure as recover_legacy_process_failure,
+    recover_real_decode_process_timeout as recover_legacy_process_timeout,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     artifact_evidence,
     artifact_index,
@@ -75,6 +79,16 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_de
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_legacy_recovery_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            recover_real_decode_process_failure,
+            recover_legacy_process_failure,
+        )
+        self.assertIs(
+            recover_real_decode_process_timeout,
+            recover_legacy_process_timeout,
+        )
+
     def test_validation_gate_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
             validation_module._acceptance_check_passed,
