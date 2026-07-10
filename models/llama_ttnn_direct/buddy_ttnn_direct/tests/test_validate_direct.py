@@ -39,6 +39,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     path_exists,
     positive_number,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
+    acceptance_check_passed,
+    final_acceptance_gate_matrix,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
 )
@@ -71,6 +75,47 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_de
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_validation_gate_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._acceptance_check_passed,
+            acceptance_check_passed,
+        )
+        self.assertIs(
+            validation_module._final_acceptance_gate_matrix,
+            final_acceptance_gate_matrix,
+        )
+        report = {
+            "final_acceptance_plan": {
+                "target_scope": "functional",
+                "full_decode_step_gate_names": ["gate.pass", "gate.missing"],
+                "model_end_to_end_gate_names": ["gate.fail"],
+                "official_performance_parity_gate_names": [],
+                "optional_gate_names": [],
+            }
+        }
+        acceptance = {
+            "checks": [
+                {"name": "gate.pass", "passed": True, "observed": "ok"},
+                {"name": "gate.fail", "passed": False, "observed": "bad"},
+            ]
+        }
+
+        matrix = validation_module._final_acceptance_gate_matrix(
+            report,
+            acceptance,
+        )
+
+        self.assertEqual(matrix["planned_gate_count"], 3)
+        self.assertEqual(matrix["passed_gates"], ["gate.pass"])
+        self.assertEqual(matrix["failed_gates"], ["gate.fail"])
+        self.assertEqual(matrix["missing_gates"], ["gate.missing"])
+        self.assertTrue(
+            validation_module._acceptance_check_passed(
+                acceptance,
+                "gate.pass",
+            )
+        )
+
     def test_validation_evidence_helpers_reexport_compatibly(self) -> None:
         self.assertIs(validation_module._artifact_index, artifact_index)
         self.assertIs(validation_module._artifact_evidence, artifact_evidence)
