@@ -25,6 +25,14 @@ from .profiling import (
     trace_profile_complete as _trace_profile_complete,
     trace_profile_observed as _trace_profile_observed,
 )
+from .runtime import (
+    attention_layer_output_shape_observed as _attention_layer_output_shape_observed,
+    attention_layer_output_shapes_complete as _attention_layer_output_shapes_complete,
+    decode_output_shape_observed as _decode_output_shape_observed,
+    decode_output_shapes_complete as _decode_output_shapes_complete,
+    expected_attention_layer_output_shape_summary as _expected_attention_layer_output_shape_summary,
+    expected_decode_output_shape_summary as _expected_decode_output_shape_summary,
+)
 from .schema import (
     acceptance_check as _acceptance_check,
     contains_all as _contains_all,
@@ -1195,8 +1203,6 @@ def real_decode_acceptance(
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
     PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
     PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
-    _attention_layer_output_shape_observed = validation._attention_layer_output_shape_observed
-    _attention_layer_output_shapes_complete = validation._attention_layer_output_shapes_complete
     _attention_layer_primitive_reports_complete = validation._attention_layer_primitive_reports_complete
     _attention_layer_primitive_reports_observed = validation._attention_layer_primitive_reports_observed
     _attention_primitive_reports_complete = validation._attention_primitive_reports_complete
@@ -1217,15 +1223,11 @@ def real_decode_acceptance(
     _config_gap_summary_observed = validation._config_gap_summary_observed
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
     _decode_depth_sweep_records_observed = validation._decode_depth_sweep_records_observed
-    _decode_output_shape_observed = validation._decode_output_shape_observed
-    _decode_output_shapes_complete = validation._decode_output_shapes_complete
     _decode_runtime_input_observed = validation._decode_runtime_input_observed
     _decode_runtime_inputs_complete = validation._decode_runtime_inputs_complete
     _decode_shell_numeric_reference_complete = validation._decode_shell_numeric_reference_complete
     _decode_shell_numeric_reference_observed = validation._decode_shell_numeric_reference_observed
     _decode_shell_runtime_inputs_accepted = validation._decode_shell_runtime_inputs_accepted
-    _expected_attention_layer_output_shape_summary = validation._expected_attention_layer_output_shape_summary
-    _expected_decode_output_shape_summary = validation._expected_decode_output_shape_summary
     _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete

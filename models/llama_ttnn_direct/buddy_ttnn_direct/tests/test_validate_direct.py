@@ -69,6 +69,16 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
     trace_profile_observed,
     trace_samples_complete,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.runtime import (
+    attention_layer_output_shape_observed,
+    attention_layer_output_shapes_complete,
+    decode_output_shape_observed,
+    decode_output_shapes_complete,
+    expected_attention_layer_output_shape_summary,
+    expected_decode_output_shape_summary,
+    paged_kv_cache_shape,
+    shape_dict_has_int_lists,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
     decode_step_contract,
@@ -472,6 +482,41 @@ class ValidateDirectTest(unittest.TestCase):
             (validation_module._trace_profile_complete, trace_profile_complete),
             (validation_module._trace_profile_observed, trace_profile_observed),
             (validation_module._trace_samples_complete, trace_samples_complete),
+        )
+        for compatibility_export, report_helper in pairs:
+            self.assertIs(compatibility_export, report_helper)
+
+    def test_validation_runtime_shape_helpers_reexport_compatibly(self) -> None:
+        pairs = (
+            (
+                validation_module._attention_layer_output_shape_observed,
+                attention_layer_output_shape_observed,
+            ),
+            (
+                validation_module._attention_layer_output_shapes_complete,
+                attention_layer_output_shapes_complete,
+            ),
+            (
+                validation_module._decode_output_shape_observed,
+                decode_output_shape_observed,
+            ),
+            (
+                validation_module._decode_output_shapes_complete,
+                decode_output_shapes_complete,
+            ),
+            (
+                validation_module._expected_attention_layer_output_shape_summary,
+                expected_attention_layer_output_shape_summary,
+            ),
+            (
+                validation_module._expected_decode_output_shape_summary,
+                expected_decode_output_shape_summary,
+            ),
+            (validation_module._paged_kv_cache_shape, paged_kv_cache_shape),
+            (
+                validation_module._shape_dict_has_int_lists,
+                shape_dict_has_int_lists,
+            ),
         )
         for compatibility_export, report_helper in pairs:
             self.assertIs(compatibility_export, report_helper)
