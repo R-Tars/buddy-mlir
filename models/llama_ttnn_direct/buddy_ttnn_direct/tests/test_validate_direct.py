@@ -23,6 +23,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
     resolve_performance_baseline as resolve_report_performance_baseline,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
+    acceptance_check,
+    int_list,
+    path_exists,
+    positive_number,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
 )
@@ -55,6 +61,25 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_de
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_validation_schema_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(validation_module._acceptance_check, acceptance_check)
+        self.assertIs(validation_module._path_exists, path_exists)
+        self.assertIs(validation_module._positive_number, positive_number)
+        self.assertIs(validation_module._int_list, int_list)
+        self.assertEqual(
+            validation_module._acceptance_check(
+                "schema.sample",
+                True,
+                observed="ok",
+            ),
+            {
+                "name": "schema.sample",
+                "passed": True,
+                "observed": "ok",
+            },
+        )
+        self.assertEqual(validation_module._int_list(["1", 2]), [1, 2])
+
     def test_performance_baseline_reference_resolves(self) -> None:
         baseline = validation_module.resolve_performance_baseline(
             "tt_metal_official_llama31_8b_b32"

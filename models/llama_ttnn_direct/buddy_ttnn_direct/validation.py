@@ -52,6 +52,27 @@ from .reports.performance import (
     performance_baseline_entry_summary as _performance_baseline_entry_summary,
     resolve_performance_baseline,
 )
+from .reports.schema import (
+    acceptance_check as _acceptance_check,
+    contains_all as _contains_all,
+    field_keys as _field_keys,
+    has_nonnegative_fields as _has_nonnegative_fields,
+    int_equal as _int_equal,
+    int_list as _int_list,
+    int_list_contains as _int_list_contains,
+    non_empty_string as _non_empty_string,
+    nonnegative_number as _nonnegative_number,
+    number_at_least as _number_at_least,
+    numbers_equal as _numbers_equal,
+    path_exists as _path_exists,
+    path_exists_relative_to as _path_exists_relative_to,
+    paths_exist as _paths_exist,
+    paths_exist_relative_to as _paths_exist_relative_to,
+    positive_count as _positive_count,
+    positive_number as _positive_number,
+    safe_int as _safe_int,
+    status_count_matches_total as _status_count_matches_total,
+)
 from .search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
@@ -10128,67 +10149,6 @@ def _real_decode_acceptance(
     }
 
 
-def _acceptance_check(
-    name: str,
-    passed: bool,
-    **details: Any,
-) -> dict[str, Any]:
-    check = {
-        "name": name,
-        "passed": bool(passed),
-    }
-    check.update(details)
-    return check
-
-
-def _path_exists(path: Any) -> bool:
-    if path is None:
-        return False
-    try:
-        return Path(path).exists()
-    except (TypeError, ValueError):
-        return False
-
-
-def _paths_exist(paths: Any) -> bool:
-    if not isinstance(paths, list) or not paths:
-        return False
-    return all(_path_exists(path) for path in paths)
-
-
-def _path_exists_relative_to(path: Any, base_dir: Any) -> bool:
-    if _path_exists(path):
-        return True
-    if path is None or base_dir is None:
-        return False
-    try:
-        candidate = Path(base_dir) / Path(path)
-    except (TypeError, ValueError):
-        return False
-    return candidate.exists()
-
-
-def _paths_exist_relative_to(paths: Any, base_dir: Any) -> bool:
-    if not isinstance(paths, list) or not paths:
-        return False
-    return all(_path_exists_relative_to(path, base_dir) for path in paths)
-
-
-def _status_count_matches_total(
-    counts: Any,
-    status: str,
-    total: Any,
-) -> bool:
-    if not isinstance(counts, dict):
-        return False
-    try:
-        expected_total = int(total)
-        observed_total = int(counts.get(status))
-    except (TypeError, ValueError):
-        return False
-    return expected_total > 0 and counts == {status: observed_total} and observed_total == expected_total
-
-
 def _attention_primitives_dry_run_complete(reports: Any) -> bool:
     if not isinstance(reports, dict):
         return False
@@ -10254,42 +10214,6 @@ def _validate_direct_artifact_observed(
         str(name): _path_exists(path)
         for name, path in sorted(artifacts.items())
     }
-
-
-def _positive_number(value: Any) -> bool:
-    try:
-        return float(value) > 0.0
-    except (TypeError, ValueError):
-        return False
-
-
-def _nonnegative_number(value: Any) -> bool:
-    try:
-        return float(value) >= 0.0
-    except (TypeError, ValueError):
-        return False
-
-
-def _numbers_equal(lhs: Any, rhs: Any) -> bool:
-    try:
-        return abs(float(lhs) - float(rhs)) <= 1.0e-9
-    except (TypeError, ValueError):
-        return False
-
-
-def _has_nonnegative_fields(value: Any, fields: tuple[str, ...]) -> bool:
-    if not isinstance(value, dict):
-        return False
-    return all(
-        field in value and _nonnegative_number(value.get(field))
-        for field in fields
-    )
-
-
-def _field_keys(value: Any) -> list[str]:
-    if not isinstance(value, dict):
-        return []
-    return sorted(str(key) for key in value)
 
 
 def _config_gap_summary_complete(summary: Any) -> bool:
@@ -11499,20 +11423,6 @@ def _observed_ops_cover_planned(planned_ops: Any, observed_ops: Any) -> bool:
     return planned_index == len(planned_ops)
 
 
-def _number_at_least(value: Any, minimum: Any) -> bool:
-    try:
-        return float(value) >= float(minimum)
-    except (TypeError, ValueError):
-        return False
-
-
-def _int_equal(observed: Any, expected: Any) -> bool:
-    try:
-        return int(observed) == int(expected)
-    except (TypeError, ValueError):
-        return False
-
-
 def _expected_layer_ids(layers: Any) -> list[int]:
     try:
         layer_count = int(layers)
@@ -12440,32 +12350,6 @@ def _decode_depth_sweep_records_observed(
     return observed
 
 
-def _int_list(value: Any) -> list[int]:
-    if not isinstance(value, (list, tuple)):
-        return []
-    result = []
-    for item in value:
-        converted = _safe_int(item)
-        if converted is None:
-            return []
-        result.append(converted)
-    return result
-
-
-def _int_list_contains(values: Any, expected: Any) -> bool:
-    expected_int = _safe_int(expected)
-    if expected_int is None:
-        return False
-    return expected_int in _int_list(values)
-
-
-def _safe_int(value: Any) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def _tensorized_tensor_paths(tensorization: dict[str, Any]) -> list[str]:
     paths = tensorization.get("tensor_paths")
     if isinstance(paths, list):
@@ -12507,28 +12391,6 @@ def _ttnn_runtime_identity_observed(environment: Any) -> dict[str, Any]:
 def _step_trace_summary(step: dict[str, Any]) -> dict[str, Any]:
     trace = step.get("trace") or {}
     return trace if isinstance(trace, dict) else {}
-
-
-def _non_empty_string(value: Any) -> bool:
-    return isinstance(value, str) and bool(value.strip())
-
-
-def _contains_all(observed: Any, expected: Any) -> bool:
-    if not isinstance(observed, list):
-        return False
-    return set(expected).issubset(set(observed))
-
-
-def _positive_count(counts: Any) -> bool:
-    if not isinstance(counts, dict):
-        return False
-    total = 0
-    for count in counts.values():
-        try:
-            total += int(count)
-        except (TypeError, ValueError):
-            return False
-    return total > 0
 
 
 def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
