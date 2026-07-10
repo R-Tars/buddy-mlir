@@ -11,7 +11,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_depth_sweep import
     resolve_decode_depths,
     run_decode_depth_sweep,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
     _write_fake_model_weights,
@@ -22,7 +22,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_att
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_single_layer_decode import (
     _make_fake_ttnn,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_validate_direct import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_validate_direct import (
     _write_fake_model_config,
     _write_template_config,
 )

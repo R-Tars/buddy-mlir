@@ -10,7 +10,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.decode_loop import (
     _normalize_token_ids,
     run_prompt_decode_loop,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
     _write_fake_model_weights,

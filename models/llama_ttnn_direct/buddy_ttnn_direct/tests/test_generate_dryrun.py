@@ -8,7 +8,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.generate import run_generate
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
     _write_fake_model_weights,

@@ -22,7 +22,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
     _fake_torch,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
     _write_fake_model_weights,
