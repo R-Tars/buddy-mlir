@@ -172,20 +172,72 @@ cmake --build "$BUDDY_BUILD" --target python-package-buddy
 cmake --build "$BUDDY_BUILD" --target check-buddy
 ```
 
-## Smoke Test
+## Activate the Source TTNN Runtime
 
-Run a small runtime check.
+The toolchain virtual environment alone does not make the source-built `ttnn`
+package importable. Model programs that call TTNN directly also need the
+tt-mlir runtime packages and the nested tt-metal source tree on `PYTHONPATH`.
+
+Activate the runtime from the Buddy repository root. These paths match the
+out-of-tree build directories used in this guide.
 
 ```bash
-cd "$BUDDY_REPO_ROOT/thirdparty/tt-mlir"
-source env/activate
 cd "$BUDDY_REPO_ROOT"
 
-export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-export PYTHONPATH="$TTMLIR_BUILD/python_packages:${PYTHONPATH:-}"
+source "$TTMLIR_TOOLCHAIN_DIR/venv/bin/activate"
 
-"$TTMLIR_TOOLCHAIN_DIR/venv/bin/python" -c "import ttrt, ttrt.runtime, ttmlir.ir; print('tt runtime ok')"
-"$TTMLIR_TOOLCHAIN_DIR/venv/bin/python" -m ttrt query
+export TTMLIR_BUILD="${TTMLIR_BUILD:-$BUDDY_REPO_ROOT/build-ttmlir}"
+export TT_METAL_HOME="$BUDDY_REPO_ROOT/thirdparty/tt-mlir/third_party/tt-metal/src/tt-metal"
+export TT_METAL_RUNTIME_ROOT="$TT_METAL_HOME"
+export TT_METAL_BUILD_HOME="$TT_METAL_HOME/build"
+export TTMLIR_PYTHON_BASE_PREFIX="$(python -c 'import sys; print(sys.base_prefix)')"
+
+export PYTHONPATH="$TTMLIR_BUILD/python_packages:\
+$TTMLIR_BUILD/runtime/python:\
+$TT_METAL_HOME:$TT_METAL_HOME/ttnn:$TT_METAL_HOME/tt_eager\
+${PYTHONPATH:+:$PYTHONPATH}"
+export LD_LIBRARY_PATH="$TTMLIR_PYTHON_BASE_PREFIX/lib:\
+$TT_METAL_BUILD_HOME/lib:$TTMLIR_BUILD/lib\
+${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+Verify imports without opening a device:
+
+```bash
+python -c "import ttrt, ttrt.runtime, ttmlir.ir; print('tt runtime ok')"
+python -c "import ttnn; print(ttnn.__file__)"
+```
+
+The second command should resolve beneath
+`$TT_METAL_HOME/ttnn/ttnn/__init__.py`. A different path means that another
+TTNN installation is shadowing the source runtime.
+
+## Check Device Ownership
+
+Device-node visibility proves that the driver is available; it does not prove
+that a shared device is free. Check ownership before starting a model run:
+
+```bash
+test -c /dev/tenstorrent/0
+fuser -v /dev/tenstorrent/0
+ps -eo user,pid,ppid,stat,etime,cmd | \
+  grep -E 'tt-smi|ttnn|tenstorrent|tt-metal|buddy_ttnn_direct' | \
+  grep -v grep
+```
+
+An empty `fuser` result is necessary but may not be sufficient when jobs run in
+another process namespace or are managed by an external scheduler. Respect the
+declared owner of a shared device even when local process probes are empty.
+
+## Smoke Test
+
+After activating the source TTNN runtime above, run a small runtime check.
+
+```bash
+cd "$BUDDY_REPO_ROOT"
+
+python -c "import ttrt, ttrt.runtime, ttmlir.ir, ttnn; print('tt runtime ok')"
+python -m ttrt query
 ```
 
 Optional runtime log settings:
