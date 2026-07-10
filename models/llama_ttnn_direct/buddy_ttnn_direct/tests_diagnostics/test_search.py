@@ -21,10 +21,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
     _fake_torch,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_single_layer_decode import (
     _make_fake_ttnn,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (

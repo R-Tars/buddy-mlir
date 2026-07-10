@@ -11,7 +11,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
     ATTENTION_LAYER_OPS,
     run_smoke_attention_layer,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
     FakeTTNNTensor,
     _fake_torch,
     _fake_ttnn,

@@ -165,10 +165,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters import (
     _fake_weight_specs,
     _write_fake_model_weights,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_attention_primitive import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
     _fake_torch,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_decode import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_single_layer_decode import (
     _fake_tokenizer_module,
     _make_fake_ttnn,
 )

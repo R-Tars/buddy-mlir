@@ -10,7 +10,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_prefill import (
     run_smoke_prefill,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_decode_shell import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_decode_shell import (
     _write_fake_model_config,
     _write_template_config,
 )
