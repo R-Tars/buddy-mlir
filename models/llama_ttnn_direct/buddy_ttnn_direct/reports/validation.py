@@ -28,6 +28,12 @@ from .autotune import (
     autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
     autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
 )
+from .depth import (
+    PROFILE_LAYER_LATENCY_KEYS,
+    PROFILE_SECTION_LATENCY_KEYS,
+    decode_depth_sweep_records_complete as _decode_depth_sweep_records_complete,
+    decode_depth_sweep_records_observed as _decode_depth_sweep_records_observed,
+)
 from .performance import (
     OFFICIAL_PERFORMANCE_PARITY_METRIC,
     PROFILE_GENERATE_MILESTONE_IDS,
@@ -1227,12 +1233,8 @@ def real_decode_acceptance(
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
     PARITY_SECTIONS = validation.PARITY_SECTIONS
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
-    PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
-    PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
     _config_gap_summary_complete = validation._config_gap_summary_complete
     _config_gap_summary_observed = validation._config_gap_summary_observed
-    _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
-    _decode_depth_sweep_records_observed = validation._decode_depth_sweep_records_observed
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
 

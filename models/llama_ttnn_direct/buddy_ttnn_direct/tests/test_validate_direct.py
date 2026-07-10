@@ -13,6 +13,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
     attention as attention_reports,
     autotune as autotune_reports,
+    depth as depth_reports,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
@@ -639,6 +640,26 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIs(
                 getattr(validation_module, f"_{name}"),
                 getattr(attention_reports, name),
+            )
+
+    def test_validation_depth_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module.PROFILE_LAYER_LATENCY_KEYS,
+            depth_reports.PROFILE_LAYER_LATENCY_KEYS,
+        )
+        self.assertIs(
+            validation_module.PROFILE_SECTION_LATENCY_KEYS,
+            depth_reports.PROFILE_SECTION_LATENCY_KEYS,
+        )
+        names = (
+            "decode_depth_sweep_record_complete",
+            "decode_depth_sweep_records_complete",
+            "decode_depth_sweep_records_observed",
+        )
+        for name in names:
+            self.assertIs(
+                getattr(validation_module, f"_{name}"),
+                getattr(depth_reports, name),
             )
 
     def test_performance_baseline_reference_resolves(self) -> None:
