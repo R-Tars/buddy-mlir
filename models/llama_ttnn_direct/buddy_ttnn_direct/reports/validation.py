@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .performance import OFFICIAL_PERFORMANCE_PARITY_METRIC
 from .schema import safe_int
 
 
@@ -449,6 +450,219 @@ def model_end_to_end_readiness(
     }
 
 
+def real_decode_acceptance_scope(
+    report: dict[str, Any],
+    acceptance: Any,
+) -> dict[str, Any]:
+    if report.get("dry_run"):
+        return {
+            "status": "dry_run",
+            "accepted_real_weight_runtime": False,
+            "require_full_decode_step": bool(
+                report.get("require_full_decode_step")
+            ),
+            "require_model_end_to_end": bool(
+                report.get("require_model_end_to_end")
+            ),
+            "require_official_performance_parity": bool(
+                report.get("require_official_performance_parity")
+            ),
+            "full_decode_step_ready": False,
+            "official_performance_parity_ready": False,
+            "missing_for_full_decode_step": [
+                "run validate-real-decode without --dry-run"
+            ],
+            "missing_for_official_performance_parity": [
+                "accepted full decode-step evidence"
+            ],
+        }
+
+    accepted = (
+        report.get("status") == "pass"
+        and isinstance(acceptance, dict)
+        and acceptance.get("passed") is True
+    )
+    full_depth = (
+        accepted
+        and report.get("require_full_depth") is True
+        and acceptance_check_passed(acceptance, "validation.full_depth_layers")
+        and acceptance_check_passed(acceptance, "decode_depth_sweep.full_depth")
+    )
+    program_runtime_shape = (
+        accepted
+        and report.get("require_program_runtime_shape") is True
+        and acceptance_check_passed(acceptance, "validation.program_batch_size")
+        and acceptance_check_passed(acceptance, "validation.program_cache_len")
+    )
+    batch32_contract = (
+        accepted
+        and report.get("require_batch32_decode_step") is True
+        and acceptance_check_passed(acceptance, "decode_step_contract.batch32")
+    )
+    trace = (
+        accepted
+        and report.get("require_trace") is True
+        and acceptance_check_passed(acceptance, "single_layer_decode.trace_status")
+        and acceptance_check_passed(acceptance, "smoke_decode_step.trace_status")
+        and acceptance_check_passed(acceptance, "profile_decode_step.trace_status")
+        and acceptance_check_passed(acceptance, "profile_decode_step.trace_profile")
+    )
+    numeric_shell = (
+        accepted
+        and report.get("require_decode_shell_numeric_reference") is True
+        and acceptance_check_passed(acceptance, "decode_shell.numeric_reference")
+    )
+    baseline_ratio_floor = (
+        accepted
+        and report.get("min_baseline_ratio") is not None
+        and acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.min_baseline_ratio",
+        )
+    )
+    official_positive_floor = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.official_min_baseline_ratio_positive",
+        )
+    )
+    performance_floor = baseline_ratio_floor and (
+        report.get("require_official_performance_parity") is not True
+        or official_positive_floor
+    )
+    official_baseline = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and acceptance_check_passed(
+            acceptance,
+            "profile_decode_step.official_baseline_reference",
+        )
+    )
+    official_metric = (
+        accepted
+        and report.get("require_official_performance_parity") is True
+        and acceptance_check_passed(
+            acceptance,
+            "decode_step_autotune.metric",
+        )
+    )
+    official_config_match = (
+        accepted
+        and report.get("require_official_config_match") is True
+        and acceptance_check_passed(
+            acceptance,
+            "official_config_diff.official_reference_format",
+        )
+        and acceptance_check_passed(acceptance, "official_config_diff.match")
+    )
+    model_end_to_end = (
+        accepted
+        and report.get("require_model_end_to_end") is True
+        and acceptance_check_passed(
+            acceptance,
+            "model_end_to_end_readiness.ready",
+        )
+    )
+
+    missing_full_decode = []
+    if not accepted:
+        missing_full_decode.append("accepted real-weight runtime gates")
+    if not full_depth:
+        missing_full_decode.append(
+            "--require-full-depth with layers == generated program layers"
+        )
+    if not program_runtime_shape:
+        missing_full_decode.append(
+            "--require-program-runtime-shape at generated batch/cache shape"
+        )
+    if not batch32_contract:
+        missing_full_decode.append("--require-batch32-decode-step")
+    if not trace:
+        missing_full_decode.append("--require-trace with captured/executed traces")
+    if not numeric_shell:
+        missing_full_decode.append("--require-decode-shell-numeric-reference")
+
+    full_decode_ready = accepted and not missing_full_decode
+    missing_parity = []
+    if not full_decode_ready:
+        missing_parity.append("accepted full decode-step evidence")
+    if not model_end_to_end:
+        missing_parity.append("accepted model end-to-end readiness")
+    if not official_config_match:
+        missing_parity.append("--require-official-config-match")
+    if not performance_floor:
+        missing_parity.append(
+            "--baseline-reference plus --min-baseline-ratio"
+        )
+    elif not official_baseline:
+        missing_parity.append("official Llama 3.1 8B batch32 baseline")
+    if not official_metric:
+        missing_parity.append(
+            f"--metric {OFFICIAL_PERFORMANCE_PARITY_METRIC}"
+        )
+
+    official_performance_parity_ready = (
+        full_decode_ready
+        and model_end_to_end
+        and official_config_match
+        and official_baseline
+        and official_metric
+        and performance_floor
+    )
+
+    if not accepted:
+        scope = "incomplete"
+    elif official_performance_parity_ready:
+        scope = "official_performance_parity"
+    elif full_decode_ready:
+        scope = "full_decode_step"
+    else:
+        scope = "bringup"
+
+    return {
+        "status": scope,
+        "accepted_real_weight_runtime": accepted,
+        "require_full_decode_step": bool(
+            report.get("require_full_decode_step")
+        ),
+        "require_model_end_to_end": bool(
+            report.get("require_model_end_to_end")
+        ),
+        "require_official_performance_parity": bool(
+            report.get("require_official_performance_parity")
+        ),
+        "requested_layers": report.get("layers"),
+        "generated_program_layers": report.get("program_num_layers"),
+        "batch_size": report.get("batch_size"),
+        "generated_program_batch_size": report.get("program_batch_size"),
+        "cache_len": report.get("cache_len"),
+        "generated_program_cache_len": report.get("program_cache_len"),
+        "full_depth_proven": full_depth,
+        "program_runtime_shape_proven": program_runtime_shape,
+        "batch32_decode_contract_proven": batch32_contract,
+        "trace_proven": trace,
+        "decode_shell_numeric_reference_proven": numeric_shell,
+        "model_end_to_end_proven": model_end_to_end,
+        "official_config_match_proven": official_config_match,
+        "official_performance_baseline_proven": official_baseline,
+        "official_performance_metric_proven": official_metric,
+        "official_positive_baseline_ratio_floor_proven": (
+            official_positive_floor
+            if report.get("require_official_performance_parity") is True
+            else None
+        ),
+        "performance_baseline_ratio_proven": performance_floor,
+        "full_decode_step_ready": full_decode_ready,
+        "official_performance_parity_ready": (
+            official_performance_parity_ready
+        ),
+        "missing_for_full_decode_step": missing_full_decode,
+        "missing_for_official_performance_parity": missing_parity,
+    }
+
+
 def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
     from .. import validation
 
@@ -748,7 +962,6 @@ def real_decode_acceptance(
     DECODE_PARAMETER_ROLES = validation.DECODE_PARAMETER_ROLES
     DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
-    OFFICIAL_PERFORMANCE_PARITY_METRIC = validation.OFFICIAL_PERFORMANCE_PARITY_METRIC
     PARITY_SECTIONS = validation.PARITY_SECTIONS
     PROFILE_BOTTLENECK_SECTION_KEYS = validation.PROFILE_BOTTLENECK_SECTION_KEYS
     PROFILE_GENERATE_MILESTONE_IDS = validation.PROFILE_GENERATE_MILESTONE_IDS

@@ -66,6 +66,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     model_end_to_end_readiness,
     positive_scalar_count,
     real_decode_acceptance,
+    real_decode_acceptance_scope,
     runtime_input_scope,
     step_synthetic_rotary_tensor_count,
     step_synthetic_runtime_input_count,
@@ -146,6 +147,10 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertIs(
             validation_module._real_decode_acceptance,
             real_decode_acceptance,
+        )
+        self.assertIs(
+            validation_module._real_decode_acceptance_scope,
+            real_decode_acceptance_scope,
         )
         self.assertIs(
             validation_module._validate_direct_acceptance,
