@@ -21,8 +21,15 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     LINEAR_WEIGHT_TRANSFORM,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.legacy_validation import (
+    diagnostic_excerpt,
+    real_decode_runtime_diagnostics,
     recover_real_decode_process_failure as recover_legacy_process_failure,
     recover_real_decode_process_timeout as recover_legacy_process_timeout,
+    runtime_error_findings,
+    tenstorrent_device_preflight_diagnostics,
+    tenstorrent_device_preflight_diagnostics_from_report,
+    tenstorrent_preflight_recommended_action,
+    walk_strings,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     artifact_evidence,
@@ -84,6 +91,35 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_smoke_single_layer_de
 
 
 class ValidateDirectTest(unittest.TestCase):
+    def test_runtime_diagnostics_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module._real_decode_runtime_diagnostics,
+            real_decode_runtime_diagnostics,
+        )
+        self.assertIs(
+            validation_module._tenstorrent_device_preflight_diagnostics,
+            tenstorrent_device_preflight_diagnostics,
+        )
+        self.assertIs(
+            validation_module._tenstorrent_device_preflight_diagnostics_from_report,
+            tenstorrent_device_preflight_diagnostics_from_report,
+        )
+        self.assertIs(
+            validation_module._tenstorrent_preflight_recommended_action,
+            tenstorrent_preflight_recommended_action,
+        )
+        self.assertIs(
+            validation_module._runtime_error_findings,
+            runtime_error_findings,
+        )
+        self.assertIs(validation_module._walk_strings, walk_strings)
+        self.assertIs(validation_module._diagnostic_excerpt, diagnostic_excerpt)
+        findings = validation_module._runtime_error_findings(
+            {"step": {"error": "Failed to initialize FW; try resetting the board"}}
+        )
+        self.assertEqual(findings[0]["kind"], "tenstorrent_firmware_init_failed")
+        self.assertEqual(findings[0]["path"], "step.error")
+
     def test_legacy_recovery_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
             recover_real_decode_process_failure,
