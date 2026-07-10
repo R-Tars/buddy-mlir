@@ -4,7 +4,6 @@ import gc
 import json
 import importlib
 import py_compile
-import shlex
 import subprocess
 import sys
 import traceback
@@ -57,8 +56,11 @@ from .reports.evidence import (
     artifact_index as _artifact_index,
     candidate_reference_status_counts as _candidate_reference_status_counts,
     dump_validation_report,
+    real_decode_cli_args as _real_decode_cli_args,
     real_decode_evidence_manifest as _real_decode_evidence_manifest,
+    real_decode_reproducibility as _real_decode_reproducibility,
     reference_summary as _reference_summary,
+    shell_command as _shell_command,
     step_names_with_status as _step_names_with_status,
     tensorization_evidence as _tensorization_evidence,
     write_json_report as _write_json,
@@ -250,155 +252,6 @@ def default_decode_step_search_space_path() -> Path:
 
 def _same_path(lhs: Path, rhs: Path) -> bool:
     return lhs.resolve() == rhs.resolve()
-
-
-def _shell_command(args: list[str]) -> str:
-    return " ".join(shlex.quote(arg) for arg in args)
-
-
-def _append_option(args: list[str], option: str, value: Any) -> None:
-    if value is not None:
-        args.extend([option, str(value)])
-
-
-def _real_decode_cli_args(
-    *,
-    program_dir: str | Path,
-    model_path: str | Path,
-    out_dir: str | Path,
-    official_config_path: str | Path,
-    decode_step_search_space_path: str | Path,
-    performance_baselines_path: str | Path,
-    layers: int,
-    batch_size: int | None,
-    cache_len: int | None,
-    max_new_tokens: int,
-    prefill_len: int | None,
-    device: str,
-    device_id: int,
-    trace: bool,
-    trace_iterations: int,
-    skip_autotune: bool,
-    skip_profile_decode_step: bool,
-    require_full_decode_step: bool,
-    require_model_end_to_end: bool,
-    require_official_performance_parity: bool,
-    require_trace: bool,
-    require_official_config_match: bool,
-    require_full_depth: bool,
-    require_program_runtime_shape: bool,
-    require_batch32_decode_step: bool,
-    min_tokens_per_second_per_user: float | None,
-    baseline_tokens_per_second_per_user: float | None,
-    baseline_reference: str | None,
-    min_baseline_ratio: float | None,
-    decode_shell_pcc_threshold: float,
-    require_decode_shell_numeric_reference: bool,
-    prompt: str | None = None,
-    tokenizer_path: str | Path | None = None,
-    dtype_seed: str | None = None,
-    metric: str | None = None,
-    dry_run: bool = False,
-    preflight_only: bool = False,
-    guard_device_busy: bool = False,
-    guard_device_health: bool = False,
-) -> list[str]:
-    args = [
-        "python",
-        "-m",
-        "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-        "validate-real-decode",
-        "--program-dir",
-        str(program_dir),
-        "--model-path",
-        str(model_path),
-        "--out-dir",
-        str(out_dir),
-        "--official-config",
-        str(official_config_path),
-        "--decode-step-search-space",
-        str(decode_step_search_space_path),
-        "--performance-baselines",
-        str(performance_baselines_path),
-        "--layers",
-        str(layers),
-        "--device",
-        str(device),
-        "--device-id",
-        str(device_id),
-        "--trace-iterations",
-        str(trace_iterations),
-        "--decode-shell-pcc-threshold",
-        str(decode_shell_pcc_threshold),
-    ]
-    _append_option(args, "--batch-size", batch_size)
-    _append_option(args, "--cache-len", cache_len)
-    _append_option(args, "--max-new-tokens", max_new_tokens)
-    _append_option(args, "--prefill-len", prefill_len)
-    _append_option(args, "--prompt", prompt)
-    _append_option(args, "--tokenizer-path", tokenizer_path)
-    _append_option(args, "--dtype-seed", dtype_seed)
-    _append_option(args, "--metric", metric)
-    _append_option(
-        args,
-        "--min-tokens-per-second-per-user",
-        min_tokens_per_second_per_user,
-    )
-    _append_option(
-        args,
-        "--baseline-tokens-per-second-per-user",
-        baseline_tokens_per_second_per_user,
-    )
-    _append_option(args, "--baseline-reference", baseline_reference)
-    _append_option(args, "--min-baseline-ratio", min_baseline_ratio)
-    if trace:
-        args.append("--trace")
-    if dry_run:
-        args.append("--dry-run")
-    if skip_autotune:
-        args.append("--skip-autotune")
-    if skip_profile_decode_step:
-        args.append("--skip-profile-decode-step")
-    if require_full_decode_step:
-        args.append("--require-full-decode-step")
-    if require_model_end_to_end:
-        args.append("--require-model-end-to-end")
-    if require_official_performance_parity:
-        args.append("--require-official-performance-parity")
-    if require_trace:
-        args.append("--require-trace")
-    if require_official_config_match:
-        args.append("--require-official-config-match")
-    if require_full_depth:
-        args.append("--require-full-depth")
-    if require_program_runtime_shape:
-        args.append("--require-program-runtime-shape")
-    if require_batch32_decode_step:
-        args.append("--require-batch32-decode-step")
-    if require_decode_shell_numeric_reference:
-        args.append("--require-decode-shell-numeric-reference")
-    if guard_device_busy:
-        args.append("--guard-device-busy")
-    if guard_device_health:
-        args.append("--guard-device-health")
-    if preflight_only:
-        args.append("--preflight-only")
-    return args
-
-
-def _real_decode_reproducibility(
-    *,
-    validation_args: list[str],
-    preflight_args: list[str],
-    artifact_paths: dict[str, Path],
-) -> dict[str, Any]:
-    return {
-        "validation_cli_args": validation_args,
-        "validation_cli_command": _shell_command(validation_args),
-        "preflight_cli_args": preflight_args,
-        "preflight_cli_command": _shell_command(preflight_args),
-        "artifact_index": _artifact_index(artifact_paths),
-    }
 
 
 def _real_decode_final_acceptance_plan(

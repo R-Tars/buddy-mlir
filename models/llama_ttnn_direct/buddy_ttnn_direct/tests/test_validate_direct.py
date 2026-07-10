@@ -36,8 +36,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     artifact_index,
     candidate_reference_status_counts,
     dump_validation_report as dump_evidence_validation_report,
+    real_decode_cli_args,
     real_decode_evidence_manifest,
+    real_decode_reproducibility,
     reference_summary,
+    shell_command,
     step_names_with_status,
     tensorization_evidence,
     write_json_report,
@@ -184,9 +187,18 @@ class ValidateDirectTest(unittest.TestCase):
 
     def test_validation_evidence_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
+            validation_module._real_decode_cli_args,
+            real_decode_cli_args,
+        )
+        self.assertIs(
             validation_module._real_decode_evidence_manifest,
             real_decode_evidence_manifest,
         )
+        self.assertIs(
+            validation_module._real_decode_reproducibility,
+            real_decode_reproducibility,
+        )
+        self.assertIs(validation_module._shell_command, shell_command)
         self.assertIs(validation_module._artifact_index, artifact_index)
         self.assertIs(validation_module._artifact_evidence, artifact_evidence)
         self.assertIs(
