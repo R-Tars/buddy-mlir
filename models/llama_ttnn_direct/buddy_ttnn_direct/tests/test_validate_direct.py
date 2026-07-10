@@ -53,6 +53,22 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
     throughput_baseline_summary,
     validate_real_generate_milestones,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.reports.profiling import (
+    PROFILE_BOTTLENECK_SECTION_KEYS,
+    bottleneck_summary_complete,
+    bottleneck_summary_observed,
+    layer_profile_field_keys,
+    layer_profile_ids,
+    layer_profiles_have_nonnegative_fields,
+    lm_head_profile_complete,
+    lm_head_profile_observed,
+    step_trace_summary,
+    throughput_summary_complete,
+    throughput_summary_observed,
+    trace_profile_complete,
+    trace_profile_observed,
+    trace_samples_complete,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
     acceptance_check,
     decode_step_contract,
@@ -421,6 +437,44 @@ class ValidateDirectTest(unittest.TestCase):
             validation_module._transformed_tensor_paths,
             transformed_tensor_paths,
         )
+
+    def test_validation_profiling_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module.PROFILE_BOTTLENECK_SECTION_KEYS,
+            PROFILE_BOTTLENECK_SECTION_KEYS,
+        )
+        pairs = (
+            (
+                validation_module._bottleneck_summary_complete,
+                bottleneck_summary_complete,
+            ),
+            (
+                validation_module._bottleneck_summary_observed,
+                bottleneck_summary_observed,
+            ),
+            (validation_module._layer_profile_field_keys, layer_profile_field_keys),
+            (validation_module._layer_profile_ids, layer_profile_ids),
+            (
+                validation_module._layer_profiles_have_nonnegative_fields,
+                layer_profiles_have_nonnegative_fields,
+            ),
+            (validation_module._lm_head_profile_complete, lm_head_profile_complete),
+            (validation_module._lm_head_profile_observed, lm_head_profile_observed),
+            (validation_module._step_trace_summary, step_trace_summary),
+            (
+                validation_module._throughput_summary_complete,
+                throughput_summary_complete,
+            ),
+            (
+                validation_module._throughput_summary_observed,
+                throughput_summary_observed,
+            ),
+            (validation_module._trace_profile_complete, trace_profile_complete),
+            (validation_module._trace_profile_observed, trace_profile_observed),
+            (validation_module._trace_samples_complete, trace_samples_complete),
+        )
+        for compatibility_export, report_helper in pairs:
+            self.assertIs(compatibility_export, report_helper)
 
     def test_performance_baseline_reference_resolves(self) -> None:
         baseline = validation_module.resolve_performance_baseline(

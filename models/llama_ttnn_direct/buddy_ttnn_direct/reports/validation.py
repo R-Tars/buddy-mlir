@@ -12,6 +12,19 @@ from .performance import (
     profile_generate_milestones_complete as _profile_generate_milestones_complete,
     throughput_baseline_summary as _throughput_baseline_summary,
 )
+from .profiling import (
+    PROFILE_BOTTLENECK_SECTION_KEYS,
+    bottleneck_summary_complete as _bottleneck_summary_complete,
+    bottleneck_summary_observed as _bottleneck_summary_observed,
+    layer_profile_field_keys as _layer_profile_field_keys,
+    layer_profile_ids as _layer_profile_ids,
+    layer_profiles_have_nonnegative_fields as _layer_profiles_have_nonnegative_fields,
+    lm_head_profile_complete as _lm_head_profile_complete,
+    lm_head_profile_observed as _lm_head_profile_observed,
+    step_trace_summary as _step_trace_summary,
+    trace_profile_complete as _trace_profile_complete,
+    trace_profile_observed as _trace_profile_observed,
+)
 from .schema import (
     acceptance_check as _acceptance_check,
     contains_all as _contains_all,
@@ -1179,7 +1192,6 @@ def real_decode_acceptance(
     DECODE_STEP_AUTOTUNE_KNOBS = validation.DECODE_STEP_AUTOTUNE_KNOBS
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
     PARITY_SECTIONS = validation.PARITY_SECTIONS
-    PROFILE_BOTTLENECK_SECTION_KEYS = validation.PROFILE_BOTTLENECK_SECTION_KEYS
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
     PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
     PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
@@ -1201,8 +1213,6 @@ def real_decode_acceptance(
     _autotune_leaderboard_observed = validation._autotune_leaderboard_observed
     _autotune_output_kind_counts_complete = validation._autotune_output_kind_counts_complete
     _autotune_output_kind_counts_observed = validation._autotune_output_kind_counts_observed
-    _bottleneck_summary_complete = validation._bottleneck_summary_complete
-    _bottleneck_summary_observed = validation._bottleneck_summary_observed
     _config_gap_summary_complete = validation._config_gap_summary_complete
     _config_gap_summary_observed = validation._config_gap_summary_observed
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete
@@ -1217,20 +1227,12 @@ def real_decode_acceptance(
     _expected_attention_layer_output_shape_summary = validation._expected_attention_layer_output_shape_summary
     _expected_decode_output_shape_summary = validation._expected_decode_output_shape_summary
     _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
-    _layer_profile_field_keys = validation._layer_profile_field_keys
-    _layer_profile_ids = validation._layer_profile_ids
-    _layer_profiles_have_nonnegative_fields = validation._layer_profiles_have_nonnegative_fields
-    _lm_head_profile_complete = validation._lm_head_profile_complete
-    _lm_head_profile_observed = validation._lm_head_profile_observed
     _observed_ops_cover_planned = validation._observed_ops_cover_planned
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
     _runtime_input_source_supported = validation._runtime_input_source_supported
-    _step_trace_summary = validation._step_trace_summary
     _step_ttnn_environment = validation._step_ttnn_environment
     _synthetic_runtime_inputs_accepted = validation._synthetic_runtime_inputs_accepted
-    _trace_profile_complete = validation._trace_profile_complete
-    _trace_profile_observed = validation._trace_profile_observed
     _ttnn_runtime_identity_available = validation._ttnn_runtime_identity_available
     _ttnn_runtime_identity_observed = validation._ttnn_runtime_identity_observed
 
