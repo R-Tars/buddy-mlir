@@ -221,12 +221,16 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --cache-len 1024 \
   --check top_token,logits_pcc,hidden_pcc,kv_cache_pcc \
   --pcc-threshold 0.99 \
+  --hf-reference /wafer/zhuxinye/tmp/ttnn_direct_hf_references/depth_1/hf_reference.json \
   --out-dir /tmp/ttnn_direct_validate_correctness_l1
 ```
 
 Repeat with `--layers 2`, `4`, and `32`. The output directory contains the
 compact comparison report plus separate `hf_reference.json`,
 `ttnn_observations.json`, and `generate.json` evidence files.
+Omit `--hf-reference` to capture the CPU reference during the command. A
+provided artifact is rejected unless its model config, prompt, depth, prefill
+length, dtype, and checkpoint count match the request.
 
 ## Diagnose
 

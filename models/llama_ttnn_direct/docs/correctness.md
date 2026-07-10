@@ -28,3 +28,7 @@ The product `correctness` suite captures both sides and only passes when the
 requested comparisons meet their gates. This path has not yet been validated
 on P150A after the refactor; HF artifacts alone remain reference inputs, not a
 passing correctness result.
+
+Use `--hf-reference` to reuse a prior CPU artifact. The suite validates its
+model config digest, prompt digest, depth, prefill length, dtype, and expected
+`3 * layers + 2` checkpoint count before opening the TTNN runtime path.

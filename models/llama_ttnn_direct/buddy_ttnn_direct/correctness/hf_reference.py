@@ -161,6 +161,60 @@ def write_hf_reference(path: str | Path, report: dict[str, Any]) -> None:
     out.write_text(json.dumps(report, indent=2) + "\n")
 
 
+def load_hf_reference(
+    path: str | Path,
+    *,
+    model_path: str | Path,
+    prompt: str,
+    layers: int,
+    prefill_len: int,
+    dtype: str,
+) -> dict[str, Any]:
+    source = Path(path)
+    report = json.loads(source.read_text())
+    errors: list[str] = []
+    if report.get("schema_version") != 1:
+        errors.append("schema_version must be 1")
+    if report.get("kind") != "hf_llama_correctness_reference":
+        errors.append("kind must be hf_llama_correctness_reference")
+    if report.get("status") != "captured" or report.get("passed") is not True:
+        errors.append("reference status must be captured and passed")
+    expected_config_digest = _file_sha256(Path(model_path) / "config.json")
+    if report.get("model_config_sha256") != expected_config_digest:
+        errors.append("model config digest does not match")
+    expected_prompt_digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    if report.get("prompt_sha256") != expected_prompt_digest:
+        errors.append("prompt digest does not match")
+    if int(report.get("layers", -1)) != int(layers):
+        errors.append("layer count does not match")
+    if int(report.get("prefill_len", -1)) != int(prefill_len):
+        errors.append("prefill length does not match")
+    if report.get("dtype") != dtype:
+        errors.append("reference dtype does not match")
+    checkpoints = report.get("checkpoints")
+    expected_names = _expected_checkpoint_names(int(layers))
+    if not isinstance(checkpoints, dict):
+        errors.append("checkpoints must be a mapping")
+    elif set(checkpoints) != expected_names:
+        errors.append(
+            "checkpoint names do not match the requested layer set"
+        )
+    else:
+        for name, snapshot in checkpoints.items():
+            if not _valid_snapshot(snapshot):
+                errors.append(f"checkpoint {name} has an invalid snapshot")
+    if not isinstance(report.get("input_token_ids"), list) or not report.get(
+        "input_token_ids"
+    ):
+        errors.append("input_token_ids must be non-empty")
+    if errors:
+        raise ValueError(
+            f"invalid HF correctness reference {source}:\n- "
+            + "\n- ".join(errors)
+        )
+    return report
+
+
 def _load_model(
     *,
     transformers: Any,
@@ -253,3 +307,32 @@ def _shape(tensor: Any) -> list[int]:
     if isinstance(tensor, (tuple, list)):
         tensor = tensor[0]
     return [int(dim) for dim in getattr(tensor, "shape", ())]
+
+
+def _expected_checkpoint_names(layers: int) -> set[str]:
+    names = {"prefill.final_hidden", "prefill.logits"}
+    for layer_id in range(layers):
+        names.update(
+            {
+                f"prefill.layer.{layer_id}.hidden",
+                f"prefill.layer.{layer_id}.key_cache",
+                f"prefill.layer.{layer_id}.value_cache",
+            }
+        )
+    return names
+
+
+def _valid_snapshot(snapshot: Any) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    values = snapshot.get("values")
+    try:
+        sample_count = int(snapshot.get("sample_count"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(values, list)
+        and sample_count == len(values)
+        and isinstance(snapshot.get("sha256"), str)
+        and len(snapshot["sha256"]) == 64
+    )

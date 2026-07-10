@@ -7,7 +7,11 @@ from typing import Any
 
 from ..runtime.generate import run_generate
 from ..runtime.observations import TTNNObservationCollector
-from .hf_reference import capture_hf_reference, write_hf_reference
+from .hf_reference import (
+    capture_hf_reference,
+    load_hf_reference,
+    write_hf_reference,
+)
 from .metrics import compare_snapshots, compare_top_token
 
 
@@ -34,6 +38,7 @@ def run_correctness(
     device_id: int = 0,
     dtype_seed: str = "bf16",
     reference_dtype: str = "bfloat16",
+    hf_reference: str | Path | None = None,
     checks: tuple[str, ...] = DEFAULT_CHECKS,
     pcc_threshold: float = 0.99,
     ttnn_module: Any | None = None,
@@ -51,16 +56,28 @@ def run_correctness(
     generate_report_path = root / "generate.json"
     report_path = root / "validation_report.json"
 
-    reference = capture_hf_reference(
-        model_path=model_path,
-        tokenizer_path=tokenizer_path,
-        prompt=prompt,
-        layers=layers,
-        prefill_len=prefill_len,
-        dtype=reference_dtype,
-        torch_module=torch_module,
-        transformers_module=transformers_module,
-    )
+    if hf_reference is None:
+        reference = capture_hf_reference(
+            model_path=model_path,
+            tokenizer_path=tokenizer_path,
+            prompt=prompt,
+            layers=layers,
+            prefill_len=prefill_len,
+            dtype=reference_dtype,
+            torch_module=torch_module,
+            transformers_module=transformers_module,
+        )
+        reference_source = "captured"
+    else:
+        reference = load_hf_reference(
+            hf_reference,
+            model_path=model_path,
+            prompt=prompt,
+            layers=layers,
+            prefill_len=prefill_len,
+            dtype=reference_dtype,
+        )
+        reference_source = "provided"
     write_hf_reference(hf_reference_path, reference)
 
     ttnn = ttnn_module or importlib.import_module("ttnn")
@@ -129,6 +146,10 @@ def run_correctness(
         "device_id": int(device_id),
         "dtype_seed": dtype_seed,
         "reference_dtype": reference_dtype,
+        "reference_source": reference_source,
+        "provided_hf_reference": (
+            str(hf_reference) if hf_reference is not None else None
+        ),
         "pcc_threshold": float(pcc_threshold),
         "requested_checks": list(requested_checks),
         "top_token": {

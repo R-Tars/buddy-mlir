@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import types
@@ -14,6 +15,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.artifacts import (
     kv_cache_snapshot,
     tensor_snapshot,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.hf_reference import (
+    load_hf_reference,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.metrics import (
     compare_snapshots,
@@ -41,6 +45,62 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 
 
 class ProductCliTest(unittest.TestCase):
+    def test_provided_hf_reference_must_match_request(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "model"
+            model_dir.mkdir()
+            config_path = model_dir / "config.json"
+            config_path.write_text('{"model_type": "llama"}\n')
+            prompt = "hello"
+            snapshot = {
+                "sample_count": 1,
+                "values": [0.0],
+                "sha256": "0" * 64,
+            }
+            report = {
+                "schema_version": 1,
+                "kind": "hf_llama_correctness_reference",
+                "status": "captured",
+                "passed": True,
+                "model_config_sha256": hashlib.sha256(
+                    config_path.read_bytes()
+                ).hexdigest(),
+                "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+                "layers": 1,
+                "prefill_len": 8,
+                "dtype": "bfloat16",
+                "input_token_ids": [1, 2],
+                "checkpoints": {
+                    "prefill.layer.0.hidden": snapshot,
+                    "prefill.layer.0.key_cache": snapshot,
+                    "prefill.layer.0.value_cache": snapshot,
+                    "prefill.final_hidden": snapshot,
+                    "prefill.logits": snapshot,
+                },
+            }
+            reference_path = root / "reference.json"
+            reference_path.write_text(json.dumps(report))
+
+            loaded = load_hf_reference(
+                reference_path,
+                model_path=model_dir,
+                prompt=prompt,
+                layers=1,
+                prefill_len=8,
+                dtype="bfloat16",
+            )
+            self.assertEqual(loaded["input_token_ids"], [1, 2])
+            with self.assertRaisesRegex(ValueError, "prompt digest"):
+                load_hf_reference(
+                    reference_path,
+                    model_path=model_dir,
+                    prompt="different",
+                    layers=1,
+                    prefill_len=8,
+                    dtype="bfloat16",
+                )
+
     def test_correctness_runner_compares_captured_artifacts(self) -> None:
         import torch
 

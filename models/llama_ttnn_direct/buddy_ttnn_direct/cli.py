@@ -1979,6 +1979,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("bfloat16", "float32"),
         default="bfloat16",
     )
+    product_validate.add_argument(
+        "--hf-reference",
+        type=Path,
+        default=None,
+        help=(
+            "Reuse a previously captured HF correctness reference after "
+            "validating its model, prompt, depth, prefill length, and dtype."
+        ),
+    )
     product_validate.set_defaults(func=_cmd_validate)
 
     inspect = subparsers.add_parser(
@@ -3105,6 +3114,7 @@ def _cmd_validate_correctness(
         device_id=args.device_id,
         dtype_seed=args.dtype_seed,
         reference_dtype=args.reference_dtype,
+        hf_reference=args.hf_reference,
         checks=checks,
         pcc_threshold=args.pcc_threshold,
     )
