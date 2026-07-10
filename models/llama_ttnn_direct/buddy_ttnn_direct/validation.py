@@ -103,7 +103,12 @@ from .reports.schema import (
 from .reports.validation import (
     acceptance_check_passed as _acceptance_check_passed,
     final_acceptance_gate_matrix as _final_acceptance_gate_matrix,
+    generate_prefill_decode_ready as _generate_prefill_decode_ready,
+    positive_scalar_count as _positive_scalar_count,
     real_decode_acceptance as _real_decode_acceptance,
+    runtime_input_scope as _runtime_input_scope,
+    step_synthetic_rotary_tensor_count as _step_synthetic_rotary_tensor_count,
+    step_synthetic_runtime_input_count as _step_synthetic_runtime_input_count,
     validate_direct_acceptance as _validate_direct_acceptance,
 )
 from .search.decode_step_autotune import (
@@ -5380,178 +5385,6 @@ def _model_end_to_end_readiness(
     }
 
 
-def _runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
-    if report.get("dry_run"):
-        return {
-            "schema_version": 1,
-            "status": "dry_run",
-            "uses_synthetic_runtime_inputs": False,
-            "runtime_input_sources": {},
-            "synthetic_runtime_input_steps": [],
-            "synthetic_runtime_input_tensor_counts": {},
-            "prompt_runtime_input_tensor_counts": {},
-            "decode_runtime_state_input_tensor_counts": {},
-            "rotary_runtime_input_tensor_counts": {},
-            "kv_cache_runtime_input_tensor_counts": {},
-            "synthetic_rotary_tensor_counts": {},
-            "depth_sweep_synthetic_record_count": 0,
-        }
-
-    steps = report.get("steps")
-    if not isinstance(steps, dict):
-        steps = {}
-    runtime_step_names = [
-        "decode_shell",
-        "single_layer_decode",
-        "smoke_decode_step",
-        "profile_decode_step",
-        "prompt_decode_loop",
-        "generate_prefill_decode",
-        "profile_generate",
-    ]
-    sources: dict[str, Any] = {}
-    runtime_counts: dict[str, Any] = {}
-    prompt_counts: dict[str, Any] = {}
-    runtime_state_counts: dict[str, Any] = {}
-    rotary_runtime_counts: dict[str, Any] = {}
-    kv_cache_runtime_counts: dict[str, Any] = {}
-    rotary_counts: dict[str, Any] = {}
-    synthetic_steps: list[str] = []
-    for name in runtime_step_names:
-        step = steps.get(name)
-        if not isinstance(step, dict):
-            continue
-        source = step.get("input_source")
-        if source is not None:
-            sources[name] = source
-        runtime_count = step.get("synthetic_runtime_input_tensor_count")
-        if runtime_count is None:
-            runtime_count = _step_synthetic_runtime_input_count(step)
-        if runtime_count is None and source == "synthetic":
-            runtime_count = step.get("runtime_input_tensor_count")
-        rotary_count = step.get("synthetic_rotary_tensor_count")
-        if rotary_count is None:
-            rotary_count = _step_synthetic_rotary_tensor_count(step)
-        prompt_count = step.get("prompt_runtime_input_tensor_count")
-        if prompt_count is None:
-            setup = step.get("parameter_setup")
-            if isinstance(setup, dict):
-                prompt_count = setup.get("prompt_runtime_input_tensor_count")
-        runtime_state_count = step.get(
-            "decode_runtime_state_input_tensor_count"
-        )
-        if runtime_state_count is None:
-            setup = step.get("parameter_setup")
-            if isinstance(setup, dict):
-                runtime_state_count = setup.get(
-                    "decode_runtime_state_input_tensor_count"
-                )
-        rotary_runtime_count = step.get("rotary_runtime_input_tensor_count")
-        if rotary_runtime_count is None:
-            setup = step.get("parameter_setup")
-            if isinstance(setup, dict):
-                rotary_runtime_count = setup.get(
-                    "rotary_runtime_input_tensor_count"
-                )
-        kv_cache_runtime_count = step.get(
-            "kv_cache_runtime_input_tensor_count"
-        )
-        if kv_cache_runtime_count is None:
-            setup = step.get("parameter_setup")
-            if isinstance(setup, dict):
-                kv_cache_runtime_count = setup.get(
-                    "kv_cache_runtime_input_tensor_count"
-                )
-        if runtime_count is not None:
-            runtime_counts[name] = runtime_count
-        if prompt_count is not None:
-            prompt_counts[name] = prompt_count
-        if runtime_state_count is not None:
-            runtime_state_counts[name] = runtime_state_count
-        if rotary_runtime_count is not None:
-            rotary_runtime_counts[name] = rotary_runtime_count
-        if kv_cache_runtime_count is not None:
-            kv_cache_runtime_counts[name] = kv_cache_runtime_count
-        if rotary_count is not None:
-            rotary_counts[name] = rotary_count
-        if (
-            source == "synthetic"
-            or _positive_scalar_count(runtime_count)
-            or _positive_scalar_count(rotary_count)
-        ):
-            synthetic_steps.append(name)
-
-    depth_sweep = steps.get("decode_depth_sweep")
-    synthetic_depth_records = 0
-    if isinstance(depth_sweep, dict):
-        records = depth_sweep.get("records")
-        if isinstance(records, list):
-            for record in records:
-                if not isinstance(record, dict):
-                    continue
-                if (
-                    record.get("input_source") == "synthetic"
-                    or _positive_scalar_count(
-                        record.get("synthetic_runtime_input_tensor_count")
-                    )
-                    or _positive_scalar_count(
-                        record.get("synthetic_rotary_tensor_count")
-                    )
-                ):
-                    synthetic_depth_records += 1
-            if synthetic_depth_records:
-                synthetic_steps.append("decode_depth_sweep")
-
-    synthetic_steps = sorted(set(synthetic_steps))
-    uses_synthetic = bool(synthetic_steps or synthetic_depth_records)
-    return {
-        "schema_version": 1,
-        "status": (
-            "synthetic_runtime_inputs"
-            if uses_synthetic
-            else "no_synthetic_runtime_inputs_observed"
-        ),
-        "uses_synthetic_runtime_inputs": uses_synthetic,
-        "runtime_input_sources": sources,
-        "synthetic_runtime_input_steps": synthetic_steps,
-        "synthetic_runtime_input_tensor_counts": runtime_counts,
-        "prompt_runtime_input_tensor_counts": prompt_counts,
-        "decode_runtime_state_input_tensor_counts": runtime_state_counts,
-        "rotary_runtime_input_tensor_counts": rotary_runtime_counts,
-        "kv_cache_runtime_input_tensor_counts": kv_cache_runtime_counts,
-        "synthetic_rotary_tensor_counts": rotary_counts,
-        "depth_sweep_synthetic_record_count": synthetic_depth_records,
-    }
-
-
-def _generate_prefill_decode_ready(step: Any) -> bool:
-    if not isinstance(step, dict):
-        return False
-    return (
-        step.get("status") == "pass"
-        and step.get("prefill_status") == "passed"
-        and step.get("kv_cache_source") == "prefill"
-        and step.get("generate_runtime_owned") is True
-        and step.get("decode_loop_runtime_owned") is True
-        and _generated_tokens_present(step.get("generated_token_ids"))
-        and step.get("generated_text_status") not in {
-            None,
-            "not_run",
-            "dry_run",
-            "error",
-        }
-    )
-
-
-def _generated_tokens_present(value: Any) -> bool:
-    if not isinstance(value, list):
-        return False
-    for row in value:
-        if isinstance(row, list) and row:
-            return True
-    return False
-
-
 def _generate_prefill_decode_failure_diagnostics(
     generate_report: dict[str, Any],
 ) -> dict[str, Any] | None:
@@ -5649,11 +5482,6 @@ def _generate_failed_step_diagnostics(step: Any) -> dict[str, Any] | None:
         "expected_ops": reference.get("expected_ops"),
         "error": step.get("error"),
     }
-
-
-def _positive_scalar_count(value: Any) -> bool:
-    numeric = _safe_int(value)
-    return numeric is not None and numeric > 0
 
 
 def _sum_present_counts(*values: Any) -> int | None:
@@ -7034,20 +6862,6 @@ def _step_tensorization_summary(step: dict[str, Any]) -> dict[str, Any]:
     setup = step.get("parameter_setup") or {}
     tensorization = setup.get("tensorization") or {}
     return tensorization if isinstance(tensorization, dict) else {}
-
-
-def _step_synthetic_runtime_input_count(step: dict[str, Any]) -> Any:
-    setup = step.get("parameter_setup") or {}
-    if not isinstance(setup, dict):
-        return None
-    return setup.get("synthetic_runtime_input_tensor_count")
-
-
-def _step_synthetic_rotary_tensor_count(step: dict[str, Any]) -> Any:
-    setup = step.get("parameter_setup") or {}
-    if not isinstance(setup, dict):
-        return None
-    return setup.get("synthetic_rotary_tensor_count")
 
 
 def _decode_runtime_inputs_complete(

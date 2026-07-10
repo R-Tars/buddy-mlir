@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from .schema import safe_int
+
 
 def acceptance_check_passed(acceptance: Any, name: str) -> bool:
     if not isinstance(acceptance, dict):
@@ -89,6 +91,198 @@ def final_acceptance_gate_matrix(
         "missing_gates": missing_gates,
         "gates": gate_entries,
     }
+
+
+def step_synthetic_runtime_input_count(step: dict[str, Any]) -> Any:
+    setup = step.get("parameter_setup") or {}
+    if not isinstance(setup, dict):
+        return None
+    return setup.get("synthetic_runtime_input_tensor_count")
+
+
+def step_synthetic_rotary_tensor_count(step: dict[str, Any]) -> Any:
+    setup = step.get("parameter_setup") or {}
+    if not isinstance(setup, dict):
+        return None
+    return setup.get("synthetic_rotary_tensor_count")
+
+
+def positive_scalar_count(value: Any) -> bool:
+    numeric = safe_int(value)
+    return numeric is not None and numeric > 0
+
+
+def _generated_tokens_present(value: Any) -> bool:
+    if not isinstance(value, list):
+        return False
+    for row in value:
+        if isinstance(row, list) and row:
+            return True
+    return False
+
+
+def generate_prefill_decode_ready(step: Any) -> bool:
+    if not isinstance(step, dict):
+        return False
+    return (
+        step.get("status") == "pass"
+        and step.get("prefill_status") == "passed"
+        and step.get("kv_cache_source") == "prefill"
+        and step.get("generate_runtime_owned") is True
+        and step.get("decode_loop_runtime_owned") is True
+        and _generated_tokens_present(step.get("generated_token_ids"))
+        and step.get("generated_text_status") not in {
+            None,
+            "not_run",
+            "dry_run",
+            "error",
+        }
+    )
+
+
+def runtime_input_scope(report: dict[str, Any]) -> dict[str, Any]:
+    if report.get("dry_run"):
+        return {
+            "schema_version": 1,
+            "status": "dry_run",
+            "uses_synthetic_runtime_inputs": False,
+            "runtime_input_sources": {},
+            "synthetic_runtime_input_steps": [],
+            "synthetic_runtime_input_tensor_counts": {},
+            "prompt_runtime_input_tensor_counts": {},
+            "decode_runtime_state_input_tensor_counts": {},
+            "rotary_runtime_input_tensor_counts": {},
+            "kv_cache_runtime_input_tensor_counts": {},
+            "synthetic_rotary_tensor_counts": {},
+            "depth_sweep_synthetic_record_count": 0,
+        }
+
+    steps = report.get("steps")
+    if not isinstance(steps, dict):
+        steps = {}
+    runtime_step_names = [
+        "decode_shell",
+        "single_layer_decode",
+        "smoke_decode_step",
+        "profile_decode_step",
+        "prompt_decode_loop",
+        "generate_prefill_decode",
+        "profile_generate",
+    ]
+    sources: dict[str, Any] = {}
+    runtime_counts: dict[str, Any] = {}
+    prompt_counts: dict[str, Any] = {}
+    runtime_state_counts: dict[str, Any] = {}
+    rotary_runtime_counts: dict[str, Any] = {}
+    kv_cache_runtime_counts: dict[str, Any] = {}
+    rotary_counts: dict[str, Any] = {}
+    synthetic_steps: list[str] = []
+    for name in runtime_step_names:
+        step = steps.get(name)
+        if not isinstance(step, dict):
+            continue
+        source = step.get("input_source")
+        if source is not None:
+            sources[name] = source
+        runtime_count = step.get("synthetic_runtime_input_tensor_count")
+        if runtime_count is None:
+            runtime_count = step_synthetic_runtime_input_count(step)
+        if runtime_count is None and source == "synthetic":
+            runtime_count = step.get("runtime_input_tensor_count")
+        rotary_count = step.get("synthetic_rotary_tensor_count")
+        if rotary_count is None:
+            rotary_count = step_synthetic_rotary_tensor_count(step)
+        prompt_count = step.get("prompt_runtime_input_tensor_count")
+        if prompt_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                prompt_count = setup.get("prompt_runtime_input_tensor_count")
+        runtime_state_count = step.get(
+            "decode_runtime_state_input_tensor_count"
+        )
+        if runtime_state_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                runtime_state_count = setup.get(
+                    "decode_runtime_state_input_tensor_count"
+                )
+        rotary_runtime_count = step.get("rotary_runtime_input_tensor_count")
+        if rotary_runtime_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                rotary_runtime_count = setup.get(
+                    "rotary_runtime_input_tensor_count"
+                )
+        kv_cache_runtime_count = step.get(
+            "kv_cache_runtime_input_tensor_count"
+        )
+        if kv_cache_runtime_count is None:
+            setup = step.get("parameter_setup")
+            if isinstance(setup, dict):
+                kv_cache_runtime_count = setup.get(
+                    "kv_cache_runtime_input_tensor_count"
+                )
+        if runtime_count is not None:
+            runtime_counts[name] = runtime_count
+        if prompt_count is not None:
+            prompt_counts[name] = prompt_count
+        if runtime_state_count is not None:
+            runtime_state_counts[name] = runtime_state_count
+        if rotary_runtime_count is not None:
+            rotary_runtime_counts[name] = rotary_runtime_count
+        if kv_cache_runtime_count is not None:
+            kv_cache_runtime_counts[name] = kv_cache_runtime_count
+        if rotary_count is not None:
+            rotary_counts[name] = rotary_count
+        if (
+            source == "synthetic"
+            or positive_scalar_count(runtime_count)
+            or positive_scalar_count(rotary_count)
+        ):
+            synthetic_steps.append(name)
+
+    depth_sweep = steps.get("decode_depth_sweep")
+    synthetic_depth_records = 0
+    if isinstance(depth_sweep, dict):
+        records = depth_sweep.get("records")
+        if isinstance(records, list):
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                if (
+                    record.get("input_source") == "synthetic"
+                    or positive_scalar_count(
+                        record.get("synthetic_runtime_input_tensor_count")
+                    )
+                    or positive_scalar_count(
+                        record.get("synthetic_rotary_tensor_count")
+                    )
+                ):
+                    synthetic_depth_records += 1
+            if synthetic_depth_records:
+                synthetic_steps.append("decode_depth_sweep")
+
+    synthetic_steps = sorted(set(synthetic_steps))
+    uses_synthetic = bool(synthetic_steps or synthetic_depth_records)
+    return {
+        "schema_version": 1,
+        "status": (
+            "synthetic_runtime_inputs"
+            if uses_synthetic
+            else "no_synthetic_runtime_inputs_observed"
+        ),
+        "uses_synthetic_runtime_inputs": uses_synthetic,
+        "runtime_input_sources": sources,
+        "synthetic_runtime_input_steps": synthetic_steps,
+        "synthetic_runtime_input_tensor_counts": runtime_counts,
+        "prompt_runtime_input_tensor_counts": prompt_counts,
+        "decode_runtime_state_input_tensor_counts": runtime_state_counts,
+        "rotary_runtime_input_tensor_counts": rotary_runtime_counts,
+        "kv_cache_runtime_input_tensor_counts": kv_cache_runtime_counts,
+        "synthetic_rotary_tensor_counts": rotary_counts,
+        "depth_sweep_synthetic_record_count": synthetic_depth_records,
+    }
+
 
 def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
     from .. import validation
@@ -439,7 +633,6 @@ def real_decode_acceptance(
     _expected_decode_runtime_input_summary = validation._expected_decode_runtime_input_summary
     _expected_layer_ids = validation._expected_layer_ids
     _field_keys = validation._field_keys
-    _generate_prefill_decode_ready = validation._generate_prefill_decode_ready
     _has_nonnegative_fields = validation._has_nonnegative_fields
     _int_equal = validation._int_equal
     _int_list = validation._int_list
@@ -469,7 +662,6 @@ def real_decode_acceptance(
     _positive_count = validation._positive_count
     _positive_number = validation._positive_number
     _profile_generate_milestones_complete = validation._profile_generate_milestones_complete
-    _runtime_input_scope = validation._runtime_input_scope
     _runtime_input_source_supported = validation._runtime_input_source_supported
     _safe_int = validation._safe_int
     _step_tensorization_summary = validation._step_tensorization_summary
@@ -2165,21 +2357,19 @@ def real_decode_acceptance(
             )
         )
     if require_model_end_to_end:
-        runtime_scope = _runtime_input_scope(report)
+        runtime_scope = runtime_input_scope(report)
         decode_loop_runtime_owned = bool(
             report.get("decode_loop_runtime_owned")
             or prompt_loop.get("decode_loop_runtime_owned")
         )
-        generate_prefill_decode_ready = _generate_prefill_decode_ready(
-            generate_step
-        )
+        generate_ready = generate_prefill_decode_ready(generate_step)
         checks.append(
             _acceptance_check(
                 "model_end_to_end_readiness.ready",
                 (
                     not runtime_scope.get("uses_synthetic_runtime_inputs")
                     and decode_loop_runtime_owned
-                    and generate_prefill_decode_ready
+                    and generate_ready
                 ),
                 observed={
                     "status": runtime_scope.get("status"),
@@ -2193,7 +2383,7 @@ def real_decode_acceptance(
                         decode_loop_runtime_owned
                     ),
                     "generate_prefill_decode_ready": (
-                        generate_prefill_decode_ready
+                        generate_ready
                     ),
                     "prefill_status": generate_step.get("prefill_status"),
                     "kv_cache_source": generate_step.get("kv_cache_source"),

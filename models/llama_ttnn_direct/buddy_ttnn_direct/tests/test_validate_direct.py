@@ -62,7 +62,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.schema import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     acceptance_check_passed,
     final_acceptance_gate_matrix,
+    generate_prefill_decode_ready,
+    positive_scalar_count,
     real_decode_acceptance,
+    runtime_input_scope,
+    step_synthetic_rotary_tensor_count,
+    step_synthetic_runtime_input_count,
     validate_direct_acceptance,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
@@ -152,6 +157,26 @@ class ValidateDirectTest(unittest.TestCase):
         self.assertIs(
             validation_module._final_acceptance_gate_matrix,
             final_acceptance_gate_matrix,
+        )
+        self.assertIs(
+            validation_module._generate_prefill_decode_ready,
+            generate_prefill_decode_ready,
+        )
+        self.assertIs(
+            validation_module._positive_scalar_count,
+            positive_scalar_count,
+        )
+        self.assertIs(
+            validation_module._runtime_input_scope,
+            runtime_input_scope,
+        )
+        self.assertIs(
+            validation_module._step_synthetic_rotary_tensor_count,
+            step_synthetic_rotary_tensor_count,
+        )
+        self.assertIs(
+            validation_module._step_synthetic_runtime_input_count,
+            step_synthetic_runtime_input_count,
         )
         report = {
             "final_acceptance_plan": {
