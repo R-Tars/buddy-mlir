@@ -27,7 +27,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.legacy_validation im
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     artifact_evidence,
     artifact_index,
+    candidate_reference_status_counts,
+    dump_validation_report as dump_evidence_validation_report,
+    reference_summary,
     step_names_with_status,
+    tensorization_evidence,
+    write_json_report,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.performance import (
     PROFILE_GENERATE_MILESTONE_IDS,
@@ -146,6 +151,47 @@ class ValidateDirectTest(unittest.TestCase):
                 },
                 failing=True,
             ),
+            ["bad"],
+        )
+        self.assertIs(
+            validation_module._tensorization_evidence,
+            tensorization_evidence,
+        )
+        self.assertIs(validation_module._reference_summary, reference_summary)
+        self.assertIs(
+            validation_module._candidate_reference_status_counts,
+            candidate_reference_status_counts,
+        )
+        self.assertIs(
+            validation_module.dump_validation_report,
+            dump_evidence_validation_report,
+        )
+        self.assertIs(validation_module._write_json, write_json_report)
+        self.assertEqual(
+            validation_module._candidate_reference_status_counts(
+                {
+                    "candidates": [
+                        {"reference_status": "passed"},
+                        {"reference_status": "failed"},
+                        {"reference_status": "passed"},
+                    ]
+                }
+            ),
+            {"passed": 2, "failed": 1},
+        )
+        self.assertEqual(
+            validation_module._reference_summary(
+                {
+                    "reference": {
+                        "status": "failed",
+                        "kind": "sample",
+                        "checks": [
+                            {"name": "ok", "passed": True},
+                            {"name": "bad", "passed": False},
+                        ],
+                    }
+                }
+            )["reference_failed_checks"],
             ["bad"],
         )
 

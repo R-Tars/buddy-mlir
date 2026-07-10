@@ -14,7 +14,6 @@ from typing import Any
 
 from .codegen.artifacts import (
     prepare_offline_artifacts,
-    write_json,
 )
 from .codegen.config_diff import (
     PARITY_SECTIONS,
@@ -49,7 +48,12 @@ from .generate import run_generate, run_profile_generate
 from .reports.evidence import (
     artifact_evidence as _artifact_evidence,
     artifact_index as _artifact_index,
+    candidate_reference_status_counts as _candidate_reference_status_counts,
+    dump_validation_report,
+    reference_summary as _reference_summary,
     step_names_with_status as _step_names_with_status,
+    tensorization_evidence as _tensorization_evidence,
+    write_json_report as _write_json,
 )
 from .reports.performance import (
     OFFICIAL_PERFORMANCE_PARITY_METRIC,
@@ -7086,43 +7090,6 @@ def _diagnostic_excerpt(text: str, limit: int = 300) -> str:
     return text[:limit] + "...<truncated>"
 
 
-def _tensorization_evidence(step: dict[str, Any]) -> dict[str, Any]:
-    tensorization = _step_tensorization_summary(step)
-    return {
-        "status": tensorization.get("status"),
-        "roles": tensorization.get("roles"),
-        "tensor_count": tensorization.get("tensor_count"),
-        "target_dtype_counts": tensorization.get("target_dtype_counts", {}),
-        "layout_counts": tensorization.get("layout_counts", {}),
-        "memory_config_counts": tensorization.get("memory_config_counts", {}),
-        "transform_counts": tensorization.get("transform_counts", {}),
-        "transform_paths_by_kind": tensorization.get(
-            "transform_paths_by_kind",
-            {},
-        ),
-        "ttnn_dtype_counts": tensorization.get("ttnn_dtype_counts", {}),
-        "ttnn_layout_counts": tensorization.get("ttnn_layout_counts", {}),
-        "ttnn_memory_config_counts": tensorization.get(
-            "ttnn_memory_config_counts",
-            {},
-        ),
-        "tensor_paths": tensorization.get("tensor_paths", []),
-        "required_tensorized_tensor_paths": step.get(
-            "required_tensorized_tensor_paths",
-            [],
-        ),
-        "missing_required_tensorized_tensor_paths": step.get(
-            "missing_required_tensorized_tensor_paths",
-            [],
-        ),
-        "physical_shape_mismatches": _tensorized_physical_shape_mismatches(
-            tensorization
-        ),
-        "key_paths": tensorization.get("key_paths", []),
-        "key_tensors": tensorization.get("key_tensors", {}),
-    }
-
-
 def _kv_cache_contract_from_template_config(
     template_config: dict[str, Any],
     *,
@@ -11842,39 +11809,6 @@ def _step_trace_summary(step: dict[str, Any]) -> dict[str, Any]:
     return trace if isinstance(trace, dict) else {}
 
 
-def _reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
-    reference = runtime_report.get("reference") or {}
-    checks = reference.get("checks") or []
-    return {
-        "reference_status": reference.get("status"),
-        "reference_kind": reference.get("kind"),
-        "reference_planned_ops": reference.get("planned_ops"),
-        "reference_planned_observed_ops": reference.get(
-            "planned_observed_ops"
-        ),
-        "reference_observed_ops": reference.get("observed_ops"),
-        "reference_failed_checks": [
-            check.get("name")
-            for check in checks
-            if isinstance(check, dict) and not check.get("passed")
-        ],
-    }
-
-
-def _candidate_reference_status_counts(report: dict[str, Any]) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for candidate in report.get("candidates", []):
-        status = candidate.get("reference_status")
-        if status is None:
-            continue
-        counts[str(status)] = counts.get(str(status), 0) + 1
-    return counts
-
-
-def dump_validation_report(report: dict[str, Any], out: str | Path) -> None:
-    _write_json(Path(out), report)
-
-
 def _require(value: Any, step: str) -> None:
     if value is None:
         raise RuntimeError(f"validate-direct requires {step} to pass first")
@@ -11898,8 +11832,3 @@ def _mark_remaining_skipped(
                 "status": "skipped",
                 "reason": f"blocked by failed step: {failed_step}",
             }
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    write_json(path, payload)
