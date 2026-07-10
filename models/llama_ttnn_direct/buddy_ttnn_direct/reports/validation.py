@@ -4,6 +4,16 @@ from pathlib import Path
 from typing import Any
 
 from ..search.decode_step_autotune import DECODE_STEP_AUTOTUNE_KNOBS
+from .attention import (
+    ATTENTION_LAYER_OPS,
+    ATTENTION_PRIMITIVES,
+    attention_layer_primitive_reports_complete as _attention_layer_primitive_reports_complete,
+    attention_layer_primitive_reports_observed as _attention_layer_primitive_reports_observed,
+    attention_primitive_reports_complete as _attention_primitive_reports_complete,
+    attention_primitive_reports_observed as _attention_primitive_reports_observed,
+    attention_primitives_dry_run_complete as _attention_primitives_dry_run_complete,
+    attention_primitives_dry_run_observed as _attention_primitives_dry_run_observed,
+)
 from .autotune import (
     autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
     autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
@@ -938,11 +948,8 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
     from .. import validation
 
     VALIDATION_STEPS = validation.VALIDATION_STEPS
-    ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
     _official_required_field_coverage_complete = validation._official_required_field_coverage_complete
     _official_required_field_coverage_observed = validation._official_required_field_coverage_observed
-    _attention_primitives_dry_run_complete = validation._attention_primitives_dry_run_complete
-    _attention_primitives_dry_run_observed = validation._attention_primitives_dry_run_observed
     _required_validate_direct_artifacts_exist = validation._required_validate_direct_artifacts_exist
     _validate_direct_artifact_observed = validation._validate_direct_artifact_observed
 
@@ -1216,18 +1223,12 @@ def real_decode_acceptance(
 ) -> dict[str, Any]:
     from .. import validation
 
-    ATTENTION_LAYER_OPS = validation.ATTENTION_LAYER_OPS
-    ATTENTION_PRIMITIVES = validation.ATTENTION_PRIMITIVES
     DECODE_PARAMETER_ROLES = validation.DECODE_PARAMETER_ROLES
     LINEAR_WEIGHT_TRANSFORM = validation.LINEAR_WEIGHT_TRANSFORM
     PARITY_SECTIONS = validation.PARITY_SECTIONS
     PROFILE_GENERATE_SECTION_KEYS = validation.PROFILE_GENERATE_SECTION_KEYS
     PROFILE_LAYER_LATENCY_KEYS = validation.PROFILE_LAYER_LATENCY_KEYS
     PROFILE_SECTION_LATENCY_KEYS = validation.PROFILE_SECTION_LATENCY_KEYS
-    _attention_layer_primitive_reports_complete = validation._attention_layer_primitive_reports_complete
-    _attention_layer_primitive_reports_observed = validation._attention_layer_primitive_reports_observed
-    _attention_primitive_reports_complete = validation._attention_primitive_reports_complete
-    _attention_primitive_reports_observed = validation._attention_primitive_reports_observed
     _config_gap_summary_complete = validation._config_gap_summary_complete
     _config_gap_summary_observed = validation._config_gap_summary_observed
     _decode_depth_sweep_records_complete = validation._decode_depth_sweep_records_complete

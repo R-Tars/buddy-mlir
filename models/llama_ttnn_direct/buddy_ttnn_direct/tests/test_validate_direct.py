@@ -11,6 +11,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct import (
     validation as validation_module,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
+    attention as attention_reports,
     autotune as autotune_reports,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
@@ -615,6 +616,29 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIs(
                 getattr(validation_module, f"_{name}"),
                 getattr(autotune_reports, name),
+            )
+
+    def test_validation_attention_helpers_reexport_compatibly(self) -> None:
+        self.assertIs(
+            validation_module.ATTENTION_LAYER_OPS,
+            attention_reports.ATTENTION_LAYER_OPS,
+        )
+        self.assertIs(
+            validation_module.ATTENTION_PRIMITIVES,
+            attention_reports.ATTENTION_PRIMITIVES,
+        )
+        names = (
+            "attention_layer_primitive_reports_complete",
+            "attention_layer_primitive_reports_observed",
+            "attention_primitive_reports_complete",
+            "attention_primitive_reports_observed",
+            "attention_primitives_dry_run_complete",
+            "attention_primitives_dry_run_observed",
+        )
+        for name in names:
+            self.assertIs(
+                getattr(validation_module, f"_{name}"),
+                getattr(attention_reports, name),
             )
 
     def test_performance_baseline_reference_resolves(self) -> None:
