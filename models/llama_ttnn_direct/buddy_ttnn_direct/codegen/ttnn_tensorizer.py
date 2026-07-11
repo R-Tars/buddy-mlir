@@ -86,10 +86,18 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
         ),
         lm_head_split_count=int(lm_head.get("split_count", 1)),
         layer_dtype_overrides=official_layer_dtype_overrides(
-            template_config.get("official_config_profile")
+            template_config.get("official_config_profile"),
+            dtype_recipe=str(
+                template_config.get(
+                    "dtype_recipe",
+                    "official_like_performance_seed",
+                )
+            ),
         ),
         weight_memory_overrides=official_weight_memory_overrides(
-            template_config.get("official_config_profile")
+            template_config.get("official_config_profile"),
+            lm_head_split_count=int(lm_head.get("split_count", 1)),
+            vocab_size=graph.vocab_size,
         ),
     )
 

@@ -42,6 +42,17 @@ HF config and weights
   `28.627 tokens/s/user` (`86.49%` of target). This is `2.78%` slower than the
   Step C baseline, so config parity is complete but performance parity remains
   a Step E optimization target.
+- Step E now uses four progressive levels instead of the historical Cartesian
+  search: LM-head splits, dtype recipe, memory layout, then program/grid. Each
+  unique hardware candidate runs in an isolated process and is measured with
+  post-prefill steady decode. A `1%` promotion threshold keeps the incumbent
+  when a challenger is within run-to-run noise.
+- Step E retained split 8, the compressed performance recipe, official L1
+  sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
+  a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
+  `0.64%`, below the `1%` promotion threshold. The selected incumbent measured
+  `28.436 tokens/s/user` (`85.91%` of target); the default config is unchanged
+  and performance parity is still not claimed.
 - The dedicated all-BF16 correctness recipe passes the Hugging Face reference
   gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
   minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
@@ -68,7 +79,8 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Steady decode benchmark | 28.627 tokens/s/user with imported profile, 86.49% of target |
+| Layered autotune | Four levels complete; official incumbent retained |
+| Steady decode benchmark | Step E confirmation: 28.436 tokens/s/user, 85.91% of target |
 | Official performance parity | Not achieved |
 
 ## Quick Start
@@ -169,7 +181,7 @@ imported by runtime code.
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.
 - The steady decode path still creates five runtime metadata/rotary tensors per
-  iteration and the imported profile reaches `86.49%`, not the M6
+  iteration and the Step E confirmation reaches `85.91%`, not the M6
   greater-than-90% milestone.
 - Buddy prefill represents 32 users in one tensor, so the imported QKV and WO
   prefill configs disable TT-Transformers' single-sequence batch fusion while

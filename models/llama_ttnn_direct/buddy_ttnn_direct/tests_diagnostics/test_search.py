@@ -6,11 +6,11 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.search.space import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.space import (
     candidate_id,
     enumerate_candidate_configs,
     load_search_space,
@@ -187,7 +187,8 @@ class SearchTest(unittest.TestCase):
             / "models"
             / "llama_ttnn_direct"
             / "buddy_ttnn_direct"
-            / "search"
+                / "future"
+                / "historical_search"
             / "spaces"
             / "lm_head_minimal.json"
         )
@@ -205,7 +206,8 @@ class SearchTest(unittest.TestCase):
             / "models"
             / "llama_ttnn_direct"
             / "buddy_ttnn_direct"
-            / "search"
+                / "future"
+                / "historical_search"
             / "spaces"
             / "decode_step_minimal.json"
         )

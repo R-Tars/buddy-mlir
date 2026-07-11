@@ -4,7 +4,6 @@ from pathlib import Path
 from typing import Any
 
 from ..codegen.ttnn_tensorizer import LINEAR_WEIGHT_TRANSFORM
-from ..search.decode_step_autotune import DECODE_STEP_AUTOTUNE_KNOBS
 from ..smoke_single_layer_decode import DECODE_PARAMETER_ROLES
 from .attention import (
     ATTENTION_LAYER_OPS,
@@ -21,6 +20,7 @@ from .artifacts import (
     validate_direct_artifact_observed as _validate_direct_artifact_observed,
 )
 from .autotune import (
+    DECODE_STEP_AUTOTUNE_KNOBS,
     autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
     autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
     autotune_candidates_complete as _autotune_candidates_complete,

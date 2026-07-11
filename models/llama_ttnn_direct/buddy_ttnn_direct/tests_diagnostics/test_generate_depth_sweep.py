@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.search.generate_depth_sweep import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.generate_depth_sweep import (
     _generate_record,
     run_generate_depth_sweep,
 )
@@ -282,7 +282,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 return payload
 
             with patch(
-                "models.llama_ttnn_direct.buddy_ttnn_direct.search."
+                "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics."
                 "generate_depth_sweep.run_generate",
                 side_effect=fake_generate,
             ) as run_generate_mock:
@@ -346,7 +346,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
                 raise RuntimeError("synthetic depth failure")
 
             with patch(
-                "models.llama_ttnn_direct.buddy_ttnn_direct.search."
+                "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics."
                 "generate_depth_sweep.run_generate",
                 side_effect=fake_generate,
             ) as run_generate_mock:

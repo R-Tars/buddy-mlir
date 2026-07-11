@@ -147,7 +147,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     step_synthetic_runtime_input_count,
     validate_direct_acceptance,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_step_autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (

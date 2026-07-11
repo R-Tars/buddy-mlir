@@ -12,6 +12,7 @@ from ..templates.attention_prefill import (
 )
 from ..templates.lm_head import build_lm_head_split_ranges
 from .official_config import apply_official_config_profile
+from .tuning import apply_runtime_tuning
 
 
 def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
@@ -198,7 +199,8 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "memory_config": None,
         },
     }
-    return apply_official_config_profile(
+    config = apply_official_config_profile(
         config,
         template_config.get("official_config_profile"),
     )
+    return apply_runtime_tuning(config, template_config.get("autotune"))

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,7 @@ def apply_official_config_profile(
         }
     )
     merged["generation"] = copy.deepcopy(config["generation"])
+    _adapt_lm_head_program_configs(merged["lm_head"])
     merged["official_config_profile"] = profile
     merged["official_config_source"] = copy.deepcopy(official["source"])
     merged["official_parity_config"] = copy.deepcopy(
@@ -71,8 +73,12 @@ def apply_official_config_profile(
 
 def official_layer_dtype_overrides(
     profile: str | None,
+    *,
+    dtype_recipe: str | None = None,
 ) -> dict[int, dict[str, str]]:
     if not profile:
+        return {}
+    if dtype_recipe == "all_bf16_correctness":
         return {}
     official = load_official_config_profile(profile)
     mlp = official["runtime_config"].get("mlp") or {}
@@ -89,6 +95,9 @@ def official_layer_dtype_overrides(
 
 def official_weight_memory_overrides(
     profile: str | None,
+    *,
+    lm_head_split_count: int | None = None,
+    vocab_size: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     if not profile:
         return {}
@@ -105,11 +114,46 @@ def official_weight_memory_overrides(
         "mlp_down": "mlp_down",
         "lm_head": "lm_head",
     }
-    return {
+    result = {
         role: copy.deepcopy(raw_configs[source])
         for role, source in role_sources.items()
         if source in raw_configs
     }
+    if (
+        "lm_head" in result
+        and lm_head_split_count is not None
+        and vocab_size is not None
+    ):
+        result["lm_head"]["n"] = math.ceil(
+            int(vocab_size) / int(lm_head_split_count)
+        )
+    return result
+
+
+def _adapt_lm_head_program_configs(lm_head: dict[str, Any]) -> None:
+    splits = lm_head.get("splits")
+    program_configs = lm_head.get("program_configs")
+    if not isinstance(splits, list) or not splits:
+        return
+    if not isinstance(program_configs, list) or not program_configs:
+        return
+    template = program_configs[0]
+    if not isinstance(template, dict):
+        return
+    if template.get("kind") != "ttnn_matmul_dram_sharded_program_config":
+        return
+    core_grid = lm_head.get("core_grid", [8, 8])
+    core_count = math.prod(int(value) for value in core_grid)
+
+    adapted = []
+    for split in splits:
+        vocab_start = int(split["vocab_start"])
+        vocab_end = int(split["vocab_end"])
+        shard_width = vocab_end - vocab_start
+        descriptor = copy.deepcopy(template)
+        descriptor["per_core_N"] = math.ceil(shard_width / (32 * core_count))
+        adapted.append(descriptor)
+    lm_head["program_configs"] = adapted
 
 
 def _deep_merge(

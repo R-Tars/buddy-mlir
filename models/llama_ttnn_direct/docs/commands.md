@@ -158,6 +158,39 @@ The report records `prefill_ms`, `decode_step_ms_p50`,
 `aggregate_tokens_per_second`. Add `--dry-run` to validate the report contract
 without loading weights or opening a device.
 
+## Layered Autotune
+
+Autotune is a development diagnostic, not a product validation gate. It varies
+one axis at a time in this order: LM-head split count, dtype recipe, memory
+layout, then program config/core grid. Every candidate uses post-prefill steady
+decode; repeated incumbents reuse the same measurement rather than expanding a
+Cartesian product.
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
+  --stage autotune \
+  --model-path "$MODEL" \
+  --config "$CONFIG" \
+  --prompt "Hello from TTNN Direct" \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 128 \
+  --cache-len 1024 \
+  --warmup 5 \
+  --iterations 10 \
+  --confirm-warmup 5 \
+  --confirm-iterations 50 \
+  --min-relative-improvement 0.01 \
+  --out /tmp/ttnn_direct_autotune.json
+```
+
+Hardware candidates run in isolated subprocesses and are resumable by state
+fingerprint. The default `1%` minimum relative improvement applies both during
+each short-measurement level and to matched 5/50 confirmations of the
+provisional winner and root incumbent. This prevents a noisy short-run delta
+from replacing the default. Add `--dry-run` to generate the five unique
+candidate bundles without opening a device.
+
 ## Validate
 
 Validation emits `/OUT_DIR/validation_report.json` with named checks and a flat

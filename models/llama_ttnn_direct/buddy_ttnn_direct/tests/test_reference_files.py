@@ -29,6 +29,53 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 
 
 class ConfigDiffTest(unittest.TestCase):
+    def test_p150a_layered_autotune_evidence_is_complete(self) -> None:
+        evidence_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "evidence"
+            / "p150a_layered_autotune_evidence_20260711.json"
+        )
+        evidence = json.loads(evidence_path.read_text())
+
+        self.assertTrue(evidence["acceptance"]["passed"])
+        self.assertTrue(evidence["acceptance"]["four_levels_completed"])
+        self.assertFalse(evidence["acceptance"]["default_config_changed"])
+        self.assertTrue(
+            evidence["acceptance"]["provisional_winner_promotion_rejected"]
+        )
+        self.assertFalse(evidence["promotion_decision"]["promoted"])
+        self.assertEqual(evidence["default_config_audit"]["status"], "match")
+        self.assertEqual(evidence["default_config_audit"]["issue_count"], 0)
+        self.assertEqual(
+            [level["name"] for level in evidence["levels"]],
+            [
+                "lm_head_split_count",
+                "dtype_recipe",
+                "memory_config_layout",
+                "program_config_core_grid",
+            ],
+        )
+        self.assertEqual(evidence["selected_state"]["lm_head_split_count"], 8)
+        self.assertEqual(
+            evidence["selected_state"]["program_config"],
+            "official",
+        )
+        self.assertEqual(evidence["winner_confirmation"]["iterations"], 50)
+        self.assertTrue(evidence["winner_confirmation"]["passed"])
+        self.assertFalse(
+            evidence["acceptance"]["official_performance_parity_claimed"]
+        )
+        for key in (
+            "seed_config_sha256",
+            "autotune_report_sha256",
+        ):
+            self.assertEqual(len(evidence[key]), 64)
+        self.assertEqual(
+            len(evidence["winner_confirmation"]["report_sha256"]),
+            64,
+        )
+
     def test_p150a_official_config_parity_evidence_is_complete(self) -> None:
         evidence_path = (
             Path(__file__).resolve().parents[2]

@@ -40,12 +40,6 @@ from .codegen.ttnn_tensorizer import (
 from .semantic.dump import dump_graph_json, load_graph_json
 from .semantic.importer_hf_llama import import_hf_llama
 from .profile_template import profile_template
-from .search.report import dump_search_report
-from .search.decode_step_autotune import run_decode_step_autotune
-from .search.decode_depth_sweep import run_decode_depth_sweep
-from .search.generate_depth_sweep import run_generate_depth_sweep
-from .search.runner import run_lm_head_search
-from .search.space import load_search_space
 from .decode_loop import run_prompt_decode_loop
 from .generate import (
     run_generate,
@@ -104,7 +98,8 @@ def default_official_template_path() -> Path:
 def default_search_space_path() -> Path:
     return (
         Path(__file__).resolve().parent
-        / "search"
+        / "future"
+        / "historical_search"
         / "spaces"
         / "lm_head_minimal.json"
     )
@@ -113,7 +108,8 @@ def default_search_space_path() -> Path:
 def default_decode_step_search_space_path() -> Path:
     return (
         Path(__file__).resolve().parent
-        / "search"
+        / "future"
+        / "historical_search"
         / "spaces"
         / "decode_step_minimal.json"
     )
@@ -2029,11 +2025,13 @@ def build_parser() -> argparse.ArgumentParser:
             "decode-loop-legacy",
             "depth-sweep",
             "generate-depth-sweep",
+            "autotune",
         ),
         required=True,
     )
     diagnose.add_argument("--program-dir", type=Path, default=None)
     diagnose.add_argument("--model-path", type=Path, default=None)
+    diagnose.add_argument("--config", type=Path, default=None)
     add_prompt_runtime_args(diagnose)
     diagnose.add_argument("--out", type=Path, required=True)
     diagnose.add_argument("--device", default="p150a")
@@ -2057,6 +2055,13 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--trace", action="store_true")
     diagnose.add_argument("--trace-iterations", type=int, default=1)
     diagnose.add_argument("--require-full-depth", action="store_true")
+    diagnose.add_argument("--candidates-dir", type=Path, default=None)
+    diagnose.add_argument("--warmup", type=int, default=5)
+    diagnose.add_argument("--iterations", type=int, default=10)
+    diagnose.add_argument("--confirm-warmup", type=int, default=5)
+    diagnose.add_argument("--confirm-iterations", type=int, default=50)
+    diagnose.add_argument("--min-relative-improvement", type=float, default=0.01)
+    diagnose.add_argument("--no-resume", action="store_true")
     diagnose.set_defaults(func=_cmd_diagnose)
     return parser
 
@@ -2433,6 +2438,8 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
 
 
 def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
+    from .diagnostics.decode_depth_sweep import run_decode_depth_sweep
+
     report = run_decode_depth_sweep(
         out=args.out,
         program_dir=args.program_dir,
@@ -2459,6 +2466,8 @@ def _cmd_decode_depth_sweep(args: argparse.Namespace) -> int:
 
 
 def _cmd_generate_depth_sweep(args: argparse.Namespace) -> int:
+    from .diagnostics.generate_depth_sweep import run_generate_depth_sweep
+
     report = run_generate_depth_sweep(
         out=args.out,
         program_dir=args.program_dir,
@@ -2658,6 +2667,10 @@ def _cmd_tensorize_parameters(args: argparse.Namespace) -> int:
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
+    from .future.historical_search.report import dump_search_report
+    from .future.historical_search.runner import run_lm_head_search
+    from .future.historical_search.space import load_search_space
+
     graph = load_graph_json(args.semantic_json)
     base_config = load_template_config(args.base_config)
     space = load_search_space(args.space)
@@ -2677,6 +2690,12 @@ def _cmd_search(args: argparse.Namespace) -> int:
 
 
 def _cmd_autotune_decode_step(args: argparse.Namespace) -> int:
+    from .future.historical_search.decode_step_autotune import (
+        run_decode_step_autotune,
+    )
+    from .future.historical_search.report import dump_search_report
+    from .future.historical_search.space import load_search_space
+
     space = load_search_space(args.space)
     report = run_decode_step_autotune(
         program_dir=args.program_dir,
@@ -3347,6 +3366,8 @@ def _run_diagnose_stage(args: argparse.Namespace) -> dict[str, object]:
             dry_run=args.dry_run,
         )
     if args.stage == "depth-sweep":
+        from .diagnostics.decode_depth_sweep import run_decode_depth_sweep
+
         _require_diagnose_args(args, "program_dir")
         return run_decode_depth_sweep(
             out=args.out,
@@ -3366,6 +3387,8 @@ def _run_diagnose_stage(args: argparse.Namespace) -> dict[str, object]:
             isolate_depth_steps=not args.dry_run,
         )
     if args.stage == "generate-depth-sweep":
+        from .diagnostics.generate_depth_sweep import run_generate_depth_sweep
+
         _require_diagnose_args(args, "program_dir")
         return run_generate_depth_sweep(
             out=args.out,
@@ -3384,6 +3407,34 @@ def _run_diagnose_stage(args: argparse.Namespace) -> dict[str, object]:
             dry_run=args.dry_run,
             require_full_depth=args.require_full_depth,
             isolate_depth_steps=not args.dry_run,
+        )
+    if args.stage == "autotune":
+        from .diagnostics.autotune import run_layered_autotune
+
+        _require_diagnose_args(args, "model_path", "config")
+        if not args.dry_run:
+            _require_diagnose_args(args, "prompt")
+        return run_layered_autotune(
+            model_path=args.model_path,
+            config_path=args.config,
+            out=args.out,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            candidates_dir=args.candidates_dir,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            device=args.device,
+            device_id=args.device_id,
+            dtype_seed=args.dtype_seed,
+            warmup=args.warmup,
+            iterations=args.iterations,
+            confirm_warmup=args.confirm_warmup,
+            confirm_iterations=args.confirm_iterations,
+            min_relative_improvement=args.min_relative_improvement,
+            dry_run=args.dry_run,
+            resume=not args.no_resume,
         )
     raise ValueError(f"unsupported diagnose stage: {args.stage}")
 

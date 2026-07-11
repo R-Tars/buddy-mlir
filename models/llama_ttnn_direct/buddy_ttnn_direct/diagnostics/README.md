@@ -19,6 +19,7 @@ Available stages are:
 - `decode-loop-legacy`
 - `depth-sweep`
 - `generate-depth-sweep`
+- `autotune`
 
 Use `--dry-run` whenever the selected stage supports it and no device should be
 opened.
@@ -64,6 +65,30 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --dry-run \
   --out /tmp/diagnose_depth_sweep.json
 ```
+
+Layered autotune dry-run or P150A execution:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
+  --stage autotune \
+  --model-path /wafer/share/models/Llama-3.1-8B-Instruct \
+  --config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --prompt "Hello from TTNN Direct" \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 128 \
+  --cache-len 1024 \
+  --warmup 5 \
+  --iterations 10 \
+  --confirm-warmup 5 \
+  --confirm-iterations 50 \
+  --out /tmp/diagnose_autotune.json
+```
+
+Autotune checks device ownership before each unique candidate and runs every
+hardware profile in a separate process so 8B parameter mappings and TTNN state
+are released between candidates. Add `--dry-run` to build all candidate bundles
+without opening a device.
 
 ## Legacy Compatibility
 

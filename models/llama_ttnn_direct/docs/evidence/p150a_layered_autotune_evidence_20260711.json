@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-11T17:15:09+08:00",
+  "purpose": "Step E rebuilt autotune as four progressive post-prefill steady-decode levels and evaluated the resulting candidates on P150A.",
+  "device": "p150a",
+  "device_id": 0,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "seed_config": "buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json",
+  "seed_config_sha256": "e245168c01426afb7440b2fc790a0301fb677ce547223942f86e703df9c648b2",
+  "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "autotune_report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_20260711_v2.json",
+  "autotune_report_sha256": "4f0b23705f69d300cbc82124da1136f31ceec719866c71d52fbb4ff54aeb164a",
+  "default_config_audit": {
+    "program_config_sha256": "808a9453009fa1a70dd2b820c4915b81b9fa5496806df9ce32723327c944c529",
+    "config_diff_report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_default_audit_diff_20260711.json",
+    "config_diff_report_sha256": "fdaed3b835c5f0b90f020e8dc53141715990056e2ad67b99221f6345179f6c86",
+    "status": "match",
+    "matching_field_count": 55,
+    "issue_count": 0
+  },
+  "strategy": {
+    "name": "progressive_four_level_decode_steady",
+    "metric": "tokens_per_second_per_user",
+    "metric_direction": "maximize",
+    "minimum_relative_improvement": 0.01,
+    "below_threshold": "keep_incumbent",
+    "unique_short_measurements": 5,
+    "candidate_warmup": 5,
+    "candidate_iterations": 10,
+    "winner_confirmation_warmup": 5,
+    "winner_confirmation_iterations": 50,
+    "final_promotion_check": "compare provisional winner and root incumbent with identical 5/50 confirmations",
+    "measurement_isolation": "one_profile_subprocess_per_unique_candidate",
+    "resume_policy": "reuse_passed_and_deterministic_invalid_candidates",
+    "device_ownership_check": "fuser_before_each_unique_candidate"
+  },
+  "runtime_shape": {
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 128,
+    "cache_len": 1024,
+    "after_prefill": true,
+    "device_token_handoff": true
+  },
+  "levels": [
+    {
+      "level": 1,
+      "name": "lm_head_split_count",
+      "incumbent": 8,
+      "challenger": 16,
+      "incumbent_tokens_per_second_per_user": 28.098410453727112,
+      "challenger_tokens_per_second_per_user": 26.923160382556183,
+      "challenger_relative_delta_percent": -4.182621195267789,
+      "winner": 8
+    },
+    {
+      "level": 2,
+      "name": "dtype_recipe",
+      "incumbent": "official_like_performance_seed",
+      "challenger": "all_bf16_correctness",
+      "challenger_status": "runtime_error",
+      "challenger_rejection": {
+        "kind": "l1_circular_buffer_overflow",
+        "required_bytes": 2093568,
+        "maximum_bytes": 1572864
+      },
+      "winner": "official_like_performance_seed"
+    },
+    {
+      "level": 3,
+      "name": "memory_config_layout",
+      "incumbent": "official_l1_sharded",
+      "challenger": "lm_head_dram_concat",
+      "incumbent_tokens_per_second_per_user": 28.098410453727112,
+      "challenger_tokens_per_second_per_user": 28.55131278100631,
+      "challenger_short_measurement_delta_percent": 1.6118432322890452,
+      "winner": "lm_head_dram_concat"
+    },
+    {
+      "level": 4,
+      "name": "program_config_core_grid",
+      "incumbent": "lm_head_dram_concat_with_official_sdpa_grid_8x8",
+      "challenger": "sdpa_grid_8x4",
+      "incumbent_tokens_per_second_per_user": 28.55131278100631,
+      "challenger_tokens_per_second_per_user": 28.6765078168603,
+      "challenger_short_measurement_delta_percent": 0.43849134648994426,
+      "promotion_threshold_percent": 1.0,
+      "winner": "official_sdpa_grid_8x8",
+      "selection_reason": "The short-measurement gain was below the promotion threshold."
+    }
+  ],
+  "provisional_winner_confirmation": {
+    "candidate": "lm_head_dram_concat",
+    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-lm-head-dram-concat-official-9fae83f4d850/steady_profile.json",
+    "report_sha256": "f0fd58c006b534f536020db334ceb2124364060cd808a0e6fa63323a8fab6eb7",
+    "warmup": 5,
+    "iterations": 50,
+    "tokens_per_second_per_user": 28.617052607979357,
+    "aggregate_tokens_per_second": 915.7456834553394,
+    "relative_delta_vs_root_incumbent_confirmation_percent": 0.6364925878879379
+  },
+  "promotion_decision": {
+    "status": "rejected",
+    "promoted": false,
+    "confirmed_relative_improvement_percent": 0.6364925878879379,
+    "minimum_relative_improvement_percent": 1.0,
+    "reason": "confirmed improvement was below promotion threshold"
+  },
+  "selected_state": {
+    "lm_head_split_count": 8,
+    "dtype_recipe": "official_like_performance_seed",
+    "memory_layout": "official_l1_sharded",
+    "program_config": "official"
+  },
+  "winner_confirmation": {
+    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-official-l1-sharded-official-8cad7ca959a0/steady_profile.json",
+    "report_sha256": "c88fff8dc54a4486c1938ff49e82ee9166f14e4fd50d18c378d19214a553ad74",
+    "status": "profiled",
+    "passed": true,
+    "warmup": 5,
+    "iterations": 50,
+    "setup_ms": 102584.09578501596,
+    "prefill_ms": 1396.2834709964227,
+    "decode_step_ms_p50": 35.0849755195668,
+    "decode_step_ms_mean": 35.166616900241934,
+    "decode_step_ms_min": 34.395349997794256,
+    "decode_step_ms_max": 36.33268101839349,
+    "tokens_per_second_per_user": 28.43605919889099,
+    "aggregate_tokens_per_second": 909.9538943645117,
+    "official_reference_tokens_per_second_per_user": 33.1,
+    "ratio_of_official_reference": 0.8590954440752565,
+    "percent_of_official_reference": 85.90954440752566,
+    "failed_checks": []
+  },
+  "comparison": {
+    "step_d_tokens_per_second_per_user": 28.62661963086402,
+    "step_e_confirmed_tokens_per_second_per_user": 28.43605919889099,
+    "step_e_vs_step_d_delta_percent": -0.665675634882068,
+    "step_c_tokens_per_second_per_user": 29.44467846963441,
+    "step_e_vs_step_c_delta_percent": -3.4254721843323455,
+    "provisional_winner_tokens_per_second_per_user": 28.617052607979357,
+    "provisional_winner_vs_step_d_delta_percent": -0.033420023069541394,
+    "interpretation": "LM-head DRAM concat advanced during short measurements but its matched 5/50 confirmation improved on the root incumbent by only 0.64%, below the 1% promotion threshold. The default production config remains unchanged."
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "four_levels_completed": true,
+    "winner_confirmed_with_full_depth_steady_decode": true,
+    "root_incumbent_confirmed_with_full_depth_steady_decode": true,
+    "provisional_winner_promotion_rejected": true,
+    "default_config_changed": false,
+    "official_performance_parity_claimed": false
+  }
+}

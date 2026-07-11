@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..search.decode_step_autotune import DECODE_STEP_AUTOTUNE_KNOBS
+DECODE_STEP_AUTOTUNE_KNOBS = (
+    "lm_head_split_count",
+    "generation_template",
+    "mlp_intermediate_dtype",
+    "attention_sdpa_output_memory_config",
+    "attention_concat_heads_output_memory_config",
+)
 from .profiling import (
     bottleneck_summary_complete as _bottleneck_summary_complete,
     bottleneck_summary_observed as _bottleneck_summary_observed,

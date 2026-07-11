@@ -224,15 +224,15 @@ from ..reports.validation import (
     step_synthetic_runtime_input_count as _step_synthetic_runtime_input_count,
     validate_direct_acceptance as _validate_direct_acceptance,
 )
-from ..search.decode_step_autotune import (
+from ..future.historical_search.decode_step_autotune import (
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
 )
-from ..search.decode_depth_sweep import run_decode_depth_sweep
-from ..search.generate_depth_sweep import run_generate_depth_sweep
-from ..search.report import dump_search_report
-from ..search.runner import run_lm_head_search
-from ..search.space import load_search_space
+from .decode_depth_sweep import run_decode_depth_sweep
+from .generate_depth_sweep import run_generate_depth_sweep
+from ..future.historical_search.report import dump_search_report
+from ..future.historical_search.runner import run_lm_head_search
+from ..future.historical_search.space import load_search_space
 from ..semantic.dump import dump_graph_json
 from ..semantic.graph import LlamaModelGraph
 from ..semantic.importer_hf_llama import import_hf_llama
@@ -271,7 +271,8 @@ def default_official_template_path() -> Path:
 def default_search_space_path() -> Path:
     return (
         Path(__file__).resolve().parent.parent
-        / "search"
+        / "future"
+        / "historical_search"
         / "spaces"
         / "lm_head_minimal.json"
     )
@@ -280,7 +281,8 @@ def default_search_space_path() -> Path:
 def default_decode_step_search_space_path() -> Path:
     return (
         Path(__file__).resolve().parent.parent
-        / "search"
+        / "future"
+        / "historical_search"
         / "spaces"
         / "decode_step_minimal.json"
     )

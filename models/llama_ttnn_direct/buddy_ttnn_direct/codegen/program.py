@@ -52,10 +52,13 @@ def write_decode_program_bundle(
         recipe=template_config["dtype_recipe"],
         lm_head_split_count=int(template_config["lm_head_split_count"]),
         layer_dtype_overrides=official_layer_dtype_overrides(
-            template_config.get("official_config_profile")
+            template_config.get("official_config_profile"),
+            dtype_recipe=str(template_config["dtype_recipe"]),
         ),
         weight_memory_overrides=official_weight_memory_overrides(
-            template_config.get("official_config_profile")
+            template_config.get("official_config_profile"),
+            lm_head_split_count=int(template_config["lm_head_split_count"]),
+            vocab_size=graph.vocab_size,
         ),
     )
     weights_manifest = build_offline_artifact_manifests(

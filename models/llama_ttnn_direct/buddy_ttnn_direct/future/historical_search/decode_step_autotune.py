@@ -6,8 +6,9 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from ..smoke_single_layer_decode import profile_decode_step
-from ..templates.lm_head import build_lm_head_split_ranges
+from ...smoke_single_layer_decode import profile_decode_step
+from ...templates.lm_head import build_lm_head_split_ranges
+from ...reports.autotune import DECODE_STEP_AUTOTUNE_KNOBS
 from .space import enumerate_candidate_configs
 
 
@@ -17,15 +18,6 @@ DECODE_STEP_METRIC_DIRECTIONS = {
     "aggregate_tokens_per_second": "maximize",
 }
 SUPPORTED_DECODE_STEP_METRICS = set(DECODE_STEP_METRIC_DIRECTIONS)
-DECODE_STEP_AUTOTUNE_KNOBS = (
-    "lm_head_split_count",
-    "generation_template",
-    "mlp_intermediate_dtype",
-    "attention_sdpa_output_memory_config",
-    "attention_concat_heads_output_memory_config",
-)
-
-
 def run_decode_step_autotune(
     *,
     program_dir: str | Path,

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_depth_sweep import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.decode_depth_sweep import (
     resolve_decode_depths,
     run_decode_depth_sweep,
 )
@@ -293,7 +293,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
                 0,
             )
 
-            import models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_depth_sweep as sweep_module
+            import models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.decode_depth_sweep as sweep_module
 
             original_profile = sweep_module.profile_decode_step
 
@@ -367,7 +367,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
                 0,
             )
 
-            import models.llama_ttnn_direct.buddy_ttnn_direct.search.decode_depth_sweep as sweep_module
+            import models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.decode_depth_sweep as sweep_module
 
             original_profile = sweep_module.profile_decode_step
 

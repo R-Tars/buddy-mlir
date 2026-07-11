@@ -123,9 +123,12 @@ the legacy workflow.
 
 ### Diagnostics
 
-Smoke, sweep, search, and legacy decode workflows are development tools. The
-visible CLI exposes them only through `diagnose --stage ...`; their tests live
-under `tests_diagnostics/` and are excluded from the default product suite.
+Smoke, sweep, layered autotune, and legacy decode workflows are development
+tools. The visible CLI exposes them only through `diagnose --stage ...`; their
+tests live under `tests_diagnostics/` and are excluded from the default product
+suite. Current autotune runs one axis at a time with isolated post-prefill
+steady-decode subprocesses. Phase-era Cartesian search is quarantined under
+`future/historical_search/` and is loaded only by hidden compatibility paths.
 
 ## Runtime Ownership
 

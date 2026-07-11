@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..search.decode_depth_sweep import (
+from ..diagnostics.decode_depth_sweep import (
     PROFILE_LAYER_LATENCY_KEYS,
     PROFILE_SECTION_LATENCY_KEYS,
 )

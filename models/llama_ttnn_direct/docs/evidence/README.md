@@ -34,6 +34,12 @@ The current baseline evidence is:
   the full 32-layer steady benchmark pass, and the imported profile measures
   `28.627 t/s/u` (`86.49%` of target). Config parity is proven; performance
   parity is not claimed.
+- `p150a_layered_autotune_evidence_20260711.json`: Step E replaced the old
+  Cartesian decode-step search with four progressive post-prefill steady-decode
+  levels. LM-head DRAM concat advanced after a `1.61%` short-run gain, but its
+  matched 5/50 confirmation improved on the root incumbent by only `0.64%`,
+  below the `1%` promotion threshold. The official config therefore remains the
+  default; its final confirmation measured `28.436 t/s/u` (`85.91%` of target).
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence
