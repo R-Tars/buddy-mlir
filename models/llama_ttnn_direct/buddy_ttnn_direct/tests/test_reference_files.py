@@ -134,7 +134,7 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertIn("program_config.attention_sdpa", missing_paths)
         self.assertIn("compute_fidelity.mlp", missing_paths)
         self.assertIn("core_grid.attention", missing_paths)
-        self.assertIn("lm_head.argmax_strategy", mismatch_paths)
+        self.assertNotIn("lm_head.argmax_strategy", mismatch_paths)
         self.assertIn("paged_attention.scale", mismatch_paths)
         self.assertEqual(diff["gap_summary"]["status"], "diff_found")
         self.assertIn(

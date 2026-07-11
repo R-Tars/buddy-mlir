@@ -364,10 +364,13 @@ def _argmax_strategy(
     lm_head: dict[str, Any],
     generation: dict[str, Any],
 ) -> str | None:
+    configured = lm_head.get("argmax_strategy")
+    if configured is not None:
+        return str(configured)
     mode = generation.get("mode")
     retain_logits = bool(lm_head.get("retain_logits", False))
     if mode == "greedy" and not retain_logits:
-        return "full_logits_concat_argmax"
+        return "full_logits_untilize_multicore_argmax"
     if mode == "full_logits" or retain_logits:
         return "retain_full_logits"
     return None

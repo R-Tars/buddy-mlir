@@ -155,10 +155,7 @@ class SmokePrefillTest(unittest.TestCase):
                 [2, 2, 32, 4],
             )
             self.assertEqual(
-                [
-                    user["user_id"]
-                    for user in report["cache_population"][0]["users"]
-                ],
+                [user["user_id"] for user in report["cache_population"][0]["users"]],
                 [0, 1],
             )
             self.assertEqual(
@@ -275,6 +272,7 @@ def _make_fake_ttnn():
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
     module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
+    module.uint32 = "ttnn.uint32"
 
     class UnaryOpType:
         SILU = "SILU"
@@ -284,7 +282,9 @@ def _make_fake_ttnn():
 
     def embedding(token_ids, weight, **kwargs):
         module.calls.append({"op": "embedding", "kwargs": dict(kwargs)})
-        return FakeTensor("embedding", [token_ids.shape[0], token_ids.shape[1], weight.shape[-1]])
+        return FakeTensor(
+            "embedding", [token_ids.shape[0], token_ids.shape[1], weight.shape[-1]]
+        )
 
     def rms_norm(hidden, **kwargs):
         module.calls.append({"op": "rms_norm", "kwargs": dict(kwargs)})
@@ -365,14 +365,14 @@ def _make_fake_ttnn():
 
     def add(lhs, rhs, **kwargs):
         module.calls.append({"op": "add", "kwargs": dict(kwargs)})
-        return FakeTensor("add", lhs.shape)
+        return FakeTensor("add", lhs.shape, dtype=lhs.dtype)
 
     def concat(tensors, **kwargs):
         shape = list(tensors[0].shape)
         dim = int(kwargs.get("dim", -1))
         shape[dim] = sum(tensor.shape[dim] for tensor in tensors)
         module.calls.append({"op": "concat", "kwargs": dict(kwargs)})
-        return FakeTensor("concat", shape)
+        return FakeTensor("concat", shape, dtype=tensors[0].dtype)
 
     def argmax(tensor, **kwargs):
         shape = list(tensor.shape)
@@ -382,6 +382,52 @@ def _make_fake_ttnn():
         del shape[dim]
         module.calls.append({"op": "argmax", "kwargs": dict(kwargs)})
         return FakeTensor("argmax", shape)
+
+    def untilize(tensor, **kwargs):
+        module.calls.append({"op": "untilize", "kwargs": dict(kwargs)})
+        return FakeTensor(
+            f"untilize:{tensor.name}",
+            tensor.shape,
+            dtype=tensor.dtype,
+        )
+
+    def topk(tensor, **kwargs):
+        shape = list(tensor.shape)
+        shape[int(kwargs.get("dim", -1))] = int(kwargs["k"])
+        module.calls.append({"op": "topk", "kwargs": dict(kwargs)})
+        return FakeTensor("topk_values", shape), FakeTensor(
+            "topk_indices",
+            shape,
+            dtype="ttnn.uint16",
+        )
+
+    def typecast(tensor, dtype):
+        module.calls.append({"op": "typecast", "dtype": dtype})
+        return FakeTensor(
+            f"typecast:{tensor.name}",
+            tensor.shape,
+            dtype=dtype,
+        )
+
+    def gather(tensor, dim, index):
+        module.calls.append({"op": "gather", "dim": dim})
+        return FakeTensor("gather", index.shape, dtype=tensor.dtype)
+
+    def reshape(tensor, logical_shape, padded_shape=None):
+        module.calls.append(
+            {
+                "op": "reshape",
+                "logical_shape": list(logical_shape),
+                "padded_shape": (
+                    list(padded_shape) if padded_shape is not None else None
+                ),
+            }
+        )
+        return FakeTensor(
+            f"reshape:{tensor.name}",
+            list(logical_shape),
+            dtype=tensor.dtype,
+        )
 
     module.UnaryOpType = UnaryOpType
     module.UnaryWithParam = unary_with_param
@@ -393,15 +439,18 @@ def _make_fake_ttnn():
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.untilize = untilize
+    module.topk = topk
+    module.typecast = typecast
+    module.gather = gather
+    module.reshape = reshape
     module.slice = slice_tensor
     module.experimental = types.SimpleNamespace(
         rotary_embedding_llama=rotary_embedding_llama,
         paged_fill_cache=paged_fill_cache,
     )
     module.transformer = types.SimpleNamespace(
-        split_query_key_value_and_split_heads=(
-            split_query_key_value_and_split_heads
-        ),
+        split_query_key_value_and_split_heads=(split_query_key_value_and_split_heads),
         scaled_dot_product_attention=scaled_dot_product_attention,
         concatenate_heads=concatenate_heads,
     )

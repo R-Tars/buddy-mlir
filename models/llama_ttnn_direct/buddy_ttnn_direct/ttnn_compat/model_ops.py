@@ -57,9 +57,7 @@ class TTNNCompatOps:
         self._record(op_name)
         kwargs = {}
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         if dtype is not None:
             kwargs["dtype"] = dtype
         return self.ttnn.add(left, right, **kwargs)
@@ -78,9 +76,7 @@ class TTNNCompatOps:
         self._record(op_name)
         kwargs = {}
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         if program_config is not None:
             kwargs["program_config"] = program_config
         if compute_kernel_config is not None:
@@ -104,9 +100,7 @@ class TTNNCompatOps:
         if activation is not None:
             kwargs["input_tensor_a_activations"] = [activation]
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         if dtype is not None:
             kwargs["dtype"] = dtype
         mul = getattr(self.ttnn, "mul", None)
@@ -144,9 +138,7 @@ class TTNNCompatOps:
             )
         kwargs = {}
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         if dtype is not None:
             kwargs["dtype"] = dtype
         return op(token_ids, weight, **kwargs)
@@ -176,9 +168,7 @@ class TTNNCompatOps:
         )
         kwargs = {"weight": weight, "epsilon": epsilon}
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         if dtype is not None:
             kwargs["dtype"] = dtype
         return op(hidden, **kwargs)
@@ -204,12 +194,7 @@ class TTNNCompatOps:
         if len(shape) == 3 and shape[1] == 1:
             batch = shape[0]
             feature_dim = shape[2]
-        elif (
-            len(shape) == 4
-            and shape[0] == 1
-            and shape[1] != 1
-            and shape[2] == 1
-        ):
+        elif len(shape) == 4 and shape[0] == 1 and shape[1] != 1 and shape[2] == 1:
             batch = shape[1]
             feature_dim = shape[3]
         else:
@@ -347,8 +332,7 @@ class TTNNCompatOps:
         position = int(position)
         if position < 0 or position >= sequence_length:
             raise ValueError(
-                f"sequence position {position} is outside length "
-                f"{sequence_length}"
+                f"sequence position {position} is outside length " f"{sequence_length}"
             )
         slice_op = getattr(self.ttnn, "slice", None)
         if not callable(slice_op):
@@ -608,14 +592,126 @@ class TTNNCompatOps:
         self._record(op_name)
         kwargs = {"dim": dim}
         if memory_config is not None:
-            kwargs["memory_config"] = self.resolve_memory_config(
-                memory_config
-            )
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         return self.ttnn.concat(tensors, **kwargs)
 
     def argmax(self, tensor, *, dim=-1, op_name="argmax_or_sampling"):
         self._record(op_name)
         return self.ttnn.argmax(tensor, dim=dim)
+
+    def force_argmax(
+        self,
+        tensor,
+        *,
+        op_name="argmax_or_sampling",
+    ):
+        untilize = getattr(self.ttnn, "untilize", None)
+        argmax = getattr(self.ttnn, "argmax", None)
+        if not callable(untilize) or not callable(argmax):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "force_argmax",
+                (("untilize",), ("argmax",)),
+            )
+        self._record(op_name)
+        shape = _tensor_shape(tensor)
+        reshape = getattr(self.ttnn, "reshape", None)
+        if (
+            callable(reshape)
+            and shape is not None
+            and len(shape) == 4
+            and shape[0] == 1
+            and shape[1] > 1
+            and shape[2] == 1
+        ):
+            logical_shape = (1, 1, shape[1], shape[3])
+            self._record(f"{op_name}.reshape")
+            try:
+                tensor = reshape(tensor, logical_shape, logical_shape)
+            except TypeError:
+                tensor = reshape(tensor, logical_shape)
+        self._record(f"{op_name}.untilize")
+        row_major = untilize(tensor, use_multicore=True)
+        self._record(f"{op_name}.multicore")
+        return argmax(
+            row_major,
+            dim=-1,
+            keepdim=False,
+            use_multicore=True,
+        )
+
+    def local_argmax(
+        self,
+        tensor,
+        *,
+        vocab_start,
+        op_name="lm_head.local_argmax",
+    ):
+        topk = getattr(self.ttnn, "topk", None)
+        typecast = getattr(self.ttnn, "typecast", None)
+        add = getattr(self.ttnn, "add", None)
+        if not callable(topk) or not callable(typecast) or not callable(add):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "local_argmax",
+                (("topk",), ("typecast",), ("add",)),
+            )
+        uint32 = getattr(self.ttnn, "uint32", None)
+        if uint32 is None:
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "local_argmax.uint32",
+                (("uint32",),),
+            )
+        self._record(f"{op_name}.topk")
+        values, indices = topk(
+            tensor,
+            k=1,
+            dim=-1,
+            largest=True,
+            sorted=False,
+        )
+        self._record(f"{op_name}.typecast")
+        indices = typecast(indices, uint32)
+        if int(vocab_start) != 0:
+            self._record(f"{op_name}.offset")
+            indices = add(indices, int(vocab_start))
+        return values, indices
+
+    def global_argmax(
+        self,
+        candidate_values,
+        candidate_indices,
+        *,
+        memory_config=None,
+        op_name="argmax_or_sampling",
+    ):
+        if not candidate_values or len(candidate_values) != len(candidate_indices):
+            raise ValueError(
+                "global_argmax requires matching non-empty value/index candidates"
+            )
+        topk = getattr(self.ttnn, "topk", None)
+        gather = getattr(self.ttnn, "gather", None)
+        if not callable(topk) or not callable(gather):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "global_argmax",
+                (("topk",), ("gather",)),
+            )
+        self._record(op_name)
+        kwargs = {"dim": -1}
+        if memory_config is not None:
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
+        self._record(f"{op_name}.concat_values")
+        values = self.ttnn.concat(candidate_values, **kwargs)
+        self._record(f"{op_name}.concat_indices")
+        indices = self.ttnn.concat(candidate_indices, **kwargs)
+        self._record(f"{op_name}.topk")
+        _, winner_slot = topk(
+            values,
+            k=1,
+            dim=-1,
+            largest=True,
+            sorted=False,
+        )
+        self._record(f"{op_name}.gather")
+        return gather(indices, -1, winner_slot)
 
     def normalize_decode_token(
         self,
@@ -633,6 +729,23 @@ class TTNNCompatOps:
         slice_op = getattr(self.ttnn, "slice", None)
         squeeze_op = getattr(self.ttnn, "squeeze", None)
         reshape_op = getattr(self.ttnn, "reshape", None)
+        if (
+            len(shape) == 3
+            and shape[1] == 1
+            and shape[2] == 1
+        ):
+            logical_batch = shape[0]
+            if callable(reshape_op):
+                self._record(f"{op_name}.reshape")
+                try:
+                    return reshape_op(
+                        token,
+                        (logical_batch, 1),
+                        (logical_batch, 1),
+                    )
+                except TypeError:
+                    return reshape_op(token, (logical_batch, 1))
+            return token
         if (
             len(shape) == 3
             and shape[0] == 1
@@ -667,6 +780,40 @@ class TTNNCompatOps:
                 [0, shape[1] - 1],
                 [batch_size, shape[1]],
             )
+        if (
+            callable(reshape_op)
+            and len(shape) == 4
+            and shape[0] == 1
+            and shape[2] == 1
+            and shape[3] == 1
+        ):
+            logical_batch = shape[1]
+            self._record(f"{op_name}.reshape")
+            try:
+                return reshape_op(
+                    token,
+                    (logical_batch, 1),
+                    (logical_batch, 1),
+                )
+            except TypeError:
+                return reshape_op(token, (logical_batch, 1))
+        if (
+            callable(reshape_op)
+            and len(shape) == 4
+            and shape[0] == 1
+            and shape[1] == 1
+            and shape[3] == 1
+        ):
+            logical_batch = shape[2]
+            self._record(f"{op_name}.reshape")
+            try:
+                return reshape_op(
+                    token,
+                    (logical_batch, 1),
+                    (logical_batch, 1),
+                )
+            except TypeError:
+                return reshape_op(token, (logical_batch, 1))
         if not callable(slice_op) or not callable(squeeze_op):
             return token
         if (

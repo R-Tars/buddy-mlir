@@ -31,9 +31,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
 
-def _fake_plan(
-    num_layers: int = 2, lm_head_split_count: int = 8
-) -> dict[str, object]:
+def _fake_plan(num_layers: int = 2, lm_head_split_count: int = 8) -> dict[str, object]:
     graph = import_hf_llama(
         "/tmp/fake-llama-codegen",
         config={
@@ -123,7 +121,8 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("self.ops.linear", source)
             self.assertIn("self.ops.mul_silu", source)
             self.assertIn("self.ops.concat", source)
-            self.assertIn("self.ops.argmax", source)
+            self.assertIn("self.ops.local_argmax", source)
+            self.assertIn("self.ops.global_argmax", source)
             self.assertIn("self.ops.embedding", source)
             self.assertIn("self.ops.rms_norm", source)
             self.assertIn("layer_params.wqkv_packed.weight", source)
@@ -296,9 +295,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
         model = generated.BuddyLlama31TTNN(
             device=None,
             parameters=_ns(
-                layers=[
-                    _ns(input_norm=_ns(weight="attn_norm_weight"))
-                ],
+                layers=[_ns(input_norm=_ns(weight="attn_norm_weight"))],
             ),
             config=_ns(
                 rms_norm=_ns(
@@ -427,9 +424,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertEqual(
                 fake_ttnn.calls[2]["kwargs"],
                 {
-                    "input_tensor_a_activations": [
-                        ("UnaryWithParam", "SILU")
-                    ],
+                    "input_tensor_a_activations": [("UnaryWithParam", "SILU")],
                     "memory_config": "gate_mem",
                     "dtype": "bf16",
                 },
@@ -826,9 +821,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             )
             self.assertEqual(report["filled_user_count"], 2)
             paged_calls = [
-                call
-                for call in fake_ttnn.calls
-                if call["op"] == "paged_fill_cache"
+                call for call in fake_ttnn.calls if call["op"] == "paged_fill_cache"
             ]
             self.assertEqual(len(paged_calls), 4)
             self.assertEqual(
@@ -849,7 +842,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                 [call["op"] for call in fake_ttnn.calls],
             )
 
-    def test_generated_lm_head_argmax_uses_split_linear_concat_argmax(
+    def test_generated_lm_head_argmax_uses_local_global_reduction(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -895,6 +888,11 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                     output_dtype="bf8",
                     compute_kernel_config="compute_cfg",
                     program_configs=["pc0", "pc1"],
+                    argmax_strategy="local_global_argmax",
+                    splits=[
+                        _ns(vocab_start=0, vocab_end=64),
+                        _ns(vocab_start=64, vocab_end=128),
+                    ],
                     retain_logits=False,
                 ),
                 generation=_ns(mode="greedy"),
@@ -907,13 +905,22 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             out = model.lm_head_argmax(_FakeTensor("hidden", "hidden_mem"))
 
-            self.assertEqual(
-                out.name,
-                "argmax:concat:linear:lm_head_shard0,linear:lm_head_shard1",
-            )
+            self.assertTrue(out.name.startswith("gather:"))
             self.assertEqual(
                 [call["op"] for call in fake_ttnn.calls],
-                ["linear", "linear", "concat", "argmax"],
+                [
+                    "linear",
+                    "topk",
+                    "typecast",
+                    "linear",
+                    "topk",
+                    "typecast",
+                    "add",
+                    "concat",
+                    "concat",
+                    "topk",
+                    "gather",
+                ],
             )
             self.assertEqual(fake_ttnn.calls[0]["weight"], "lm_head_shard0")
             self.assertEqual(
@@ -925,19 +932,20 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                     "dtype": "bf8",
                 },
             )
-            self.assertEqual(fake_ttnn.calls[1]["weight"], "lm_head_shard1")
-            self.assertEqual(fake_ttnn.calls[1]["kwargs"]["program_config"], "pc1")
-            self.assertEqual(
-                fake_ttnn.calls[2]["tensors"],
+            linear_calls = [call for call in fake_ttnn.calls if call["op"] == "linear"]
+            self.assertEqual(linear_calls[1]["weight"], "lm_head_shard1")
+            self.assertEqual(linear_calls[1]["kwargs"]["program_config"], "pc1")
+            concat_calls = [call for call in fake_ttnn.calls if call["op"] == "concat"]
+            self.assertEqual(len(concat_calls), 2)
+            self.assertTrue(
+                all(
+                    call["kwargs"] == {"dim": -1, "memory_config": "concat_mem"}
+                    for call in concat_calls
+                )
+            )
+            self.assertNotIn(
                 ["linear:lm_head_shard0", "linear:lm_head_shard1"],
-            )
-            self.assertEqual(
-                fake_ttnn.calls[2]["kwargs"],
-                {"dim": -1, "memory_config": "concat_mem"},
-            )
-            self.assertEqual(
-                fake_ttnn.calls[3]["kwargs"],
-                {"dim": -1},
+                [call["tensors"] for call in concat_calls],
             )
 
     def test_codegen_python_dry_run_does_not_write_artifacts(self) -> None:
@@ -960,6 +968,7 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertFalse(out_dir.exists())
+
 
 class _FakeTensor:
     def __init__(
@@ -985,6 +994,7 @@ def _ns(**kwargs):
 def _make_fake_ttnn_module():
     module = types.ModuleType("ttnn")
     module.calls = []
+    module.uint32 = "ttnn.uint32"
 
     class UnaryOpType:
         SILU = "SILU"
@@ -1086,6 +1096,36 @@ def _make_fake_ttnn_module():
             }
         )
         return _FakeTensor(f"argmax:{getattr(tensor, 'name', tensor)}")
+
+    def untilize(tensor, **kwargs):
+        name = getattr(tensor, "name", tensor)
+        module.calls.append(
+            {"op": "untilize", "tensor": name, "kwargs": dict(kwargs)}
+        )
+        return _FakeTensor(f"untilize:{name}")
+
+    def topk(tensor, **kwargs):
+        name = getattr(tensor, "name", tensor)
+        module.calls.append({"op": "topk", "tensor": name, "kwargs": dict(kwargs)})
+        return _FakeTensor(f"topk_values:{name}"), _FakeTensor(f"topk_indices:{name}")
+
+    def typecast(tensor, dtype):
+        name = getattr(tensor, "name", tensor)
+        module.calls.append({"op": "typecast", "tensor": name, "dtype": dtype})
+        return _FakeTensor(f"typecast:{name}")
+
+    def gather(tensor, dim, index):
+        tensor_name = getattr(tensor, "name", tensor)
+        index_name = getattr(index, "name", index)
+        module.calls.append(
+            {
+                "op": "gather",
+                "tensor": tensor_name,
+                "dim": dim,
+                "index": index_name,
+            }
+        )
+        return _FakeTensor(f"gather:{tensor_name}:{index_name}")
 
     def squeeze(tensor, dim):
         shape = list(getattr(tensor, "shape", ()))
@@ -1225,6 +1265,10 @@ def _make_fake_ttnn_module():
     module.concat = concat
     module.to_memory_config = to_memory_config
     module.argmax = argmax
+    module.untilize = untilize
+    module.topk = topk
+    module.typecast = typecast
+    module.gather = gather
     module.squeeze = squeeze
     module.reshape = reshape
     module.slice = slice_tensor

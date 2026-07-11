@@ -103,6 +103,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(generated_config["kv_cache"]["num_kv_heads"], 2)
             self.assertEqual(generated_config["kv_cache"]["head_dim"], 4)
             self.assertEqual(
+                generated_config["lm_head"]["argmax_strategy"],
+                "full_logits_untilize_multicore_argmax",
+            )
+            self.assertEqual(
                 generated_config["rms_norm"]["input_memory_config"],
                 "dram",
             )
@@ -155,6 +159,9 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("observer=None", source)
             self.assertIn('self._observe("prefill.final_hidden"', source)
             self.assertIn('self._observe(f"{stage}.logits"', source)
+            self.assertIn("self.ops.local_argmax", source)
+            self.assertIn("self.ops.global_argmax", source)
+            self.assertIn("self.ops.force_argmax", source)
             self.assertIn("self.ops.scaled_dot_product_attention", source)
             self.assertIn("self.ops.fill_cache", source)
             self.assertIn("to_memory_config.{op_name}.input", source)

@@ -59,6 +59,14 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         else "full_logits"
     )
     retain_logits = generation_template != "device_argmax_greedy"
+    argmax_strategy = (
+        template_config.get(
+            "lm_head_argmax_strategy",
+            "full_logits_untilize_multicore_argmax",
+        )
+        if generation_template == "device_argmax_greedy"
+        else "retain_full_logits"
+    )
     kv_cache_template = template_config.get("kv_cache_template")
     kv_cache_policy = "paged" if kv_cache_template == "paged_kv_cache" else None
     return {
@@ -159,6 +167,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "split_count": lm_head_split_count,
             "split_axis": "vocab",
             "retain_logits": retain_logits,
+            "argmax_strategy": argmax_strategy,
             "output_memory_config": None,
             "concat_memory_config": None,
             "output_dtype": None,

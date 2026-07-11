@@ -46,6 +46,148 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         )
         self.assertEqual(ops.op_log, ["select_sequence_position"])
 
+    def test_model_ops_local_global_argmax_stays_on_device(self) -> None:
+        calls = []
+
+        def topk(tensor, **kwargs):
+            calls.append(("topk", tensor, dict(kwargs)))
+            return f"values:{tensor}", f"indices:{tensor}"
+
+        def typecast(tensor, dtype):
+            calls.append(("typecast", tensor, dtype))
+            return f"uint32:{tensor}"
+
+        def add(tensor, scalar):
+            calls.append(("add", tensor, scalar))
+            return f"offset:{tensor}:{scalar}"
+
+        def concat(tensors, **kwargs):
+            calls.append(("concat", list(tensors), dict(kwargs)))
+            return "concat:" + ",".join(tensors)
+
+        def gather(tensor, dim, index):
+            calls.append(("gather", tensor, dim, index))
+            return "global-token"
+
+        module = types.SimpleNamespace(
+            topk=topk,
+            typecast=typecast,
+            add=add,
+            concat=concat,
+            gather=gather,
+            uint32="uint32",
+        )
+        ops = TTNNCompatOps(module)
+
+        values0, indices0 = ops.local_argmax("logits0", vocab_start=0)
+        values1, indices1 = ops.local_argmax("logits1", vocab_start=64)
+        token = ops.global_argmax(
+            [values0, values1],
+            [indices0, indices1],
+        )
+
+        self.assertEqual(token, "global-token")
+        self.assertEqual(calls[-1][0], "gather")
+        self.assertEqual(calls[-1][2], -1)
+        self.assertIn(("add", "uint32:indices:logits1", 64), calls)
+        self.assertNotIn(("add", "uint32:indices:logits0", 0), calls)
+        self.assertEqual(
+            [call[0] for call in calls],
+            [
+                "topk",
+                "typecast",
+                "topk",
+                "typecast",
+                "add",
+                "concat",
+                "concat",
+                "topk",
+                "gather",
+            ],
+        )
+
+    def test_model_ops_normalizes_prefill_topk_token_shape(self) -> None:
+        calls = []
+
+        def reshape(tensor, logical_shape, padded_shape=None):
+            calls.append((logical_shape, padded_shape))
+            return "normalized"
+
+        ops = TTNNCompatOps(types.SimpleNamespace(reshape=reshape))
+        token = types.SimpleNamespace(shape=(1, 32, 1, 1))
+
+        result = ops.normalize_decode_token(token, batch_size=32)
+
+        self.assertEqual(result, "normalized")
+        self.assertEqual(calls, [((32, 1), (32, 1))])
+
+    def test_model_ops_force_argmax_uses_official_multicore_path(self) -> None:
+        calls = []
+
+        def untilize(tensor, **kwargs):
+            calls.append(("untilize", tensor, dict(kwargs)))
+            return "row-major-logits"
+
+        def argmax(tensor, **kwargs):
+            calls.append(("argmax", tensor, dict(kwargs)))
+            return "tokens"
+
+        ops = TTNNCompatOps(
+            types.SimpleNamespace(untilize=untilize, argmax=argmax)
+        )
+
+        result = ops.force_argmax("tiled-logits")
+
+        self.assertEqual(result, "tokens")
+        self.assertEqual(
+            calls,
+            [
+                ("untilize", "tiled-logits", {"use_multicore": True}),
+                (
+                    "argmax",
+                    "row-major-logits",
+                    {
+                        "dim": -1,
+                        "keepdim": False,
+                        "use_multicore": True,
+                    },
+                ),
+            ],
+        )
+
+    def test_model_ops_force_argmax_normalizes_prefill_logits(self) -> None:
+        calls = []
+
+        def reshape(tensor, logical_shape, padded_shape=None):
+            calls.append(("reshape", logical_shape, padded_shape))
+            return types.SimpleNamespace(shape=logical_shape)
+
+        def untilize(tensor, **kwargs):
+            calls.append(("untilize", tuple(tensor.shape), dict(kwargs)))
+            return tensor
+
+        def argmax(tensor, **kwargs):
+            calls.append(("argmax", tuple(tensor.shape), dict(kwargs)))
+            return "tokens"
+
+        ops = TTNNCompatOps(
+            types.SimpleNamespace(
+                reshape=reshape,
+                untilize=untilize,
+                argmax=argmax,
+            )
+        )
+        logits = types.SimpleNamespace(shape=(1, 32, 1, 128256))
+
+        result = ops.force_argmax(logits)
+
+        self.assertEqual(result, "tokens")
+        self.assertEqual(
+            calls[0],
+            ("reshape", (1, 1, 32, 128256), (1, 1, 32, 128256)),
+        )
+        self.assertEqual(calls[1][1], (1, 1, 32, 128256))
+
     def test_qkv_heads_wrapper_calls_experimental_api(self) -> None:
         fake = _fake_ttnn()
 
@@ -233,7 +375,9 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         )
         out = ttnn_ops.concat_heads_prefill(fake, attn)
 
-        self.assertEqual((q, k, v), ("rotary:q_prefill", "rotary:k_prefill", "v_prefill"))
+        self.assertEqual(
+            (q, k, v), ("rotary:q_prefill", "rotary:k_prefill", "v_prefill")
+        )
         self.assertEqual(cache, "filled:cache")
         self.assertEqual(paged_cache, "paged_filled:paged_cache")
         self.assertEqual(out, "concat_prefill:prefill_attn")
@@ -273,9 +417,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             return f"filled:{cache_tensor}:{batch_index}"
 
         fake = types.SimpleNamespace(
-            kv_cache=types.SimpleNamespace(
-                fill_cache_for_user_=fill_cache_for_user_
-            )
+            kv_cache=types.SimpleNamespace(fill_cache_for_user_=fill_cache_for_user_)
         )
 
         out = ttnn_ops.fill_cache(fake, "cache", "key", user_id=3)
@@ -292,7 +434,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                 "v_cache",
                 "page_table",
                 "pos",
-        )
+            )
 
         message = str(ctx.exception)
         self.assertIn("TTNN Direct", message)
@@ -305,9 +447,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
     def test_rotary_and_cache_missing_api_raise_clear_errors(self) -> None:
         missing = types.SimpleNamespace()
 
-        with self.assertRaisesRegex(
-            UnsupportedTTNNOp, "rotary_embedding_llama"
-        ):
+        with self.assertRaisesRegex(UnsupportedTTNNOp, "rotary_embedding_llama"):
             ttnn_ops.rotary_embedding_decode(
                 missing,
                 "q",
@@ -329,9 +469,7 @@ def _fake_ttnn():
     module = types.SimpleNamespace(calls=[])
 
     def nlp_create_qkv_heads_decode(fused_qkv, **kwargs):
-        module.calls.append(
-            ("nlp_create_qkv_heads_decode", fused_qkv, dict(kwargs))
-        )
+        module.calls.append(("nlp_create_qkv_heads_decode", fused_qkv, dict(kwargs)))
         return "q", "k", "v"
 
     def rotary_embedding_llama(
@@ -399,9 +537,7 @@ def _fake_ttnn():
         return "prefill_attn"
 
     def fill_cache(cache_tensor, update_tensor, **kwargs):
-        module.calls.append(
-            ("fill_cache", cache_tensor, update_tensor, dict(kwargs))
-        )
+        module.calls.append(("fill_cache", cache_tensor, update_tensor, dict(kwargs)))
         return f"filled:{cache_tensor}"
 
     def paged_fill_cache(cache_tensor, update_tensor, page_table, **kwargs):
@@ -425,9 +561,7 @@ def _fake_ttnn():
         return f"mem:{tensor}"
 
     def nlp_concat_heads_decode(attention, **kwargs):
-        module.calls.append(
-            ("nlp_concat_heads_decode", attention, dict(kwargs))
-        )
+        module.calls.append(("nlp_concat_heads_decode", attention, dict(kwargs)))
         return f"concat:{attention}"
 
     module.experimental = types.SimpleNamespace(
@@ -441,9 +575,7 @@ def _fake_ttnn():
         paged_scaled_dot_product_attention_decode=(
             paged_scaled_dot_product_attention_decode
         ),
-        split_query_key_value_and_split_heads=(
-            split_query_key_value_and_split_heads
-        ),
+        split_query_key_value_and_split_heads=(split_query_key_value_and_split_heads),
         scaled_dot_product_attention=scaled_dot_product_attention,
         concatenate_heads=concatenate_heads,
     )

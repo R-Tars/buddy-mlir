@@ -26,13 +26,18 @@ HF config and weights
 - The frozen pre-refactor profile measured about `0.1898 tokens/s/user` versus
   the recorded official target of `33.1 tokens/s/user`. This is functional
   evidence, not performance parity.
+- The Step B mixed prefill plus one-decode profile reached `1.3583
+  tokens/s/user` and milestone M2 with official force-argmax, a 48% improvement
+  over the comparable tiled-argmax run. Step C will establish steady-state
+  decode throughput.
 - The dedicated all-BF16 correctness recipe passes the Hugging Face reference
   gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
   minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
-- The frozen profile's full-logits argmax was the dominant measured
-  bottleneck. The current path selects the final valid prompt position before
-  final norm and LM-head; a post-fix device profile is still pending. Split
-  LM-head local argmax plus global reduction remains the next decode target.
+- The production greedy path follows TT-Transformers force-argmax: concatenate
+  LM-head logits, untilize with multicore, then run multicore argmax. A composed
+  shard-local/global reduction remains available for diagnostics but was slower
+  on P150A. Steady-state decode profiling is still required before claiming an
+  official-comparable performance result.
 
 See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 [docs/evidence/README.md](docs/evidence/README.md) for the frozen measurements.
@@ -142,7 +147,8 @@ imported by runtime code.
 
 ## Known Limitations
 
-- LM-head shards are concatenated into full logits before argmax.
+- The composed local/global LM-head reduction needs a fused TTNN operation to
+  become competitive with the official force-argmax path.
 - Numerical correctness is proven with the dedicated all-BF16 recipe. The
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.

@@ -57,7 +57,7 @@
       "split_axis": "vocab",
       "retain_logits": false,
       "shard_count": 8,
-      "argmax_strategy": "local_global_argmax"
+      "argmax_strategy": "full_logits_untilize_multicore_argmax"
     },
     "paged_attention": {
       "enabled": true,

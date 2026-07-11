@@ -239,10 +239,11 @@ class PromptDecodeLoopTest(unittest.TestCase):
                 report["reference"]["status"],
                 "passed",
             )
-            self.assertEqual(
-                [call["op"] for call in fake_ttnn.calls].count("argmax"),
-                2,
-            )
+            ops = [call["op"] for call in fake_ttnn.calls]
+            self.assertEqual(ops.count("untilize"), 2)
+            self.assertEqual(ops.count("argmax"), 2)
+            self.assertEqual(ops.count("topk"), 0)
+            self.assertEqual(ops.count("gather"), 0)
             self.assertEqual(json.loads(report_json.read_text()), report)
 
 

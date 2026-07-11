@@ -53,6 +53,8 @@ class GenerateSectionProfiler:
         self._wrap_method(model, "final_norm", self._record_final_norm)
         self._wrap_method(model, "lm_head_argmax", self._record_lm_head_argmax)
         self._wrap_ops_method(model, "argmax", self._record_argmax)
+        self._wrap_ops_method(model, "force_argmax", self._record_argmax)
+        self._wrap_ops_method(model, "global_argmax", self._record_argmax)
 
     def to_report(
         self,

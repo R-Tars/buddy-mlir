@@ -37,6 +37,10 @@ ALLOWED_GENERATION_TEMPLATES = {
     "device_argmax_greedy",
     "full_logits",
 }
+ALLOWED_LM_HEAD_ARGMAX_STRATEGIES = {
+    "full_logits_untilize_multicore_argmax",
+    "local_global_argmax",
+}
 
 
 def load_template_config(path: str | Path) -> dict[str, Any]:
@@ -102,6 +106,12 @@ def validate_template_config(config: dict[str, Any]) -> None:
         config,
         "generation_template",
         ALLOWED_GENERATION_TEMPLATES,
+        errors,
+    )
+    _check_allowed(
+        config,
+        "lm_head_argmax_strategy",
+        ALLOWED_LM_HEAD_ARGMAX_STRATEGIES,
         errors,
     )
 
@@ -179,6 +189,10 @@ def build_execution_plan(
             "dtype_recipe": config["dtype_recipe"],
             "kv_cache_template": config["kv_cache_template"],
             "lm_head_split_count": int(config["lm_head_split_count"]),
+            "lm_head_argmax_strategy": config.get(
+                "lm_head_argmax_strategy",
+                "full_logits_untilize_multicore_argmax",
+            ),
             "prefill_seq_len": int(config["prefill_seq_len"]),
             "prefill_attention_template": config.get(
                 "prefill_attention_template",

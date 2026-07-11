@@ -10,7 +10,7 @@
   "lm_head_template": "official_split_lm_head",
   "kv_cache_template": "paged_kv_cache",
   "generation_template": "device_argmax_greedy",
-  "lm_head_argmax_strategy": "full_logits_untilize_multicore_argmax",
+  "lm_head_argmax_strategy": "local_global_argmax",
   "lm_head_split_count": 8,
   "dtype_recipe": "official_like_performance_seed"
 }

@@ -20,6 +20,10 @@ The current baseline evidence is:
 - `p150a_numerical_correctness_evidence_20260711.json`: the dedicated all-BF16
   correctness recipe passed the Step A checks at depths `1,2,4,32`, including
   full-depth logits, hidden-state, and sampled KV PCC at threshold `0.99`.
+- `p150a_lm_head_argmax_evidence_20260711.json`: the Step B strategy study
+  rejected composed local/global top-k for the default path and selected the
+  TT-Transformers force-argmax sequence. The mixed two-token profile reached
+  `1.3583 t/s/u` and milestone M2 while 1/32-layer correctness remained green.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

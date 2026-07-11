@@ -188,8 +188,9 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(op_check["expected"], SINGLE_LAYER_DECODE_OPS)
             self.assertIn("qkv_linear", report["reference"]["observed_ops"])
             self.assertEqual(json.loads(report_json.read_text()), report)
+            ops = [call["op"] for call in fake_ttnn.calls]
             self.assertEqual(
-                [call["op"] for call in fake_ttnn.calls],
+                ops[:13],
                 [
                     "embedding",
                     "to_memory_config",
@@ -204,28 +205,14 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                     "to_memory_config",
                     "nlp_concat_heads_decode",
                     "linear",
-                    "add",
-                    "to_memory_config",
-                    "rms_norm",
-                    "linear",
-                    "linear",
-                    "mul",
-                    "linear",
-                    "add",
-                    "to_memory_config",
-                    "rms_norm",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "linear",
-                    "concat",
-                    "argmax",
                 ],
             )
+            self.assertEqual(ops.count("linear"), 13)
+            self.assertEqual(ops.count("concat"), 1)
+            self.assertEqual(ops.count("untilize"), 1)
+            self.assertEqual(ops.count("argmax"), 1)
+            self.assertEqual(ops.count("topk"), 0)
+            self.assertEqual(ops.count("gather"), 0)
             rms_input_moves = [
                 call
                 for call in fake_ttnn.calls
@@ -682,7 +669,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    call["kwargs"]["dtype"] == "ttnn.bfloat16"
+                    call["kwargs"]["dtype"] == "ttnn.uint32"
                     for call in prompt_and_state_calls[:3]
                 )
             )
@@ -1046,7 +1033,10 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(generated_ops.count("add"), 4)
             self.assertEqual(generated_ops.count("rms_norm"), 5)
             self.assertEqual(generated_ops.count("linear"), 18)
+            self.assertEqual(generated_ops.count("untilize"), 1)
             self.assertEqual(generated_ops.count("argmax"), 1)
+            self.assertEqual(generated_ops.count("topk"), 0)
+            self.assertEqual(generated_ops.count("gather"), 0)
 
     def test_single_layer_decode_api_mismatch_is_reported(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1222,6 +1212,7 @@ def _make_fake_ttnn(
         "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
     )
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
+    module.uint32 = "ttnn.uint32"
 
     class UnaryOpType:
         SILU = "SILU"
@@ -1491,11 +1482,11 @@ def _make_fake_ttnn(
             {
                 "op": "add",
                 "lhs": lhs.name,
-                "rhs": rhs.name,
+                "rhs": getattr(rhs, "name", rhs),
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("add", lhs.shape)
+        return FakeTensor("add", lhs.shape, dtype=lhs.dtype)
 
     def concat(tensors, **kwargs):
         shape = list(tensors[0].shape)
@@ -1508,7 +1499,7 @@ def _make_fake_ttnn(
                 "kwargs": dict(kwargs),
             }
         )
-        return FakeTensor("concat", shape)
+        return FakeTensor("concat", shape, dtype=tensors[0].dtype)
 
     def argmax(tensor, **kwargs):
         dim = int(kwargs.get("dim", -1))
@@ -1524,6 +1515,46 @@ def _make_fake_ttnn(
             }
         )
         return FakeTensor("argmax", shape)
+
+    def untilize(tensor, **kwargs):
+        module.calls.append(
+            {"op": "untilize", "tensor": tensor.name, "kwargs": dict(kwargs)}
+        )
+        return FakeTensor(f"untilize:{tensor.name}", tensor.shape, tensor.dtype)
+
+    def topk(tensor, **kwargs):
+        shape = list(tensor.shape)
+        shape[int(kwargs.get("dim", -1))] = int(kwargs["k"])
+        module.calls.append(
+            {
+                "op": "topk",
+                "tensor": tensor.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor("topk_values", shape, dtype=tensor.dtype), FakeTensor(
+            "topk_indices",
+            shape,
+            dtype="ttnn.uint16",
+        )
+
+    def typecast(tensor, dtype):
+        module.calls.append(
+            {"op": "typecast", "tensor": tensor.name, "dtype": dtype}
+        )
+        return FakeTensor(f"typecast:{tensor.name}", tensor.shape, dtype=dtype)
+
+    def gather(tensor, dim, index):
+        module.calls.append(
+            {
+                "op": "gather",
+                "tensor": tensor.name,
+                "dim": dim,
+                "index": index.name,
+            }
+        )
+        batch = index.shape[-2] if len(index.shape) >= 4 else index.shape[0]
+        return FakeTensor("gather", [batch, 1], dtype=tensor.dtype)
 
     def begin_trace_capture(device, **kwargs):
         module.calls.append(
@@ -1581,6 +1612,10 @@ def _make_fake_ttnn(
     module.add = add
     module.concat = concat
     module.argmax = argmax
+    module.untilize = untilize
+    module.topk = topk
+    module.typecast = typecast
+    module.gather = gather
     module.begin_trace_capture = begin_trace_capture
     module.end_trace_capture = end_trace_capture
     module.execute_trace = execute_trace
