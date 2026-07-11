@@ -1,42 +1,66 @@
 {
-  "schema_version": 1,
-  "model_name": "llama3.1-8b",
-  "source": "hand_written_official_like_seed_for_config_parity",
-  "notes": "Seed reference for diff-official-config. Replace with measured/imported TT-Transformers config when available.",
+  "schema_version": 2,
+  "profile_id": "p150a_llama31_8b_b32_performance",
+  "model_name": "Llama-3.1-8B-Instruct",
+  "source": {
+    "kind": "extracted_tt_transformers_model_args",
+    "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+    "model_config": "models/tt_transformers/tt/model_config.py",
+    "decoder_config": "models/tt_transformers/model_params/Llama-3.1-8B-Instruct/performance_decoder_config.json",
+    "device_name": "P150",
+    "optimization": "DecodersPrecision.performance",
+    "batch_size": 32,
+    "max_seq_len": 1024,
+    "runtime_adaptations": [
+      "prefill_qkv_and_wo_disable_fuse_batch_for_buddy_batch32_tensor_shape"
+    ],
+    "extracted_at": "2026-07-11T12:38:11+08:00"
+  },
   "parity_config": {
     "dtype_recipe": {
-      "recipe": "official_like_performance_seed",
+      "recipe": "tt_transformers_performance",
       "embedding": "bfloat16",
       "rms_norm": "bfloat16",
       "attention_qkv": "bfloat8_b",
       "attention_o_proj": "bfloat8_b",
-      "mlp_intermediate": "bfloat4_b",
+      "mlp_intermediate": {
+        "default": "bfloat4_b",
+        "layer_31": "bfloat8_b"
+      },
       "mlp_output": "bfloat8_b",
       "lm_head": "bfloat8_b",
       "kv_cache": "bfloat8_b"
     },
     "compute_fidelity": {
-      "attention_qkv": "HiFi2",
-      "attention_sdpa": "HiFi4",
-      "attention_o_proj": "HiFi2",
-      "mlp": "HiFi2",
-      "lm_head": "HiFi2"
+      "attention_qkv": "HiFi2(fp32_dest_acc=true,math_approx=true,packer_l1_acc=true)",
+      "attention_sdpa": "HiFi2(fp32_dest_acc=true,math_approx=true,packer_l1_acc=true)",
+      "attention_o_proj": "HiFi2(fp32_dest_acc=true,math_approx=true,packer_l1_acc=true)",
+      "mlp": {
+        "gate_up_default": "LoFi(fp32_dest_acc=false,math_approx=false,packer_l1_acc=true)",
+        "gate_up_layer_31": "HiFi2(fp32_dest_acc=false,math_approx=false,packer_l1_acc=true)",
+        "down": "HiFi2(fp32_dest_acc=false,math_approx=false,packer_l1_acc=true)"
+      },
+      "lm_head": "HiFi2(fp32_dest_acc=false,math_approx=false,packer_l1_acc=true)"
     },
     "program_config": {
-      "attention_qkv": "official_p150a_qkv_decode_program",
-      "attention_sdpa": "official_p150a_paged_sdpa_decode_program",
-      "attention_o_proj": "official_p150a_o_proj_decode_program",
-      "mlp_gate": "official_p150a_mlp_gate_decode_program",
-      "mlp_up": "official_p150a_mlp_up_decode_program",
-      "mlp_down": "official_p150a_mlp_down_decode_program",
-      "lm_head_shards": "official_p150a_lm_head_sharded_programs"
+      "attention_qkv": "MatmulDRAMSharded(in0_block_w=4,per_core_M=1,per_core_N=6)",
+      "attention_sdpa": "SDPA(grid=8x8,q_chunk=0,k_chunk=0,exp_approx=false,max_cores_per_head_batch=16)",
+      "attention_o_proj": "MatmulDRAMSharded(in0_block_w=4,per_core_M=1,per_core_N=4)",
+      "mlp_gate": "MatmulDRAMSharded(in0_block_w=2,per_core_M=1,per_core_N=7)",
+      "mlp_up": "MatmulDRAMSharded(in0_block_w=2,per_core_M=1,per_core_N=7)",
+      "mlp_down": "MatmulDRAMSharded(in0_block_w=7,per_core_M=1,per_core_N=2)",
+      "lm_head_shards": "8xMatmulDRAMSharded(in0_block_w=2,per_core_M=1,per_core_N=8)"
     },
     "memory_config": {
-      "embedding": "dram",
-      "rms_norm": "l1_interleaved",
+      "embedding": "dram_interleaved",
+      "rms_norm": {
+        "attention": "l1_width_sharded(grid=8x4,shape=32x128)",
+        "mlp": "l1_width_sharded(grid=8x8,shape=32x64)",
+        "lm_head": "l1_width_sharded(grid=8x8,shape=32x64)"
+      },
       "attention_qkv": "l1_width_sharded",
-      "attention_heads": "l1_height_sharded",
-      "attention_sdpa": "l1_height_sharded",
+      "attention_heads": "l1_height_sharded(grid=8x4,shape=32x128)",
+      "attention_sdpa": "dram_then_l1_height_sharded(grid=8x4,shape=32x128)",
       "attention_concat_heads": "l1_width_sharded",
       "attention_o_proj": "l1_width_sharded",
       "mlp_gate": "l1_width_sharded",
@@ -44,12 +68,12 @@
       "mlp_down": "l1_width_sharded",
       "lm_head_output": "l1_width_sharded",
       "lm_head_concat": "l1_interleaved",
-      "kv_cache": "paged_bfloat8_l1"
+      "kv_cache": "dram_interleaved"
     },
     "core_grid": {
-      "attention": "p150a_attention_decode_grid",
-      "mlp": "p150a_mlp_decode_grid",
-      "lm_head": "p150a_lm_head_grid"
+      "attention": "8x4",
+      "mlp": "8x8",
+      "lm_head": "8x8"
     },
     "lm_head": {
       "template": "official_split_lm_head",
@@ -61,12 +85,397 @@
     },
     "paged_attention": {
       "enabled": true,
-      "scale": "head_dim^-0.5",
+      "scale": 0.08838834764831845,
       "max_cache_len": 1024,
       "page_block_size": 32,
-      "qkv_heads_memory_config": "l1_height_sharded",
-      "sdpa_program_config": "official_p150a_paged_sdpa_decode_program",
-      "sdpa_memory_config": "l1_height_sharded"
+      "qkv_heads_memory_config": "l1_height_sharded(grid=8x4,shape=32x128)",
+      "sdpa_program_config": "SDPA(grid=8x8,q_chunk=0,k_chunk=0,exp_approx=false,max_cores_per_head_batch=16)",
+      "sdpa_memory_config": "dram_then_l1_height_sharded(grid=8x4,shape=32x128)"
+    }
+  },
+  "parameter_config": {
+    "weight_memory_config": {
+      "attention_qkv": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 4096,
+        "n": 6144,
+        "dram_grid_width": 8
+      },
+      "attention_o_proj": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 4096,
+        "n": 4096,
+        "dram_grid_width": 8
+      },
+      "mlp_gate": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 4096,
+        "n": 14336,
+        "dram_grid_width": 8
+      },
+      "mlp_up": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 4096,
+        "n": 14336,
+        "dram_grid_width": 8
+      },
+      "mlp_down": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 14336,
+        "n": 4096,
+        "dram_grid_width": 8
+      },
+      "lm_head": {
+        "kind": "ttnn_dram_sharded_memory_config",
+        "k": 4096,
+        "n": 16032,
+        "dram_grid_width": 8
+      }
+    }
+  },
+  "runtime_config": {
+    "embedding": {
+      "output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "DRAM_MEMORY_CONFIG"
+      },
+      "output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      }
+    },
+    "prefill": {
+      "qkv_program_config": {
+        "kind": "ttnn_matmul_multicore_reuse_mcast_program_config",
+        "core_grid": [8, 10],
+        "in0_block_w": 1,
+        "out_subblock_h": 1,
+        "out_subblock_w": 1,
+        "per_core_M": 1,
+        "per_core_N": 24,
+        "transpose_mcast": false,
+        "fuse_batch": false
+      },
+      "o_proj_program_config": {
+        "kind": "ttnn_matmul_multicore_reuse_mcast_program_config",
+        "core_grid": [8, 8],
+        "in0_block_w": 8,
+        "out_subblock_h": 1,
+        "out_subblock_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 16,
+        "transpose_mcast": false,
+        "fuse_batch": false
+      },
+      "gate_program_config": {
+        "kind": "ttnn_matmul_multicore_reuse_mcast_program_config",
+        "core_grid": [8, 8],
+        "in0_block_w": 8,
+        "out_subblock_h": 1,
+        "out_subblock_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 56,
+        "transpose_mcast": false,
+        "fuse_batch": false
+      },
+      "up_program_config": {
+        "kind": "ttnn_matmul_multicore_reuse_mcast_program_config",
+        "core_grid": [8, 8],
+        "in0_block_w": 8,
+        "out_subblock_h": 1,
+        "out_subblock_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 56,
+        "transpose_mcast": false,
+        "fuse_batch": false
+      },
+      "down_program_config": {
+        "kind": "ttnn_matmul_multicore_reuse_mcast_program_config",
+        "core_grid": [8, 8],
+        "in0_block_w": 8,
+        "out_subblock_h": 1,
+        "out_subblock_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 16,
+        "transpose_mcast": false,
+        "fuse_batch": false
+      }
+    },
+    "rms_norm": {
+      "output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      },
+      "compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": false,
+        "fp32_dest_acc_en": true,
+        "packer_l1_acc": true
+      },
+      "attention": {
+        "input_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 4],
+          "shard_shape": [32, 128]
+        },
+        "program_config": {
+          "kind": "ttnn_layer_norm_program_config",
+          "core_grid": [8, 4],
+          "subblock_w": 4,
+          "block_h": 1,
+          "block_w": 4,
+          "inplace": false
+        },
+        "output_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 4],
+          "shard_shape": [32, 128]
+        }
+      },
+      "mlp": {
+        "input_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 8],
+          "shard_shape": [32, 64]
+        },
+        "program_config": {
+          "kind": "ttnn_layer_norm_program_config",
+          "core_grid": [8, 8],
+          "subblock_w": 2,
+          "block_h": 1,
+          "block_w": 2,
+          "inplace": false
+        },
+        "output_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 8],
+          "shard_shape": [32, 64]
+        }
+      },
+      "final": {
+        "input_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 8],
+          "shard_shape": [32, 64]
+        },
+        "program_config": {
+          "kind": "ttnn_layer_norm_program_config",
+          "core_grid": [8, 8],
+          "subblock_w": 2,
+          "block_h": 1,
+          "block_w": 2,
+          "inplace": false
+        },
+        "output_memory_config": {
+          "kind": "ttnn_sharded_memory_config",
+          "strategy": "width",
+          "core_grid": [8, 8],
+          "shard_shape": [32, 64]
+        }
+      }
+    },
+    "attention": {
+      "core_grid": [8, 4],
+      "qkv_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "qkv_program_config": {
+        "kind": "ttnn_matmul_dram_sharded_program_config",
+        "in0_block_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 6
+      },
+      "qkv_compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": true,
+        "fp32_dest_acc_en": true,
+        "packer_l1_acc": true
+      },
+      "qkv_output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      },
+      "qkv_heads_memory_config": {
+        "kind": "ttnn_sharded_memory_config",
+        "strategy": "height",
+        "core_grid": [8, 4],
+        "shard_shape": [32, 128]
+      },
+      "sdpa_kernel_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "DRAM_MEMORY_CONFIG"
+      },
+      "sdpa_output_memory_config": {
+        "kind": "ttnn_sharded_memory_config",
+        "strategy": "height",
+        "core_grid": [8, 4],
+        "shard_shape": [32, 128]
+      },
+      "sdpa_program_config": {
+        "kind": "ttnn_sdpa_program_config",
+        "core_grid": [8, 8],
+        "q_chunk_size": 0,
+        "k_chunk_size": 0,
+        "exp_approx_mode": false,
+        "max_cores_per_head_batch": 16
+      },
+      "sdpa_compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": true,
+        "fp32_dest_acc_en": true,
+        "packer_l1_acc": true
+      },
+      "concat_heads_input_memory_config": {
+        "kind": "ttnn_sharded_memory_config",
+        "strategy": "height",
+        "core_grid": [8, 4],
+        "shard_shape": [32, 128]
+      },
+      "o_proj_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "o_proj_program_config": {
+        "kind": "ttnn_matmul_dram_sharded_program_config",
+        "in0_block_w": 4,
+        "per_core_M": 1,
+        "per_core_N": 4
+      },
+      "o_proj_compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": true,
+        "fp32_dest_acc_en": true,
+        "packer_l1_acc": true
+      },
+      "o_proj_output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      }
+    },
+    "mlp": {
+      "core_grid": [8, 8],
+      "gate_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "up_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "down_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "gate_program_config": {
+        "kind": "ttnn_matmul_dram_sharded_program_config",
+        "in0_block_w": 2,
+        "per_core_M": 1,
+        "per_core_N": 7
+      },
+      "up_program_config": {
+        "kind": "ttnn_matmul_dram_sharded_program_config",
+        "in0_block_w": 2,
+        "per_core_M": 1,
+        "per_core_N": 7
+      },
+      "down_program_config": {
+        "kind": "ttnn_matmul_dram_sharded_program_config",
+        "in0_block_w": 7,
+        "per_core_M": 1,
+        "per_core_N": 2
+      },
+      "gate_up_compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "LoFi",
+        "math_approx_mode": false,
+        "fp32_dest_acc_en": false,
+        "packer_l1_acc": true
+      },
+      "down_compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": false,
+        "fp32_dest_acc_en": false,
+        "packer_l1_acc": true
+      },
+      "intermediate_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      },
+      "output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat16"
+      },
+      "layer_overrides": {
+        "31": {
+          "parameter_intermediate_dtype": "bfloat8_b",
+          "gate_up_compute_kernel_config": {
+            "kind": "ttnn_wormhole_compute_kernel_config",
+            "math_fidelity": "HiFi2",
+            "math_approx_mode": false,
+            "fp32_dest_acc_en": false,
+            "packer_l1_acc": true
+          }
+        }
+      }
+    },
+    "lm_head": {
+      "core_grid": [8, 8],
+      "input_memory_config": {
+        "kind": "ttnn_sharded_memory_config",
+        "strategy": "width",
+        "core_grid": [8, 8],
+        "shard_shape": [32, 64]
+      },
+      "output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+      },
+      "shard_output_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_MEMORY_CONFIG"
+      },
+      "concat_memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "L1_MEMORY_CONFIG"
+      },
+      "output_dtype": {
+        "kind": "ttnn_dtype",
+        "name": "bfloat8_b"
+      },
+      "compute_kernel_config": {
+        "kind": "ttnn_wormhole_compute_kernel_config",
+        "math_fidelity": "HiFi2",
+        "math_approx_mode": false,
+        "fp32_dest_acc_en": false,
+        "packer_l1_acc": true
+      },
+      "program_configs": [
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8},
+        {"kind": "ttnn_matmul_dram_sharded_program_config", "in0_block_w": 2, "per_core_M": 1, "per_core_N": 8}
+      ]
+    },
+    "kv_cache": {
+      "memory_config": {
+        "kind": "ttnn_memory_config",
+        "name": "DRAM_MEMORY_CONFIG"
+      }
     }
   }
 }

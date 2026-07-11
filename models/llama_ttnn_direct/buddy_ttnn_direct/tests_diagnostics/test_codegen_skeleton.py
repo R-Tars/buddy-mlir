@@ -255,7 +255,6 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
                     "weight": "attn_norm_weight",
                     "epsilon": 1e-5,
                     "memory_config": "norm_mem",
-                    "dtype": "bf16",
                 },
             )
 

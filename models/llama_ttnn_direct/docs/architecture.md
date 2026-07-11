@@ -48,6 +48,10 @@ device.
 `buddy_ttnn_direct/templates/` maps semantic operations to official-like TTNN
 templates. `buddy_ttnn_direct/compiler/` validates plans, builds generated
 config, renders generated Python source, and writes compiler artifacts.
+`compiler/official_config.py` imports the extracted hardware profile and keeps
+its provenance attached to generated config. `runtime/config_runtime.py`
+materializes JSON descriptors into TTNN dtype, memory, program, grid, and
+compute-kernel objects without making compiler modules import TTNN.
 `buddy_ttnn_direct/codegen/` retains artifact, parameter, tensorization, and
 package helpers; `codegen/python_ttnn.py` is a compatibility facade for the
 canonical compiler modules.

@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-11T13:08:00+08:00",
+  "purpose": "Step D imported TT-Transformers configuration parity and full-depth execution evidence for TTNN Direct on P150A.",
+  "device": "p150a",
+  "device_id": 0,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "profile_id": "p150a_llama31_8b_b32_performance",
+  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_program_20260711_v9",
+  "program_config_sha256": "808a9453009fa1a70dd2b820c4915b81b9fa5496806df9ce32723327c944c529",
+  "generated_model_sha256": "415229458998348e82667a0befdc5ca0933629dfce8d59644e25400cb3c8cf0f",
+  "official_reference": "buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json",
+  "official_reference_sha256": "f634e5fd43252b57cc0e85d07e71e6e9c2b5a6d660a9af18adc56d2f84a42f5d",
+  "ttnn_module_file": "/wafer/zhuxinye/buddy-mlir/thirdparty/tt-mlir/third_party/tt-metal/src/tt-metal/ttnn/ttnn/__init__.py",
+  "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "official_source": {
+    "kind": "extracted_tt_transformers_model_args",
+    "model_config": "models/tt_transformers/tt/model_config.py",
+    "decoder_config": "models/tt_transformers/model_params/Llama-3.1-8B-Instruct/performance_decoder_config.json",
+    "device_name": "P150",
+    "optimization": "DecodersPrecision.performance",
+    "mesh_shape": [1, 1],
+    "runtime_adaptations": [
+      "prefill_qkv_and_wo_disable_fuse_batch_for_buddy_batch32_tensor_shape"
+    ]
+  },
+  "config_diff": {
+    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_diff_20260711_v9.json",
+    "report_sha256": "fdaed3b835c5f0b90f020e8dc53141715990056e2ad67b99221f6345179f6c86",
+    "status": "match",
+    "issue_count": 0,
+    "matching_field_count": 55,
+    "sections": [
+      "dtype_recipe",
+      "compute_fidelity",
+      "program_config",
+      "memory_config",
+      "core_grid",
+      "lm_head",
+      "paged_attention"
+    ]
+  },
+  "parameter_recipe": {
+    "tensor_count": 234,
+    "dtype_counts": {
+      "bfloat16": 66,
+      "bfloat8_b": 106,
+      "bfloat4_b": 62
+    },
+    "dram_width_sharded_weight_counts": {
+      "attention_qkv_4096x768_per_bank": 32,
+      "attention_o_proj_4096x512_per_bank": 32,
+      "mlp_gate_up_4096x1792_per_bank": 64,
+      "mlp_down_14336x512_per_bank": 32,
+      "lm_head_4096x2016_per_bank": 8
+    },
+    "layer_31_mlp_gate_up_override": "bfloat8_b_and_HiFi2"
+  },
+  "depth_one_generate": {
+    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_generate_depth1_20260711_v9.json",
+    "report_sha256": "2ea1a9104422e0d3e5a1c5760c8a35d9830e61d88ae838122c790ecee27b8a84",
+    "status": "passed",
+    "passed": true,
+    "layers": 1,
+    "batch_size": 32,
+    "prefill_len": 128,
+    "cache_len": 1024,
+    "max_new_tokens": 2,
+    "generated_token_ids_per_user": [95639, 75901],
+    "decode_token_runtime_handoff": "device_tensor_direct",
+    "decode_token_host_roundtrip_per_step": false,
+    "failed_contract_checks": []
+  },
+  "full_depth_steady_profile": {
+    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_decode_steady_full_20260711_v9.json",
+    "report_sha256": "66c2909b2fae1f33c1c5321b652d066b62861c42caf83e49609b0eef3cf8dc70",
+    "status": "profiled",
+    "passed": true,
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 128,
+    "cache_len": 1024,
+    "warmup": 5,
+    "iterations": 50,
+    "setup_ms": 102207.21005499945,
+    "prefill_ms": 1659.9385360023007,
+    "decode_step_ms_p50": 34.78741850994993,
+    "decode_step_ms_mean": 34.9325212999247,
+    "decode_step_ms_min": 34.18017199146561,
+    "decode_step_ms_max": 39.68292000354268,
+    "decode_step_ms_stdev": 0.8103783822304937,
+    "tokens_per_second_per_user": 28.62661963086402,
+    "aggregate_tokens_per_second": 916.0518281876487,
+    "official_reference_tokens_per_second_per_user": 33.1,
+    "ratio_of_official_reference": 0.8648525568236863,
+    "percent_of_official_reference": 86.48525568236863,
+    "decode_runtime_tensor_conversions_per_step": 5,
+    "decode_token_runtime_handoff": "device_tensor_direct",
+    "decode_token_host_roundtrip_per_step": false
+  },
+  "comparison_to_step_c": {
+    "step_c_tokens_per_second_per_user": 29.44467846963441,
+    "step_d_tokens_per_second_per_user": 28.62661963086402,
+    "absolute_delta_tokens_per_second_per_user": -0.8180588387703907,
+    "relative_delta_percent": -2.7782909554065482,
+    "interpretation": "Imported official configuration parity is functional, but it does not improve the current Buddy runtime throughput. Step E autotuning must treat this profile as a measured baseline rather than assuming imported settings are optimal for the Buddy execution structure."
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "official_config_imported": true,
+    "all_required_parity_sections_match": true,
+    "depth_one_generate_passed": true,
+    "full_depth_steady_profile_passed": true,
+    "official_performance_parity_claimed": false
+  }
+}

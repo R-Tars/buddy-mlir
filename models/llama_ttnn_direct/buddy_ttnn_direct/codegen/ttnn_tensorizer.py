@@ -11,6 +11,11 @@ from typing import Any
 
 from .artifacts import write_json
 from .config_emit import emit_parameter_config
+from ..compiler.official_config import (
+    official_layer_dtype_overrides,
+    official_weight_memory_overrides,
+)
+from ..runtime.config_runtime import realize_ttnn_config
 from ..semantic.dump import load_graph_json
 
 
@@ -80,6 +85,12 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
             )
         ),
         lm_head_split_count=int(lm_head.get("split_count", 1)),
+        layer_dtype_overrides=official_layer_dtype_overrides(
+            template_config.get("official_config_profile")
+        ),
+        weight_memory_overrides=official_weight_memory_overrides(
+            template_config.get("official_config_profile")
+        ),
     )
 
 
@@ -680,10 +691,12 @@ def _find_parameter_config_item(
     return matches[0]
 
 
-def _entry_memory_config(entry: Mapping[str, Any]) -> str | None:
+def _entry_memory_config(entry: Mapping[str, Any]) -> Any | None:
     value = entry.get("memory_config")
     if value is None:
         return None
+    if isinstance(value, Mapping):
+        return copy.deepcopy(dict(value))
     value = str(value)
     if value in ("", "none", "None", "default"):
         return None
@@ -705,6 +718,8 @@ def _resolve_ttnn_layout(ttnn: Any, layout: str) -> Any:
 def _resolve_ttnn_memory_config(ttnn: Any, memory_config: Any | None) -> Any | None:
     if memory_config is None:
         return None
+    if isinstance(memory_config, Mapping):
+        return realize_ttnn_config(dict(memory_config), ttnn)
     value = str(memory_config)
     if value in ("", "none", "None", "default"):
         return None

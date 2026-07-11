@@ -149,6 +149,8 @@ class TTNNCompatOps:
         weight,
         *,
         epsilon,
+        program_config=None,
+        compute_kernel_config=None,
         memory_config=None,
         dtype=None,
         op_name="rms_norm",
@@ -167,11 +169,20 @@ class TTNNCompatOps:
             op_name=f"to_layout.tile.{op_name}",
         )
         kwargs = {"weight": weight, "epsilon": epsilon}
+        if program_config is not None:
+            kwargs["program_config"] = program_config
+        if compute_kernel_config is not None:
+            kwargs["compute_kernel_config"] = compute_kernel_config
         if memory_config is not None:
             kwargs["memory_config"] = self.resolve_memory_config(memory_config)
-        if dtype is not None:
-            kwargs["dtype"] = dtype
-        return op(hidden, **kwargs)
+        result = op(hidden, **kwargs)
+        result_dtype = getattr(result, "dtype", None)
+        if dtype is None or result_dtype is None or result_dtype == dtype:
+            return result
+        typecast = getattr(self.ttnn, "typecast", None)
+        if typecast is None:
+            return result
+        return typecast(result, dtype)
 
     def ensure_tile_layout(self, tensor, *, op_name):
         to_layout = getattr(self.ttnn, "to_layout", None)

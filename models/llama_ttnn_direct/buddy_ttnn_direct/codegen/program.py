@@ -17,6 +17,10 @@ from .python_ttnn import (
     build_codegen_config,
     render_python_ttnn_model,
 )
+from ..compiler.official_config import (
+    official_layer_dtype_overrides,
+    official_weight_memory_overrides,
+)
 from ..semantic.dump import graph_json_dict
 from ..semantic.graph import LlamaModelGraph
 from ..templates.diff import expand_final_templates, expand_layer_templates
@@ -47,6 +51,12 @@ def write_decode_program_bundle(
         graph,
         recipe=template_config["dtype_recipe"],
         lm_head_split_count=int(template_config["lm_head_split_count"]),
+        layer_dtype_overrides=official_layer_dtype_overrides(
+            template_config.get("official_config_profile")
+        ),
+        weight_memory_overrides=official_weight_memory_overrides(
+            template_config.get("official_config_profile")
+        ),
     )
     weights_manifest = build_offline_artifact_manifests(
         model_path,

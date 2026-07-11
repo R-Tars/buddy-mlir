@@ -224,6 +224,13 @@ def build_config_parity_view(config: dict[str, Any]) -> dict[str, Any]:
             "model_name": config.get("model_name") or config.get("model"),
             "parity_config": parity_config,
         }
+    imported_parity = config.get("official_parity_config")
+    if isinstance(imported_parity, dict):
+        return {
+            "source_format": "generated_config_with_imported_official_profile",
+            "model_name": config.get("model_name") or config.get("model"),
+            "parity_config": _normalize_parity_config(imported_parity),
+        }
     parity_config = _normalize_generated_config(config)
     return {
         "source_format": "generated_ttnn_direct_config",
@@ -454,11 +461,10 @@ def _gap_summary(
 def _required_field_coverage(
     parity_config: dict[str, Any],
 ) -> dict[str, Any]:
-    flat = _flatten(parity_config)
     missing_paths = [
         path
         for path in REQUIRED_PARITY_PATHS
-        if _is_missing(flat.get(path))
+        if _is_missing(_get(parity_config, path))
     ]
     sections_missing_fields = [
         section

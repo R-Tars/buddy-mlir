@@ -2,12 +2,37 @@ from __future__ import annotations
 
 
 _SOURCE = """\
-    def mlp_decode(self, layer_id, hidden):
+    def mlp_decode(self, layer_id, hidden, stage="decode"):
         # Template: official_gated_mlp_decode
         layer_params = self.parameters.layers[layer_id].mlp
-        mlp_config = self.config.mlp
-        compute_kernel_config = _optional_attr(
-            mlp_config, "compute_kernel_config"
+        mlp_config = (
+            self.config.mlp
+            if stage == "decode"
+            else _optional_attr(self.config, "prefill", self.config.mlp)
+        )
+        layer_overrides = _optional_attr(
+            mlp_config, "layer_overrides", None
+        )
+        layer_config = _optional_attr(
+            layer_overrides, str(layer_id), None
+        )
+        gate_up_compute_kernel_config = _optional_attr(
+            layer_config,
+            "gate_up_compute_kernel_config",
+            _optional_attr(
+                mlp_config,
+                "gate_up_compute_kernel_config",
+                _optional_attr(mlp_config, "compute_kernel_config"),
+            ),
+        )
+        down_compute_kernel_config = _optional_attr(
+            layer_config,
+            "down_compute_kernel_config",
+            _optional_attr(
+                mlp_config,
+                "down_compute_kernel_config",
+                _optional_attr(mlp_config, "compute_kernel_config"),
+            ),
         )
         intermediate_dtype = _optional_attr(
             mlp_config, "intermediate_dtype"
@@ -22,7 +47,7 @@ _SOURCE = """\
             program_config=_optional_attr(
                 mlp_config, "gate_program_config"
             ),
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=gate_up_compute_kernel_config,
             dtype=intermediate_dtype,
             op_name="mlp_gate",
         )
@@ -35,7 +60,7 @@ _SOURCE = """\
             program_config=_optional_attr(
                 mlp_config, "up_program_config"
             ),
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=gate_up_compute_kernel_config,
             dtype=intermediate_dtype,
             op_name="mlp_up",
         )
@@ -55,7 +80,7 @@ _SOURCE = """\
             program_config=_optional_attr(
                 mlp_config, "down_program_config"
             ),
-            compute_kernel_config=compute_kernel_config,
+            compute_kernel_config=down_compute_kernel_config,
             dtype=_optional_attr(mlp_config, "output_dtype"),
             op_name="mlp_down",
         )

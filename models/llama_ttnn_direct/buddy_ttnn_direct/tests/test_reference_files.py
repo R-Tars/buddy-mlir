@@ -16,6 +16,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.config import (
     build_codegen_config,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.official_config import (
+    P150A_LLAMA31_8B_B32_PERFORMANCE,
+    load_official_config_profile,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
 )
@@ -25,6 +29,41 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 
 
 class ConfigDiffTest(unittest.TestCase):
+    def test_p150a_official_config_parity_evidence_is_complete(self) -> None:
+        evidence_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "evidence"
+            / "p150a_official_config_parity_evidence_20260711.json"
+        )
+        evidence = json.loads(evidence_path.read_text())
+
+        self.assertTrue(evidence["acceptance"]["passed"])
+        self.assertTrue(
+            evidence["acceptance"]["all_required_parity_sections_match"]
+        )
+        self.assertTrue(evidence["depth_one_generate"]["passed"])
+        self.assertTrue(evidence["full_depth_steady_profile"]["passed"])
+        self.assertEqual(evidence["config_diff"]["issue_count"], 0)
+        self.assertEqual(evidence["config_diff"]["matching_field_count"], 55)
+        self.assertEqual(
+            set(evidence["config_diff"]["sections"]),
+            set(PARITY_SECTIONS),
+        )
+        self.assertEqual(
+            evidence["full_depth_steady_profile"]["iterations"],
+            50,
+        )
+        self.assertFalse(
+            evidence["acceptance"]["official_performance_parity_claimed"]
+        )
+        for key in (
+            "program_config_sha256",
+            "generated_model_sha256",
+            "official_reference_sha256",
+        ):
+            self.assertEqual(len(evidence[key]), 64)
+
     def test_p150a_numerical_correctness_evidence_is_complete(self) -> None:
         evidence_path = (
             Path(__file__).resolve().parents[2]
@@ -132,7 +171,10 @@ class ConfigDiffTest(unittest.TestCase):
         mismatch_paths = {field["path"] for field in diff["mismatched_fields"]}
         self.assertIn("memory_config.attention_qkv", missing_paths)
         self.assertIn("program_config.attention_sdpa", missing_paths)
-        self.assertIn("compute_fidelity.mlp", missing_paths)
+        self.assertIn(
+            "compute_fidelity.mlp.gate_up_default",
+            missing_paths,
+        )
         self.assertIn("core_grid.attention", missing_paths)
         self.assertNotIn("lm_head.argmax_strategy", mismatch_paths)
         self.assertIn("paged_attention.scale", mismatch_paths)
@@ -170,6 +212,59 @@ class ConfigDiffTest(unittest.TestCase):
             "memory_config.attention_qkv",
             diff["required_field_coverage"]["ours"]["missing_required_paths"],
         )
+
+    def test_imported_official_profile_has_exact_generated_parity(self) -> None:
+        official = load_official_config_profile(
+            P150A_LLAMA31_8B_B32_PERFORMANCE
+        )
+        generated = _fake_generated_config(
+            official_profile=P150A_LLAMA31_8B_B32_PERFORMANCE
+        )
+
+        self.assertEqual(official["schema_version"], 2)
+        self.assertEqual(
+            official["source"]["kind"],
+            "extracted_tt_transformers_model_args",
+        )
+        self.assertEqual(official["source"]["device_name"], "P150")
+        self.assertEqual(
+            official["source"]["tt_metal_git_commit"],
+            "61e690c25202111b52cbc1fbc9148b6524070c6f",
+        )
+        self.assertEqual(
+            official["source"]["runtime_adaptations"],
+            [
+                "prefill_qkv_and_wo_disable_fuse_batch_for_"
+                "buddy_batch32_tensor_shape"
+            ],
+        )
+        self.assertEqual(
+            generated["official_config_profile"],
+            P150A_LLAMA31_8B_B32_PERFORMANCE,
+        )
+        self.assertEqual(
+            generated["attention"]["qkv_program_config"]["kind"],
+            "ttnn_matmul_dram_sharded_program_config",
+        )
+        self.assertEqual(
+            generated["rms_norm"]["attention"][
+                "input_memory_config"
+            ]["shard_shape"],
+            [32, 128],
+        )
+        self.assertEqual(
+            generated["mlp"]["layer_overrides"]["31"][
+                "parameter_intermediate_dtype"
+            ],
+            "bfloat8_b",
+        )
+        self.assertEqual(
+            generated["lm_head"]["shard_output_memory_config"]["name"],
+            "L1_MEMORY_CONFIG",
+        )
+        diff = diff_official_config(generated, official)
+        self.assertEqual(diff["status"], "match")
+        self.assertEqual(diff["summary"]["issue_count"], 0)
 
     def test_official_required_field_coverage_reports_missing_seed_field(
         self,
@@ -240,7 +335,9 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertEqual(view["parity_config"]["lm_head"]["shard_count"], 8)
 
 
-def _fake_generated_config() -> dict[str, object]:
+def _fake_generated_config(
+    *, official_profile: str | None = None
+) -> dict[str, object]:
     graph = import_hf_llama(
         "/tmp/fake-config-diff",
         config={
@@ -278,6 +375,7 @@ def _fake_generated_config() -> dict[str, object]:
             "generation_template": "device_argmax_greedy",
             "lm_head_split_count": 8,
             "dtype_recipe": "official_like_performance_seed",
+            "official_config_profile": official_profile,
         },
     )
     return build_codegen_config(plan)

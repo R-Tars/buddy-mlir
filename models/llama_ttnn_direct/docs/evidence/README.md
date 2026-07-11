@@ -28,6 +28,12 @@ The current baseline evidence is:
   excluded five warmup iterations and measured 50 post-prefill decode steps.
   Mean throughput was `29.445 t/s/u` (`88.96%` of the recorded official target),
   reaching M5 while remaining below the greater-than-90% M6 threshold.
+- `p150a_official_config_parity_evidence_20260711.json`: Step D replaced the
+  hand-written seed with an extracted TT-Transformers performance profile. All
+  55 compared fields across seven parity sections match, depth-1 generation and
+  the full 32-layer steady benchmark pass, and the imported profile measures
+  `28.627 t/s/u` (`86.49%` of target). Config parity is proven; performance
+  parity is not claimed.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

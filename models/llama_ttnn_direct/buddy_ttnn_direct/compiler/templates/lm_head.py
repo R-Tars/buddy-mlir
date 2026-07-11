@@ -37,6 +37,13 @@ _SOURCE = """\
                 GENERATED_LM_HEAD_SPLIT_COUNT,
             )
         )
+        hidden = self.ops.to_memory_config(
+            hidden,
+            memory_config=_optional_attr(
+                lm_head_config, "input_memory_config"
+            ),
+            op_name="to_memory_config.lm_head.input",
+        )
         program_configs = _optional_attr(
             lm_head_config, "program_configs", None
         )
@@ -78,7 +85,19 @@ _SOURCE = """\
                 op_name="split_lm_head",
             )
             if shard_logits is not None:
-                shard_logits.append(logits_i)
+                shard_logits.append(
+                    self.ops.to_memory_config(
+                        logits_i,
+                        memory_config=_optional_attr(
+                            lm_head_config,
+                            "shard_output_memory_config",
+                        ),
+                        op_name=(
+                            "to_memory_config."
+                            f"lm_head.shard_output[{shard_id}]"
+                        ),
+                    )
+                )
             if local_global_argmax:
                 vocab_start = _optional_attr(
                     split_config, "vocab_start", None

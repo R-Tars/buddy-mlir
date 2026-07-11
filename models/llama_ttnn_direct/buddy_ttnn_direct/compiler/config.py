@@ -11,6 +11,7 @@ from ..templates.attention_prefill import (
     official_prefill_attention_op_sequence,
 )
 from ..templates.lm_head import build_lm_head_split_ranges
+from .official_config import apply_official_config_profile
 
 
 def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
@@ -69,7 +70,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
     )
     kv_cache_template = template_config.get("kv_cache_template")
     kv_cache_policy = "paged" if kv_cache_template == "paged_kv_cache" else None
-    return {
+    config = {
         "schema_version": 1,
         "model_name": plan["model_name"],
         "num_layers": len(plan["layers"]),
@@ -194,5 +195,10 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "max_cache_len": plan["max_cache_len"],
             "num_kv_heads": plan.get("num_key_value_heads"),
             "head_dim": head_dim,
+            "memory_config": None,
         },
     }
+    return apply_official_config_profile(
+        config,
+        template_config.get("official_config_profile"),
+    )

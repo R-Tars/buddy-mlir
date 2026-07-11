@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from ..dtype_recipes import (
     CORRECTNESS_RECIPE,
@@ -22,6 +23,8 @@ def emit_parameter_config(
     recipe: str = SEED_RECIPE,
     lm_head_split_count: int = 8,
     kv_page_block_size: int = 32,
+    layer_dtype_overrides: Mapping[int, Mapping[str, str]] | None = None,
+    weight_memory_overrides: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     validate_llama_graph(graph)
     if recipe not in SUPPORTED_RECIPES:
@@ -45,6 +48,10 @@ def emit_parameter_config(
 
     for layer in graph.layers:
         layer_id = layer.layer_id
+        layer_dtypes = dict(dtypes)
+        layer_dtypes.update(
+            (layer_dtype_overrides or {}).get(layer_id, {})
+        )
         _add_weight(
             weights,
             layer.input_norm.weight,
@@ -104,7 +111,7 @@ def emit_parameter_config(
             layer.mlp.gate_proj,
             role="mlp_gate",
             layer_id=layer_id,
-            target_dtype=dtypes["mlp_intermediate"],
+            target_dtype=layer_dtypes["mlp_intermediate"],
             packing="gate_up_group",
             layout="tile",
         )
@@ -113,7 +120,7 @@ def emit_parameter_config(
             layer.mlp.up_proj,
             role="mlp_up",
             layer_id=layer_id,
-            target_dtype=dtypes["mlp_intermediate"],
+            target_dtype=layer_dtypes["mlp_intermediate"],
             packing="gate_up_group",
             layout="tile",
         )
@@ -146,6 +153,7 @@ def emit_parameter_config(
         layout="tile",
         extra={"tied_to_embedding": graph.lm_head.tied_to_embedding},
     )
+    _apply_weight_memory_overrides(weights, weight_memory_overrides or {})
 
     return {
         "schema_version": 1,
@@ -246,3 +254,13 @@ def _add_weight(
     existing.setdefault("memory_config", "dram")
     if extra:
         existing.update(extra)
+
+
+def _apply_weight_memory_overrides(
+    weights: dict[str, dict[str, Any]],
+    overrides: Mapping[str, Any],
+) -> None:
+    for entry in weights.values():
+        role = str(entry.get("role"))
+        if role in overrides:
+            entry["memory_config"] = copy.deepcopy(overrides[role])

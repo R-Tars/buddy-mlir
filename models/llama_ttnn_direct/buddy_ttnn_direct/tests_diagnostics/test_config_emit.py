@@ -149,6 +149,55 @@ class ParameterConfigEmitTest(unittest.TestCase):
         self.assertEqual(config["kv_cache"]["page_block_size"], 32)
         self.assertEqual(config["kv_cache"]["dtype"], "bfloat8_b")
 
+    def test_emit_parameter_config_applies_layer_dtype_override(self) -> None:
+        config = emit_parameter_config(
+            _fake_graph(num_layers=2),
+            layer_dtype_overrides={1: {"mlp_intermediate": "bfloat8_b"}},
+        )
+        weights = config["weights"]
+
+        self.assertEqual(
+            weights["model.layers.0.mlp.gate_proj.weight"]["target_dtype"],
+            "bfloat4_b",
+        )
+        self.assertEqual(
+            weights["model.layers.1.mlp.gate_proj.weight"]["target_dtype"],
+            "bfloat8_b",
+        )
+        self.assertEqual(
+            weights["model.layers.1.mlp.up_proj.weight"]["target_dtype"],
+            "bfloat8_b",
+        )
+        self.assertEqual(
+            weights["model.layers.1.mlp.down_proj.weight"]["target_dtype"],
+            "bfloat8_b",
+        )
+
+    def test_emit_parameter_config_applies_weight_memory_override(self) -> None:
+        descriptor = {
+            "kind": "ttnn_dram_sharded_memory_config",
+            "k": 4096,
+            "n": 14336,
+            "dram_grid_width": 8,
+        }
+        config = emit_parameter_config(
+            _fake_graph(num_layers=1),
+            weight_memory_overrides={"mlp_gate": descriptor},
+        )
+
+        self.assertEqual(
+            config["weights"]["model.layers.0.mlp.gate_proj.weight"][
+                "memory_config"
+            ],
+            descriptor,
+        )
+        self.assertEqual(
+            config["weights"]["model.layers.0.mlp.up_proj.weight"][
+                "memory_config"
+            ],
+            "dram",
+        )
+
     def test_emit_parameter_config_marks_tied_lm_head(self) -> None:
         tied_config = _fake_config(num_layers=1)
         tied_config["tie_word_embeddings"] = True

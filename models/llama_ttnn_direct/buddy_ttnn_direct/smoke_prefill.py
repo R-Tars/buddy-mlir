@@ -319,6 +319,10 @@ def _run_generated_prefill(
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     prefill_config = dict(config)
     prefill_config["num_layers"] = layer_count
+    prefill_config["batch_size"] = int(plan["batch_size"])
+    prefill_config["max_cache_len"] = int(plan["cache_len"])
+    prefill_config["prefill"] = dict(prefill_config.get("prefill") or {})
+    prefill_config["prefill"]["seq_len"] = int(plan["prefill_len"])
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,

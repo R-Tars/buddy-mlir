@@ -12,5 +12,6 @@
   "generation_template": "device_argmax_greedy",
   "lm_head_argmax_strategy": "local_global_argmax",
   "lm_head_split_count": 8,
-  "dtype_recipe": "official_like_performance_seed"
+  "dtype_recipe": "official_like_performance_seed",
+  "official_config_profile": "p150a_llama31_8b_b32_performance"
 }

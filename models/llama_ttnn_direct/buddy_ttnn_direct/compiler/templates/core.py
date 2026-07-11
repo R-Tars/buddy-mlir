@@ -121,6 +121,10 @@ class BuddyLlama31TTNN:
                 int(valid_seq_len) - 1,
                 op_name="select_last_prompt_hidden",
             )
+            hidden = self.ops.reshape_decode_hidden_for_layer(
+                hidden,
+                op_name="reshape_prefill_selected_hidden",
+            )
         hidden = self.final_norm(hidden)
         self._observe("prefill.final_hidden", hidden)
         token = self.lm_head_argmax(hidden, stage="prefill")
@@ -135,7 +139,9 @@ class BuddyLlama31TTNN:
         valid_seq_len=None,
     ):
         residual = hidden
-        hidden = self.rmsnorm(hidden, layer_id, kind="attn")
+        hidden = self.rmsnorm(
+            hidden, layer_id, kind="attn", stage="prefill"
+        )
         hidden, kv_cache, cache_report = self.attention_prefill(
             layer_id,
             hidden,
@@ -149,8 +155,10 @@ class BuddyLlama31TTNN:
             op_name="residual_add.attn",
         )
         residual = hidden
-        hidden = self.rmsnorm(hidden, layer_id, kind="mlp")
-        hidden = self.mlp_decode(layer_id, hidden)
+        hidden = self.rmsnorm(
+            hidden, layer_id, kind="mlp", stage="prefill"
+        )
+        hidden = self.mlp_decode(layer_id, hidden, stage="prefill")
         hidden = self.ops.add(
             residual,
             hidden,
@@ -222,7 +230,7 @@ class BuddyLlama31TTNN:
             ),
         )
 
-    def rmsnorm(self, hidden, layer_id, kind):
+    def rmsnorm(self, hidden, layer_id, kind, stage="decode"):
         layer_params = self.parameters.layers[layer_id]
         if kind == "attn":
             norm_params = layer_params.input_norm
@@ -233,6 +241,8 @@ class BuddyLlama31TTNN:
         return self._rmsnorm_with_weight(
             hidden,
             norm_params.weight,
+            config_kind="attention" if kind == "attn" else kind,
+            use_kind_config=stage == "decode",
             op_name=f"rms_norm.{kind}",
         )
 
@@ -240,27 +250,51 @@ class BuddyLlama31TTNN:
         return self._rmsnorm_with_weight(
             hidden,
             self.parameters.final_norm.weight,
+            config_kind="final",
+            use_kind_config=True,
             op_name="rms_norm.final",
         )
 
-    def _rmsnorm_with_weight(self, hidden, weight, op_name):
+    def _rmsnorm_with_weight(
+        self,
+        hidden,
+        weight,
+        config_kind,
+        use_kind_config,
+        op_name,
+    ):
         rms_config = _optional_attr(self.config, "rms_norm", None)
+        kind_config = (
+            _optional_attr(rms_config, config_kind, None)
+            if use_kind_config
+            else None
+        )
         epsilon = _optional_attr(
             rms_config, "eps", GENERATED_RMS_NORM_EPS
         )
         hidden = self.ops.to_memory_config(
             hidden,
             memory_config=_optional_attr(
-                rms_config, "input_memory_config"
-            ),
+                kind_config, "input_memory_config"
+            ) or _optional_attr(rms_config, "input_memory_config"),
             op_name=f"to_memory_config.{op_name}.input",
         )
         return self.ops.rms_norm(
             hidden,
             weight,
             epsilon=epsilon,
+            program_config=_optional_attr(
+                kind_config, "program_config"
+            ),
+            compute_kernel_config=_optional_attr(
+                kind_config,
+                "compute_kernel_config",
+                _optional_attr(rms_config, "compute_kernel_config"),
+            ),
             memory_config=_optional_attr(
-                rms_config, "output_memory_config"
+                kind_config,
+                "output_memory_config",
+                _optional_attr(rms_config, "output_memory_config"),
             ),
             dtype=_optional_attr(rms_config, "output_dtype"),
             op_name=op_name,

@@ -187,6 +187,9 @@ def build_execution_plan(
             "device": config["device"],
             "model": config["model"],
             "dtype_recipe": config["dtype_recipe"],
+            "official_config_profile": config.get(
+                "official_config_profile"
+            ),
             "kv_cache_template": config["kv_cache_template"],
             "lm_head_split_count": int(config["lm_head_split_count"]),
             "lm_head_argmax_strategy": config.get(

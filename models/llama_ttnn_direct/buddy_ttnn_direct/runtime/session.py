@@ -6,6 +6,7 @@ from typing import Any
 
 from ..smoke_decode_shell import _to_namespace
 from ..smoke_single_layer_decode import _load_generated_model
+from .config_runtime import realize_ttnn_config
 from .state import build_generate_state
 
 
@@ -45,7 +46,7 @@ def build_runtime_session(
         tokenizer_module=tokenizer_module,
     )
     generated = _load_generated_model(program_dir / "model.py", ttnn)
-    runtime_config = dict(config)
+    runtime_config = realize_ttnn_config(config, ttnn)
     runtime_config["num_layers"] = layer_count
     runtime_config["batch_size"] = batch_size
     runtime_config["max_cache_len"] = cache_len

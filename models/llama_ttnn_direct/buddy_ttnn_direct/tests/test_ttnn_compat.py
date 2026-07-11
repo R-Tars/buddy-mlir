@@ -3,6 +3,10 @@ from __future__ import annotations
 import types
 import unittest
 
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
+    TTNNConfigResolutionError,
+    realize_ttnn_config,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates import (
     ttnn_ops as legacy_ttnn_ops,
 )
@@ -14,6 +18,122 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import (
 
 
 class TTNNOpsWrapperTest(unittest.TestCase):
+    def test_runtime_config_realizes_official_ttnn_descriptors(self) -> None:
+        fake = _fake_config_ttnn()
+        config = {
+            "metadata": {"kind": "official_profile", "enabled": True},
+            "dtype": {"kind": "ttnn_dtype", "name": "bfloat8_b"},
+            "memory": {
+                "kind": "ttnn_sharded_memory_config",
+                "strategy": "width",
+                "core_grid": [8, 4],
+                "shard_shape": [32, 128],
+            },
+            "weight_memory": {
+                "kind": "ttnn_dram_sharded_memory_config",
+                "k": 4096,
+                "n": 6144,
+                "dram_grid_width": 8,
+            },
+            "programs": [
+                {
+                    "kind": "ttnn_matmul_dram_sharded_program_config",
+                    "in0_block_w": 4,
+                    "per_core_M": 1,
+                    "per_core_N": 6,
+                },
+                {
+                    "kind": "ttnn_sdpa_program_config",
+                    "core_grid": [8, 8],
+                    "q_chunk_size": 0,
+                    "k_chunk_size": 0,
+                    "exp_approx_mode": False,
+                    "max_cores_per_head_batch": 16,
+                },
+                {
+                    "kind": "ttnn_layer_norm_program_config",
+                    "core_grid": [8, 4],
+                    "subblock_w": 4,
+                    "block_h": 1,
+                    "block_w": 4,
+                    "inplace": False,
+                },
+                {
+                    "kind": (
+                        "ttnn_matmul_multicore_reuse_mcast_program_config"
+                    ),
+                    "core_grid": [8, 10],
+                    "in0_block_w": 1,
+                    "out_subblock_h": 1,
+                    "out_subblock_w": 1,
+                    "per_core_M": 1,
+                    "per_core_N": 24,
+                    "fuse_batch": True,
+                },
+            ],
+            "compute": {
+                "kind": "ttnn_wormhole_compute_kernel_config",
+                "math_fidelity": "HiFi2",
+                "math_approx_mode": True,
+                "fp32_dest_acc_en": True,
+                "packer_l1_acc": True,
+            },
+        }
+
+        resolved = realize_ttnn_config(config, fake)
+
+        self.assertEqual(
+            resolved["metadata"],
+            {"kind": "official_profile", "enabled": True},
+        )
+        self.assertEqual(resolved["dtype"], "dtype:bfloat8_b")
+        self.assertEqual(resolved["memory"]["constructor"], "sharded")
+        self.assertEqual(resolved["memory"]["shape"], (32, 128))
+        self.assertEqual(
+            resolved["memory"]["core_grid"],
+            {"constructor": "core_grid", "x": 8, "y": 4},
+        )
+        self.assertEqual(
+            resolved["weight_memory"],
+            {
+                "constructor": "memory_config",
+                "memory_layout": "width_sharded",
+                "buffer_type": "dram",
+                "shard_spec": {
+                    "constructor": "shard_spec",
+                    "grid": (
+                        "core_range_set",
+                        (("core_range", (0, 0), (7, 0)),),
+                    ),
+                    "shape": (4096, 768),
+                    "orientation": "row_major",
+                },
+            },
+        )
+        self.assertEqual(resolved["programs"][0]["constructor"], "matmul")
+        self.assertEqual(resolved["programs"][1]["constructor"], "sdpa")
+        self.assertEqual(resolved["programs"][2]["constructor"], "norm")
+        self.assertEqual(
+            resolved["programs"][3]["constructor"],
+            "matmul_mcast",
+        )
+        self.assertEqual(
+            resolved["programs"][3]["compute_with_storage_grid_size"],
+            (8, 10),
+        )
+        self.assertEqual(resolved["compute"]["constructor"], "compute")
+        self.assertEqual(resolved["compute"]["math_fidelity"], "HiFi2")
+
+    def test_runtime_config_rejects_unknown_ttnn_descriptor(self) -> None:
+        with self.assertRaisesRegex(
+            TTNNConfigResolutionError,
+            "unsupported TTNN config descriptor kind",
+        ):
+            realize_ttnn_config(
+                {"kind": "ttnn_not_a_real_descriptor"},
+                types.SimpleNamespace(),
+            )
+
     def test_module_import_does_not_require_ttnn(self) -> None:
         self.assertTrue(callable(ttnn_ops.nlp_create_qkv_heads_decode))
         self.assertTrue(callable(TTNNCompatOps))
@@ -582,6 +702,54 @@ def _fake_ttnn():
     module.kv_cache = types.SimpleNamespace(fill_cache_for_user_=fill_cache)
     module.to_memory_config = to_memory_config
     return module
+
+
+def _fake_config_ttnn():
+    def constructor(name):
+        def build(**kwargs):
+            return {"constructor": name, **kwargs}
+
+        return build
+
+    return types.SimpleNamespace(
+        bfloat8_b="dtype:bfloat8_b",
+        ShardStrategy=types.SimpleNamespace(WIDTH="width", HEIGHT="height"),
+        ShardOrientation=types.SimpleNamespace(ROW_MAJOR="row_major"),
+        TensorMemoryLayout=types.SimpleNamespace(
+            WIDTH_SHARDED="width_sharded"
+        ),
+        BufferType=types.SimpleNamespace(DRAM="dram"),
+        MathFidelity=types.SimpleNamespace(HiFi2="HiFi2"),
+        CoreCoord=lambda x, y: (x, y),
+        CoreRange=lambda start, end: ("core_range", start, end),
+        CoreRangeSet=lambda ranges: (
+            "core_range_set",
+            tuple(sorted(ranges)),
+        ),
+        ShardSpec=lambda grid, shape, orientation: {
+            "constructor": "shard_spec",
+            "grid": grid,
+            "shape": shape,
+            "orientation": orientation,
+        },
+        MemoryConfig=lambda memory_layout, buffer_type, shard_spec: {
+            "constructor": "memory_config",
+            "memory_layout": memory_layout,
+            "buffer_type": buffer_type,
+            "shard_spec": shard_spec,
+        },
+        CoreGrid=constructor("core_grid"),
+        create_sharded_memory_config=constructor("sharded"),
+        MatmulMultiCoreReuseMultiCastDRAMShardedProgramConfig=constructor(
+            "matmul"
+        ),
+        MatmulMultiCoreReuseMultiCastProgramConfig=constructor(
+            "matmul_mcast"
+        ),
+        SDPAProgramConfig=constructor("sdpa"),
+        LayerNormShardedMultiCoreProgramConfig=constructor("norm"),
+        WormholeComputeKernelConfig=constructor("compute"),
+    )
 
 
 if __name__ == "__main__":

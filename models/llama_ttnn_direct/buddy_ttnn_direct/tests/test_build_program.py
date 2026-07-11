@@ -156,6 +156,10 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("def prefill_prompt", source)
             self.assertIn("valid_seq_len=None", source)
             self.assertIn("self.ops.select_sequence_position", source)
+            self.assertIn(
+                'op_name="reshape_prefill_selected_hidden"',
+                source,
+            )
             self.assertIn("observer=None", source)
             self.assertIn('self._observe("prefill.final_hidden"', source)
             self.assertIn('self._observe(f"{stage}.logits"', source)

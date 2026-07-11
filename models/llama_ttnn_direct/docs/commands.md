@@ -24,6 +24,11 @@ export CORRECTNESS_CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p15
 export PROGRAM=/tmp/llama31_ttnn_direct
 ```
 
+The production `CONFIG` imports the extracted P150 TT-Transformers performance
+profile, including compressed dtypes, compute kernels, DRAM-sharded weights,
+memory layouts, and program grids. `CORRECTNESS_CONFIG` intentionally remains
+all-BF16 and does not import the performance profile.
+
 ## Build
 
 Build imports the HF Llama graph, creates the template plan, emits normalized

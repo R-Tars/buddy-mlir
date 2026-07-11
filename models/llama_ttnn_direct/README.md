@@ -33,6 +33,15 @@ HF config and weights
   iterations. Mean decode latency is `33.962 ms`, throughput is `29.445
   tokens/s/user` (`942.23` aggregate), and the run reaches `88.96%` of the
   recorded official `33.1 tokens/s/user` target.
+- Step D imports the P150/Llama 3.1 8B TT-Transformers performance profile at
+  tt-metal commit `61e690c2`. All 55 fields across dtype, fidelity, memory,
+  program, grid, LM-head, and paged-attention sections match the extracted
+  reference. DRAM-sharded weights and the layer-31 precision override execute
+  successfully at full depth.
+- The Step D full-depth profile measures `34.933 ms` mean decode latency and
+  `28.627 tokens/s/user` (`86.49%` of target). This is `2.78%` slower than the
+  Step C baseline, so config parity is complete but performance parity remains
+  a Step E optimization target.
 - The dedicated all-BF16 correctness recipe passes the Hugging Face reference
   gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
   minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
@@ -58,7 +67,8 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Paged KV cache | Functional |
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
-| Steady decode benchmark | 29.445 tokens/s/user on P150A, 88.96% of target |
+| Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
+| Steady decode benchmark | 28.627 tokens/s/user with imported profile, 86.49% of target |
 | Official performance parity | Not achieved |
 
 ## Quick Start
@@ -159,8 +169,11 @@ imported by runtime code.
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.
 - The steady decode path still creates five runtime metadata/rotary tensors per
-  iteration and reaches `88.96%`, not the M6 greater-than-90% milestone.
-- Official dtype, memory, program, and core-grid parity remains incomplete.
+  iteration and the imported profile reaches `86.49%`, not the M6
+  greater-than-90% milestone.
+- Buddy prefill represents 32 users in one tensor, so the imported QKV and WO
+  prefill configs disable TT-Transformers' single-sequence batch fusion while
+  retaining the extracted grid and block geometry.
 - The primary executable is the Python CLI; there is no integrated
   `buddy-cli` runner for this path.
 

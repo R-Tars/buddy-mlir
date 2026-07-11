@@ -192,7 +192,11 @@ _SOURCE = """\
             cache_position,
             scale=_optional_attr(attention_config, "scale"),
             memory_config=_optional_attr(
-                attention_config, "sdpa_output_memory_config"
+                attention_config,
+                "sdpa_kernel_output_memory_config",
+                _optional_attr(
+                    attention_config, "sdpa_output_memory_config"
+                ),
             ),
             program_config=_optional_attr(
                 attention_config, "sdpa_program_config"
@@ -207,6 +211,10 @@ _SOURCE = """\
             memory_config=_optional_attr(
                 attention_config,
                 "concat_heads_input_memory_config",
+            )
+            or _optional_attr(
+                attention_config,
+                "sdpa_output_memory_config",
             )
             or attention_heads_memory_config,
             op_name="to_memory_config.concat_heads_input",
