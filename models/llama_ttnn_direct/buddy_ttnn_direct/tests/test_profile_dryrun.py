@@ -7,6 +7,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
+    run_profile_decode_steady,
     run_profile_generate,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate_dryrun import (
@@ -30,6 +31,83 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_sin
 
 
 class ProfileGenerateTest(unittest.TestCase):
+    def test_cli_profile_decode_steady_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_steady_profile.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "profile",
+                    "--mode",
+                    "decode-steady",
+                    "--program-dir",
+                    str(program_dir),
+                    "--prefill-len",
+                    "8",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--warmup",
+                    "2",
+                    "--iterations",
+                    "4",
+                    "--after-prefill",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertEqual(report["command"], "profile")
+            self.assertEqual(report["mode"], "decode-steady")
+            self.assertEqual(
+                report["template"],
+                "post_prefill_decode_steady_profile",
+            )
+            self.assertEqual(report["status"], "dry_run")
+            self.assertTrue(report["passed"])
+            self.assertTrue(report["after_prefill"])
+            self.assertEqual(report["layers"], 2)
+            self.assertEqual(report["warmup"], 2)
+            self.assertEqual(report["iterations"], 4)
+            self.assertTrue(report["compile_excluded_by_warmup"])
+            self.assertIsNone(report["prefill_ms"])
+            self.assertIsNone(report["decode_step_ms_p50"])
+            self.assertIsNone(report["decode_step_ms_mean"])
+            self.assertIsNone(report["tokens_per_second_per_user"])
+            self.assertEqual(report["host_copy_profile"]["status"], "not_run")
+            self.assertEqual(report["section_profile"]["status"], "not_run")
+            self.assertFalse(
+                report["timing_scope"]["per_op_section_profiler_installed"]
+            )
+            self.assertTrue(
+                report["timing_scope"]["runtime_metadata_in_timed_region"]
+            )
+            self.assertFalse(report["official_performance_parity_claimed"])
+
     def test_cli_profile_generate_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -253,6 +331,97 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(by_id["M2"]["reason"], "requires_batch32_profile")
             self.assertEqual(milestones["highest_passed"], "M0")
             self.assertTrue(generate_report_json.is_file())
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
+    def test_profile_decode_steady_runs_repeated_post_prefill_decode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "decode_steady_profile.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            fake_ttnn = _make_generate_fake_ttnn()
+            with _fake_torch_and_safetensors():
+                report = run_profile_decode_steady(
+                    out=report_json,
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    prompt="hello tenstorrent",
+                    tokenizer_path=model_dir,
+                    tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                    layers=1,
+                    prefill_len=8,
+                    batch_size=2,
+                    cache_len=16,
+                    device="p150a",
+                    warmup=2,
+                    iterations=4,
+                    ttnn_module=fake_ttnn,
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertEqual(report["status"], "profiled")
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["prefill_status"], "passed")
+            self.assertGreaterEqual(report["prefill_ms"], 0.0)
+            self.assertEqual(len(report["warmup_step_ms_samples"]), 2)
+            self.assertEqual(len(report["decode_step_ms_samples"]), 4)
+            self.assertGreater(report["decode_step_ms_p50"], 0.0)
+            self.assertGreater(report["decode_step_ms_mean"], 0.0)
+            self.assertGreater(report["tokens_per_second_per_user"], 0.0)
+            self.assertGreater(report["aggregate_tokens_per_second"], 0.0)
+            self.assertEqual(
+                report["throughput_summary"]["measured_tokens_per_user"],
+                4,
+            )
+            self.assertEqual(
+                report["throughput_summary"]["measured_aggregate_tokens"],
+                8,
+            )
+            self.assertEqual(report["cache_position_start"], 5)
+            self.assertEqual(report["cache_position_end"], 8)
+            self.assertEqual(report["runtime_context"]["decode_step_count"], 6)
+            self.assertEqual(
+                report["runtime_context"]["decode_token_update_count"],
+                7,
+            )
+            self.assertEqual(
+                report["runtime_context"]["page_table_update_count"],
+                6,
+            )
+            self.assertGreater(
+                report["decode_runtime_tensor_conversion_count"],
+                0,
+            )
+            self.assertFalse(
+                report["host_copy_profile"]["runtime_host_roundtrip_present"]
+            )
+            self.assertEqual(report["section_profile"]["status"], "not_run")
+            self.assertEqual(report["acceptance"]["failed_checks"], [])
+            decode_ops = [
+                call
+                for call in fake_ttnn.calls
+                if call["op"] == "paged_scaled_dot_product_attention_decode"
+            ]
+            self.assertEqual(len(decode_ops), 6)
             self.assertEqual(json.loads(report_json.read_text()), report)
 
 

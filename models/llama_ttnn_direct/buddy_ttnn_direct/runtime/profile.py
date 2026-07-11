@@ -5,17 +5,16 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .profile_baselines import (
+    PROFILE_GENERATE_MILESTONE_IDS,
+    PROFILE_GENERATE_OFFICIAL_BASELINE_ID,
+    PROFILE_GENERATE_OFFICIAL_BATCH_SIZE,
+    PROFILE_GENERATE_OFFICIAL_TPS_PER_USER,
+)
 from .reports import (
     default_generate_report_path as _default_generate_report_path,
     write_report as _write_report,
 )
-
-
-PROFILE_GENERATE_OFFICIAL_BASELINE_ID = "tt_metal_official_llama31_8b_b32"
-PROFILE_GENERATE_OFFICIAL_TPS_PER_USER = 33.1
-PROFILE_GENERATE_OFFICIAL_BATCH_SIZE = 32
-PROFILE_GENERATE_MILESTONE_IDS = ("M0", "M1", "M2", "M3", "M4", "M5", "M6")
-
 
 class GenerateSectionProfiler:
     """Records first-pass generate section timings from generated model calls."""
@@ -448,6 +447,52 @@ def run_profile_generate(
     _write_report(profile_path, report)
     return report
 
+
+def run_profile_decode_steady(
+    *,
+    out: str | Path,
+    program_dir: str | Path,
+    model_path: str | Path | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
+    layers: int | None = None,
+    prefill_len: int | None = None,
+    device: str,
+    device_id: int = 0,
+    batch_size: int | None = None,
+    cache_len: int | None = None,
+    dtype_seed: str = "bf16",
+    warmup: int = 5,
+    iterations: int = 50,
+    after_prefill: bool = True,
+    dry_run: bool = False,
+    ttnn_module: Any | None = None,
+    torch_module: Any | None = None,
+    tokenizer_module: Any | None = None,
+) -> dict[str, Any]:
+    from .steady_profile import run_profile_decode_steady as run
+
+    return run(
+        out=out,
+        program_dir=program_dir,
+        model_path=model_path,
+        prompt=prompt,
+        tokenizer_path=tokenizer_path,
+        layers=layers,
+        prefill_len=prefill_len,
+        device=device,
+        device_id=device_id,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        dtype_seed=dtype_seed,
+        warmup=warmup,
+        iterations=iterations,
+        after_prefill=after_prefill,
+        dry_run=dry_run,
+        ttnn_module=ttnn_module,
+        torch_module=torch_module,
+        tokenizer_module=tokenizer_module,
+    )
 
 def _profile_generate_sections(
     *,

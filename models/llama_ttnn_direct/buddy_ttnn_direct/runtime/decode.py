@@ -242,6 +242,94 @@ def run_decode_loop(
     )
 
 
+def run_decode_steady_iterations(
+    *,
+    context: Any,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    decode_plan: dict[str, Any],
+    batch_size: int,
+    cache_len: int,
+    warmup: int,
+    iterations: int,
+) -> SimpleNamespace:
+    """Run post-prefill decode without per-op profiling or host token copies."""
+
+    total_steps = int(warmup) + int(iterations)
+    effective_token_count = int(
+        context.prefill_tokenization["effective_token_count"]
+    )
+    if effective_token_count + total_steps > int(cache_len):
+        raise ValueError(
+            "decode-steady steps exceed cache capacity: "
+            f"effective_prompt_tokens={effective_token_count}, "
+            f"warmup={warmup}, iterations={iterations}, cache_len={cache_len}"
+        )
+
+    warmup_samples: list[float] = []
+    measured_samples: list[float] = []
+    cache_positions: list[int] = []
+    tensor_conversion_count = 0
+    decode_runtime_state_count = 0
+    decode_rotary_runtime_count = 0
+
+    for step_index in range(total_steps):
+        step_start = time.perf_counter()
+        decode_runtime = build_decode_runtime_for_position(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            parameters=context.parameters,
+            decode_plan=decode_plan,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            prefill_effective_token_count=effective_token_count,
+            generated_token_index=step_index,
+        )
+        context.install_decode_runtime(decode_runtime)
+        token, kv_cache = context.generated_model.decode_step(
+            context.token_ids,
+            context.page_table,
+            context.cache_position,
+            context.kv_cache,
+        )
+        synchronize = getattr(ttnn, "synchronize_device", None)
+        if callable(synchronize):
+            synchronize(device)
+        latency_ms = (time.perf_counter() - step_start) * 1000.0
+
+        context.update_kv_cache(kv_cache)
+        context.update_decode_token(token)
+        cache_positions.append(
+            int(decode_runtime.decode_runtime_state["cache_position_value"])
+        )
+        tensor_conversion_count += int(decode_runtime.tensor_conversion_count)
+        decode_runtime_state_count += int(
+            decode_runtime.decode_runtime_state_input_tensor_count
+        )
+        decode_rotary_runtime_count += int(
+            decode_runtime.rotary_runtime_input_tensor_count
+        )
+        if step_index < warmup:
+            warmup_samples.append(latency_ms)
+        else:
+            measured_samples.append(latency_ms)
+
+    return SimpleNamespace(
+        warmup_step_ms_samples=warmup_samples,
+        measured_step_ms_samples=measured_samples,
+        cache_positions=cache_positions,
+        tensor_conversion_count=tensor_conversion_count,
+        decode_runtime_state_input_tensor_count=decode_runtime_state_count,
+        decode_rotary_runtime_input_tensor_count=decode_rotary_runtime_count,
+        final_token=context.token_ids,
+        final_kv_cache=context.kv_cache,
+    )
+
+
 def materialize_generate_token_events(
     token_events: list[dict[str, Any]],
     *,

@@ -28,16 +28,19 @@ HF config and weights
   evidence, not performance parity.
 - The Step B mixed prefill plus one-decode profile reached `1.3583
   tokens/s/user` and milestone M2 with official force-argmax, a 48% improvement
-  over the comparable tiled-argmax run. Step C will establish steady-state
-  decode throughput.
+  over the comparable tiled-argmax run.
+- Step C post-prefill steady decode passed on P150A with 5 warmup and 50 measured
+  iterations. Mean decode latency is `33.962 ms`, throughput is `29.445
+  tokens/s/user` (`942.23` aggregate), and the run reaches `88.96%` of the
+  recorded official `33.1 tokens/s/user` target.
 - The dedicated all-BF16 correctness recipe passes the Hugging Face reference
   gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
   minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
 - The production greedy path follows TT-Transformers force-argmax: concatenate
   LM-head logits, untilize with multicore, then run multicore argmax. A composed
   shard-local/global reduction remains available for diagnostics but was slower
-  on P150A. Steady-state decode profiling is still required before claiming an
-  official-comparable performance result.
+  on P150A. The steady benchmark reaches milestone M5 but remains below the M6
+  greater-than-90% threshold, so official performance parity is not claimed.
 
 See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 [docs/evidence/README.md](docs/evidence/README.md) for the frozen measurements.
@@ -55,6 +58,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Paged KV cache | Functional |
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
+| Steady decode benchmark | 29.445 tokens/s/user on P150A, 88.96% of target |
 | Official performance parity | Not achieved |
 
 ## Quick Start
@@ -111,8 +115,9 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --out /tmp/ttnn_direct_generate.json
 ```
 
-Profile the same workflow with the `profile` command. Detailed examples and
-suite semantics are in [docs/commands.md](docs/commands.md).
+Profile the same workflow or post-prefill steady decode with the `profile`
+command. Detailed examples and suite semantics are in
+[docs/commands.md](docs/commands.md).
 
 ## Commands
 
@@ -120,7 +125,7 @@ The user-facing CLI exposes only:
 
 - `build`: create the generated TTNN program bundle.
 - `generate`: run or dry-run prompt prefill followed by decode.
-- `profile`: profile generate and emit section/throughput data.
+- `profile`: profile generate or post-prefill steady decode.
 - `validate`: run `dryrun`, `functional`, `device`, `performance`, or
   `correctness` gates.
 - `inspect`: inspect required program artifacts and normalized config.
@@ -137,8 +142,9 @@ All commands emit JSON with a stable top-level `schema_version`, `status`, and
 - Generate reports record prompt/prefill/decode ownership, KV-cache source,
   generated token IDs and text, runtime environment, latency, and reference
   checks.
-- Profile reports record prefill/decode timings, per-section and per-layer
-  timing data, throughput, and the path to the underlying generate report.
+- Generate-mode profile reports record per-section/per-layer timing and the
+  underlying generate report. Decode-steady reports record warmup samples,
+  measured p50/mean decode latency, separate prefill latency, and throughput.
 - Validation reports contain compact named checks and `failed_checks`; the
   product path does not run smoke, search, or autotune gates.
 
@@ -152,8 +158,8 @@ imported by runtime code.
 - Numerical correctness is proven with the dedicated all-BF16 recipe. The
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.
-- The current profile mixes prefill and a short decode run; a steady-state
-  decode benchmark is still needed for official comparison.
+- The steady decode path still creates five runtime metadata/rotary tensors per
+  iteration and reaches `88.96%`, not the M6 greater-than-90% milestone.
 - Official dtype, memory, program, and core-grid parity remains incomplete.
 - The primary executable is the Python CLI; there is no integrated
   `buddy-cli` runner for this path.

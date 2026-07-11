@@ -6,7 +6,7 @@ from .inputs import (
     DecodeRotaryRuntimeState,
     DecodeRuntimeState,
 )
-from .profile import GenerateSectionProfiler
+from .profile import GenerateSectionProfiler, run_profile_decode_steady
 from .tokenizer import (
     PrefillPromptTokenization,
     PromptTokenization,
@@ -22,4 +22,5 @@ __all__ = [
     "PromptTokenization",
     "PromptTokenizationError",
     "TTNNDirectRuntimeContext",
+    "run_profile_decode_steady",
 ]

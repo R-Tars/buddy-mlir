@@ -47,7 +47,11 @@ from .search.generate_depth_sweep import run_generate_depth_sweep
 from .search.runner import run_lm_head_search
 from .search.space import load_search_space
 from .decode_loop import run_prompt_decode_loop
-from .generate import run_generate, run_profile_generate
+from .generate import (
+    run_generate,
+    run_profile_decode_steady,
+    run_profile_generate,
+)
 from .reports.performance import default_performance_baselines_path
 from .reports.validation import (
     validate_device,
@@ -1906,18 +1910,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     product_profile = subparsers.add_parser(
         "profile",
-        help="Profile prompt prefill plus decode generate.",
+        help="Profile generate or post-prefill steady decode.",
     )
     product_profile.add_argument("--program-dir", type=Path, required=True)
     product_profile.add_argument("--model-path", type=Path, default=None)
     add_prompt_runtime_args(product_profile)
+    product_profile.add_argument(
+        "--mode",
+        choices=("generate", "decode-steady"),
+        default="generate",
+    )
     product_profile.add_argument("--max-new-tokens", type=int, default=2)
     product_profile.add_argument("--prefill-len", type=int, default=None)
-    product_profile.add_argument("--layers", type=int, default=1)
+    product_profile.add_argument("--layers", type=int, default=None)
     product_profile.add_argument("--device", default="p150a")
     product_profile.add_argument("--device-id", type=int, default=0)
     product_profile.add_argument("--batch-size", type=int, default=None)
     product_profile.add_argument("--cache-len", type=int, default=None)
+    product_profile.add_argument("--warmup", type=int, default=5)
+    product_profile.add_argument("--iterations", type=int, default=50)
+    product_profile.add_argument(
+        "--after-prefill",
+        action="store_true",
+        help="Confirm that steady decode starts from prompt-populated KV cache.",
+    )
     product_profile.add_argument(
         "--dtype-seed",
         choices=("bf16", "fp32"),
@@ -2367,6 +2383,31 @@ def _cmd_generate(args: argparse.Namespace) -> int:
 
 
 def _cmd_profile_generate(args: argparse.Namespace) -> int:
+    if getattr(args, "mode", "generate") == "decode-steady":
+        report = run_profile_decode_steady(
+            out=args.out,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            warmup=args.warmup,
+            iterations=args.iterations,
+            after_prefill=True,
+            dry_run=args.dry_run,
+        )
+        print(f"wrote steady decode profile report: {args.out}")
+        if report.get("status") == "no_device":
+            print(NO_TTNN_DEVICE_MESSAGE)
+            return 2
+        return 0 if report.get("passed") else 1
+
     report = run_profile_generate(
         out=args.out,
         program_dir=args.program_dir,
@@ -2374,7 +2415,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         prompt=args.prompt,
         tokenizer_path=args.tokenizer_path,
         max_new_tokens=args.max_new_tokens,
-        layers=args.layers,
+        layers=args.layers or 1,
         prefill_len=args.prefill_len,
         device=args.device,
         device_id=args.device_id,

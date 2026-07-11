@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-11T12:27:07+08:00",
+  "purpose": "Step C post-prefill steady-state decode benchmark for TTNN Direct on P150A.",
+  "device": "p150a",
+  "device_id": 0,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_stepb_official_force_program_20260711",
+  "program_config_sha256": "d7f444e692dc0a0a1442cec3450d846b3c2429459c87b89bc8914ac1ca5b2f84",
+  "generated_model_sha256": "fbb8f4c8ebf326cf5ceb83819561e7c974dfa39870e69bbe0b5b1d1100da6041",
+  "profile_report": "/wafer/zhuxinye/tmp/ttnn_direct_stepc_decode_steady_full_20260711/profile.json",
+  "profile_report_sha256": "400fcb004f7228d96738213f5e9f46ecc45e576fdf73eb10a326ea036f102f8a",
+  "ttnn_module_file": "/wafer/zhuxinye/buddy-mlir/thirdparty/tt-mlir/third_party/tt-metal/src/tt-metal/ttnn/ttnn/__init__.py",
+  "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "workload": {
+    "model": "Llama 3.1 8B",
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 128,
+    "cache_len": 1024,
+    "warmup": 5,
+    "iterations": 50,
+    "lm_head_split_count": 8,
+    "argmax_strategy": "full_logits_untilize_multicore_argmax"
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "prefill_passed": true,
+    "sample_count_passed": true,
+    "positive_latency_passed": true,
+    "device_token_handoff_passed": true,
+    "highest_performance_milestone": "M5",
+    "official_performance_parity_claimed": false
+  },
+  "latency_ms": {
+    "setup": 102333.98388000205,
+    "prefill": 1075.5753490084317,
+    "warmup_total": 332.75637397309765,
+    "decode_step_p50": 34.094789501978084,
+    "decode_step_mean": 33.96199422015343,
+    "decode_step_min": 33.52081499178894,
+    "decode_step_max": 34.35604498372413,
+    "decode_step_stdev": 0.26550416208520994,
+    "decode_total": 1698.0997110076714
+  },
+  "throughput": {
+    "tokens_per_second_per_user": 29.44467846963441,
+    "aggregate_tokens_per_second": 942.2297110283012,
+    "official_reference_tokens_per_second_per_user": 33.1,
+    "ratio_of_official_reference": 0.8895673253665984,
+    "percent_of_official_reference": 88.95673253665984,
+    "gap_to_official_tokens_per_second_per_user": 3.65532153036559,
+    "m6_90_percent_threshold_tokens_per_second_per_user": 29.79,
+    "gap_to_m6_threshold_tokens_per_second_per_user": 0.3453215303655901
+  },
+  "runtime_contract": {
+    "parameter_tensorization_count": 1,
+    "parameter_tensorization_count_per_decode_step": 0,
+    "kv_cache_initialization_count": 1,
+    "kv_cache_reinitialized_per_step": false,
+    "decode_steps": 55,
+    "decode_token_runtime_handoff": "device_tensor_direct",
+    "decode_token_host_roundtrip_per_step": false,
+    "runtime_metadata_in_timed_region": true,
+    "per_op_section_profiler_installed": false,
+    "decode_runtime_tensor_conversions": 275,
+    "decode_runtime_tensor_conversions_per_step": 5
+  },
+  "timing_scope": {
+    "includes": [
+      "decode runtime metadata preparation",
+      "generated model decode_step",
+      "device synchronization"
+    ],
+    "excludes": [
+      "parameter materialization and tensorization",
+      "prompt prefill",
+      "warmup iterations",
+      "host token materialization and text decoding",
+      "per-op diagnostic synchronization"
+    ]
+  },
+  "scope_note": "This is the first official-comparable Step C steady decode measurement. It reaches M5 and 88.96% of the recorded 33.1 t/s/u target, but it does not pass or claim the M6 greater-than-90% milestone."
+}

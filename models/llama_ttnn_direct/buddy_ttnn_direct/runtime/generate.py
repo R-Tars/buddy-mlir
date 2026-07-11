@@ -10,16 +10,12 @@ from ..codegen.parameters import ParameterMaterializationError
 from ..codegen.ttnn_tensorizer import (
     TTNNTensorizationError,
 )
-from ..smoke_decode_shell import (
-    _to_namespace,
-)
 from ..smoke_mlp import NoTTNNDeviceError
 from ..smoke_prefill import (
     _prefill_plan,
 )
 from ..smoke_single_layer_decode import (
     _decode_step_plan,
-    _load_generated_model,
 )
 from ..ttnn_compat import UnsupportedTTNNOp
 from .decode import (
@@ -44,6 +40,7 @@ from .tokenizer import (
     PromptTokenizationError,
     detokenize_generated_token_ids,
 )
+from .session import build_runtime_session
 from .state import build_generate_state
 
 
@@ -242,7 +239,7 @@ def run_generate(
 
     try:
         with maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
-            context = build_generate_state(
+            session = build_runtime_session(
                 ttnn=ttnn,
                 torch=torch,
                 device=ttnn_device,
@@ -254,32 +251,20 @@ def run_generate(
                 prompt=prompt,
                 tokenizer_path=tokenizer_path or model_path,
                 tokenizer_module=tokenizer_module,
-            )
-            generated = _load_generated_model(program_root / "model.py", ttnn)
-            generate_config = dict(config)
-            generate_config["num_layers"] = layer_count
-            generate_config["batch_size"] = batch_size
-            generate_config["max_cache_len"] = cache_len
-            generate_config["seq_len"] = 1
-            generate_config["prefill"] = dict(
-                generate_config.get("prefill") or {}
-            )
-            generate_config["prefill"]["seq_len"] = prefill_len
-            model = generated.BuddyLlama31TTNN(
-                device=ttnn_device,
-                parameters=context.parameters,
-                config=_to_namespace(generate_config),
+                config=config,
+                layer_count=layer_count,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                prefill_len=prefill_len,
                 observer=observer,
             )
+            context = session.context
+            model = session.generated_model
             section_profiler = GenerateSectionProfiler(
                 ttnn=ttnn,
                 device=ttnn_device,
             )
             section_profiler.install(model)
-            context.install_generated_model(
-                generated_module=generated,
-                generated_model=model,
-            )
 
             total_start = time.perf_counter()
             prefill_result = run_prefill_prompt(

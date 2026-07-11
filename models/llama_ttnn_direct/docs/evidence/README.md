@@ -24,6 +24,10 @@ The current baseline evidence is:
   rejected composed local/global top-k for the default path and selected the
   TT-Transformers force-argmax sequence. The mixed two-token profile reached
   `1.3583 t/s/u` and milestone M2 while 1/32-layer correctness remained green.
+- `p150a_decode_steady_evidence_20260711.json`: the Step C full-depth benchmark
+  excluded five warmup iterations and measured 50 post-prefill decode steps.
+  Mean throughput was `29.445 t/s/u` (`88.96%` of the recorded official target),
+  reaching M5 while remaining below the greater-than-90% M6 threshold.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

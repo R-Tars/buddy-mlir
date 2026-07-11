@@ -89,11 +89,12 @@ come from decode steps.
 
 ## Profile
 
-Profile runs the same generate path and derives throughput and section timing
-from its report.
+Generate mode runs the same generate path and derives throughput and section
+timing from its report.
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
+  --mode generate \
   --program-dir "$PROGRAM" \
   --model-path "$MODEL" \
   --tokenizer-path "$MODEL" \
@@ -119,6 +120,38 @@ The profile report includes:
 - performance milestones and the underlying generate report path.
 
 The command does not claim official parity.
+
+### Post-prefill steady decode
+
+Steady mode materializes and tensorizes parameters once, runs prompt prefill
+once, excludes warmup iterations, and measures repeated decode iterations. The
+timed region includes decode metadata preparation, generated `decode_step`, and
+device synchronization. It excludes prefill, warmup, host token copies, and the
+per-op diagnostic profiler.
+
+When `--layers` is omitted in this mode, all generated layers are used.
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
+  --mode decode-steady \
+  --program-dir "$PROGRAM" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --prompt "Hello from TTNN Direct" \
+  --batch-size 32 \
+  --prefill-len 128 \
+  --cache-len 1024 \
+  --warmup 5 \
+  --iterations 50 \
+  --after-prefill \
+  --device p150a \
+  --out /tmp/ttnn_direct_decode_steady.json
+```
+
+The report records `prefill_ms`, `decode_step_ms_p50`,
+`decode_step_ms_mean`, `tokens_per_second_per_user`, and
+`aggregate_tokens_per_second`. Add `--dry-run` to validate the report contract
+without loading weights or opening a device.
 
 ## Validate
 
