@@ -106,6 +106,7 @@ class BuddyLlama31TTNN:
                 hidden,
                 kv_cache,
                 page_table,
+                valid_seq_len=valid_seq_len,
             )
             cache_reports.append(cache_report)
             self._observe(
@@ -125,7 +126,14 @@ class BuddyLlama31TTNN:
         token = self.lm_head_argmax(hidden, stage="prefill")
         return token, kv_cache, cache_reports
 
-    def prefill_layer(self, layer_id, hidden, kv_cache, page_table=None):
+    def prefill_layer(
+        self,
+        layer_id,
+        hidden,
+        kv_cache,
+        page_table=None,
+        valid_seq_len=None,
+    ):
         residual = hidden
         hidden = self.rmsnorm(hidden, layer_id, kind="attn")
         hidden, kv_cache, cache_report = self.attention_prefill(
@@ -133,6 +141,7 @@ class BuddyLlama31TTNN:
             hidden,
             kv_cache,
             page_table,
+            valid_seq_len=valid_seq_len,
         )
         hidden = self.ops.add(
             residual,

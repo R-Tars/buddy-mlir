@@ -8,6 +8,7 @@ _SOURCE = """\
         hidden,
         kv_cache,
         page_table=None,
+        valid_seq_len=None,
     ):
         layer_params = self.parameters.layers[layer_id].attention
         prefill_config = _optional_attr(
@@ -46,8 +47,33 @@ _SOURCE = """\
                 prefill_config, "qkv_heads_memory_config"
             ),
         )
+        self._observe(
+            f"prefill.layer.{layer_id}.q_pre_rope",
+            q,
+            valid_seq_len=valid_seq_len,
+        )
+        self._observe(
+            f"prefill.layer.{layer_id}.k_pre_rope",
+            k,
+            valid_seq_len=valid_seq_len,
+        )
+        self._observe(
+            f"prefill.layer.{layer_id}.v_pre_rope",
+            v,
+            valid_seq_len=valid_seq_len,
+        )
 
         q, k = self.rotary_embedding_prefill(layer_id, q, k)
+        self._observe(
+            f"prefill.layer.{layer_id}.q_post_rope",
+            q,
+            valid_seq_len=valid_seq_len,
+        )
+        self._observe(
+            f"prefill.layer.{layer_id}.k_post_rope",
+            k,
+            valid_seq_len=valid_seq_len,
+        )
         attn = self.ops.scaled_dot_product_attention(
             q,
             k,

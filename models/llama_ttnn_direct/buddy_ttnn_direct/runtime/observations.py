@@ -26,6 +26,7 @@ class TTNNObservationCollector:
         self.capture_logits = bool(capture_logits)
         self.capture_kv_cache = bool(capture_kv_cache)
         self.checkpoints: dict[str, dict[str, Any]] = {}
+        self.diagnostics: dict[str, dict[str, Any]] = {}
 
     def observe(
         self,
@@ -39,9 +40,19 @@ class TTNNObservationCollector:
         if name.endswith(".logits"):
             if not self.capture_logits or not name.startswith("prefill."):
                 return
-        elif name.endswith(".hidden"):
+        elif name.endswith("hidden"):
             if not self.capture_hidden or not name.startswith("prefill."):
                 return
+        elif name.endswith(("_pre_rope", "_post_rope")):
+            if not name.startswith("prefill."):
+                return
+            self._observe_attention_tensor(
+                name,
+                tensor,
+                ops=ops,
+                valid_seq_len=valid_seq_len,
+            )
+            return
         else:
             return
 
@@ -102,6 +113,8 @@ class TTNNObservationCollector:
             "passed": captured,
             "checkpoint_count": len(self.checkpoints),
             "checkpoints": self.checkpoints,
+            "diagnostic_count": len(self.diagnostics),
+            "diagnostics": self.diagnostics,
         }
 
     def summary(self) -> dict[str, Any]:
@@ -109,7 +122,53 @@ class TTNNObservationCollector:
             "status": "captured",
             "checkpoint_count": len(self.checkpoints),
             "checkpoint_names": sorted(self.checkpoints),
+            "diagnostic_count": len(self.diagnostics),
+            "diagnostic_names": sorted(self.diagnostics),
         }
+
+    def _observe_attention_tensor(
+        self,
+        name: str,
+        tensor: Any,
+        *,
+        ops: Any,
+        valid_seq_len: int | None,
+    ) -> None:
+        logical_shape = _shape(tensor)
+        sampled = tensor
+        if valid_seq_len is not None:
+            sampled = ops.select_sequence_position(
+                sampled,
+                int(valid_seq_len) - 1,
+                op_name=f"correctness.{name}.position",
+            )
+        sampled = ops.slice_batch_user(
+            sampled,
+            0,
+            op_name=f"correctness.{name}.user",
+        )
+        host = _to_torch(self.ttnn, sampled)
+        if len(host.shape) != 4:
+            raise ValueError(
+                f"expected [batch, heads, seq, dim] attention tensor: "
+                f"{_shape(host)}"
+            )
+        vector = host[0, :, -1, :].reshape(-1)
+        self.diagnostics[name] = tensor_snapshot(
+            name,
+            vector,
+            logical_shape=logical_shape,
+            sample_policy={
+                "kind": "all_heads_last_token_vector",
+                "batch_id": 0,
+                "position": (
+                    int(valid_seq_len) - 1
+                    if valid_seq_len is not None
+                    else 0
+                ),
+                "source": "ttnn_device_slice",
+            },
+        )
 
     def _paged_user_zero_to_host(
         self,

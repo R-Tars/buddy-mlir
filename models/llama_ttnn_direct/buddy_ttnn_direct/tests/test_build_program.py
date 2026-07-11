@@ -23,6 +23,43 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
 
 class BuildProgramTest(unittest.TestCase):
+    def test_correctness_recipe_reaches_generated_kv_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            out_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            template = json.loads(config_json.read_text())
+            template["dtype_recipe"] = "all_bf16_correctness"
+            config_json.write_text(json.dumps(template))
+
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            generated = json.loads((out_dir / "config.json").read_text())
+            manifest = json.loads(
+                (out_dir / "weights_manifest.json").read_text()
+            )
+            self.assertEqual(generated["kv_cache"]["dtype"], "bfloat16")
+            self.assertEqual(
+                manifest["config_summary"]["recipe"],
+                "all_bf16_correctness",
+            )
+
     def test_cli_build_program_writes_decode_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

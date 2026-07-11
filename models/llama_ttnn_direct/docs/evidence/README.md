@@ -14,8 +14,12 @@ The current baseline evidence is:
   `official_performance_parity_claimed=false`.
 - `hf_correctness_reference_manifest_20260710.json`: CPU BF16 Hugging Face
   reference artifacts were captured for depths `1,2,4,32`, including hidden,
-  logits, and sampled KV checkpoints. This manifest does not claim TTNN
-  numerical correctness.
+  logits, and sampled KV checkpoints. Q/K references use the Meta interleaved
+  RoPE layout expected by TTNN. This manifest does not claim TTNN numerical
+  correctness.
+- `p150a_numerical_correctness_evidence_20260711.json`: the dedicated all-BF16
+  correctness recipe passed the Step A checks at depths `1,2,4,32`, including
+  full-depth logits, hidden-state, and sampled KV PCC at threshold `0.99`.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

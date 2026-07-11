@@ -4,12 +4,16 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..dtype_recipes import (
+    CORRECTNESS_RECIPE,
+    PERFORMANCE_RECIPE,
+    SEED_RECIPE,
+    SUPPORTED_RECIPES,
+    recipe_dtypes,
+)
 from ..semantic.graph import LlamaModelGraph
 from ..semantic.validate import validate_llama_graph
 from ..templates.lm_head import build_lm_head_split_ranges
-
-
-SEED_RECIPE = "official_like_performance_seed"
 
 
 def emit_parameter_config(
@@ -20,13 +24,14 @@ def emit_parameter_config(
     kv_page_block_size: int = 32,
 ) -> dict[str, Any]:
     validate_llama_graph(graph)
-    if recipe != SEED_RECIPE:
+    if recipe not in SUPPORTED_RECIPES:
         raise ValueError(f"unsupported parameter metadata recipe: {recipe}")
     if lm_head_split_count <= 0:
         raise ValueError("lm_head_split_count must be positive")
     if kv_page_block_size <= 0:
         raise ValueError("kv_page_block_size must be positive")
 
+    dtypes = recipe_dtypes(recipe)
     weights: dict[str, dict[str, Any]] = {}
     _add_weight(
         weights,
@@ -54,7 +59,7 @@ def emit_parameter_config(
             layer.attention.q_proj,
             role="q_proj",
             layer_id=layer_id,
-            target_dtype="bfloat8_b",
+            target_dtype=dtypes["attention_qkv"],
             packing="qkv_pack",
             layout="tile",
         )
@@ -63,7 +68,7 @@ def emit_parameter_config(
             layer.attention.k_proj,
             role="k_proj",
             layer_id=layer_id,
-            target_dtype="bfloat8_b",
+            target_dtype=dtypes["attention_qkv"],
             packing="qkv_pack",
             layout="tile",
         )
@@ -72,7 +77,7 @@ def emit_parameter_config(
             layer.attention.v_proj,
             role="v_proj",
             layer_id=layer_id,
-            target_dtype="bfloat8_b",
+            target_dtype=dtypes["attention_qkv"],
             packing="qkv_pack",
             layout="tile",
         )
@@ -81,7 +86,7 @@ def emit_parameter_config(
             layer.attention.o_proj,
             role="o_proj",
             layer_id=layer_id,
-            target_dtype="bfloat8_b",
+            target_dtype=dtypes["attention_output"],
             packing="none",
             layout="tile",
         )
@@ -99,7 +104,7 @@ def emit_parameter_config(
             layer.mlp.gate_proj,
             role="mlp_gate",
             layer_id=layer_id,
-            target_dtype="bfloat4_b",
+            target_dtype=dtypes["mlp_intermediate"],
             packing="gate_up_group",
             layout="tile",
         )
@@ -108,7 +113,7 @@ def emit_parameter_config(
             layer.mlp.up_proj,
             role="mlp_up",
             layer_id=layer_id,
-            target_dtype="bfloat4_b",
+            target_dtype=dtypes["mlp_intermediate"],
             packing="gate_up_group",
             layout="tile",
         )
@@ -117,7 +122,7 @@ def emit_parameter_config(
             layer.mlp.down_proj,
             role="mlp_down",
             layer_id=layer_id,
-            target_dtype="bfloat8_b",
+            target_dtype=dtypes["mlp_output"],
             packing="none",
             layout="tile",
         )
@@ -136,7 +141,7 @@ def emit_parameter_config(
         graph.lm_head.weight,
         role="lm_head",
         layer_id=None,
-        target_dtype="bfloat8_b",
+        target_dtype=dtypes["lm_head"],
         packing="vocab_split",
         layout="tile",
         extra={"tied_to_embedding": graph.lm_head.tied_to_embedding},
@@ -159,13 +164,13 @@ def emit_parameter_config(
             "splits": build_lm_head_split_ranges(
                 graph.vocab_size, lm_head_split_count
             ),
-            "target_dtype": "bfloat8_b",
+            "target_dtype": dtypes["lm_head"],
             "tied_to_embedding": graph.lm_head.tied_to_embedding,
         },
         "kv_cache": {
             "policy": "paged",
             "page_block_size": kv_page_block_size,
-            "dtype": "bfloat8_b",
+            "dtype": dtypes["kv_cache"],
         },
     }
 

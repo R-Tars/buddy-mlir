@@ -17,6 +17,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.artifacts import (
     tensor_snapshot,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.hf_reference import (
+    _hf_key_cache_to_meta_layout,
     load_hf_reference,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.metrics import (
@@ -45,6 +46,18 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 
 
 class ProductCliTest(unittest.TestCase):
+    def test_hf_key_cache_is_interleaved_for_meta_rope(self) -> None:
+        import torch
+
+        key = torch.arange(8, dtype=torch.float32).reshape(1, 1, 1, 8)
+
+        converted = _hf_key_cache_to_meta_layout(key)
+
+        self.assertEqual(
+            converted.reshape(-1).tolist(),
+            [0.0, 4.0, 1.0, 5.0, 2.0, 6.0, 3.0, 7.0],
+        )
+
     def test_provided_hf_reference_must_match_request(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -70,6 +83,7 @@ class ProductCliTest(unittest.TestCase):
                 "layers": 1,
                 "prefill_len": 8,
                 "dtype": "bfloat16",
+                "key_cache_layout": "meta_interleaved_rope",
                 "input_token_ids": [1, 2],
                 "checkpoints": {
                     "prefill.layer.0.hidden": snapshot,
@@ -164,6 +178,8 @@ class ProductCliTest(unittest.TestCase):
         class FakeOps:
             @staticmethod
             def select_sequence_position(tensor, position, **_kwargs):
+                if tensor.ndim == 4:
+                    return tensor[:, :, position : position + 1, :]
                 return tensor[:, position : position + 1, :]
 
             @staticmethod
@@ -194,6 +210,18 @@ class ProductCliTest(unittest.TestCase):
             valid_seq_len=4,
         )
         collector.observe("prefill.logits", logits, ops=FakeOps())
+        heads = torch.arange(2 * 3 * 6 * 4, dtype=torch.float32).reshape(
+            2,
+            3,
+            6,
+            4,
+        )
+        collector.observe(
+            "prefill.layer.0.k_pre_rope",
+            heads,
+            ops=FakeOps(),
+            valid_seq_len=4,
+        )
         cache = torch.arange(4 * 2 * 4 * 8, dtype=torch.float32).reshape(
             4,
             2,
@@ -207,6 +235,11 @@ class ProductCliTest(unittest.TestCase):
 
         report = collector.to_report()
         self.assertEqual(report["checkpoint_count"], 4)
+        self.assertEqual(report["diagnostic_count"], 1)
+        self.assertEqual(
+            report["diagnostics"]["prefill.layer.0.k_pre_rope"]["values"],
+            heads[0, :, 3, :].reshape(-1).tolist(),
+        )
         self.assertEqual(
             report["checkpoints"]["prefill.layer.0.hidden"]["values"],
             hidden[0, 3].tolist(),

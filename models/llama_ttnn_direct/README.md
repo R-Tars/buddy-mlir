@@ -26,8 +26,9 @@ HF config and weights
 - The frozen pre-refactor profile measured about `0.1898 tokens/s/user` versus
   the recorded official target of `33.1 tokens/s/user`. This is functional
   evidence, not performance parity.
-- Full-model numerical equivalence to the Hugging Face reference is not yet
-  established.
+- The dedicated all-BF16 correctness recipe passes the Hugging Face reference
+  gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
+  minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
 - The frozen profile's full-logits argmax was the dominant measured
   bottleneck. The current path selects the final valid prompt position before
   final norm and LM-head; a post-fix device profile is still pending. Split
@@ -48,7 +49,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Prompt-conditioned prefill and decode | Functional on P150A |
 | Paged KV cache | Functional |
 | Product dry-run workflow | Device-free |
-| Full-model numerical correctness | Not yet proven |
+| Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official performance parity | Not achieved |
 
 ## Quick Start
@@ -61,6 +62,7 @@ Define paths used by the examples:
 ```bash
 export MODEL=/wafer/share/models/Llama-3.1-8B-Instruct
 export CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json
+export CORRECTNESS_CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json
 export PROGRAM=/tmp/llama31_ttnn_direct
 ```
 
@@ -141,9 +143,9 @@ imported by runtime code.
 ## Known Limitations
 
 - LM-head shards are concatenated into full logits before argmax.
-- There is no full-model logits, hidden-state, or KV-cache PCC gate yet.
-- Real Llama 3 RoPE values are generated from the HF config, but their
-  end-to-end device numerics have not yet passed a PCC gate.
+- Numerical correctness is proven with the dedicated all-BF16 recipe. The
+  compressed performance recipe has a separate, lower-precision acceptance
+  profile and is not claimed to pass the `0.99` full-depth PCC gate.
 - The current profile mixes prefill and a short decode run; a steady-state
   decode benchmark is still needed for official comparison.
 - Official dtype, memory, program, and core-grid parity remains incomplete.

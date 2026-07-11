@@ -25,6 +25,36 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 
 
 class ConfigDiffTest(unittest.TestCase):
+    def test_p150a_numerical_correctness_evidence_is_complete(self) -> None:
+        evidence_path = (
+            Path(__file__).resolve().parents[2]
+            / "docs"
+            / "evidence"
+            / "p150a_numerical_correctness_evidence_20260711.json"
+        )
+        evidence = json.loads(evidence_path.read_text())
+
+        self.assertEqual(evidence["parameter_recipe"], "all_bf16_correctness")
+        self.assertEqual(evidence["pcc_threshold"], 0.99)
+        self.assertTrue(evidence["acceptance"]["passed"])
+        self.assertTrue(evidence["acceptance"]["full_depth_passed"])
+        self.assertGreaterEqual(
+            evidence["acceptance"]["minimum_observed_pcc"],
+            evidence["pcc_threshold"],
+        )
+        self.assertEqual(
+            [record["layers"] for record in evidence["records"]],
+            [1, 2, 4, 32],
+        )
+        self.assertTrue(evidence["records"][0]["top_token_required"])
+        for record in evidence["records"]:
+            self.assertEqual(record["status"], "pass")
+            self.assertGreaterEqual(
+                record["minimum_pcc"],
+                evidence["pcc_threshold"],
+            )
+            self.assertEqual(len(record["validation_report_sha256"]), 64)
+
     def test_hf_correctness_reference_manifest_is_complete(self) -> None:
         manifest_path = (
             Path(__file__).resolve().parents[2]
@@ -40,6 +70,10 @@ class ConfigDiffTest(unittest.TestCase):
         )
         self.assertFalse(manifest["tenstorrent_device_opened"])
         self.assertFalse(manifest["ttnn_correctness_claimed"])
+        self.assertEqual(
+            manifest["key_cache_layout"],
+            "meta_interleaved_rope",
+        )
         self.assertEqual(manifest["effective_token_count"], 6)
         self.assertEqual(
             [record["layers"] for record in manifest["records"]],

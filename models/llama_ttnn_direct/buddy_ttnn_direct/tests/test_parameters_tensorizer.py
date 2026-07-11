@@ -14,6 +14,7 @@ from unittest.mock import patch
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
     TensorMetadataReference,
+    _reverse_permute_qk_weight,
     load_llama_parameters_from_manifests,
     materialize_parameters_from_program,
 )
@@ -24,6 +25,24 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
 
 
 class ParameterMaterializerTest(unittest.TestCase):
+    def test_qk_weights_are_reverse_permuted_to_meta_rope_layout(self) -> None:
+        import torch
+
+        source = torch.arange(16, dtype=torch.float32).reshape(8, 2)
+        transformed = _reverse_permute_qk_weight(
+            source,
+            shape=[8, 2],
+            head_dim=4,
+            source_key="q_proj.weight",
+        )
+
+        self.assertTrue(
+            torch.equal(
+                transformed,
+                source[[0, 2, 1, 3, 4, 6, 5, 7]],
+            )
+        )
+
     def test_loads_layer_limited_parameters_and_packs_qkv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -71,6 +90,12 @@ class ParameterMaterializerTest(unittest.TestCase):
                     "model.layers.0.self_attn.k_proj.weight",
                     "model.layers.0.self_attn.v_proj.weight",
                 ],
+            )
+            self.assertEqual(
+                params.metadata["tensors"][
+                    "layers.0.attention.wqkv_packed.weight"
+                ]["qk_rope_layout"],
+                "hf_to_meta_reverse_permute",
             )
             self.assertEqual(
                 params.layers[0].mlp.gate_proj.shape,

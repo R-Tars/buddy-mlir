@@ -41,8 +41,8 @@ def split_qkv_heads_prefill(
     num_kv_heads: int,
     memory_config: Any | None = None,
 ) -> tuple[Any, Any, Any]:
-    # Typical TTNN prefill paths split fused QKV into [B, H, S, D] heads
-    # before causal SDPA. Keep resolution explicit so API drift is visible.
+    # Llama RoPE requires K to remain [B, H, S, D]. The TTNN default
+    # transposes K, and seq_len == head_dim can hide that error in shapes.
     op_name = "split_query_key_value_and_split_heads"
     op = _resolve_op(
         ttnn_module,
@@ -56,6 +56,7 @@ def split_qkv_heads_prefill(
     kwargs = _without_none(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
+        transpose_key=False,
         memory_config=memory_config,
     )
     return op(fused_qkv, **kwargs)

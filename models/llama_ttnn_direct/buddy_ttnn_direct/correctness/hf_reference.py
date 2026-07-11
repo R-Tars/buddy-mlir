@@ -113,6 +113,7 @@ def capture_hf_reference(
         cache_layers = _cache_layers(outputs.past_key_values)
         for layer_id in range(layers):
             key, value = cache_layers[layer_id]
+            key = _hf_key_cache_to_meta_layout(key)
             snapshots[f"prefill.layer.{layer_id}.key_cache"] = (
                 kv_cache_snapshot(
                     f"prefill.layer.{layer_id}.key_cache",
@@ -145,6 +146,7 @@ def capture_hf_reference(
                 getattr(transformers, "__version__", "unknown")
             ),
             "reference_semantics": "truncated_layers_then_final_norm_lm_head",
+            "key_cache_layout": "meta_interleaved_rope",
             "top_token": top_token,
             "checkpoints": snapshots,
         }
@@ -191,6 +193,8 @@ def load_hf_reference(
         errors.append("prefill length does not match")
     if report.get("dtype") != dtype:
         errors.append("reference dtype does not match")
+    if report.get("key_cache_layout") != "meta_interleaved_rope":
+        errors.append("key cache layout must be meta_interleaved_rope")
     checkpoints = report.get("checkpoints")
     expected_names = _expected_checkpoint_names(int(layers))
     if not isinstance(checkpoints, dict):
@@ -284,6 +288,19 @@ def _cache_layers(cache: Any) -> list[tuple[Any, Any]]:
     if isinstance(cache, (tuple, list)):
         return [(layer[0], layer[1]) for layer in cache]
     raise TypeError("unsupported Hugging Face KV cache representation")
+
+
+def _hf_key_cache_to_meta_layout(key: Any) -> Any:
+    shape = _shape(key)
+    if len(shape) != 4 or shape[-1] % 2:
+        raise ValueError(
+            f"expected even-rank [batch, heads, seq, dim] key cache: {shape}"
+        )
+    return (
+        key.reshape(shape[0], shape[1], shape[2], 2, shape[3] // 2)
+        .transpose(-2, -1)
+        .reshape(shape)
+    )
 
 
 def _torch_dtype(torch: Any, dtype: str) -> Any:

@@ -239,6 +239,19 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         self.assertEqual(out, "concat_prefill:prefill_attn")
         self.assertIn(
             (
+                "split_query_key_value_and_split_heads",
+                "fused_qkv",
+                {
+                    "num_heads": 32,
+                    "num_kv_heads": 8,
+                    "transpose_key": False,
+                    "memory_config": "heads_mem",
+                },
+            ),
+            fake.calls,
+        )
+        self.assertIn(
+            (
                 "scaled_dot_product_attention",
                 "rotary:q_prefill",
                 "rotary:k_prefill",

@@ -20,6 +20,7 @@ The examples below use:
 ```bash
 export MODEL=/wafer/share/models/Llama-3.1-8B-Instruct
 export CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json
+export CORRECTNESS_CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json
 export PROGRAM=/tmp/llama31_ttnn_direct
 ```
 
@@ -208,10 +209,22 @@ Runs a CPU Hugging Face reference followed by the same truncated layer count
 on P150A. It compares the top token, complete last-position logits, per-layer
 last-position hidden states, and deterministic prefill KV-cache coordinates:
 
+Build the dedicated high-accuracy program first. This keeps the all-BF16
+correctness contract separate from the compressed performance recipe:
+
+```bash
+export CORRECTNESS_PROGRAM=/tmp/llama31_ttnn_direct_correctness
+
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli build \
+  --model-path "$MODEL" \
+  --config "$CORRECTNESS_CONFIG" \
+  --out-dir "$CORRECTNESS_PROGRAM"
+```
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --suite correctness \
-  --program-dir "$PROGRAM" \
+  --program-dir "$CORRECTNESS_PROGRAM" \
   --model-path "$MODEL" \
   --tokenizer-path "$MODEL" \
   --prompt "Hello from TTNN Direct" \
@@ -225,8 +238,11 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --out-dir /tmp/ttnn_direct_validate_correctness_l1
 ```
 
-Repeat with `--layers 2`, `4`, and `32`. The output directory contains the
-compact comparison report plus separate `hf_reference.json`,
+The Step A contract requires exact top-token matching at depth 1. Repeat with
+`--layers 2`, `4`, and `32` and use
+`--check logits_pcc,hidden_pcc,kv_cache_pcc` for those sampled-depth PCC gates.
+The output directory contains the compact comparison report plus separate
+`hf_reference.json`,
 `ttnn_observations.json`, and `generate.json` evidence files.
 Omit `--hf-reference` to capture the CPU reference during the command. A
 provided artifact is rejected unless its model config, prompt, depth, prefill

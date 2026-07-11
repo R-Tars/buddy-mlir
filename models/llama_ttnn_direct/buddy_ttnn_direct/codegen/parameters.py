@@ -139,6 +139,7 @@ def load_llama_parameters_from_manifests(
             attention.q_proj,
             attention.k_proj,
             attention.v_proj,
+            head_dim=int(config_dict["head_dim"]),
             path=f"layers.{layer_id}.attention.wqkv_packed.weight",
             tensor_records=tensor_records,
         )
@@ -506,12 +507,25 @@ def _pack_qkv(
     k_proj: TensorParameter,
     v_proj: TensorParameter,
     *,
+    head_dim: int,
     path: str,
     tensor_records: dict[str, dict[str, Any]],
 ) -> PackedTensorParameter:
     _validate_qkv_shapes(q_proj, k_proj, v_proj)
+    q_weight = _reverse_permute_qk_weight(
+        q_proj.weight,
+        shape=q_proj.shape,
+        head_dim=head_dim,
+        source_key=q_proj.source_key,
+    )
+    k_weight = _reverse_permute_qk_weight(
+        k_proj.weight,
+        shape=k_proj.shape,
+        head_dim=head_dim,
+        source_key=k_proj.source_key,
+    )
     packed = loader.cat(
-        [q_proj.weight, k_proj.weight, v_proj.weight],
+        [q_weight, k_weight, v_proj.weight],
         dim=0,
     )
     parameter = PackedTensorParameter(
@@ -535,8 +549,38 @@ def _pack_qkv(
         "dtype": parameter.dtype,
         "source_keys": list(parameter.source_keys),
         "packed_axis": parameter.packed_axis,
+        "qk_rope_layout": "hf_to_meta_reverse_permute",
     }
     return parameter
+
+
+def _reverse_permute_qk_weight(
+    tensor: Any,
+    *,
+    shape: list[int],
+    head_dim: int,
+    source_key: str,
+) -> Any:
+    if head_dim <= 0 or head_dim % 2:
+        raise ParameterMaterializationError(
+            f"head_dim must be a positive even integer; got {head_dim}"
+        )
+    if shape[0] % head_dim:
+        raise ParameterMaterializationError(
+            f"{source_key} output dimension {shape[0]} is not divisible by "
+            f"head_dim {head_dim}"
+        )
+    num_heads = shape[0] // head_dim
+    transformed = tensor.reshape(
+        num_heads,
+        2,
+        head_dim // 2,
+        shape[1],
+    ).transpose(1, 2)
+    contiguous = getattr(transformed, "contiguous", None)
+    if callable(contiguous):
+        transformed = contiguous()
+    return transformed.reshape(shape[0], shape[1])
 
 
 def _validate_qkv_shapes(

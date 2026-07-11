@@ -7,6 +7,7 @@ from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_emit import (
+    CORRECTNESS_RECIPE,
     emit_parameter_config,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
@@ -67,6 +68,20 @@ def _fake_graph(num_layers: int = 2):
 
 
 class ParameterConfigEmitTest(unittest.TestCase):
+    def test_correctness_recipe_uses_bfloat16_for_every_weight(self) -> None:
+        config = emit_parameter_config(
+            _fake_graph(num_layers=2),
+            recipe=CORRECTNESS_RECIPE,
+        )
+
+        self.assertEqual(config["recipe"], CORRECTNESS_RECIPE)
+        self.assertEqual(
+            {entry["target_dtype"] for entry in config["weights"].values()},
+            {"bfloat16"},
+        )
+        self.assertEqual(config["lm_head"]["target_dtype"], "bfloat16")
+        self.assertEqual(config["kv_cache"]["dtype"], "bfloat16")
+
     def test_emit_parameter_config_classifies_weights(self) -> None:
         config = emit_parameter_config(_fake_graph(num_layers=2))
         weights = config["weights"]

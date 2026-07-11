@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+from ..dtype_recipes import recipe_dtypes
 from ..templates.attention_decode import (
     official_paged_attention_decode_op_sequence,
 )
@@ -45,6 +46,7 @@ def validate_execution_plan_for_codegen(plan: dict[str, Any]) -> None:
 def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
     validate_execution_plan_for_codegen(plan)
     template_config = copy.deepcopy(plan["template_config"])
+    dtypes = recipe_dtypes(template_config["dtype_recipe"])
     lm_head_split_count = int(template_config["lm_head_split_count"])
     vocab_size = plan.get("vocab_size")
     head_dim = plan.get("head_dim")
@@ -179,7 +181,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
             "template": kv_cache_template,
             "policy": kv_cache_policy,
             "page_block_size": 32,
-            "dtype": "bfloat8_b",
+            "dtype": dtypes["kv_cache"],
             "max_cache_len": plan["max_cache_len"],
             "num_kv_heads": plan.get("num_key_value_heads"),
             "head_dim": head_dim,

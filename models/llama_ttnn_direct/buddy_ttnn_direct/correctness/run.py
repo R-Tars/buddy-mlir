@@ -107,8 +107,8 @@ def run_correctness(
         cache_len=cache_len,
         dtype_seed=dtype_seed,
         dry_run=False,
-        ttnn_module=ttnn,
-        torch_module=torch,
+        ttnn_module=ttnn_module,
+        torch_module=torch_module,
         tokenizer_module=tokenizer_module,
         observer=collector,
     )
@@ -198,7 +198,7 @@ def _compare_requested(
         prefixes.extend(
             ("hidden_pcc", name)
             for name in reference
-            if name.endswith(".hidden")
+            if name.endswith("hidden")
         )
     if "kv_cache_pcc" in requested_checks:
         prefixes.extend(
