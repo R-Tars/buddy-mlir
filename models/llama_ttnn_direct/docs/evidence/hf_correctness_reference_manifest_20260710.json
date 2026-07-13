@@ -24,7 +24,7 @@
   "transformers_version": "5.12.1",
   "reference_semantics": "truncated_layers_then_final_norm_lm_head",
   "key_cache_layout": "meta_interleaved_rope",
-  "artifact_root": "/wafer/zhuxinye/tmp/ttnn_direct_hf_references",
+  "artifact_root": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/references/hf",
   "tenstorrent_device_opened": false,
   "ttnn_correctness_claimed": false,
   "records": [

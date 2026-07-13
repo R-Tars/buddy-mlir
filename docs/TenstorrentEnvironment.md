@@ -212,6 +212,32 @@ The second command should resolve beneath
 `$TT_METAL_HOME/ttnn/ttnn/__init__.py`. A different path means that another
 TTNN installation is shadowing the source runtime.
 
+## Keep Model Artifacts in the Build Tree
+
+Generated programs, reports, and retained runtime logs belong under the active
+Buddy build directory, not in the source tree or `/tmp`. A model may define a
+more specific layout beneath this root:
+
+```bash
+export BUDDY_BUILD="${BUDDY_BUILD:-$BUDDY_REPO_ROOT/build-tenstorrent}"
+export BUDDY_MODEL_BUILD_ROOT="$BUDDY_BUILD/models"
+```
+
+TT-Metal inspector output honors `TT_METAL_LOGS_PATH`. Some pinned watcher
+paths are also relative to the process working directory, so model commands
+that retain runtime diagnostics should set the variable and execute from the
+same build-tree artifact directory:
+
+```bash
+export MODEL_RUNTIME_ARTIFACTS="$BUDDY_MODEL_BUILD_ROOT/<model>/runtime_artifacts"
+mkdir -p "$MODEL_RUNTIME_ARTIFACTS"
+export TT_METAL_LOGS_PATH="$MODEL_RUNTIME_ARTIFACTS"
+cd "$MODEL_RUNTIME_ARTIFACTS"
+```
+
+Keep the repository root on `PYTHONPATH` when a Python model command is run
+from that directory.
+
 ## Check Device Ownership
 
 Device-node visibility proves that the driver is available; it does not prove

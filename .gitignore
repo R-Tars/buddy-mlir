@@ -26,4 +26,5 @@ __pycache__/
 ttrt-artifacts/
 /query_results.json
 /ttrt_report.xml
+/generated/
 .py-stage

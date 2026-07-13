@@ -13,10 +13,10 @@
   "dtype_seed": "bf16",
   "parameter_recipe": "all_bf16_correctness",
   "pcc_threshold": 0.99,
-  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_correctness_bf16_program_20260711",
-  "artifact_root": "/wafer/zhuxinye/tmp",
+  "program_dir": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_correctness_bf16_program_20260711",
+  "artifact_root": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history",
   "hf_reference_manifest": "hf_correctness_reference_manifest_20260710.json",
-  "hf_reference_manifest_sha256": "8a334f0b18cc3e8617ba90fc94ed8e575cba908ea4913ee755de4691b6305697",
+  "hf_reference_manifest_sha256": "cf7e727c04c6bb435d7385bca494c173ecb1231864d997ea18667c2302540f88",
   "ttnn_module_file": "/wafer/zhuxinye/buddy-mlir/thirdparty/tt-mlir/third_party/tt-metal/src/tt-metal/ttnn/ttnn/__init__.py",
   "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
   "acceptance": {
@@ -59,7 +59,7 @@
       "final_hidden_pcc": 0.9989185913882808,
       "minimum_kv_cache_pcc": 0.9998980769876713,
       "minimum_pcc": 0.9988219662813671,
-      "validation_report": "/wafer/zhuxinye/tmp/ttnn_direct_correctness_p150a_depth1_allbf16_20260711/validation_report.json",
+      "validation_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_correctness_p150a_depth1_allbf16_20260711/validation_report.json",
       "validation_report_sha256": "0ef6d6839b18017a5e7ec2e33972c7e4bd7012dad930df3a16cfe09ed1763709"
     },
     {
@@ -77,7 +77,7 @@
       "final_hidden_pcc": 0.9977118765021725,
       "minimum_kv_cache_pcc": 0.997925194736569,
       "minimum_pcc": 0.9974835352421597,
-      "validation_report": "/wafer/zhuxinye/tmp/ttnn_direct_correctness_p150a_depth2_allbf16_pcc_20260711/validation_report.json",
+      "validation_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_correctness_p150a_depth2_allbf16_pcc_20260711/validation_report.json",
       "validation_report_sha256": "64bd81dce169bcdbf3e0bdd58bfcd3055264c1b59b62351afd36d1e01a8e1c56"
     },
     {
@@ -96,7 +96,7 @@
       "final_hidden_pcc": 0.996457987740688,
       "minimum_kv_cache_pcc": 0.9972875000420235,
       "minimum_pcc": 0.9964281194584126,
-      "validation_report": "/wafer/zhuxinye/tmp/ttnn_direct_correctness_p150a_depth4_allbf16_20260711/validation_report.json",
+      "validation_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_correctness_p150a_depth4_allbf16_20260711/validation_report.json",
       "validation_report_sha256": "fd193d793f3f25c6b92968704efc2f42de640134bcee7bb4cc4e034dbad1d912"
     },
     {
@@ -115,7 +115,7 @@
       "final_hidden_pcc": 0.9981760818985004,
       "minimum_kv_cache_pcc": 0.9925982836726808,
       "minimum_pcc": 0.9925982836726808,
-      "validation_report": "/wafer/zhuxinye/tmp/ttnn_direct_correctness_p150a_depth32_allbf16_20260711/validation_report.json",
+      "validation_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_correctness_p150a_depth32_allbf16_20260711/validation_report.json",
       "validation_report_sha256": "6a4c20205f7dfb2a7e9882009e2c77fb236e0324ba0060c3b484bb1968f080ee"
     }
   ],

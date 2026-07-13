@@ -131,23 +131,37 @@ and JSON metadata manifests. The package is not wired into `buddy-cli`, but the
 Python runner can inspect and exercise the generated decode path:
 
 ```bash
-python run_decode.py
-python run_decode.py --mode smoke --dry-run --out /tmp/decode_step_smoke.json
-python run_decode.py --mode prefill-smoke --dry-run \\
-  --prefill-len 128 --out /tmp/prefill_smoke.json
-python run_decode.py --mode profile --dry-run --out /tmp/decode_step_profile.json
-python run_decode.py --mode decode-loop --dry-run \\
-  --out /tmp/prompt_decode_loop.json
-python run_decode.py --mode generate --dry-run \\
-  --prefill-len 128 --max-new-tokens 8 --out /tmp/generate.json
-python run_decode.py --mode profile-generate --dry-run \\
-  --prefill-len 128 --max-new-tokens 8 --out /tmp/generate_profile.json
-python run_decode.py --mode validate-real --dry-run --require-trace \\
+export TTNN_DIRECT_PACKAGE_DIR="$PWD"
+export TTNN_DIRECT_BUILD="$(cd .. && pwd)"
+export TTNN_DIRECT_REPORTS="$TTNN_DIRECT_BUILD/reports/package"
+export TTNN_DIRECT_RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+export TT_METAL_LOGS_PATH="$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+mkdir -p "$TTNN_DIRECT_REPORTS" "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+cd "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode smoke --dry-run \\
+  --out "$TTNN_DIRECT_REPORTS/decode_step_smoke.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode prefill-smoke --dry-run \\
+  --prefill-len 128 --out "$TTNN_DIRECT_REPORTS/prefill_smoke.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode profile --dry-run \\
+  --out "$TTNN_DIRECT_REPORTS/decode_step_profile.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode decode-loop --dry-run \\
+  --out "$TTNN_DIRECT_REPORTS/prompt_decode_loop.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode generate --dry-run \\
+  --prefill-len 128 --max-new-tokens 8 \\
+  --out "$TTNN_DIRECT_REPORTS/generate.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode profile-generate --dry-run \\
+  --prefill-len 128 --max-new-tokens 8 \\
+  --out "$TTNN_DIRECT_REPORTS/generate_profile.json"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode validate-real \\
+  --dry-run --require-trace \\
   --prompt "Hello from TTNN Direct" \\
   --require-model-end-to-end \\
   --min-tokens-per-second-per-user 1.0 \\
   --decode-shell-pcc-threshold 0.99 \\
-  --require-decode-shell-numeric-reference --out-dir /tmp/validate_real
+  --require-decode-shell-numeric-reference \\
+  --out-dir "$TTNN_DIRECT_REPORTS/validate_real"
 ```
 """
 

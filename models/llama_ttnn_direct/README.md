@@ -91,11 +91,25 @@ Set up TT-Metal and the Buddy toolchain as described in
 Define paths used by the examples:
 
 ```bash
+export BUDDY_REPO_ROOT=/wafer/zhuxinye/buddy-mlir
+export BUDDY_BUILD="${BUDDY_BUILD:-$BUDDY_REPO_ROOT/build-tenstorrent}"
+export TTNN_DIRECT_BUILD="$BUDDY_BUILD/models/llama31_ttnn_direct"
 export MODEL=/wafer/share/models/Llama-3.1-8B-Instruct
-export CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json
-export CORRECTNESS_CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json
-export PROGRAM=/tmp/llama31_ttnn_direct
+export CONFIG="$BUDDY_REPO_ROOT/models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json"
+export CORRECTNESS_CONFIG="$BUDDY_REPO_ROOT/models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json"
+export PROGRAM="$TTNN_DIRECT_BUILD/program"
+export REPORTS="$TTNN_DIRECT_BUILD/reports"
+export RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+
+mkdir -p "$PROGRAM" "$REPORTS" "$RUNTIME_ARTIFACTS"
+export PYTHONPATH="$BUDDY_REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export TT_METAL_LOGS_PATH="$RUNTIME_ARTIFACTS"
+cd "$RUNTIME_ARTIFACTS"
 ```
+
+Running from `RUNTIME_ARTIFACTS` keeps TT-Metal inspector and watcher output
+under the Buddy build tree instead of creating `generated/` in the source
+tree.
 
 Build a generated program bundle:
 
@@ -117,7 +131,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --prefill-len 128 \
   --cache-len 1024 \
   --max-new-tokens 2 \
-  --out-dir /tmp/ttnn_direct_validate
+  --out-dir "$REPORTS/validation/dryrun"
 ```
 
 Run prompt-conditioned generation on an available P150A:
@@ -134,7 +148,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --cache-len 1024 \
   --max-new-tokens 2 \
   --device p150a \
-  --out /tmp/ttnn_direct_generate.json
+  --out "$REPORTS/generate/generate.json"
 ```
 
 Profile the same workflow or post-prefill steady decode with the `profile`

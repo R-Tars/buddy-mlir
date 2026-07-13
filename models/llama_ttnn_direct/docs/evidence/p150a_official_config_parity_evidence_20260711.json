@@ -6,7 +6,7 @@
   "device_id": 0,
   "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
   "profile_id": "p150a_llama31_8b_b32_performance",
-  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_program_20260711_v9",
+  "program_dir": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepd_parity_program_20260711_v9",
   "program_config_sha256": "808a9453009fa1a70dd2b820c4915b81b9fa5496806df9ce32723327c944c529",
   "generated_model_sha256": "415229458998348e82667a0befdc5ca0933629dfce8d59644e25400cb3c8cf0f",
   "official_reference": "buddy_ttnn_direct/reference/official_p150a_llama31_8b_config_seed.json",
@@ -25,7 +25,7 @@
     ]
   },
   "config_diff": {
-    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_diff_20260711_v9.json",
+    "report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepd_parity_diff_20260711_v9.json",
     "report_sha256": "fdaed3b835c5f0b90f020e8dc53141715990056e2ad67b99221f6345179f6c86",
     "status": "match",
     "issue_count": 0,
@@ -57,7 +57,7 @@
     "layer_31_mlp_gate_up_override": "bfloat8_b_and_HiFi2"
   },
   "depth_one_generate": {
-    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_generate_depth1_20260711_v9.json",
+    "report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepd_parity_generate_depth1_20260711_v9.json",
     "report_sha256": "2ea1a9104422e0d3e5a1c5760c8a35d9830e61d88ae838122c790ecee27b8a84",
     "status": "passed",
     "passed": true,
@@ -72,7 +72,7 @@
     "failed_contract_checks": []
   },
   "full_depth_steady_profile": {
-    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepd_parity_decode_steady_full_20260711_v9.json",
+    "report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepd_parity_decode_steady_full_20260711_v9.json",
     "report_sha256": "66c2909b2fae1f33c1c5321b652d066b62861c42caf83e49609b0eef3cf8dc70",
     "status": "profiled",
     "passed": true,

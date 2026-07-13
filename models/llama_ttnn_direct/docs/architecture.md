@@ -35,6 +35,29 @@ validate
 The existing `models/llama31_tt` path remains independent and continues to be
 the TTIR baseline.
 
+## Build-Tree Ownership
+
+All reproducible TTNN Direct artifacts live beneath the active Buddy binary
+directory:
+
+```text
+${BUDDY_BUILD}/models/llama31_ttnn_direct/
+  program/
+  correctness_program/
+  llama31_ttnn_direct_package/
+  reports/
+  autotune/
+  references/
+  runtime_artifacts/generated/{inspector,watcher}/
+  evidence_archive/
+```
+
+The source tree owns generators and checked-in compact evidence only. It does
+not own generated model programs or TT-Metal logs. Device commands execute
+from `runtime_artifacts/` and set `TT_METAL_LOGS_PATH` there so generic
+TT-Metal outputs cannot create a top-level `generated/` directory. System
+temporary storage remains reserved for disposable process-level scratch.
+
 ## Package Boundaries
 
 ### Semantic model

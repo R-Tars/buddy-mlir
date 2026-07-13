@@ -3,10 +3,13 @@
 Diagnostics preserve focused bring-up tools without adding them to the product
 workflow. They are selected through one visible command:
 
+The examples assume the build-tree variables from `docs/commands.md`,
+including `PROGRAM`, `REPORTS`, `AUTOTUNE`, and `RUNTIME_ARTIFACTS`.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage STAGE \
-  --out /tmp/diagnose.json
+  --out "$REPORTS/diagnostics/diagnose.json"
 ```
 
 Available stages are:
@@ -35,7 +38,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --hidden-size 4096 \
   --intermediate-size 14336 \
   --dry-run \
-  --out /tmp/diagnose_mlp.json
+  --out "$REPORTS/diagnostics/mlp.json"
 ```
 
 Attention primitive dry-run:
@@ -50,7 +53,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --num-kv-heads 8 \
   --head-dim 128 \
   --dry-run \
-  --out /tmp/diagnose_attention.json
+  --out "$REPORTS/diagnostics/attention.json"
 ```
 
 Depth sweep dry-run:
@@ -58,12 +61,12 @@ Depth sweep dry-run:
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage depth-sweep \
-  --program-dir /tmp/llama31_ttnn_direct \
+  --program-dir "$PROGRAM" \
   --depths 1,2,4,8,16,32 \
   --batch-size 32 \
   --cache-len 1024 \
   --dry-run \
-  --out /tmp/diagnose_depth_sweep.json
+  --out "$REPORTS/diagnostics/depth_sweep.json"
 ```
 
 Layered autotune dry-run or P150A execution:
@@ -71,8 +74,8 @@ Layered autotune dry-run or P150A execution:
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \
-  --model-path /wafer/share/models/Llama-3.1-8B-Instruct \
-  --config models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json \
+  --model-path "$MODEL" \
+  --config "$CONFIG" \
   --prompt "Hello from TTNN Direct" \
   --layers 32 \
   --batch-size 32 \
@@ -82,7 +85,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --iterations 10 \
   --confirm-warmup 5 \
   --confirm-iterations 50 \
-  --out /tmp/diagnose_autotune.json
+  --candidates-dir "$AUTOTUNE/candidates" \
+  --out "$AUTOTUNE/report.json"
 ```
 
 Autotune checks device ownership before each unique candidate and runs every

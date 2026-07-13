@@ -618,76 +618,87 @@ def render_program_readme(plan: dict[str, Any]) -> str:
         README.md
         ```
 
-        Inspect the decode op sequence with:
+        Keep reports and TT-Metal runtime logs beside this program in the
+        Buddy build tree:
 
         ```bash
-        python run_decode.py
+        export TTNN_DIRECT_PROGRAM_DIR="$PWD"
+        export TTNN_DIRECT_BUILD="$(cd .. && pwd)"
+        export TTNN_DIRECT_REPORTS="$TTNN_DIRECT_BUILD/reports/diagnostics"
+        export TTNN_DIRECT_RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+        export TT_METAL_LOGS_PATH="$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+        mkdir -p "$TTNN_DIRECT_REPORTS" "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+        cd "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py"
         ```
 
         Run the generated decode smoke path from the bundle:
 
         ```bash
-        python run_decode.py --mode smoke --layers 1 --device p150a \
-          --out /tmp/decode_step_smoke_report.json
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" \
+          --mode smoke --layers 1 --device p150a \
+          --out "$TTNN_DIRECT_REPORTS/decode_step_smoke.json"
         ```
 
         Run the generated prefill smoke path:
 
         ```bash
-        python run_decode.py --mode prefill-smoke --layers 1 \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" \
+          --mode prefill-smoke --layers 1 \
           --prefill-len 128 --device p150a \
-          --out /tmp/prefill_smoke_report.json
+          --out "$TTNN_DIRECT_REPORTS/prefill_smoke.json"
         ```
 
         Profile the generated decode path by section:
 
         ```bash
-        python run_decode.py --mode profile --layers 1 --device p150a \
-          --out /tmp/decode_step_profile_report.json
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" \
+          --mode profile --layers 1 --device p150a \
+          --out "$TTNN_DIRECT_REPORTS/decode_step_profile.json"
         ```
 
         Run a prompt-owned multi-step decode loop:
 
         ```bash
-        python run_decode.py --mode decode-loop \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" --mode decode-loop \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
           --max-new-tokens 2 \
           --layers 1 \
           --device p150a \
-          --out /tmp/prompt_decode_loop_report.json
+          --out "$TTNN_DIRECT_REPORTS/prompt_decode_loop.json"
         ```
 
         Run prompt prefill followed by decode using prefilled KV cache:
 
         ```bash
-        python run_decode.py --mode generate \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" --mode generate \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
           --prefill-len 128 \
           --max-new-tokens 8 \
           --layers 1 \
           --device p150a \
-          --out /tmp/generate_report.json
+          --out "$TTNN_DIRECT_REPORTS/generate.json"
         ```
 
         Profile prompt prefill followed by decode without claiming parity:
 
         ```bash
-        python run_decode.py --mode profile-generate \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" --mode profile-generate \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
           --prefill-len 128 \
           --max-new-tokens 8 \
           --layers 1 \
           --device p150a \
-          --out /tmp/generate_profile_report.json
+          --out "$TTNN_DIRECT_REPORTS/generate_profile.json"
         ```
 
         Validate the real-weight path after providing a local HF model:
 
         ```bash
-        python run_decode.py --mode validate-real \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
           --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
@@ -701,9 +712,9 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --min-baseline-ratio 0.1 \
           --decode-shell-pcc-threshold 0.99 \
           --preflight-only \
-          --out-dir /tmp/validate_ttnn_direct_real
+          --out-dir "$TTNN_DIRECT_REPORTS/validate_real_preflight"
 
-        python run_decode.py --mode validate-real \
+        python "$TTNN_DIRECT_PROGRAM_DIR/run_decode.py" --mode validate-real \
           --model-path /path/to/Llama-3.1-8B-Instruct \
           --prompt "Hello from TTNN Direct" \
           --tokenizer-path /path/to/Llama-3.1-8B-Instruct \
@@ -716,7 +727,7 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --baseline-reference tt_metal_official_llama31_8b_b32 \
           --min-baseline-ratio 0.1 \
           --decode-shell-pcc-threshold 0.99 \
-          --out-dir /tmp/validate_ttnn_direct_real
+          --out-dir "$TTNN_DIRECT_REPORTS/validate_real"
         ```
 
         Add `--dry-run` to smoke/profile/validate-real to write report schemas

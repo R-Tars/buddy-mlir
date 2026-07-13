@@ -1,9 +1,11 @@
 # TTNN Direct Command Reference
 
-Run commands from the Buddy MLIR repository root:
+Initialize paths from the Buddy MLIR repository root:
 
 ```bash
-python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli --help
+export BUDDY_REPO_ROOT=/wafer/zhuxinye/buddy-mlir
+export BUDDY_BUILD="${BUDDY_BUILD:-$BUDDY_REPO_ROOT/build-tenstorrent}"
+export TTNN_DIRECT_BUILD="$BUDDY_BUILD/models/llama31_ttnn_direct"
 ```
 
 The visible command set is `build`, `generate`, `profile`, `validate`,
@@ -19,10 +21,40 @@ The examples below use:
 
 ```bash
 export MODEL=/wafer/share/models/Llama-3.1-8B-Instruct
-export CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json
-export CORRECTNESS_CONFIG=models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json
-export PROGRAM=/tmp/llama31_ttnn_direct
+export CONFIG="$BUDDY_REPO_ROOT/models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json"
+export CORRECTNESS_CONFIG="$BUDDY_REPO_ROOT/models/llama_ttnn_direct/buddy_ttnn_direct/configs/p150a_llama31_8b_b32_correctness.json"
+export PROGRAM="$TTNN_DIRECT_BUILD/program"
+export CORRECTNESS_PROGRAM="$TTNN_DIRECT_BUILD/correctness_program"
+export REPORTS="$TTNN_DIRECT_BUILD/reports"
+export AUTOTUNE="$TTNN_DIRECT_BUILD/autotune"
+export HF_REFERENCES="$TTNN_DIRECT_BUILD/references/hf"
+export RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+
+mkdir -p \
+  "$PROGRAM" \
+  "$CORRECTNESS_PROGRAM" \
+  "$REPORTS/inspect" \
+  "$REPORTS/dryrun" \
+  "$REPORTS/generate" \
+  "$REPORTS/performance" \
+  "$REPORTS/validation" \
+  "$REPORTS/correctness" \
+  "$REPORTS/diagnostics" \
+  "$AUTOTUNE/candidates" \
+  "$HF_REFERENCES" \
+  "$RUNTIME_ARTIFACTS"
+
+export PYTHONPATH="$BUDDY_REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+export TT_METAL_LOGS_PATH="$RUNTIME_ARTIFACTS"
+cd "$RUNTIME_ARTIFACTS"
+
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli --help
 ```
+
+The runtime working directory is deliberate. Inspector honors
+`TT_METAL_LOGS_PATH`, while the pinned watcher also writes relative to the
+process working directory. Together these settings keep both under
+`$RUNTIME_ARTIFACTS/generated` and leave the source tree clean.
 
 The production `CONFIG` imports the extracted P150 TT-Transformers performance
 profile, including compressed dtypes, compute kernels, DRAM-sharded weights,
@@ -46,7 +78,7 @@ Use `inspect` to verify the required bundle files:
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli inspect \
   --program-dir "$PROGRAM" \
-  --out /tmp/ttnn_direct_inspect.json
+  --out "$REPORTS/inspect/inspect.json"
 ```
 
 ## Generate
@@ -65,7 +97,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --cache-len 1024 \
   --max-new-tokens 2 \
   --dry-run \
-  --out /tmp/ttnn_direct_generate_dryrun.json
+  --out "$REPORTS/dryrun/generate.json"
 ```
 
 ### P150A execution
@@ -86,7 +118,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --max-new-tokens 2 \
   --device p150a \
   --device-id 0 \
-  --out /tmp/ttnn_direct_generate.json
+  --out "$REPORTS/generate/generate.json"
 ```
 
 `max-new-tokens` includes the first token produced by prefill. Remaining tokens
@@ -110,8 +142,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
   --cache-len 1024 \
   --max-new-tokens 2 \
   --device p150a \
-  --generate-report /tmp/ttnn_direct_profile_generate.json \
-  --out /tmp/ttnn_direct_profile.json
+  --generate-report "$REPORTS/performance/generate.json" \
+  --out "$REPORTS/performance/generate_profile.json"
 ```
 
 Add `--dry-run` for schema validation without device execution.
@@ -150,7 +182,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
   --iterations 50 \
   --after-prefill \
   --device p150a \
-  --out /tmp/ttnn_direct_decode_steady.json
+  --out "$REPORTS/performance/decode_steady.json"
 ```
 
 The report records `prefill_ms`, `decode_step_ms_p50`,
@@ -181,7 +213,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --confirm-warmup 5 \
   --confirm-iterations 50 \
   --min-relative-improvement 0.01 \
-  --out /tmp/ttnn_direct_autotune.json
+  --candidates-dir "$AUTOTUNE/candidates" \
+  --out "$AUTOTUNE/report.json"
 ```
 
 Hardware candidates run in isolated subprocesses and are resumable by state
@@ -210,7 +243,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --prefill-len 128 \
   --cache-len 1024 \
   --max-new-tokens 2 \
-  --out-dir /tmp/ttnn_direct_validate_dryrun
+  --out-dir "$REPORTS/validation/dryrun"
 ```
 
 ### Functional suite
@@ -229,7 +262,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --batch-size 32 \
   --prefill-len 128 \
   --cache-len 1024 \
-  --out-dir /tmp/ttnn_direct_validate_functional
+  --out-dir "$REPORTS/validation/functional"
 ```
 
 ### Device suite
@@ -250,7 +283,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --cache-len 1024 \
   --device p150a \
   --require-full-depth \
-  --out-dir /tmp/ttnn_direct_validate_device
+  --out-dir "$REPORTS/validation/device"
 ```
 
 ### Performance suite
@@ -271,7 +304,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --cache-len 1024 \
   --device p150a \
   --require-full-depth \
-  --out-dir /tmp/ttnn_direct_validate_performance
+  --out-dir "$REPORTS/validation/performance"
 ```
 
 ### Correctness suite
@@ -284,8 +317,6 @@ Build the dedicated high-accuracy program first. This keeps the all-BF16
 correctness contract separate from the compressed performance recipe:
 
 ```bash
-export CORRECTNESS_PROGRAM=/tmp/llama31_ttnn_direct_correctness
-
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli build \
   --model-path "$MODEL" \
   --config "$CORRECTNESS_CONFIG" \
@@ -305,8 +336,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli validate \
   --cache-len 1024 \
   --check top_token,logits_pcc,hidden_pcc,kv_cache_pcc \
   --pcc-threshold 0.99 \
-  --hf-reference /wafer/zhuxinye/tmp/ttnn_direct_hf_references/depth_1/hf_reference.json \
-  --out-dir /tmp/ttnn_direct_validate_correctness_l1
+  --hf-reference "$HF_REFERENCES/depth_1/hf_reference.json" \
+  --out-dir "$REPORTS/correctness/depth_1"
 ```
 
 The Step A contract requires exact top-token matching at depth 1. Repeat with

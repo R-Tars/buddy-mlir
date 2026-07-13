@@ -8,11 +8,11 @@
   "seed_config": "buddy_ttnn_direct/configs/p150a_llama31_8b_b32.json",
   "seed_config_sha256": "e245168c01426afb7440b2fc790a0301fb677ce547223942f86e703df9c648b2",
   "tt_metal_git_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
-  "autotune_report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_20260711_v2.json",
+  "autotune_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepe_autotune_20260711_v2.json",
   "autotune_report_sha256": "4f0b23705f69d300cbc82124da1136f31ceec719866c71d52fbb4ff54aeb164a",
   "default_config_audit": {
     "program_config_sha256": "808a9453009fa1a70dd2b820c4915b81b9fa5496806df9ce32723327c944c529",
-    "config_diff_report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_default_audit_diff_20260711.json",
+    "config_diff_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepe_default_audit_diff_20260711.json",
     "config_diff_report_sha256": "fdaed3b835c5f0b90f020e8dc53141715990056e2ad67b99221f6345179f6c86",
     "status": "match",
     "matching_field_count": 55,
@@ -91,7 +91,7 @@
   ],
   "provisional_winner_confirmation": {
     "candidate": "lm_head_dram_concat",
-    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-lm-head-dram-concat-official-9fae83f4d850/steady_profile.json",
+    "report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-lm-head-dram-concat-official-9fae83f4d850/steady_profile.json",
     "report_sha256": "f0fd58c006b534f536020db334ceb2124364060cd808a0e6fa63323a8fab6eb7",
     "warmup": 5,
     "iterations": 50,
@@ -113,7 +113,7 @@
     "program_config": "official"
   },
   "winner_confirmation": {
-    "report": "/wafer/zhuxinye/tmp/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-official-l1-sharded-official-8cad7ca959a0/steady_profile.json",
+    "report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_stepe_autotune_candidates_20260711_v2/split8-official-like-performance-seed-official-l1-sharded-official-8cad7ca959a0/steady_profile.json",
     "report_sha256": "c88fff8dc54a4486c1938ff49e82ee9166f14e4fd50d18c378d19214a553ad74",
     "status": "profiled",
     "passed": true,

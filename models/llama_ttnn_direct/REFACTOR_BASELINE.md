@@ -26,7 +26,7 @@ in `/wafer/zhuxinye/推进文档4.md`.
 Evidence:
 
 - `docs/evidence/p150a_generate_depth_evidence_20260709.json`
-- `/wafer/zhuxinye/tmp/ttnn_direct_pr5_full_20260709_143626/generate_full_report.json`
+- `/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_full_20260709_143626/generate_full_report.json`
 
 ## Performance Baseline
 
@@ -42,7 +42,7 @@ Evidence:
 Evidence:
 
 - `docs/evidence/p150a_generate_profile_evidence_20260709.json`
-- `/wafer/zhuxinye/tmp/ttnn_direct_pr7_profile_full_20260709_144258/generate_profile_report.json`
+- `/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr7_profile_full_20260709_144258/generate_profile_report.json`
 
 ## Bottleneck Baseline
 

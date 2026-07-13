@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -29,6 +30,16 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 
 
 class ConfigDiffTest(unittest.TestCase):
+    def test_product_docs_keep_artifacts_in_buddy_build_tree(self) -> None:
+        model_root = Path(__file__).resolve().parents[2]
+        for path in (
+            model_root / "README.md",
+            model_root / "docs" / "commands.md",
+        ):
+            text = path.read_text()
+            self.assertNotIn("/tmp", text, path)
+            self.assertIn("$BUDDY_BUILD/models/llama31_ttnn_direct", text)
+
     def test_p150a_layered_autotune_evidence_is_complete(self) -> None:
         evidence_path = (
             Path(__file__).resolve().parents[2]
@@ -124,6 +135,11 @@ class ConfigDiffTest(unittest.TestCase):
         self.assertEqual(evidence["pcc_threshold"], 0.99)
         self.assertTrue(evidence["acceptance"]["passed"])
         self.assertTrue(evidence["acceptance"]["full_depth_passed"])
+        manifest_path = evidence_path.parent / evidence["hf_reference_manifest"]
+        self.assertEqual(
+            evidence["hf_reference_manifest_sha256"],
+            hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+        )
         self.assertGreaterEqual(
             evidence["acceptance"]["minimum_observed_pcc"],
             evidence["pcc_threshold"],

@@ -4,6 +4,18 @@ This directory stores historical P150A evidence and reproducibility manifests.
 These files are documentation artifacts only. Runtime code must not import
 them.
 
+Compact manifests remain checked in here. Their untracked raw programs,
+reports, candidates, and HF reference arrays live under the active build tree:
+
+```text
+${BUDDY_BUILD}/models/llama31_ttnn_direct/evidence_archive/phase_history/
+${BUDDY_BUILD}/models/llama31_ttnn_direct/references/hf/
+```
+
+The manifests currently record the concrete build path used for the captured
+2026-07-09 through 2026-07-11 evidence. Cleaning the Buddy build tree also
+removes those raw files, but does not remove these compact checked-in records.
+
 The current baseline evidence is:
 
 - `p150a_generate_depth_evidence_20260709.json`: prompt-conditioned generate

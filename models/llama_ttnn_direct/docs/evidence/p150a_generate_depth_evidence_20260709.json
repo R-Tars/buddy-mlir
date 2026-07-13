@@ -5,7 +5,7 @@
   "device": "p150a",
   "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
   "tokenizer_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
-  "program_dir": "/wafer/zhuxinye/tmp/ttnn_direct_pr2_20260709/llama31_decode_loop_demo_program_141623",
+  "program_dir": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr2_20260709/llama31_decode_loop_demo_program_141623",
   "prompt": "Hello from TTNN Direct",
   "batch_size": 32,
   "prefill_len": 128,
@@ -40,16 +40,16 @@
     }
   },
   "artifact_roots": [
-    "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920",
-    "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth8_20260709_143215",
-    "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth16_20260709_143401",
-    "/wafer/zhuxinye/tmp/ttnn_direct_pr5_full_20260709_143626"
+    "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920",
+    "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth8_20260709_143215",
+    "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth16_20260709_143401",
+    "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_full_20260709_143626"
   ],
   "depth_records": [
     {
       "depth": 1,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_1.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_1.json",
       "status": "passed",
       "generated_text": "ungsXHR",
       "tokens_per_second_per_user": 0.19508336409100346,
@@ -79,8 +79,8 @@
     },
     {
       "depth": 2,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_2.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_2.json",
       "status": "passed",
       "generated_text": ".GraphicsUnit.GraphicsUnit",
       "tokens_per_second_per_user": 0.20555172046433876,
@@ -110,8 +110,8 @@
     },
     {
       "depth": 4,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_4.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_20260709_142920/generate_depth_sweep_report_reports/generate_depth_4.json",
       "status": "passed",
       "generated_text": ".GraphicsUnit.GraphicsUnit",
       "tokens_per_second_per_user": 0.20158631662928958,
@@ -141,8 +141,8 @@
     },
     {
       "depth": 8,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth8_20260709_143215/generate_depth8_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth8_20260709_143215/generate_depth8_report_reports/generate_depth_8.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth8_20260709_143215/generate_depth8_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth8_20260709_143215/generate_depth8_report_reports/generate_depth_8.json",
       "status": "passed",
       "generated_text": ".GraphicsUnit.GraphicsUnit",
       "tokens_per_second_per_user": 0.19733835066006414,
@@ -172,8 +172,8 @@
     },
     {
       "depth": 16,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth16_20260709_143401/generate_depth16_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_depth16_20260709_143401/generate_depth16_report_reports/generate_depth_16.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth16_20260709_143401/generate_depth16_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_depth16_20260709_143401/generate_depth16_report_reports/generate_depth_16.json",
       "status": "passed",
       "generated_text": ".GraphicsUnit.GraphicsUnit",
       "tokens_per_second_per_user": 0.19377542977047912,
@@ -203,8 +203,8 @@
     },
     {
       "depth": 32,
-      "summary_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_full_20260709_143626/generate_full_report.json",
-      "generate_report": "/wafer/zhuxinye/tmp/ttnn_direct_pr5_full_20260709_143626/generate_full_report_reports/generate_depth_32.json",
+      "summary_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_full_20260709_143626/generate_full_report.json",
+      "generate_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/evidence_archive/phase_history/ttnn_direct_pr5_full_20260709_143626/generate_full_report_reports/generate_depth_32.json",
       "status": "passed",
       "generated_text": "Question href",
       "tokens_per_second_per_user": 0.18635347803375277,

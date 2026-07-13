@@ -94,7 +94,9 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(manifest["model_name"], "fake-package-program")
             self.assertEqual(manifest["num_layers"], 2)
             package_readme = (package_dir / "PACKAGE_README.md").read_text()
-            self.assertIn("python run_decode.py --mode smoke", package_readme)
+            self.assertIn("TTNN_DIRECT_PACKAGE_DIR", package_readme)
+            self.assertIn("TT_METAL_LOGS_PATH", package_readme)
+            self.assertIn("--mode smoke", package_readme)
             self.assertIn("prefill-smoke", package_readme)
             self.assertIn("decode-loop", package_readme)
             self.assertIn("generate", package_readme)
@@ -109,6 +111,7 @@ class PackageProgramTest(unittest.TestCase):
                 "--require-decode-shell-numeric-reference",
                 package_readme,
             )
+            self.assertNotIn("/tmp", package_readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -177,6 +180,9 @@ class PackageProgramTest(unittest.TestCase):
         self.assertIn("add_subdirectory(llama_ttnn_direct)", models_cmake)
         self.assertIn("llama31_ttnn_direct_program", direct_cmake)
         self.assertIn("llama31_ttnn_direct_package", direct_cmake)
+        self.assertIn("runtime_artifacts", direct_cmake)
+        self.assertIn("evidence_archive", direct_cmake)
+        self.assertIn("build\n", direct_cmake)
         self.assertNotIn("llama31_tt_rax", direct_cmake)
 
 

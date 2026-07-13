@@ -1,8 +1,8 @@
 # ===- CMakeLists.txt - TTNN Direct Llama package -----------*- cmake -*-===//
 #
-# Phase 13 adds a lightweight package-directory target for the additive
-# Buddy-TTNN Direct Python program path. It intentionally does not register a
-# buddy-cli runner and does not modify existing flatbuffer package targets.
+# Build-tree targets for the additive Buddy-TTNN Direct Python program path.
+# The package intentionally remains independent from buddy-cli and existing
+# flatbuffer package targets.
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
@@ -20,10 +20,29 @@ set(_BUDDY_LLAMA31_TTNN_DIRECT_PROGRAM_DIR
   "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/program")
 set(_BUDDY_LLAMA31_TTNN_DIRECT_PACKAGE_DIR
   "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/llama31_ttnn_direct_package")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_CORRECTNESS_PROGRAM_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/correctness_program")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_REPORTS_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/reports")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_AUTOTUNE_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/autotune")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_REFERENCES_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/references")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_RUNTIME_ARTIFACTS_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/runtime_artifacts")
+set(_BUDDY_LLAMA31_TTNN_DIRECT_EVIDENCE_ARCHIVE_DIR
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}/evidence_archive")
 set(_BUDDY_LLAMA31_TTNN_DIRECT_MANIFEST
   "${_BUDDY_LLAMA31_TTNN_DIRECT_PACKAGE_DIR}/manifest.json")
 
-file(MAKE_DIRECTORY "${_BUDDY_LLAMA31_TTNN_DIRECT_FAKE_MODEL_DIR}")
+file(MAKE_DIRECTORY
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_FAKE_MODEL_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_CORRECTNESS_PROGRAM_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_REPORTS_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_AUTOTUNE_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_REFERENCES_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_RUNTIME_ARTIFACTS_DIR}"
+  "${_BUDDY_LLAMA31_TTNN_DIRECT_EVIDENCE_ARCHIVE_DIR}")
 file(WRITE
   "${_BUDDY_LLAMA31_TTNN_DIRECT_FAKE_MODEL_DIR}/config.json"
   "{\n"
@@ -53,7 +72,7 @@ add_custom_command(
           "${_BUDDY_LLAMA31_TTNN_DIRECT_ROOT}"
   COMMAND "${Python3_EXECUTABLE}" -m
           models.llama_ttnn_direct.buddy_ttnn_direct.cli
-          build-program
+          build
           --model-path "${_BUDDY_LLAMA31_TTNN_DIRECT_MODEL_INPUT}"
           --config "${BUDDY_LLAMA31_TTNN_DIRECT_CONFIG}"
           --out-dir "${_BUDDY_LLAMA31_TTNN_DIRECT_PROGRAM_DIR}"
