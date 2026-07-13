@@ -147,9 +147,14 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --prefill-len 128 \
   --cache-len 1024 \
   --max-new-tokens 2 \
-  --device p150a \
-  --out "$REPORTS/generate/generate.json"
+  --device p150a
 ```
+
+Generation prints decoded text directly and does not write a report by
+default. Add `--report-level summary --out "$REPORTS/generate/generate.json"`
+for a compact JSON report. `--report-level full` additionally streams
+per-step diagnostics to sibling `generate.steps.jsonl` and deduplicated
+`generate.references.jsonl` files.
 
 Profile the same workflow or post-prefill steady decode with the `profile`
 command. Detailed examples and suite semantics are in
@@ -172,12 +177,13 @@ Bring-up commands are documented separately in
 
 ## Reports
 
-All commands emit JSON with a stable top-level `schema_version`, `status`, and
-`passed` contract.
+Report-producing commands emit JSON with a stable top-level `schema_version`,
+`status`, and `passed` contract. Generate reports are optional.
 
-- Generate reports record prompt/prefill/decode ownership, KV-cache source,
-  generated token IDs and text, runtime environment, latency, and reference
-  checks.
+- Summary generate reports record generated text and token IDs, KV-cache
+  capacity, latency, throughput, and compact status. Full reports retain
+  runtime ownership evidence and stream detailed decode-step references to
+  JSONL so repeated operations do not accumulate in host memory.
 - Generate-mode profile reports record per-section/per-layer timing and the
   underlying generate report. Decode-steady reports record warmup samples,
   measured p50/mean decode latency, separate prefill latency, and throughput.

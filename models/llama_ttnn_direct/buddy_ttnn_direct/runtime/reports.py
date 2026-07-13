@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,28 +22,159 @@ PROMPT_CONDITIONED_GENERATE_SEMANTICS = (
 def write_report(out: str | Path, report: dict[str, Any]) -> None:
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    safe_report = _json_safe_report_value(report)
-    report.clear()
-    report.update(safe_report)
-    out_path.write_text(json.dumps(report, indent=2) + "\n")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=out_path.parent,
+            prefix=f".{out_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            json.dump(report, handle, indent=2, default=_json_default)
+            handle.write("\n")
+        temporary_path.replace(out_path)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
 
 
-def _json_safe_report_value(value: Any) -> Any:
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return value
+def reset_json_lines(path: str | Path) -> Path:
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.unlink(missing_ok=True)
+    return out_path
+
+
+def append_json_line(path: str | Path, payload: dict[str, Any]) -> None:
+    out_path = Path(path)
+    with out_path.open("a", encoding="utf-8") as handle:
+        json.dump(payload, handle, separators=(",", ":"), default=_json_default)
+        handle.write("\n")
+
+
+def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
-    if isinstance(value, dict):
-        return {
-            str(key): _json_safe_report_value(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, (list, tuple)):
-        return [_json_safe_report_value(item) for item in value]
     return {
         "type": type(value).__name__,
         "repr": repr(value),
     }
+
+
+def compact_generate_report(
+    report: dict[str, Any],
+    *,
+    report_level: str,
+) -> dict[str, Any]:
+    step_reports = report.get("step_reports")
+    if not isinstance(step_reports, list):
+        step_reports = []
+    latencies = [
+        float(step["latency_ms"])
+        for step in step_reports
+        if isinstance(step, dict)
+        and isinstance(step.get("latency_ms"), (int, float))
+    ]
+    cache_positions = [
+        int(step["cache_position_value"])
+        for step in step_reports
+        if isinstance(step, dict)
+        and isinstance(step.get("cache_position_value"), int)
+    ]
+    failed_steps = [
+        int(step["step_index"])
+        for step in step_reports
+        if isinstance(step, dict)
+        and isinstance(step.get("step_index"), int)
+        and not bool(step.get("passed"))
+    ]
+    prefill = report.get("prefill")
+    if not isinstance(prefill, dict):
+        prefill = {}
+    section_profile = report.get("section_profile")
+    if not isinstance(section_profile, dict):
+        section_profile = {}
+    compact = {
+        key: report.get(key)
+        for key in (
+            "schema_version",
+            "command",
+            "mode",
+            "template",
+            "program_dir",
+            "program_num_layers",
+            "layers",
+            "device",
+            "device_id",
+            "batch_size",
+            "prefill_len",
+            "cache_len",
+            "max_new_tokens",
+            "decode_steps",
+            "generated_token_budget",
+            "dtype_seed",
+            "dtype",
+            "dry_run",
+            "model_semantics",
+            "kv_cache_source",
+            "passed",
+            "status",
+            "runtime_status",
+            "prefill_status",
+            "generated_token_ids",
+            "generated_text",
+            "generated_text_by_user",
+            "generated_text_status",
+            "generated_text_source",
+            "prompt_tokenization",
+            "latency_ms",
+            "throughput_summary",
+            "prefill_cache_population_summary",
+            "cache_capacity",
+            "reference",
+            "end_to_end_contract",
+            "diagnostics",
+            "ttnn_version",
+            "error",
+            "detail",
+            "message",
+        )
+        if key in report
+    }
+    compact.update(
+        {
+            "report_level": report_level,
+            "prefill": {
+                "status": prefill.get("status", report.get("prefill_status")),
+                "latency_ms": prefill.get("latency_ms"),
+            },
+            "decode_summary": {
+                "step_count": len(step_reports),
+                "failed_steps": failed_steps,
+                "latency_ms_total": sum(latencies) if latencies else None,
+                "latency_ms_mean": (
+                    sum(latencies) / len(latencies) if latencies else None
+                ),
+                "latency_ms_min": min(latencies) if latencies else None,
+                "latency_ms_max": max(latencies) if latencies else None,
+                "first_cache_position": (
+                    cache_positions[0] if cache_positions else None
+                ),
+                "last_cache_position": (
+                    cache_positions[-1] if cache_positions else None
+                ),
+            },
+            "section_profile": {
+                "status": section_profile.get("status"),
+                "sections_ms": section_profile.get("sections_ms", {}),
+            },
+        }
+    )
+    return compact
 
 
 def dry_run_reference(kind: str) -> dict[str, Any]:

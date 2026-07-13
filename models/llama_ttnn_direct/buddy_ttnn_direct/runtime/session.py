@@ -8,6 +8,7 @@ from ..smoke_decode_shell import _to_namespace
 from ..smoke_single_layer_decode import _load_generated_model
 from .config_runtime import realize_ttnn_config
 from .state import build_generate_state
+from .tokenizer import PrefillPromptTokenization
 
 
 def build_runtime_session(
@@ -29,6 +30,7 @@ def build_runtime_session(
     cache_len: int,
     prefill_len: int,
     observer: Any | None = None,
+    prefill_tokenization: PrefillPromptTokenization | None = None,
 ) -> SimpleNamespace:
     """Materialize one reusable model/runtime context for prefill and decode."""
 
@@ -44,6 +46,7 @@ def build_runtime_session(
         prompt=prompt,
         tokenizer_path=tokenizer_path,
         tokenizer_module=tokenizer_module,
+        prefill_tokenization=prefill_tokenization,
     )
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     runtime_config = realize_ttnn_config(config, ttnn)

@@ -990,13 +990,23 @@ def build_parser() -> argparse.ArgumentParser:
     generate.add_argument(
         "--dry-run",
         action="store_true",
-        help="Write the generate report schema without opening a device.",
+        help="Validate generate planning without opening a device.",
+    )
+    generate.add_argument(
+        "--report-level",
+        choices=("none", "summary", "full"),
+        default=None,
+        help=(
+            "Report detail. Defaults to none without --out and full with "
+            "--out for compatibility. Full step diagnostics are streamed "
+            "to sibling .steps.jsonl and .references.jsonl files."
+        ),
     )
     generate.add_argument(
         "--out",
         type=Path,
-        required=True,
-        help="Output generate report JSON path.",
+        default=None,
+        help="Optional output generate report JSON path.",
     )
     generate.set_defaults(func=_cmd_generate)
 
@@ -2364,6 +2374,18 @@ def _cmd_prompt_decode_loop(args: argparse.Namespace) -> int:
 
 
 def _cmd_generate(args: argparse.Namespace) -> int:
+    if args.report_level == "none" and args.out is not None:
+        print(
+            "generate: --report-level none cannot be combined with --out",
+            file=sys.stderr,
+        )
+        return 2
+    if args.report_level in {"summary", "full"} and args.out is None:
+        print(
+            f"generate: --report-level {args.report_level} requires --out",
+            file=sys.stderr,
+        )
+        return 2
     report = run_generate(
         out=args.out,
         program_dir=args.program_dir,
@@ -2379,12 +2401,42 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         cache_len=args.cache_len,
         dtype_seed=args.dtype_seed,
         dry_run=args.dry_run,
+        report_level=args.report_level,
     )
-    print(f"wrote generate report: {args.out}")
+    _print_generated_text(report)
+    if args.out is not None:
+        print(f"wrote generate report: {args.out}")
+        diagnostics = report.get("diagnostics")
+        if isinstance(diagnostics, dict) and diagnostics.get("decode_steps"):
+            print(
+                "wrote generate step diagnostics: "
+                f"{diagnostics['decode_steps']}"
+            )
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
+    if not report.get("passed"):
+        error = (
+            report.get("error")
+            or report.get("detail")
+            or report.get("status")
+        )
+        print(f"generate failed: {error}", file=sys.stderr)
     return 0 if report.get("passed") else 1
+
+
+def _print_generated_text(report: dict[str, object]) -> None:
+    text_by_user = report.get("generated_text_by_user")
+    if not isinstance(text_by_user, list) or not text_by_user:
+        if report.get("status") == "dry_run":
+            print("generate dry-run passed")
+        return
+    if len(text_by_user) == 1:
+        print(str(text_by_user[0]))
+        return
+    for user_index, text in enumerate(text_by_user):
+        print(f"[user {user_index}]")
+        print(str(text))
 
 
 def _cmd_profile_generate(args: argparse.Namespace) -> int:

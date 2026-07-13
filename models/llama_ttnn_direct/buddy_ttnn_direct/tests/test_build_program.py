@@ -466,6 +466,34 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(generate_payload["max_new_tokens"], 3)
             self.assertEqual(generate_payload["decode_steps"], 2)
 
+            generate_no_report = subprocess.run(
+                [
+                    sys.executable,
+                    str(out_dir / "run_decode.py"),
+                    "--mode",
+                    "generate",
+                    "--dry-run",
+                    "--max-new-tokens",
+                    "3",
+                    "--prefill-len",
+                    "8",
+                    "--layers",
+                    "1",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                ],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            no_report_summary = json.loads(generate_no_report.stdout)
+            self.assertEqual(no_report_summary["status"], "dry_run")
+            self.assertIsNone(no_report_summary["report"])
+            self.assertFalse((out_dir / "generate_report.json").exists())
+
             profile_generate = subprocess.run(
                 [
                     sys.executable,

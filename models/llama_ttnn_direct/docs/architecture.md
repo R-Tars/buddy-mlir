@@ -104,7 +104,8 @@ weights_manifest.json
 - `decode.py`: decode-step and token handoff orchestration.
 - `generate.py`: high-level generate entry point.
 - `profile.py`: generate section profiling and profile report assembly.
-- `reports.py`: generate report schemas and JSON writing.
+- `reports.py`: optional compact/full generate schemas, atomic JSON writing,
+  and streamed JSONL diagnostics.
 
 `buddy_ttnn_direct/generate.py` remains a small compatibility facade that
 re-exports the public runtime entry points.

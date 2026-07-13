@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import time
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +18,7 @@ from ..smoke_single_layer_decode import (
     _generated_observed_op_sequence,
     _time_decode_step,
 )
+from .reports import append_json_line
 from .rotary import attach_decode_rotary_parameters
 
 
@@ -97,6 +100,9 @@ def run_decode_loop(
     decode_step_count: int,
     generated_token_events: list[dict[str, Any]],
     initial_tensor_conversion_count: int,
+    report_level: str = "full",
+    diagnostics_path: str | None = None,
+    diagnostics_reference_path: str | None = None,
 ) -> SimpleNamespace:
     decode_runtime = build_decode_runtime_for_position(
         ttnn=ttnn,
@@ -126,6 +132,8 @@ def run_decode_loop(
         decode_runtime.rotary_runtime_input_tensor_count
     )
     step_reports = []
+    diagnostic_reference_ids: set[str] = set()
+    observed_op_cursor = _observed_op_cursor(context.generated_model, ttnn)
     for step_index in range(decode_step_count):
         input_shapes = _loop_input_shapes(
             token_ids=context.token_ids,
@@ -167,43 +175,64 @@ def run_decode_loop(
                 "token_shape": _shape(token),
             }
         )
+        observed_ops, observed_op_cursor = _observed_ops_since(
+            context.generated_model,
+            ttnn,
+            observed_op_cursor,
+        )
         reference = _decode_step_reference(
             plan=decode_plan,
             layer_count=layer_count,
             output_shapes=output_shapes,
             output=output,
-            observed_ops=_generated_observed_op_sequence(
-                context.generated_model,
-                ttnn,
+            observed_ops=observed_ops,
+        )
+        full_step_report = {
+            "step_index": step_index,
+            "status": (
+                "passed" if reference["passed"] else "reference_mismatch"
             ),
-        )
-        step_reports.append(
-            {
-                "step_index": step_index,
-                "status": (
-                    "passed" if reference["passed"] else "reference_mismatch"
-                ),
-                "passed": bool(reference["passed"]),
-                "latency_ms": latency_ms,
-                "cache_position_value": decode_runtime_state.get(
-                    "cache_position_value"
-                ),
-                "input_shapes": input_shapes,
-                "decode_runtime_state": decode_runtime_state,
-                "rotary_runtime_state": rotary_runtime_state,
-                "output_shapes": output_shapes,
-                "output": output,
-                "generated_token_ids": [],
-                "token_materialization": {
-                    "status": "deferred",
-                    "source": "reporting_after_decode_loop",
-                },
-                "token_materialization_ms": None,
-                "token_runtime_handoff": "device_tensor_direct",
-                "runtime_host_roundtrip": False,
-                "reference": reference,
-            }
-        )
+            "passed": bool(reference["passed"]),
+            "latency_ms": latency_ms,
+            "cache_position_value": decode_runtime_state.get(
+                "cache_position_value"
+            ),
+            "input_shapes": input_shapes,
+            "decode_runtime_state": decode_runtime_state,
+            "rotary_runtime_state": rotary_runtime_state,
+            "output_shapes": output_shapes,
+            "output": output,
+            "generated_token_ids": [],
+            "token_materialization": {
+                "status": "deferred",
+                "source": "reporting_after_decode_loop",
+            },
+            "token_materialization_ms": None,
+            "token_runtime_handoff": "device_tensor_direct",
+            "runtime_host_roundtrip": False,
+            "reference": reference,
+        }
+        if report_level == "full" and diagnostics_path is not None:
+            diagnostic_step = dict(full_step_report)
+            if diagnostics_reference_path is not None:
+                reference_id = _reference_id(reference)
+                if reference_id not in diagnostic_reference_ids:
+                    append_json_line(
+                        diagnostics_reference_path,
+                        {
+                            "reference_id": reference_id,
+                            "reference": reference,
+                        },
+                    )
+                    diagnostic_reference_ids.add(reference_id)
+                diagnostic_step["reference"] = {
+                    "reference_id": reference_id,
+                    "kind": reference.get("kind"),
+                    "status": reference.get("status"),
+                    "passed": reference.get("passed"),
+                }
+            append_json_line(diagnostics_path, diagnostic_step)
+        step_reports.append(_compact_step_report(full_step_report))
         context.update_decode_token(token)
         if step_index + 1 < decode_step_count:
             decode_runtime = build_decode_runtime_for_position(
@@ -239,7 +268,80 @@ def run_decode_loop(
         tensor_conversion_count=tensor_conversion_count,
         decode_runtime_state_input_tensor_count=decode_runtime_state_count,
         decode_rotary_runtime_input_tensor_count=decode_rotary_runtime_count,
+        diagnostics_step_count=(
+            decode_step_count
+            if report_level == "full" and diagnostics_path is not None
+            else 0
+        ),
+        diagnostics_reference_count=len(diagnostic_reference_ids),
     )
+
+
+def _compact_step_report(step: dict[str, Any]) -> dict[str, Any]:
+    reference = step["reference"]
+    compact_reference: dict[str, Any]
+    if bool(reference.get("passed")):
+        compact_reference = {
+            "kind": reference.get("kind"),
+            "status": reference.get("status"),
+            "passed": True,
+            "failed_checks": [],
+        }
+    else:
+        compact_reference = reference
+    return {
+        "step_index": step["step_index"],
+        "status": step["status"],
+        "passed": step["passed"],
+        "latency_ms": step["latency_ms"],
+        "cache_position_value": step["cache_position_value"],
+        "input_shapes": step["input_shapes"],
+        "output_shapes": step["output_shapes"],
+        "output": step["output"],
+        "generated_token_ids": [],
+        "token_materialization": step["token_materialization"],
+        "token_materialization_ms": None,
+        "token_runtime_handoff": step["token_runtime_handoff"],
+        "runtime_host_roundtrip": step["runtime_host_roundtrip"],
+        "reference": compact_reference,
+    }
+
+
+def _observed_op_cursor(model: Any, ttnn: Any) -> int:
+    op_log = getattr(getattr(model, "ops", None), "op_log", None)
+    if isinstance(op_log, list):
+        op_log.clear()
+        return 0
+    observed = _generated_observed_op_sequence(model, ttnn)
+    return len(observed) if isinstance(observed, list) else 0
+
+
+def _observed_ops_since(
+    model: Any,
+    ttnn: Any,
+    cursor: int,
+) -> tuple[list[str] | None, int]:
+    op_log = getattr(getattr(model, "ops", None), "op_log", None)
+    if isinstance(op_log, list):
+        start = cursor if 0 <= cursor <= len(op_log) else 0
+        observed = [str(item) for item in op_log[start:]]
+        op_log.clear()
+        return observed, 0
+    observed = _generated_observed_op_sequence(model, ttnn)
+    if not isinstance(observed, list):
+        return None, cursor
+    start = cursor if 0 <= cursor <= len(observed) else 0
+    return observed[start:], len(observed)
+
+
+def _reference_id(reference: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        reference,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return f"decode-{hashlib.sha256(encoded).hexdigest()[:16]}"
 
 
 def run_decode_steady_iterations(

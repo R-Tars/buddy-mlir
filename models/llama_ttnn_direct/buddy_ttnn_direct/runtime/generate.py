@@ -30,15 +30,18 @@ from .profile import (
     GenerateSectionProfiler,
 )
 from .reports import (
+    compact_generate_report as _compact_generate_report,
     generate_dry_run_report as _generate_dry_run_report,
     generate_failed_report as _generate_failed_report,
     generate_no_device_report as _generate_no_device_report,
     generate_success_report as _generate_success_report,
+    reset_json_lines as _reset_json_lines,
     write_report as _write_report,
 )
 from .tokenizer import (
     PromptTokenizationError,
     detokenize_generated_token_ids,
+    tokenize_prompt_for_prefill,
 )
 from .session import build_runtime_session
 from .state import build_generate_state
@@ -46,7 +49,7 @@ from .state import build_generate_state
 
 def run_generate(
     *,
-    out: str | Path,
+    out: str | Path | None = None,
     program_dir: str | Path,
     model_path: str | Path | None = None,
     prompt: str | None = None,
@@ -64,7 +67,16 @@ def run_generate(
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
     observer: Any | None = None,
+    report_level: str | None = None,
 ) -> dict[str, Any]:
+    resolved_report_level = _resolve_report_level(
+        out=out,
+        report_level=report_level,
+    )
+    diagnostics_path = _diagnostics_path(out, resolved_report_level)
+    if diagnostics_path is not None:
+        diagnostics_path.unlink(missing_ok=True)
+        _diagnostics_reference_path(diagnostics_path).unlink(missing_ok=True)
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
     layer_count = int(layers)
@@ -120,8 +132,12 @@ def run_generate(
             decode_plan=decode_plan,
             prefill_plan=prefill_plan,
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
 
     if model_path is None:
         report = _generate_failed_report(
@@ -141,8 +157,12 @@ def run_generate(
             message="model_path is required for generate execution",
             detail="model_path was not provided",
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
     if prompt is None:
         report = _generate_failed_report(
             program_dir=program_root,
@@ -161,8 +181,12 @@ def run_generate(
             message="prompt is required for generate execution",
             detail="prompt was not provided",
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
     if decode_plan["output_kind"] != "token":
         report = _generate_failed_report(
             program_dir=program_root,
@@ -181,8 +205,12 @@ def run_generate(
             message="generate requires token output",
             detail=f"output_kind={decode_plan['output_kind']}",
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
 
     try:
         ttnn = (
@@ -206,8 +234,12 @@ def run_generate(
             prefill_plan=prefill_plan,
             detail=str(err),
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
 
     try:
         torch = (
@@ -234,8 +266,94 @@ def run_generate(
             detail=str(err),
             ttnn_module=ttnn,
         )
-        _write_report(out, report)
-        return report
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
+
+    try:
+        prefill_tokenization = tokenize_prompt_for_prefill(
+            prompt=prompt,
+            batch_size=batch_size,
+            prefill_len=prefill_len,
+            tokenizer_path=tokenizer_path or model_path,
+            vocab_size=prefill_plan.get("vocab_size"),
+            tokenizer_module=tokenizer_module,
+        )
+    except (PromptTokenizationError, ValueError) as err:
+        report = _generate_failed_report(
+            program_dir=program_root,
+            layers=layer_count,
+            max_new_tokens=token_count,
+            decode_steps=decode_step_count,
+            prefill_len=prefill_len,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            decode_plan=decode_plan,
+            prefill_plan=prefill_plan,
+            status="prompt_tokenization_error",
+            message=str(err),
+            detail=str(err),
+            ttnn_module=ttnn,
+        )
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
+
+    required_cache_len = (
+        int(prefill_tokenization.effective_token_count) + decode_step_count
+    )
+    cache_capacity = {
+        "effective_prompt_tokens": int(
+            prefill_tokenization.effective_token_count
+        ),
+        "decode_steps": decode_step_count,
+        "required_cache_len": required_cache_len,
+        "configured_cache_len": cache_len,
+        "passed": required_cache_len <= cache_len,
+    }
+    if required_cache_len > cache_len:
+        message = (
+            "generate exceeds KV cache capacity: "
+            "effective prompt tokens "
+            f"({prefill_tokenization.effective_token_count}) "
+            f"+ decode steps ({decode_step_count}) requires cache_len >= "
+            f"{required_cache_len}, got {cache_len}"
+        )
+        report = _generate_failed_report(
+            program_dir=program_root,
+            layers=layer_count,
+            max_new_tokens=token_count,
+            decode_steps=decode_step_count,
+            prefill_len=prefill_len,
+            device=device,
+            device_id=device_id,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            dtype_seed=dtype_seed,
+            decode_plan=decode_plan,
+            prefill_plan=prefill_plan,
+            status="cache_capacity_exceeded",
+            message=message,
+            detail=message,
+            ttnn_module=ttnn,
+        )
+        report["prompt_tokenization"] = prefill_tokenization.to_report()
+        report["cache_capacity"] = cache_capacity
+        return _finalize_report(
+            report,
+            out=out,
+            report_level=resolved_report_level,
+            diagnostics_path=diagnostics_path,
+        )
 
     try:
         with maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
@@ -257,6 +375,7 @@ def run_generate(
                 cache_len=cache_len,
                 prefill_len=prefill_len,
                 observer=observer,
+                prefill_tokenization=prefill_tokenization,
             )
             context = session.context
             model = session.generated_model
@@ -295,6 +414,11 @@ def run_generate(
                     ],
                 )
 
+            if diagnostics_path is not None:
+                _reset_json_lines(diagnostics_path)
+                _reset_json_lines(
+                    _diagnostics_reference_path(diagnostics_path)
+                )
             decode_loop = run_decode_loop(
                 context=context,
                 ttnn=ttnn,
@@ -310,6 +434,17 @@ def run_generate(
                 initial_tensor_conversion_count=(
                     context.tensor_conversion_count
                     + first_token.tensor_conversion_count
+                ),
+                report_level=resolved_report_level,
+                diagnostics_path=(
+                    str(diagnostics_path)
+                    if diagnostics_path is not None
+                    else None
+                ),
+                diagnostics_reference_path=(
+                    str(_diagnostics_reference_path(diagnostics_path))
+                    if diagnostics_path is not None
+                    else None
                 ),
             )
             generated_token_events = decode_loop.generated_token_events
@@ -381,6 +516,7 @@ def run_generate(
                 section_profiler=section_profiler,
                 ttnn_module=ttnn,
             )
+            report["cache_capacity"] = cache_capacity
             observation_summary = getattr(observer, "summary", None)
             if callable(observation_summary):
                 report["correctness_observations"] = observation_summary()
@@ -463,5 +599,75 @@ def run_generate(
             ttnn_module=ttnn,
         )
 
-    _write_report(out, report)
-    return report
+    return _finalize_report(
+        report,
+        out=out,
+        report_level=resolved_report_level,
+        diagnostics_path=diagnostics_path,
+    )
+
+
+def _resolve_report_level(
+    *,
+    out: str | Path | None,
+    report_level: str | None,
+) -> str:
+    if report_level is None:
+        return "full" if out is not None else "none"
+    normalized = str(report_level).lower()
+    if normalized not in {"none", "summary", "full"}:
+        raise ValueError(
+            "report_level must be one of: none, summary, full"
+        )
+    if normalized == "none" and out is not None:
+        raise ValueError("report_level=none cannot be combined with out")
+    if normalized in {"summary", "full"} and out is None:
+        raise ValueError(f"report_level={normalized} requires out")
+    return normalized
+
+
+def _diagnostics_path(
+    out: str | Path | None,
+    report_level: str,
+) -> Path | None:
+    if out is None or report_level != "full":
+        return None
+    out_path = Path(out)
+    return out_path.with_name(f"{out_path.stem}.steps.jsonl")
+
+
+def _diagnostics_reference_path(diagnostics_path: Path) -> Path:
+    name = diagnostics_path.name
+    if name.endswith(".steps.jsonl"):
+        name = f"{name[:-len('.steps.jsonl')]}.references.jsonl"
+    else:
+        name = f"{diagnostics_path.stem}.references.jsonl"
+    return diagnostics_path.with_name(name)
+
+
+def _finalize_report(
+    report: dict[str, Any],
+    *,
+    out: str | Path | None,
+    report_level: str,
+    diagnostics_path: Path | None,
+) -> dict[str, Any]:
+    if diagnostics_path is not None and diagnostics_path.is_file():
+        reference_path = _diagnostics_reference_path(diagnostics_path)
+        report["diagnostics"] = {
+            "decode_steps": str(diagnostics_path),
+            "references": (
+                str(reference_path) if reference_path.is_file() else None
+            ),
+            "format": "jsonl",
+            "status": "written",
+        }
+    report["report_level"] = report_level
+    finalized = (
+        report
+        if report_level == "full"
+        else _compact_generate_report(report, report_level=report_level)
+    )
+    if out is not None:
+        _write_report(out, finalized)
+    return finalized

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import io
 import tempfile
 import types
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
@@ -240,6 +242,213 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertIn("generate.model_semantics", check_names)
 
+    def test_cli_generate_dry_run_without_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                exit_code = main(
+                    [
+                        "generate",
+                        "--program-dir",
+                        str(program_dir),
+                        "--max-new-tokens",
+                        "3",
+                        "--prefill-len",
+                        "8",
+                        "--layers",
+                        "1",
+                        "--batch-size",
+                        "2",
+                        "--cache-len",
+                        "16",
+                        "--dry-run",
+                    ]
+                )
+
+            self.assertEqual(exit_code, 0)
+            self.assertIn("generate dry-run passed", stdout.getvalue())
+            self.assertEqual(list(root.glob("*.json")), [config_json])
+
+    def test_cli_generate_writes_compact_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "generate_summary.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            self.assertEqual(
+                main(
+                    [
+                        "generate",
+                        "--program-dir",
+                        str(program_dir),
+                        "--max-new-tokens",
+                        "3",
+                        "--prefill-len",
+                        "8",
+                        "--layers",
+                        "1",
+                        "--batch-size",
+                        "2",
+                        "--cache-len",
+                        "16",
+                        "--dry-run",
+                        "--report-level",
+                        "summary",
+                        "--out",
+                        str(report_json),
+                    ]
+                ),
+                0,
+            )
+
+            report = json.loads(report_json.read_text())
+            self.assertEqual(report["report_level"], "summary")
+            self.assertEqual(report["status"], "dry_run")
+            self.assertEqual(report["decode_summary"]["step_count"], 0)
+            self.assertNotIn("decode_plan", report)
+            self.assertNotIn("step_reports", report)
+
+    def test_generate_rejects_insufficient_cache_before_device_setup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            fake_ttnn = _make_generate_fake_ttnn()
+
+            report = run_generate(
+                program_dir=program_dir,
+                model_path=model_dir,
+                prompt="hello tenstorrent",
+                tokenizer_path=model_dir,
+                tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                max_new_tokens=3,
+                layers=1,
+                prefill_len=8,
+                device="p150a",
+                batch_size=2,
+                cache_len=4,
+                ttnn_module=fake_ttnn,
+                torch_module=_fake_torch(),
+            )
+
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status"], "cache_capacity_exceeded")
+            self.assertEqual(report["report_level"], "none")
+            self.assertEqual(report["cache_capacity"]["required_cache_len"], 5)
+            self.assertEqual(report["cache_capacity"]["configured_cache_len"], 4)
+            self.assertEqual(fake_ttnn.calls, [])
+
+    def test_generate_without_report_returns_compact_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            with _fake_torch_and_safetensors():
+                report = run_generate(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    prompt="hello tenstorrent",
+                    tokenizer_path=model_dir,
+                    tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
+                    max_new_tokens=2,
+                    layers=1,
+                    prefill_len=8,
+                    device="p150a",
+                    batch_size=2,
+                    cache_len=16,
+                    ttnn_module=_make_generate_fake_ttnn(),
+                    torch_module=_fake_torch(),
+                )
+
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["report_level"], "none")
+            self.assertEqual(report["decode_summary"]["step_count"], 1)
+            self.assertEqual(
+                report["generated_text"],
+                "<tok:23> <tok:23>",
+            )
+            self.assertNotIn("step_reports", report)
+            self.assertNotIn("diagnostics", report)
+            self.assertEqual(
+                list(root.glob("generate*.json*")),
+                [],
+            )
+
     def test_generate_runs_prefill_then_decode_with_prefilled_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -473,6 +682,34 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 report["step_reports"][1]["cache_position_value"],
                 4,
+            )
+            diagnostics_path = root / "generate_report.steps.jsonl"
+            self.assertEqual(
+                report["diagnostics"]["decode_steps"],
+                str(diagnostics_path),
+            )
+            diagnostic_steps = [
+                json.loads(line)
+                for line in diagnostics_path.read_text().splitlines()
+            ]
+            self.assertEqual(len(diagnostic_steps), 2)
+            reference_path = root / "generate_report.references.jsonl"
+            diagnostic_references = [
+                json.loads(line)
+                for line in reference_path.read_text().splitlines()
+            ]
+            self.assertEqual(len(diagnostic_references), 1)
+            self.assertEqual(
+                diagnostic_steps[0]["reference"]["reference_id"],
+                diagnostic_references[0]["reference_id"],
+            )
+            self.assertIn(
+                "observed_ops",
+                diagnostic_references[0]["reference"],
+            )
+            self.assertNotIn(
+                "observed_ops",
+                report["step_reports"][0]["reference"],
             )
             self.assertEqual(
                 report["parameter_setup"]["synthetic_runtime_input_tensor_count"],

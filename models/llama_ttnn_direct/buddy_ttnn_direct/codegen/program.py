@@ -155,6 +155,11 @@ def main(argv=None):
     parser.add_argument("--layers", type=int, default=1)
     parser.add_argument("--decode-steps", type=int, default=2)
     parser.add_argument("--max-new-tokens", type=int, default=None)
+    parser.add_argument(
+        "--report-level",
+        choices=("none", "summary", "full"),
+        default=None,
+    )
     parser.add_argument("--prefill-len", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--cache-len", type=int, default=None)
@@ -345,7 +350,7 @@ def main(argv=None):
             run_generate,
         )
 
-        report_path = args.out or program_dir / "generate_report.json"
+        report_path = args.out
         report = run_generate(
             out=report_path,
             program_dir=program_dir,
@@ -365,8 +370,18 @@ def main(argv=None):
             cache_len=args.cache_len,
             dtype_seed=args.dtype_seed,
             dry_run=args.dry_run,
+            report_level=args.report_level,
         )
-        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        print(
+            json.dumps(
+                {
+                    "status": report["status"],
+                    "report": str(report_path) if report_path else None,
+                    "generated_text": report.get("generated_text"),
+                },
+                indent=2,
+            )
+        )
         return _report_exit_code(report)
 
     if args.mode == "profile-generate":
@@ -678,9 +693,11 @@ def render_program_readme(plan: dict[str, Any]) -> str:
           --prefill-len 128 \
           --max-new-tokens 8 \
           --layers 1 \
-          --device p150a \
-          --out "$TTNN_DIRECT_REPORTS/generate.json"
+          --device p150a
         ```
+
+        Add `--report-level summary --out "$TTNN_DIRECT_REPORTS/generate.json"`
+        for a compact report, or use `full` for streamed step diagnostics.
 
         Profile prompt prefill followed by decode without claiming parity:
 

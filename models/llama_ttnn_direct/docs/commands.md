@@ -85,8 +85,8 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli inspect \
 
 ### Device-free dry-run
 
-Dry-run validates plans and writes the generate report schema without loading
-weights or opening a device:
+Dry-run validates plans without loading weights or opening a device. This
+example explicitly requests a compact report:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
@@ -97,6 +97,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --cache-len 1024 \
   --max-new-tokens 2 \
   --dry-run \
+  --report-level summary \
   --out "$REPORTS/dryrun/generate.json"
 ```
 
@@ -117,12 +118,29 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
   --cache-len 1024 \
   --max-new-tokens 2 \
   --device p150a \
-  --device-id 0 \
-  --out "$REPORTS/generate/generate.json"
+  --device-id 0
 ```
 
 `max-new-tokens` includes the first token produced by prefill. Remaining tokens
-come from decode steps.
+come from decode steps. Generation prints decoded text to the terminal and
+does not create a JSON report unless `--out` is provided.
+
+Use one of the optional report modes when an artifact is needed:
+
+```bash
+# Compact result, timing, throughput, and cache-capacity summary.
+--report-level summary --out "$REPORTS/generate/generate.json"
+
+# Runtime evidence plus streamed per-step diagnostics.
+--report-level full --out "$REPORTS/generate/generate.json"
+```
+
+For compatibility, supplying `--out` without `--report-level` selects `full`.
+Full mode writes the main report atomically and streams decode details to the
+sibling `generate.steps.jsonl`; repeated structural references are stored once
+in `generate.references.jsonl` and linked by ID. Cache capacity is checked
+before opening the device: `effective_prompt_tokens + max_new_tokens - 1`
+must not exceed `cache-len`.
 
 ## Profile
 

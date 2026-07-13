@@ -20,7 +20,7 @@ from .prefill import (
     build_prefill_page_table_tensor,
     prefill_token_ids_tensor,
 )
-from .tokenizer import tokenize_prompt_for_prefill
+from .tokenizer import PrefillPromptTokenization, tokenize_prompt_for_prefill
 
 
 GENERATE_RUNTIME_OWNER = "TTNNDirectRuntimeContext"
@@ -39,7 +39,17 @@ def build_generate_state(
     prompt: str,
     tokenizer_path: str | Path,
     tokenizer_module: Any | None,
+    prefill_tokenization: PrefillPromptTokenization | None = None,
 ) -> TTNNDirectRuntimeContext:
+    if prefill_tokenization is None:
+        prefill_tokenization = tokenize_prompt_for_prefill(
+            prompt=prompt,
+            batch_size=int(prefill_plan["batch_size"]),
+            prefill_len=int(prefill_plan["prefill_len"]),
+            tokenizer_path=tokenizer_path,
+            vocab_size=prefill_plan.get("vocab_size"),
+            tokenizer_module=tokenizer_module,
+        )
     host_params = load_llama_parameters_from_manifests(
         model_path=model_path,
         weights_manifest=program_dir / "weights_manifest.json",
@@ -57,14 +67,6 @@ def build_generate_state(
         ttnn_module=ttnn,
     )
     assert result.parameters is not None
-    prefill_tokenization = tokenize_prompt_for_prefill(
-        prompt=prompt,
-        batch_size=int(prefill_plan["batch_size"]),
-        prefill_len=int(prefill_plan["prefill_len"]),
-        tokenizer_path=tokenizer_path,
-        vocab_size=prefill_plan.get("vocab_size"),
-        tokenizer_module=tokenizer_module,
-    )
     prefill_token_ids = prefill_token_ids_tensor(
         ttnn=ttnn,
         torch=torch,
