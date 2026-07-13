@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Sequence
 
 
 class RotaryConfigurationError(ValueError):
@@ -73,12 +73,25 @@ def attach_decode_rotary_parameters(
     device: Any,
     dtype_seed: str,
     plan: dict[str, Any],
-    cache_position_value: int,
+    cache_position_value: int | None = None,
+    cache_position_values: Sequence[int] | None = None,
 ) -> SimpleNamespace:
     head_dim = _head_dim(plan)
     batch_size = int(plan["input_shapes"]["cache_position"][0])
     rotary_config = _rotary_config(plan)
-    positions = [int(cache_position_value)] * batch_size
+    if cache_position_values is None:
+        if cache_position_value is None:
+            raise ValueError(
+                "cache_position_value or cache_position_values is required"
+            )
+        positions = [int(cache_position_value)] * batch_size
+    else:
+        positions = [int(value) for value in cache_position_values]
+        if len(positions) != batch_size:
+            raise ValueError(
+                "cache_position_values length must match decode batch size"
+            )
+    uniform_position = positions[0] if len(set(positions)) == 1 else None
     host = build_decode_rotary_host_tensors(
         torch=torch,
         positions=positions,
@@ -126,7 +139,8 @@ def attach_decode_rotary_parameters(
             "mode": "decode",
             "theta": float(rotary_config["theta"]),
             "scaling": rotary_config.get("scaling"),
-            "cache_position_value": int(cache_position_value),
+            "cache_position_value": uniform_position,
+            "cache_position_values": positions,
             "positions": positions,
             "cos_sin_shape": [1, batch_size, 1, head_dim],
             "transformation_shape": [1, 1, batch_size * 32, 32],

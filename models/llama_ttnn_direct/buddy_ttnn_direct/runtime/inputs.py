@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Sequence
 
 
 @dataclass(frozen=True)
@@ -12,7 +12,8 @@ class DecodeRuntimeState:
     page_block_size: int
     page_count: int
     max_num_blocks: int
-    cache_position_value: int
+    cache_position_value: int | None
+    cache_position_values: list[int]
     page_table: list[list[int]]
     cache_position: list[int]
 
@@ -26,6 +27,7 @@ class DecodeRuntimeState:
             "page_count": self.page_count,
             "max_num_blocks": self.max_num_blocks,
             "cache_position_value": self.cache_position_value,
+            "cache_position_values": self.cache_position_values,
             "page_table_shape": [self.batch_size, self.page_count],
             "cache_position_shape": [self.batch_size],
         }
@@ -101,7 +103,7 @@ def build_decode_runtime_state(
     batch_size: int,
     cache_len: int,
     page_block_size: int,
-    prompt_token_count: int,
+    prompt_token_count: int | Sequence[int],
 ) -> DecodeRuntimeState:
     if batch_size <= 0:
         raise ValueError("batch_size must be positive")
@@ -109,12 +111,28 @@ def build_decode_runtime_state(
         raise ValueError("cache_len must be positive")
     if page_block_size <= 0:
         raise ValueError("page_block_size must be positive")
-    if prompt_token_count <= 0:
-        raise ValueError("prompt_token_count must be positive")
+    if isinstance(prompt_token_count, int):
+        prompt_token_counts = [prompt_token_count for _ in range(batch_size)]
+    else:
+        prompt_token_counts = [int(value) for value in prompt_token_count]
+    if len(prompt_token_counts) != batch_size:
+        raise ValueError(
+            "prompt_token_count sequence length must match batch_size"
+        )
+    if any(value <= 0 for value in prompt_token_counts):
+        raise ValueError("prompt_token_count values must be positive")
 
     page_count = max(1, math.ceil(cache_len / page_block_size))
     max_num_blocks = batch_size * page_count
-    cache_position_value = min(max(prompt_token_count - 1, 0), cache_len - 1)
+    cache_position_values = [
+        min(max(prompt_count - 1, 0), cache_len - 1)
+        for prompt_count in prompt_token_counts
+    ]
+    cache_position_value = (
+        cache_position_values[0]
+        if len(set(cache_position_values)) == 1
+        else None
+    )
     page_table = [
         [batch_id * page_count + page_id for page_id in range(page_count)]
         for batch_id in range(batch_size)
@@ -126,8 +144,9 @@ def build_decode_runtime_state(
         page_count=page_count,
         max_num_blocks=max_num_blocks,
         cache_position_value=cache_position_value,
+        cache_position_values=cache_position_values,
         page_table=page_table,
-        cache_position=[cache_position_value for _ in range(batch_size)],
+        cache_position=cache_position_values,
     )
 
 

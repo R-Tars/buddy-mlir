@@ -368,6 +368,63 @@ class TTNNCompatOps:
                 except TypeError:
                     raise err
 
+    def select_sequence_positions(
+        self,
+        tensor,
+        positions,
+        *,
+        op_name="select_sequence_positions",
+    ):
+        shape = _tensor_shape(tensor)
+        if shape is None or len(shape) not in (3, 4):
+            return tensor
+        sequence_dim = 1 if len(shape) == 3 else 2
+        batch_dim = 0 if len(shape) == 3 or shape[0] != 1 else 1
+        batch_size = shape[batch_dim]
+        positions = [int(position) for position in positions]
+        if len(positions) != batch_size:
+            raise ValueError(
+                "sequence position count must match tensor batch size"
+            )
+        if len(set(positions)) == 1:
+            return self.select_sequence_position(
+                tensor,
+                positions[0],
+                op_name=op_name,
+            )
+
+        slice_op = getattr(self.ttnn, "slice", None)
+        concat_op = getattr(self.ttnn, "concat", None)
+        if not callable(slice_op) or not callable(concat_op):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "select_sequence_positions",
+                (("slice", "concat"),),
+            )
+        selected = []
+        for user_id, position in enumerate(positions):
+            if position < 0 or position >= shape[sequence_dim]:
+                raise ValueError(
+                    f"sequence position {position} is outside length "
+                    f"{shape[sequence_dim]} for user {user_id}"
+                )
+            starts = [0 for _ in shape]
+            ends = list(shape)
+            steps = [1 for _ in shape]
+            starts[batch_dim] = user_id
+            ends[batch_dim] = user_id + 1
+            starts[sequence_dim] = position
+            ends[sequence_dim] = position + 1
+            try:
+                user_hidden = slice_op(tensor, starts, ends, steps)
+            except TypeError:
+                try:
+                    user_hidden = slice_op(tensor, starts, ends, steps=steps)
+                except TypeError:
+                    user_hidden = slice_op(tensor, starts, ends)
+            selected.append(user_hidden)
+        self._record(op_name)
+        return concat_op(selected, dim=batch_dim)
+
     def nlp_create_qkv_heads_decode(
         self,
         qkv,

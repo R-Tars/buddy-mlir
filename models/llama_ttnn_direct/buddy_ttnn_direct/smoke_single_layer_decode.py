@@ -1958,7 +1958,7 @@ def _build_prompt_decode_runtime_state_tensors(
     batch_size: int,
     cache_len: int,
     page_block_size: int,
-    prompt_token_count: int,
+    prompt_token_count: int | list[int],
 ) -> SimpleNamespace:
     runtime_state = build_decode_runtime_state(
         batch_size=batch_size,

@@ -96,9 +96,10 @@ def run_prefill_prompt(
             context.prefill_token_ids,
             context.kv_cache,
             context.prefill_page_table,
-            valid_seq_len=context.prefill_tokenization[
-                "effective_token_count"
-            ],
+            valid_seq_len=context.prefill_tokenization.get(
+                "effective_token_count_by_user",
+                context.prefill_tokenization["effective_token_count"],
+            ),
         )
     )
     context.update_kv_cache(kv_cache)
@@ -140,18 +141,29 @@ def run_prefill_prompt(
     )
     first_token = prefill_token_direct_handoff(prefill_token=prefill_token)
     context.update_decode_token(first_token.token_ids)
-    generated_token_events = [
-        {
-            "step_index": "prefill",
-            "token": first_token.token_ids,
-            "runtime_handoff": first_token.runtime_handoff,
-            "runtime_host_roundtrip": first_token.runtime_host_roundtrip,
-            "cache_position_value": (
-                context.prefill_tokenization["effective_token_count"] - 1
-            ),
-            "token_shape": _shape(first_token.token_ids),
-        }
+    prompt_token_counts = [
+        int(value)
+        for value in context.prefill_tokenization.get(
+            "effective_token_count_by_user",
+            [context.prefill_tokenization["effective_token_count"]],
+        )
     ]
+    prefill_event = {
+        "step_index": "prefill",
+        "token": first_token.token_ids,
+        "runtime_handoff": first_token.runtime_handoff,
+        "runtime_host_roundtrip": first_token.runtime_host_roundtrip,
+        "cache_position_value": (
+            context.prefill_tokenization["effective_token_count"] - 1
+        ),
+        "token_shape": _shape(first_token.token_ids),
+    }
+    if len(set(prompt_token_counts)) > 1:
+        prefill_event["cache_position_value"] = None
+        prefill_event["cache_position_values"] = [
+            value - 1 for value in prompt_token_counts
+        ]
+    generated_token_events = [prefill_event]
     return SimpleNamespace(
         prefill_token=prefill_token,
         kv_cache=kv_cache,

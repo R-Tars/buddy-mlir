@@ -29,6 +29,7 @@ export REPORTS="$TTNN_DIRECT_BUILD/reports"
 export AUTOTUNE="$TTNN_DIRECT_BUILD/autotune"
 export HF_REFERENCES="$TTNN_DIRECT_BUILD/references/hf"
 export RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+export OFFICIAL_PROMPTS=/wafer/zhuxinye/tt-metal-official-repro/models/tt_transformers/demo/sample_prompts/input_data_questions_prefill_128.json
 
 mkdir -p \
   "$PROGRAM" \
@@ -125,6 +126,36 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
 come from decode steps. Generation prints decoded text to the terminal and
 does not create a JSON report unless `--out` is provided.
 
+### Official batch32 prompts
+
+Use the same JSON and instruct formatting as the TT-Metal text demo when
+comparing batch output. Buddy reads the first 32 prompt objects, applies
+`tokenizer.apply_chat_template` with one user turn and an assistant generation
+prompt, and keeps each user's prompt and decode positions independent:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli generate \
+  --program-dir "$PROGRAM" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --input-prompts "$OFFICIAL_PROMPTS" \
+  --instruct \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 256 \
+  --cache-len 1024 \
+  --max-new-tokens 200 \
+  --device p150a \
+  --device-id 0 \
+  --report-level summary \
+  --out "$REPORTS/generate/official_batch32.json"
+```
+
+The official instruct prompts are longer than 128 tokens for some users, so a
+128-token Buddy prefill would not be an input-parity run. Prompt-file mode
+rejects truncation and reports the required minimum. The summary records the
+input file SHA256, per-user prompt SHA256 values, and per-user token counts.
+
 Use one of the optional report modes when an artifact is needed:
 
 ```bash
@@ -207,6 +238,13 @@ The report records `prefill_ms`, `decode_step_ms_p50`,
 `decode_step_ms_mean`, `tokens_per_second_per_user`, and
 `aggregate_tokens_per_second`. Add `--dry-run` to validate the report contract
 without loading weights or opening a device.
+
+For a steady-decode comparison initialized from the official batch32 prompts,
+replace `--prompt` in the command above with:
+
+```bash
+--input-prompts "$OFFICIAL_PROMPTS" --instruct --prefill-len 256
+```
 
 ## Layered Autotune
 

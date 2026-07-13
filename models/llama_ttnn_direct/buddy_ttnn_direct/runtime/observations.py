@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, Sequence
 
 from ..correctness.artifacts import (
     kv_cache_snapshot,
@@ -34,7 +34,7 @@ class TTNNObservationCollector:
         tensor: Any,
         *,
         ops: Any,
-        valid_seq_len: int | None = None,
+        valid_seq_len: int | Sequence[int] | None = None,
         **_metadata: Any,
     ) -> None:
         if name.endswith(".logits"):
@@ -57,11 +57,12 @@ class TTNNObservationCollector:
             return
 
         logical_shape = _shape(tensor)
+        user_zero_seq_len = _user_zero_seq_len(valid_seq_len)
         sampled = tensor
-        if name.startswith("prefill.layer.") and valid_seq_len is not None:
+        if name.startswith("prefill.layer.") and user_zero_seq_len is not None:
             sampled = ops.select_sequence_position(
                 sampled,
-                int(valid_seq_len) - 1,
+                user_zero_seq_len - 1,
                 op_name=f"correctness.{name}.position",
             )
         sampled = ops.slice_batch_user(
@@ -78,8 +79,8 @@ class TTNNObservationCollector:
                 "kind": "last_token_vector",
                 "batch_id": 0,
                 "position": (
-                    int(valid_seq_len) - 1
-                    if valid_seq_len is not None
+                    user_zero_seq_len - 1
+                    if user_zero_seq_len is not None
                     else 0
                 ),
                 "source": "ttnn_device_slice",
@@ -132,14 +133,15 @@ class TTNNObservationCollector:
         tensor: Any,
         *,
         ops: Any,
-        valid_seq_len: int | None,
+        valid_seq_len: int | Sequence[int] | None,
     ) -> None:
         logical_shape = _shape(tensor)
+        user_zero_seq_len = _user_zero_seq_len(valid_seq_len)
         sampled = tensor
-        if valid_seq_len is not None:
+        if user_zero_seq_len is not None:
             sampled = ops.select_sequence_position(
                 sampled,
-                int(valid_seq_len) - 1,
+                user_zero_seq_len - 1,
                 op_name=f"correctness.{name}.position",
             )
         sampled = ops.slice_batch_user(
@@ -162,8 +164,8 @@ class TTNNObservationCollector:
                 "kind": "all_heads_last_token_vector",
                 "batch_id": 0,
                 "position": (
-                    int(valid_seq_len) - 1
-                    if valid_seq_len is not None
+                    user_zero_seq_len - 1
+                    if user_zero_seq_len is not None
                     else 0
                 ),
                 "source": "ttnn_device_slice",
@@ -215,3 +217,12 @@ def _to_torch(ttnn: Any, tensor: Any) -> Any:
 
 def _shape(tensor: Any) -> list[int]:
     return [int(dim) for dim in getattr(tensor, "shape", ())]
+
+
+def _user_zero_seq_len(value: int | Sequence[int] | None) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    values = list(value)
+    return int(values[0]) if values else None

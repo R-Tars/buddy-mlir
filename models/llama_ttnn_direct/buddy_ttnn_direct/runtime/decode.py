@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Sequence
 
 from ..decode_loop import (
     _loop_generated_token_ids,
@@ -43,9 +43,20 @@ def build_decode_runtime_for_position(
     decode_plan: dict[str, Any],
     batch_size: int,
     cache_len: int,
-    prefill_effective_token_count: int,
+    prefill_effective_token_count: int | Sequence[int],
     generated_token_index: int,
 ) -> SimpleNamespace:
+    if isinstance(prefill_effective_token_count, int):
+        prompt_token_counts: int | list[int] = (
+            int(prefill_effective_token_count)
+            + int(generated_token_index)
+            + 1
+        )
+    else:
+        prompt_token_counts = [
+            int(value) + int(generated_token_index) + 1
+            for value in prefill_effective_token_count
+        ]
     runtime_state = _build_prompt_decode_runtime_state_tensors(
         ttnn=ttnn,
         torch=torch,
@@ -53,12 +64,16 @@ def build_decode_runtime_for_position(
         batch_size=batch_size,
         cache_len=cache_len,
         page_block_size=int(decode_plan["kv_cache"]["page_block_size"]),
-        prompt_token_count=(
-            int(prefill_effective_token_count)
-            + int(generated_token_index)
-            + 1
-        ),
+        prompt_token_count=prompt_token_counts,
     )
+    cache_position_value = runtime_state.decode_runtime_state[
+        "cache_position_value"
+    ]
+    cache_position_values = runtime_state.decode_runtime_state.get(
+        "cache_position_values"
+    )
+    if cache_position_values is None:
+        cache_position_values = [int(cache_position_value)] * batch_size
     rotary_runtime = attach_decode_rotary_parameters(
         parameters=parameters,
         ttnn=ttnn,
@@ -66,9 +81,8 @@ def build_decode_runtime_for_position(
         device=device,
         dtype_seed=dtype_seed,
         plan=decode_plan,
-        cache_position_value=int(
-            runtime_state.decode_runtime_state["cache_position_value"]
-        ),
+        cache_position_value=cache_position_value,
+        cache_position_values=cache_position_values,
     )
     return SimpleNamespace(
         page_table=runtime_state.page_table,
@@ -114,7 +128,10 @@ def run_decode_loop(
         batch_size=batch_size,
         cache_len=cache_len,
         prefill_effective_token_count=(
-            context.prefill_tokenization["effective_token_count"]
+            context.prefill_tokenization.get(
+                "effective_token_count_by_user",
+                context.prefill_tokenization["effective_token_count"],
+            )
         ),
         generated_token_index=0,
     )
@@ -162,19 +179,21 @@ def run_decode_loop(
             "dtype": _dtype(token),
             "repr": repr(token),
         }
-        generated_token_events.append(
-            {
-                "step_index": step_index,
-                "token": token,
-                "runtime_handoff": "device_tensor_direct",
-                "runtime_host_roundtrip": False,
-                "cache_position_value": decode_runtime_state.get(
-                    "cache_position_value"
-                ),
-                "page_table_shape": input_shapes.get("page_table"),
-                "token_shape": _shape(token),
-            }
-        )
+        token_event = {
+            "step_index": step_index,
+            "token": token,
+            "runtime_handoff": "device_tensor_direct",
+            "runtime_host_roundtrip": False,
+            "cache_position_value": decode_runtime_state.get(
+                "cache_position_value"
+            ),
+            "page_table_shape": input_shapes.get("page_table"),
+            "token_shape": _shape(token),
+        }
+        position_values = decode_runtime_state.get("cache_position_values")
+        if position_values is not None and len(set(position_values)) > 1:
+            token_event["cache_position_values"] = position_values
+        generated_token_events.append(token_event)
         observed_ops, observed_op_cursor = _observed_ops_since(
             context.generated_model,
             ttnn,
@@ -245,7 +264,10 @@ def run_decode_loop(
                 batch_size=batch_size,
                 cache_len=cache_len,
                 prefill_effective_token_count=(
-                    context.prefill_tokenization["effective_token_count"]
+                    context.prefill_tokenization.get(
+                        "effective_token_count_by_user",
+                        context.prefill_tokenization["effective_token_count"],
+                    )
                 ),
                 generated_token_index=step_index + 1,
             )
@@ -360,9 +382,14 @@ def run_decode_steady_iterations(
     """Run post-prefill decode without per-op profiling or host token copies."""
 
     total_steps = int(warmup) + int(iterations)
-    effective_token_count = int(
-        context.prefill_tokenization["effective_token_count"]
-    )
+    effective_token_counts = [
+        int(value)
+        for value in context.prefill_tokenization.get(
+            "effective_token_count_by_user",
+            [context.prefill_tokenization["effective_token_count"]] * batch_size,
+        )
+    ]
+    effective_token_count = max(effective_token_counts)
     if effective_token_count + total_steps > int(cache_len):
         raise ValueError(
             "decode-steady steps exceed cache capacity: "
@@ -388,7 +415,7 @@ def run_decode_steady_iterations(
             decode_plan=decode_plan,
             batch_size=batch_size,
             cache_len=cache_len,
-            prefill_effective_token_count=effective_token_count,
+            prefill_effective_token_count=effective_token_counts,
             generated_token_index=step_index,
         )
         context.install_decode_runtime(decode_runtime)
@@ -405,9 +432,10 @@ def run_decode_steady_iterations(
 
         context.update_kv_cache(kv_cache)
         context.update_decode_token(token)
-        cache_positions.append(
-            int(decode_runtime.decode_runtime_state["cache_position_value"])
-        )
+        position_values = decode_runtime.decode_runtime_state[
+            "cache_position_values"
+        ]
+        cache_positions.append(max(int(value) for value in position_values))
         tensor_conversion_count += int(decode_runtime.tensor_conversion_count)
         decode_runtime_state_count += int(
             decode_runtime.decode_runtime_state_input_tensor_count

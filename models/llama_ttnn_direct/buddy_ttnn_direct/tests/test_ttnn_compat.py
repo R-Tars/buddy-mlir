@@ -166,6 +166,33 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         )
         self.assertEqual(ops.op_log, ["select_sequence_position"])
 
+    def test_model_ops_selects_each_users_sequence_position(self) -> None:
+        slices = []
+
+        def slice_op(tensor, starts, ends, steps):
+            slices.append((starts, ends, steps))
+            return f"user{starts[0]}"
+
+        def concat(tensors, *, dim):
+            return (list(tensors), dim)
+
+        ops = TTNNCompatOps(
+            types.SimpleNamespace(slice=slice_op, concat=concat)
+        )
+        tensor = types.SimpleNamespace(shape=(2, 8, 16))
+
+        result = ops.select_sequence_positions(tensor, [2, 5])
+
+        self.assertEqual(result, (["user0", "user1"], 0))
+        self.assertEqual(
+            slices,
+            [
+                ([0, 2, 0], [1, 3, 16], [1, 1, 1]),
+                ([1, 5, 0], [2, 6, 16], [1, 1, 1]),
+            ],
+        )
+        self.assertEqual(ops.op_log, ["select_sequence_positions"])
+
     def test_model_ops_local_global_argmax_stays_on_device(self) -> None:
         calls = []
 

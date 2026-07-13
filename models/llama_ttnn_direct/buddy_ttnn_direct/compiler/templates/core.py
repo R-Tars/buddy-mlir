@@ -116,11 +116,18 @@ class BuddyLlama31TTNN:
                 valid_seq_len=valid_seq_len,
             )
         if valid_seq_len is not None:
-            hidden = self.ops.select_sequence_position(
-                hidden,
-                int(valid_seq_len) - 1,
-                op_name="select_last_prompt_hidden",
-            )
+            if isinstance(valid_seq_len, (list, tuple)):
+                hidden = self.ops.select_sequence_positions(
+                    hidden,
+                    [int(value) - 1 for value in valid_seq_len],
+                    op_name="select_last_prompt_hidden_by_user",
+                )
+            else:
+                hidden = self.ops.select_sequence_position(
+                    hidden,
+                    int(valid_seq_len) - 1,
+                    op_name="select_last_prompt_hidden",
+                )
             hidden = self.ops.reshape_decode_hidden_for_layer(
                 hidden,
                 op_name="reshape_prefill_selected_hidden",

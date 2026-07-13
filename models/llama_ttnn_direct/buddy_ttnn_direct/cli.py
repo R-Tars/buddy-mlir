@@ -143,8 +143,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser = add_productized_parser  # type: ignore[method-assign]
 
-    def add_prompt_runtime_args(command: argparse.ArgumentParser) -> None:
-        command.add_argument(
+    def add_prompt_runtime_args(
+        command: argparse.ArgumentParser,
+        *,
+        batch_prompts: bool = False,
+    ) -> None:
+        prompt_group = command.add_mutually_exclusive_group()
+        prompt_group.add_argument(
             "--prompt",
             default=None,
             help=(
@@ -152,6 +157,25 @@ def build_parser() -> argparse.ArgumentParser:
                 "tokenizer instead of smoke-synthesized token tensors."
             ),
         )
+        if batch_prompts:
+            prompt_group.add_argument(
+                "--input-prompts",
+                "--input_prompts",
+                type=Path,
+                default=None,
+                help=(
+                    "JSON list of prompt strings or {'prompt': ...} objects. "
+                    "The first --batch-size entries are used."
+                ),
+            )
+            command.add_argument(
+                "--instruct",
+                action="store_true",
+                help=(
+                    "Apply the tokenizer chat template with a user message and "
+                    "assistant generation prompt, matching TT-Metal instruct mode."
+                ),
+            )
         command.add_argument(
             "--tokenizer-path",
             type=Path,
@@ -952,7 +976,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Local HF model directory. Required for non-dry-run execution.",
     )
-    add_prompt_runtime_args(generate)
+    add_prompt_runtime_args(generate, batch_prompts=True)
     generate.add_argument(
         "--max-new-tokens",
         type=int,
@@ -1029,7 +1053,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Local HF model directory. Required for non-dry-run execution.",
     )
-    add_prompt_runtime_args(profile_generate)
+    add_prompt_runtime_args(profile_generate, batch_prompts=True)
     profile_generate.add_argument(
         "--max-new-tokens",
         type=int,
@@ -1920,7 +1944,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     product_profile.add_argument("--program-dir", type=Path, required=True)
     product_profile.add_argument("--model-path", type=Path, default=None)
-    add_prompt_runtime_args(product_profile)
+    add_prompt_runtime_args(product_profile, batch_prompts=True)
     product_profile.add_argument(
         "--mode",
         choices=("generate", "decode-steady"),
@@ -2391,6 +2415,8 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         program_dir=args.program_dir,
         model_path=args.model_path,
         prompt=args.prompt,
+        input_prompts=args.input_prompts,
+        instruct=args.instruct,
         tokenizer_path=args.tokenizer_path,
         max_new_tokens=args.max_new_tokens,
         layers=args.layers,
@@ -2446,6 +2472,8 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             program_dir=args.program_dir,
             model_path=args.model_path,
             prompt=args.prompt,
+            input_prompts=args.input_prompts,
+            instruct=args.instruct,
             tokenizer_path=args.tokenizer_path,
             layers=args.layers,
             prefill_len=args.prefill_len,
@@ -2470,6 +2498,8 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         program_dir=args.program_dir,
         model_path=args.model_path,
         prompt=args.prompt,
+        input_prompts=args.input_prompts,
+        instruct=args.instruct,
         tokenizer_path=args.tokenizer_path,
         max_new_tokens=args.max_new_tokens,
         layers=args.layers or 1,

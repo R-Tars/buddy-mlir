@@ -26,6 +26,8 @@ def run_profile_decode_steady(
     program_dir: str | Path,
     model_path: str | Path | None = None,
     prompt: str | None = None,
+    input_prompts: str | Path | None = None,
+    instruct: bool = False,
     tokenizer_path: str | Path | None = None,
     layers: int | None = None,
     prefill_len: int | None = None,
@@ -54,7 +56,11 @@ def run_profile_decode_steady(
     from .device import maybe_generate_device
     from .prefill import run_prefill_prompt
     from .session import build_runtime_session
-    from .tokenizer import PromptTokenizationError
+    from .tokenizer import (
+        PromptTokenizationError,
+        load_prompt_batch,
+        tokenize_prompts_for_prefill,
+    )
 
     profile_path = Path(out)
     program_root = Path(program_dir)
@@ -125,12 +131,17 @@ def run_profile_decode_steady(
         _write_report(profile_path, report)
         return report
 
-    if model_path is None or prompt is None:
+    if model_path is None or (prompt is None and input_prompts is None):
         missing = "model_path" if model_path is None else "prompt"
         report = _decode_steady_failed_report(
             base,
             status=f"missing_{missing}",
-            message=f"{missing} is required for decode-steady execution",
+            message=(
+                f"{missing} is required for decode-steady execution"
+                if missing == "model_path"
+                else "prompt or input_prompts is required for "
+                "decode-steady execution"
+            ),
         )
         _write_report(profile_path, report)
         return report
@@ -158,6 +169,32 @@ def run_profile_decode_steady(
         return report
 
     try:
+        prompt_batch = load_prompt_batch(
+            prompt=prompt,
+            input_prompts=input_prompts,
+            batch_size=batch_size,
+        )
+        prefill_tokenization = tokenize_prompts_for_prefill(
+            prompt_batch=prompt_batch,
+            prefill_len=prefill_len,
+            tokenizer_path=tokenizer_path or model_path,
+            vocab_size=prefill_plan.get("vocab_size"),
+            tokenizer_module=tokenizer_module,
+            instruct=instruct,
+            reject_truncation=input_prompts is not None,
+            padding_token_id=0 if input_prompts is not None else None,
+        )
+    except (PromptTokenizationError, ValueError) as err:
+        report = _decode_steady_failed_report(
+            base,
+            status="prompt_tokenization_error",
+            message=str(err),
+            ttnn_module=ttnn,
+        )
+        _write_report(profile_path, report)
+        return report
+
+    try:
         with maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
             setup_start = time.perf_counter()
             session = build_runtime_session(
@@ -169,7 +206,7 @@ def run_profile_decode_steady(
                 prefill_plan=prefill_plan,
                 program_dir=program_root,
                 model_path=Path(model_path),
-                prompt=prompt,
+                prompt=prompt_batch.prompts[0],
                 tokenizer_path=tokenizer_path or model_path,
                 tokenizer_module=tokenizer_module,
                 config=config,
@@ -177,6 +214,7 @@ def run_profile_decode_steady(
                 batch_size=batch_size,
                 cache_len=cache_len,
                 prefill_len=prefill_len,
+                prefill_tokenization=prefill_tokenization,
             )
             setup_ms = (time.perf_counter() - setup_start) * 1000.0
             context = session.context

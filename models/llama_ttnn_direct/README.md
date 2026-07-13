@@ -100,6 +100,7 @@ export CORRECTNESS_CONFIG="$BUDDY_REPO_ROOT/models/llama_ttnn_direct/buddy_ttnn_
 export PROGRAM="$TTNN_DIRECT_BUILD/program"
 export REPORTS="$TTNN_DIRECT_BUILD/reports"
 export RUNTIME_ARTIFACTS="$TTNN_DIRECT_BUILD/runtime_artifacts"
+export OFFICIAL_PROMPTS=/wafer/zhuxinye/tt-metal-official-repro/models/tt_transformers/demo/sample_prompts/input_data_questions_prefill_128.json
 
 mkdir -p "$PROGRAM" "$REPORTS" "$RUNTIME_ARTIFACTS"
 export PYTHONPATH="$BUDDY_REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
@@ -155,6 +156,11 @@ default. Add `--report-level summary --out "$REPORTS/generate/generate.json"`
 for a compact JSON report. `--report-level full` additionally streams
 per-step diagnostics to sibling `generate.steps.jsonl` and deduplicated
 `generate.references.jsonl` files.
+
+For an apples-to-apples batch32 input comparison with the TT-Metal demo, use
+`--input-prompts "$OFFICIAL_PROMPTS" --instruct --prefill-len 256` instead of
+`--prompt`. Prompt-file mode rejects truncation and records the source file
+hash plus per-user token lengths in the report.
 
 Profile the same workflow or post-prefill steady decode with the `profile`
 command. Detailed examples and suite semantics are in
