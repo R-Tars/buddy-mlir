@@ -5,7 +5,9 @@ import json
 import tempfile
 import types
 import unittest
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Iterator
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import build_parser
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
@@ -154,6 +156,21 @@ class BatchPromptTest(unittest.TestCase):
 
 
 def _fake_chat_tokenizer_module(calls: list[tuple[object, bool, bool]]) -> object:
+    class FakeBatchEncoding(Mapping[str, list[int]]):
+        def __init__(self, input_ids: list[int]) -> None:
+            self._input_ids = input_ids
+
+        def __getitem__(self, key: str) -> list[int]:
+            if key != "input_ids":
+                raise KeyError(key)
+            return self._input_ids
+
+        def __iter__(self) -> Iterator[str]:
+            return iter(("input_ids",))
+
+        def __len__(self) -> int:
+            return 1
+
     class FakeTokenizer:
         pad_token_id = 99
 
@@ -163,13 +180,15 @@ def _fake_chat_tokenizer_module(calls: list[tuple[object, bool, bool]]) -> objec
             *,
             add_generation_prompt: bool,
             tokenize: bool,
-        ) -> list[int]:
+        ) -> Mapping[str, list[int]]:
             calls.append((messages, add_generation_prompt, tokenize))
             prompt = messages[0]["content"]  # type: ignore[index]
-            return (
-                [10, 11, 12, 13]
-                if prompt == "alpha"
-                else [20, 21, 22, 24, 23]
+            return FakeBatchEncoding(
+                (
+                    [10, 11, 12, 13]
+                    if prompt == "alpha"
+                    else [20, 21, 22, 24, 23]
+                )
             )
 
     class AutoTokenizer:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -467,7 +468,7 @@ def _encode_prompt(tokenizer: Any, prompt: str, *, instruct: bool = False) -> li
 
 
 def _extract_input_ids(encoded: Any) -> list[int]:
-    if isinstance(encoded, dict):
+    if isinstance(encoded, Mapping):
         encoded = encoded.get("input_ids")
     if encoded is None:
         return []
