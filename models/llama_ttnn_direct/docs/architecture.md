@@ -222,6 +222,14 @@ keys include prefill length, batch size, and a configuration hash, but the
 current TTNN runtime synchronizes at the large residual add during trace
 capture; this candidate therefore remains disabled instead of falling back.
 
+The parity harness records prefetcher, global-CB, sub-device, trace, and
+sampling controls for every official profile. The corresponding published
+release does not expose the Llama prefetcher path. The newer same-commit source
+does expose it, but its fixture and command-line defaults are disabled and the
+matched benchmark does not request it. Buddy therefore keeps prefetcher and
+sub-device execution disabled unless a future matched official A/B clears the
+documented one-percent promotion threshold.
+
 Execution-graph capture is diagnostic-only. `execution-graph-diff` wraps the
 corresponding-release official trace through the parity pytest plugin and asks
 the Buddy trace session to emit TTNN graph plus Python I/O metadata. Normal

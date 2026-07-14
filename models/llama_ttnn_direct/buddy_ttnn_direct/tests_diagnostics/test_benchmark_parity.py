@@ -9,6 +9,7 @@ from unittest.mock import patch
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity import (
     _finalize_report,
+    _official_execution_features,
     _planned_commands,
     _parse_buddy_report,
     _parse_official_log,
@@ -17,6 +18,41 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity imp
 
 
 class BenchmarkParityTest(unittest.TestCase):
+    def test_official_execution_features_record_disabled_prefetcher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            current = root / "current"
+            release = root / "release"
+            current_source = (
+                current / "models/tt_transformers/demo/conftest.py"
+            )
+            release_source = (
+                release / "models/tt_transformers/demo/conftest.py"
+            )
+            current_source.parent.mkdir(parents=True)
+            release_source.parent.mkdir(parents=True)
+            current_source.write_text("use_prefetcher = False\n")
+            release_source.write_text("enable_trace = True\n")
+
+            features = _official_execution_features(
+                official_root=current,
+                release_root=release,
+            )
+
+        current_profile = features["official-greedy"]
+        self.assertFalse(current_profile["use_prefetcher"])
+        self.assertTrue(current_profile["prefetcher_supported_by_source"])
+        self.assertFalse(current_profile["global_cb_active"])
+        self.assertIsNone(current_profile["global_cb"])
+        self.assertIsNone(current_profile["sub_device_id"])
+        self.assertTrue(current_profile["trace"])
+        release_profile = features["official-release-demo"]
+        self.assertFalse(release_profile["prefetcher_supported_by_source"])
+        self.assertEqual(
+            release_profile["sampling_mode"],
+            "force argmax (temperature=0) in the release demo",
+        )
+
     def test_parse_official_exact_samples(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             log_path = Path(tmpdir) / "official.log"

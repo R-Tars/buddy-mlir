@@ -560,6 +560,11 @@ def _collect_metadata(
                 f"{release_commit} != {OFFICIAL_EXTERNAL_RELEASE_COMMIT}"
             )
 
+    official_execution_features = _official_execution_features(
+        official_root=official_root,
+        release_root=release_root,
+    )
+
     return {
         "buddy_commit": buddy_commit,
         "official_tt_metal_commit": official_commit,
@@ -567,6 +572,7 @@ def _collect_metadata(
         "buddy_tt_metal_commit": buddy_tt_metal_commit,
         "same_tt_metal_commit": same_tt_metal_commit,
         "official_release": release_metadata,
+        "official_execution_features": official_execution_features,
         "layers": layers,
         "model_config_sha256": _sha256(model_root / "config.json"),
         "input_prompts_sha256": _sha256(prompts_path),
@@ -591,9 +597,76 @@ def _collect_metadata(
         "trace_mode": {
             "official-demo": "trace",
             "official-greedy": "trace",
-            "buddy": "eager",
+            "buddy": "trace",
         },
     }
+
+
+def _official_execution_features(
+    *,
+    official_root: Path,
+    release_root: Path | None,
+) -> dict[str, dict[str, Any]]:
+    """Describe execution controls selected by the parity harness."""
+
+    current_supports_prefetcher = _source_mentions_prefetcher(official_root)
+
+    def profile(
+        *,
+        source_supports_prefetcher: bool,
+        sampling_mode: str,
+        comparison_scope: str,
+    ) -> dict[str, Any]:
+        return {
+            "use_prefetcher": False,
+            "use_prefetcher_requested_by_command": False,
+            "prefetcher_supported_by_source": source_supports_prefetcher,
+            "global_cb": None,
+            "global_cb_active": False,
+            "sub_device_id": None,
+            "trace": True,
+            "sampling_mode": sampling_mode,
+            "comparison_scope": comparison_scope,
+            "selection_reason": (
+                "the parity command omits --use_prefetcher and the official "
+                "fixture/CLI default is disabled"
+                if source_supports_prefetcher
+                else "the target source does not expose the Llama prefetcher path"
+            ),
+        }
+
+    features = {
+        "official-demo": profile(
+            source_supports_prefetcher=current_supports_prefetcher,
+            sampling_mode="official non-uniform device sampling",
+            comparison_scope="same-commit-local",
+        ),
+        "official-greedy": profile(
+            source_supports_prefetcher=current_supports_prefetcher,
+            sampling_mode="force argmax (temperature=0)",
+            comparison_scope="same-commit-local",
+        ),
+    }
+    if release_root is not None:
+        features["official-release-demo"] = profile(
+            source_supports_prefetcher=_source_mentions_prefetcher(release_root),
+            sampling_mode="force argmax (temperature=0) in the release demo",
+            comparison_scope="release-reference",
+        )
+    return features
+
+
+def _source_mentions_prefetcher(root: Path) -> bool:
+    relative_paths = (
+        Path("models/tt_transformers/demo/conftest.py"),
+        Path("models/tt_transformers/demo/simple_text_demo.py"),
+        Path("models/tt_transformers/tt/common.py"),
+    )
+    for relative_path in relative_paths:
+        source_path = root / relative_path
+        if source_path.is_file() and "use_prefetcher" in source_path.read_text():
+            return True
+    return False
 
 
 def _planned_commands(

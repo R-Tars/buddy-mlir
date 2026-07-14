@@ -87,6 +87,11 @@ The current baseline evidence is:
   this runtime, while prefill trace capture is blocked by synchronization at
   the residual add; both constraints are recorded without changing the eager
   default.
+- `p150a_goal6_prefetcher_decision_20260714.json`: Goal 6 audits all conditional
+  entry criteria. The corresponding `v0.64.0-dev20251030` release has no Llama
+  prefetcher path, the newer same-commit official source defaults it off, the
+  Goal 0 commands do not request it, and the Goal 4 graph has no global-CB or
+  sub-device path. No production prefetcher implementation is promoted.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence
