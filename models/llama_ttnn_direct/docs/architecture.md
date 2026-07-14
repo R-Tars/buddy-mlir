@@ -253,6 +253,12 @@ generate/profile runs do not create graph files. `TTNNCompatOps` semantic op
 recording is also disabled by default and enabled only by observers and smoke
 diagnostics.
 
+Custom operations remain outside the production path. After Goal 7 reaches
+M8, the Goal 8 audit finds no residual region that satisfies the required
+greater-than-one-millisecond measurement and unsupported-official-composition
+criteria. LM-head force-argmax, residual/RMSNorm, and SDPA/concat-heads remain
+composed from the matched official TTNN operations.
+
 ## Evidence Boundary
 
 Runtime reference data lives under `buddy_ttnn_direct/reference/` and may be

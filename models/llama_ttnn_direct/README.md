@@ -65,6 +65,9 @@ HF config and weights
   `v0.64.0-dev20251030` release reproduces `33.321 tokens/s/user`; Buddy
   reaches `33.938 tokens/s/user`, or `101.85%`, with `0.0139%` repetition CV.
   Goal 7 therefore reaches the M8 performance parity band.
+- Goal 8 audits the optional LM-head/argmax, residual/RMSNorm, and
+  SDPA/concat-heads custom-op candidates. None satisfies the conditional
+  bottleneck threshold, so no custom kernel is added.
 - The production greedy path follows TT-Transformers force-argmax: concatenate
   LM-head logits, untilize with multicore, then run multicore argmax. A composed
   shard-local/global reduction remains available for diagnostics but was slower

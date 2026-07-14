@@ -98,6 +98,11 @@ The current baseline evidence is:
   corresponding release reproduces `33.321 t/s/u`; Buddy measures
   `33.938 t/s/u` (`101.85%`) with `0.0139%` repetition CV, reaching M8. A
   separate batch32 trace generation run produces eight tokens for all users.
+- `p150a_goal8_custom_op_decision_20260714.json`: Goal 8 evaluates all three
+  conditional custom-op candidates after M8. Buddy already reaches `101.85%`
+  of the corresponding release, official core operation counts match, and no
+  unsupported residual region clears the required one-millisecond entry gate.
+  No custom operation or kernel is implemented.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

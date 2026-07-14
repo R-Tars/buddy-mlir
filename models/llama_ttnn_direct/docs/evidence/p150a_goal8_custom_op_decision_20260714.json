@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "goal": 8,
+  "status": "passed",
+  "recorded_at": "2026-07-14T20:05:00+08:00",
+  "decision": "do_not_implement",
+  "production_path_changed": false,
+  "purpose": "Audit the conditional custom-op entry criteria after runtime parity and final M8 evidence.",
+  "target": {
+    "device": "P150A",
+    "model": "Llama-3.1-8B-Instruct",
+    "batch_size": 32,
+    "buddy_goal7_commit": "d9cc539",
+    "buddy_tt_metal_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+    "published_release_tag": "v0.64.0-dev20251030",
+    "published_release_commit": "b76035fbdac81d8f9974976471dc60fc005e1bfb"
+  },
+  "prerequisites": {
+    "persistent_runtime_inputs_complete": true,
+    "full_decode_trace_complete": true,
+    "execution_graph_conversion_cleanup_complete": true,
+    "prefetcher_decision_complete": true,
+    "m8_performance_parity_band_reached": true
+  },
+  "performance": {
+    "goal7_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal7_final_parity_clean_release_5x100x3_20260714.json",
+    "goal7_report_sha256": "8d333aec63f6d1cf0c8c59c66bc0ba479364d7ee2311033aaff0b4ebfc7fb599",
+    "buddy_median_tokens_per_second_per_user": 33.93804828552105,
+    "corresponding_release_median_tokens_per_second_per_user": 33.320649272843475,
+    "buddy_ratio_of_corresponding_release": 1.018529021077052,
+    "buddy_repetition_cv_percent": 0.01385579890078382,
+    "buddy_mean_decode_latency_ms": 29.46329599459811,
+    "corresponding_release_mean_decode_latency_ms": 30.009866666666664
+  },
+  "graph_audit": {
+    "goal4_report": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal4_execution_graph_diff_20260714.json",
+    "goal4_report_sha256": "dc17f953992ae594317a5bbf4ea6d6ea8c2bef0a4548d5894a37430fa5ad108b",
+    "matched_core_counts": {
+      "qkv_head_split": [32, 32],
+      "paged_cache_update": [64, 64],
+      "sdpa": [32, 32],
+      "concat_heads": [32, 32],
+      "rms_norm": [65, 65],
+      "concat": [1, 1],
+      "untilize": [1, 1],
+      "argmax": [1, 1]
+    },
+    "redundant_rmsnorm_layout_ops_removed": 64,
+    "required_initial_tilize_retained": 1,
+    "post_capture_program_compiles": 0,
+    "unresolved_official_composition_gap": false
+  },
+  "candidate_audit": {
+    "fused_lm_head_force_argmax": {
+      "eligible": false,
+      "measured_argmax_region_ms": 0.8523338008671999,
+      "region_over_one_ms": false,
+      "official_composition_already_used": true,
+      "reason": "The selected full-logits untilize plus multicore argmax path is the official composition, and its isolated measured region is below the one-millisecond entry threshold."
+    },
+    "residual_add_rmsnorm": {
+      "eligible": false,
+      "rms_norm_counts_match_official": true,
+      "measured_residual_region_over_one_ms": false,
+      "reason": "No isolated residual region above one millisecond is recorded, and the RMSNorm graph count and layouts already match the official composition."
+    },
+    "sdpa_epilogue_concat_heads_bridge": {
+      "eligible": false,
+      "sdpa_counts_match_official": true,
+      "concat_heads_counts_match_official": true,
+      "unresolved_layout_bridge": false,
+      "reason": "Execution-graph cleanup found no residual SDPA-to-concat layout bridge, while the current official-op composition already exceeds corresponding-release throughput."
+    }
+  },
+  "entry_conditions": {
+    "single_residual_region_over_one_ms": false,
+    "official_existing_ops_cannot_resolve_region": false,
+    "custom_op_region_gain_at_least_ten_percent_demonstrated": false,
+    "custom_op_end_to_end_gain_at_least_one_percent_demonstrated": false,
+    "any_candidate_eligible": false
+  },
+  "rationale": [
+    "Goal 8 is conditional and M8 has already been reached against both the same-commit primary baseline and the corresponding published release.",
+    "The execution graph matches official core operation counts and no measured unsupported region satisfies the greater-than-one-millisecond prerequisite.",
+    "A custom operation would add maintenance and correctness risk without a qualifying performance hypothesis."
+  ],
+  "acceptance": {
+    "conditional_rules_evaluated": true,
+    "no_megakernel_added": true,
+    "no_custom_kernel_added": true,
+    "production_behavior_unchanged": true,
+    "passed": true
+  }
+}
