@@ -43,6 +43,7 @@ def run_profile_decode_steady(
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
+    runtime_input_mode: str | None = None,
 ) -> dict[str, Any]:
     """Measure repeated full decode iterations after one prompt prefill."""
 
@@ -50,6 +51,7 @@ def run_profile_decode_steady(
     from ..codegen.ttnn_tensorizer import TTNNTensorizationError
     from ..ttnn_compat import UnsupportedTTNNOp
     from .decode import run_decode_steady_iterations
+    from .decode_inputs import resolve_runtime_input_mode
     from .device import maybe_generate_device
     from .errors import NoTTNNDeviceError
     from .plans import decode_step_plan, prefill_plan as build_prefill_plan
@@ -64,6 +66,10 @@ def run_profile_decode_steady(
     profile_path = Path(out)
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
+    resolved_runtime_input_mode = resolve_runtime_input_mode(
+        runtime_input_mode,
+        config=config,
+    )
     num_layers = int(config["num_layers"])
     layer_count = num_layers if layers is None else int(layers)
     batch_size = int(batch_size or config["batch_size"])
@@ -112,6 +118,7 @@ def run_profile_decode_steady(
         device=device,
         device_id=device_id,
         dtype_seed=dtype_seed,
+        runtime_input_mode=resolved_runtime_input_mode,
     )
     if dry_run:
         report = {
@@ -235,6 +242,7 @@ def run_profile_decode_steady(
                 cache_len=cache_len,
                 warmup=warmup,
                 iterations=iterations,
+                runtime_input_mode=resolved_runtime_input_mode,
             )
 
             samples = list(decode_result.measured_step_ms_samples)
@@ -271,6 +279,7 @@ def run_profile_decode_steady(
             ]
             passed = not failed_checks
             measured_positions = decode_result.cache_positions[warmup:]
+            runtime_inputs = decode_result.runtime_input_report
             report = {
                 **base,
                 "status": "profiled" if passed else "profile_incomplete",
@@ -314,6 +323,30 @@ def run_profile_decode_steady(
                     decode_step_count=warmup + iterations
                 ),
                 "parameter_setup": context.parameter_setup,
+                "runtime_inputs": runtime_inputs,
+                "execution_mode": runtime_inputs["execution_mode"],
+                "runtime_input_mode": runtime_inputs["runtime_input_mode"],
+                "runtime_input_mode_requested": runtime_inputs[
+                    "runtime_input_mode_requested"
+                ],
+                "new_device_tensors_per_decode_step": runtime_inputs[
+                    "new_device_tensors_per_decode_step"
+                ],
+                "host_to_device_updates_per_decode_step": runtime_inputs[
+                    "host_to_device_updates_per_decode_step"
+                ],
+                "page_table_update_count": runtime_inputs[
+                    "page_table_update_count"
+                ],
+                "cache_position_update_count": runtime_inputs[
+                    "cache_position_update_count"
+                ],
+                "rotary_buffer_update_count": runtime_inputs[
+                    "rotary_buffer_update_count"
+                ],
+                "token_device_copy_count": runtime_inputs[
+                    "token_device_copy_count"
+                ],
                 "decode_runtime_state_input_tensor_count": (
                     decode_result.decode_runtime_state_input_tensor_count
                 ),
@@ -380,6 +413,7 @@ def _decode_steady_report_base(
     device: str,
     device_id: int,
     dtype_seed: str,
+    runtime_input_mode: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -396,6 +430,9 @@ def _decode_steady_report_base(
         "device": device,
         "device_id": device_id,
         "dtype_seed": dtype_seed,
+        "execution_mode": "eager",
+        "runtime_input_mode": runtime_input_mode,
+        "runtime_input_mode_requested": runtime_input_mode,
         "after_prefill": True,
         "warmup": warmup,
         "iterations": iterations,

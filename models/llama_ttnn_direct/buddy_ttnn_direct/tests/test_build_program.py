@@ -91,6 +91,10 @@ class BuildProgramTest(unittest.TestCase):
 
             generated_config = json.loads((out_dir / "config.json").read_text())
             self.assertEqual(generated_config["num_layers"], 2)
+            self.assertEqual(
+                generated_config["runtime_input_mode"],
+                "persistent",
+            )
             self.assertEqual(generated_config["hidden_size"], 16)
             self.assertEqual(generated_config["intermediate_size"], 32)
             self.assertEqual(

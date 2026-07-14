@@ -71,6 +71,13 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
     )
     kv_cache_template = template_config.get("kv_cache_template")
     kv_cache_policy = "paged" if kv_cache_template == "paged_kv_cache" else None
+    runtime_input_mode = str(
+        template_config.get("runtime_input_mode", "persistent")
+    )
+    if runtime_input_mode not in {"recreate", "persistent"}:
+        raise ValueError(
+            "template_config.runtime_input_mode must be recreate or persistent"
+        )
     config = {
         "schema_version": 1,
         "model_name": plan["model_name"],
@@ -79,6 +86,7 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         "batch_size": plan["batch_size"],
         "seq_len": plan["seq_len"],
         "max_cache_len": plan["max_cache_len"],
+        "runtime_input_mode": runtime_input_mode,
         "hidden_size": plan.get("hidden_size"),
         "intermediate_size": plan.get("intermediate_size"),
         "num_attention_heads": plan.get("num_attention_heads"),

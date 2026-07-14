@@ -158,6 +158,14 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertEqual(report["max_new_tokens"], 3)
             self.assertEqual(report["decode_steps"], 2)
+            self.assertEqual(report["execution_mode"], "eager")
+            self.assertEqual(report["runtime_input_mode"], "persistent")
+            self.assertEqual(
+                report["runtime_input_mode_requested"],
+                "persistent",
+            )
+            self.assertIsNone(report["new_device_tensors_per_decode_step"])
+            self.assertIsNone(report["host_to_device_updates_per_decode_step"])
             self.assertTrue(
                 report["prefill_first_token_counts_as_generated_token"]
             )

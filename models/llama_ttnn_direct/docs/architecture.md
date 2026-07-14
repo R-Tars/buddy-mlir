@@ -101,6 +101,9 @@ weights_manifest.json
 - `tensor_meta.py`: shape, dtype, and integer host-tensor helpers.
 - `tokenizer.py`: prompt tokenization and generated text decoding.
 - `inputs.py`: token, page-table, cache-position, and rotary inputs.
+- `decode_inputs.py`: A/B-selectable persistent decode input ownership. The
+  persistent path allocates page table, current position, rotary index, full
+  cos/sin caches, and rotary transformation once per runtime session.
 - `rotary.py`: HF-compatible Llama RoPE values and TTNN tensor placement.
 - `kv_cache.py`: paged KV-cache allocation and metadata.
 - `prefill.py`: prompt prefill orchestration.
@@ -173,7 +176,16 @@ The intended invariants are:
 - prefill and decode RoPE tensors are derived from the HF model configuration;
 - prefill selects the last valid prompt position before final norm and LM-head;
 - generated token tensors are handed directly to the next decode step;
+- persistent decode mode updates current position and rotary index on device,
+  gathers cos/sin from full device caches, and performs no per-step
+  `ttnn.from_torch` calls;
 - host token materialization is limited to reporting and detokenization.
+
+`runtime_input_mode` selects `recreate` or `persistent`. The P150A performance
+configuration defaults to `persistent`; `recreate` remains available as a
+matched A/B control. Generate and steady-profile reports expose per-step
+device-tensor creation, host-to-device updates, page-table updates,
+cache-position updates, rotary updates, and token device copies.
 
 ## Evidence Boundary
 

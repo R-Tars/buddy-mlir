@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-14T15:25:22+08:00",
+  "purpose": "Goal 2 persistent decode runtime inputs with matched P150A correctness and 5/50 performance evidence.",
+  "device": "p150a",
+  "device_id": 0,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "buddy_execution_head": "a6a085f",
+  "tt_metal_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "official_release": {
+    "tag": "v0.64.0-dev20251030",
+    "commit": "b76035fbdac81d8f9974976471dc60fc005e1bfb",
+    "published_tokens_per_second_per_user": 33.1,
+    "local_median_tokens_per_second_per_user": 33.5458575
+  },
+  "report": {
+    "path": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal2_persistent_inputs_20260714.json",
+    "sha256": "7f876577fa29d67e3aa7e872572b56bdcd3fc56f10e0fb846716f97109aaf43e",
+    "raw_run_root": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal2_persistent_inputs_20260714_runs"
+  },
+  "workload": {
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 256,
+    "cache_len": 1024,
+    "warmup": 5,
+    "iterations": 50,
+    "repetitions": 3,
+    "execution_mode": "eager",
+    "runtime_input_mode": "persistent",
+    "prompt_mode": "official batch prompts with instruct chat template"
+  },
+  "runtime_inputs": {
+    "new_device_tensors_per_decode_step": 0,
+    "host_to_device_updates_per_decode_step": 0,
+    "page_table_update_count": 0,
+    "token_device_copy_count": 0
+  },
+  "performance": {
+    "tokens_per_second_per_user": [
+      28.80207456258359,
+      29.294057375120975,
+      29.381550794960848
+    ],
+    "median_tokens_per_second_per_user": 29.294057375120975,
+    "coefficient_of_variation_percent": 0.8747103885382816,
+    "goal1_recreate_median_tokens_per_second_per_user": 27.6102116524882,
+    "relative_change_percent": 6.0986338816005015,
+    "ratio_of_official_release_local_median_percent": 87.32540932996265,
+    "target_90_percent_reached": false
+  },
+  "correctness": {
+    "depth1_generated_token_ids_equal": true,
+    "full_depth_generate_passed": true,
+    "all_bf16_comparisons_passed": 99,
+    "all_bf16_comparison_count": 99,
+    "all_bf16_minimum_pcc": 0.9925982836726808
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "product_tests_passed": 88,
+    "diagnostics_tests_passed": 224,
+    "diagnostics_subtests_passed": 9,
+    "per_step_device_input_target_met": true,
+    "performance_regression_at_most_1_percent": true,
+    "correctness_passed": true,
+    "persistent_promoted_to_default": true,
+    "remaining_90_percent_target_carried_to_goal3_trace": true
+  }
+}

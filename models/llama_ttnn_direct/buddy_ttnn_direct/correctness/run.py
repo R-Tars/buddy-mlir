@@ -45,6 +45,7 @@ def run_correctness(
     torch_module: Any | None = None,
     transformers_module: Any | None = None,
     tokenizer_module: Any | None = None,
+    runtime_input_mode: str | None = None,
 ) -> dict[str, Any]:
     requested_checks = _validate_checks(checks)
     if not 0.0 <= float(pcc_threshold) <= 1.0:
@@ -111,6 +112,7 @@ def run_correctness(
         torch_module=torch_module,
         tokenizer_module=tokenizer_module,
         observer=collector,
+        runtime_input_mode=runtime_input_mode,
     )
     observations = collector.to_report()
     _write_json(observations_path, observations)
@@ -163,6 +165,8 @@ def run_correctness(
             if not comparison["passed"]
         ],
         "runtime_status": generate.get("status"),
+        "runtime_input_mode": generate.get("runtime_input_mode"),
+        "runtime_inputs": generate.get("runtime_inputs"),
         "reports": {
             "generate": str(generate_report_path),
             "hf_reference": str(hf_reference_path),

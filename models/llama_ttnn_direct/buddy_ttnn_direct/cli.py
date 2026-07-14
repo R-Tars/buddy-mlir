@@ -1002,6 +1002,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="bf16",
     )
     generate.add_argument(
+        "--runtime-input-mode",
+        choices=("recreate", "persistent"),
+        default=None,
+        help="Select per-step recreation or persistent decode inputs.",
+    )
+    generate.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate generate planning without opening a device.",
@@ -1959,6 +1965,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("bf16", "fp32"),
         default="bf16",
     )
+    product_profile.add_argument(
+        "--runtime-input-mode",
+        choices=("recreate", "persistent"),
+        default=None,
+        help="Select per-step recreation or persistent decode inputs.",
+    )
     product_profile.add_argument("--dry-run", action="store_true")
     product_profile.add_argument("--generate-report", type=Path, default=None)
     product_profile.add_argument("--out", type=Path, required=True)
@@ -1994,6 +2006,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--dtype-seed",
         choices=("bf16", "fp32"),
         default="bf16",
+    )
+    product_validate.add_argument(
+        "--runtime-input-mode",
+        choices=("recreate", "persistent"),
+        default=None,
+        help="Select per-step recreation or persistent decode inputs.",
     )
     product_validate.add_argument("--require-full-depth", action="store_true")
     product_validate.add_argument(
@@ -2451,6 +2469,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         dry_run=args.dry_run,
         report_level=args.report_level,
+        runtime_input_mode=getattr(args, "runtime_input_mode", None),
     )
     _print_generated_text(report)
     if args.out is not None:
@@ -2509,6 +2528,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             iterations=args.iterations,
             after_prefill=True,
             dry_run=args.dry_run,
+            runtime_input_mode=getattr(args, "runtime_input_mode", None),
         )
         print(f"wrote steady decode profile report: {args.out}")
         if report.get("status") == "no_device":
@@ -2534,6 +2554,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         dry_run=args.dry_run,
         generate_report=args.generate_report,
+        runtime_input_mode=getattr(args, "runtime_input_mode", None),
     )
     print(f"wrote generate profile report: {args.out}")
     if report.get("status") == "no_device":
@@ -3117,6 +3138,7 @@ def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
         cache_len=args.cache_len,
         dtype_seed=args.dtype_seed,
         dry_run=True,
+        runtime_input_mode=getattr(args, "runtime_input_mode", None),
     )
     profile = run_profile_generate(
         out=profile_report,
@@ -3134,6 +3156,7 @@ def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
         dtype_seed=args.dtype_seed,
         dry_run=True,
         generate_report=underlying_generate_report,
+        runtime_input_mode=getattr(args, "runtime_input_mode", None),
     )
     report = validate_dryrun(
         artifacts=artifacts,
@@ -3186,6 +3209,7 @@ def _cmd_validate_product_runtime(args: argparse.Namespace) -> int:
             dtype_seed=args.dtype_seed,
             dry_run=False,
             generate_report=generate_report_path,
+            runtime_input_mode=getattr(args, "runtime_input_mode", None),
         )
         report = validate_performance(
             artifacts=artifacts,
@@ -3210,6 +3234,7 @@ def _cmd_validate_product_runtime(args: argparse.Namespace) -> int:
             cache_len=args.cache_len,
             dtype_seed=args.dtype_seed,
             dry_run=False,
+            runtime_input_mode=getattr(args, "runtime_input_mode", None),
         )
         if args.suite == "functional":
             report = validate_functional(
@@ -3284,6 +3309,7 @@ def _cmd_validate_correctness(
         hf_reference=args.hf_reference,
         checks=checks,
         pcc_threshold=args.pcc_threshold,
+        runtime_input_mode=getattr(args, "runtime_input_mode", None),
     )
     report["artifacts"] = artifacts
     if not artifacts.get("passed"):

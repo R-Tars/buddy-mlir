@@ -63,12 +63,14 @@ class TTNNDirectRuntimeContext:
         self.kv_cache_reinitialized_per_step = False
         self.kv_cache_update_count = 0
         self.page_table_update_count = 0
+        self.cache_position_update_count = 0
         self.rotary_state_update_count = 0
         self.generated_model_initialization_count = 0
         self.decode_token_update_count = 0
         self.decode_token_runtime_handoff = "device_tensor_direct"
         self.decode_token_host_roundtrip_per_step = False
         self.host_token_materialization_for_reporting_only = True
+        self.runtime_input_report = None
 
     def install_generated_model(
         self,
@@ -80,13 +82,24 @@ class TTNNDirectRuntimeContext:
         self.generated_model = generated_model
         self.generated_model_initialization_count += 1
 
-    def install_decode_runtime(self, runtime_state: SimpleNamespace) -> None:
+    def install_decode_runtime(
+        self,
+        runtime_state: SimpleNamespace,
+        *,
+        page_table_updated: bool = True,
+        cache_position_updated: bool = True,
+        rotary_state_updated: bool = True,
+    ) -> None:
         self.page_table = runtime_state.page_table
         self.cache_position = runtime_state.cache_position
         self.decode_runtime_state = runtime_state.decode_runtime_state
         self.rotary_state = runtime_state.rotary_runtime_state
-        self.page_table_update_count += 1
-        self.rotary_state_update_count += 1
+        self.page_table_update_count += int(page_table_updated)
+        self.cache_position_update_count += int(cache_position_updated)
+        self.rotary_state_update_count += int(rotary_state_updated)
+
+    def set_runtime_input_report(self, report: dict[str, Any]) -> None:
+        self.runtime_input_report = dict(report)
 
     def update_decode_token(self, token_ids: Any) -> None:
         self.token_ids = token_ids
@@ -131,6 +144,7 @@ class TTNNDirectRuntimeContext:
             "kv_cache_update_count": self.kv_cache_update_count,
             "decode_step_count": int(decode_step_count),
             "page_table_update_count": self.page_table_update_count,
+            "cache_position_update_count": self.cache_position_update_count,
             "rotary_state_update_count": self.rotary_state_update_count,
             "decode_token_update_count": self.decode_token_update_count,
             "decode_token_runtime_handoff": (
@@ -150,6 +164,7 @@ class TTNNDirectRuntimeContext:
             "current_page_table_shape": _shape(self.page_table),
             "current_cache_position_shape": _shape(self.cache_position),
             "current_rotary_state": self.rotary_state,
+            "runtime_inputs": self.runtime_input_report,
         }
 
 

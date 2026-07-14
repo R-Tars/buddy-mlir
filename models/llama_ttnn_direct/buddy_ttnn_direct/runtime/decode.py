@@ -6,6 +6,10 @@ import time
 from types import SimpleNamespace
 from typing import Any, Sequence
 
+from .decode_inputs import (
+    DecodeInputBuffers,
+    PersistentDecodeInputsUnsupported,
+)
 from .inputs import build_prompt_decode_runtime_state_tensors
 from .reports import append_json_line
 from .rotary import attach_decode_rotary_parameters
@@ -132,6 +136,120 @@ def build_decode_runtime_for_position(
     )
 
 
+def _initial_decode_runtime(
+    *,
+    runtime_input_mode: str,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    dtype_seed: str,
+    parameters: Any,
+    decode_plan: dict[str, Any],
+    batch_size: int,
+    cache_len: int,
+    prefill_effective_token_count: int | Sequence[int],
+    token_input: Any,
+) -> tuple[SimpleNamespace, DecodeInputBuffers | None, str | None]:
+    if runtime_input_mode == "persistent":
+        try:
+            buffers = DecodeInputBuffers(
+                ttnn=ttnn,
+                torch=torch,
+                device=device,
+                dtype_seed=dtype_seed,
+                parameters=parameters,
+                decode_plan=decode_plan,
+                batch_size=batch_size,
+                cache_len=cache_len,
+                prefill_effective_token_count=prefill_effective_token_count,
+                token_input=token_input,
+            )
+            return buffers.initial_runtime_state(), buffers, None
+        except PersistentDecodeInputsUnsupported as err:
+            fallback_reason = str(err)
+    else:
+        fallback_reason = None
+    runtime = build_decode_runtime_for_position(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+        parameters=parameters,
+        decode_plan=decode_plan,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        prefill_effective_token_count=prefill_effective_token_count,
+        generated_token_index=0,
+    )
+    return runtime, None, fallback_reason
+
+
+def _runtime_input_report(
+    *,
+    requested_mode: str,
+    decode_step_count: int,
+    persistent_inputs: DecodeInputBuffers | None,
+    fallback_reason: str | None,
+) -> dict[str, Any]:
+    if persistent_inputs is not None:
+        report = persistent_inputs.to_report()
+        report["runtime_input_mode_requested"] = requested_mode
+        return report
+    report = {
+        "execution_mode": "eager",
+        "runtime_input_mode": "recreate",
+        "runtime_input_mode_requested": requested_mode,
+        "new_device_tensors_per_decode_step": 5,
+        "host_to_device_updates_per_decode_step": 5,
+        "page_table_update_count": int(decode_step_count),
+        "cache_position_update_count": int(decode_step_count),
+        "rotary_buffer_update_count": int(decode_step_count),
+        "token_device_copy_count": 0,
+        "persistent_input_count": 0,
+        "initial_device_tensor_creation_count": 0,
+        "host_update_count": 5 * int(decode_step_count),
+        "decode_step_count": int(decode_step_count),
+        "page_table_reused": False,
+        "cache_position_update": "recreate_from_host",
+        "rotary_update": "recreate_from_host",
+        "token_update": "device_tensor_direct_handoff",
+    }
+    if fallback_reason is not None:
+        report["fallback_reason"] = fallback_reason
+    return report
+
+
+def _install_context_decode_runtime(
+    context: Any,
+    runtime: SimpleNamespace,
+    *,
+    page_table_updated: bool,
+    cache_position_updated: bool,
+    rotary_state_updated: bool,
+) -> None:
+    install = context.install_decode_runtime
+    try:
+        install(
+            runtime,
+            page_table_updated=page_table_updated,
+            cache_position_updated=cache_position_updated,
+            rotary_state_updated=rotary_state_updated,
+        )
+    except TypeError as err:
+        if "unexpected keyword argument" not in str(err):
+            raise
+        install(runtime)
+
+
+def _set_context_runtime_input_report(
+    context: Any,
+    report: dict[str, Any],
+) -> None:
+    setter = getattr(context, "set_runtime_input_report", None)
+    if callable(setter):
+        setter(report)
+
+
 def run_decode_loop(
     *,
     context: Any,
@@ -149,25 +267,34 @@ def run_decode_loop(
     report_level: str = "full",
     diagnostics_path: str | None = None,
     diagnostics_reference_path: str | None = None,
+    runtime_input_mode: str = "recreate",
 ) -> SimpleNamespace:
-    decode_runtime = build_decode_runtime_for_position(
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        parameters=context.parameters,
-        decode_plan=decode_plan,
-        batch_size=batch_size,
-        cache_len=cache_len,
-        prefill_effective_token_count=(
-            context.prefill_tokenization.get(
-                "effective_token_count_by_user",
-                context.prefill_tokenization["effective_token_count"],
-            )
-        ),
-        generated_token_index=0,
+    effective_token_counts = context.prefill_tokenization.get(
+        "effective_token_count_by_user",
+        context.prefill_tokenization["effective_token_count"],
     )
-    context.install_decode_runtime(decode_runtime)
+    decode_runtime, persistent_inputs, fallback_reason = (
+        _initial_decode_runtime(
+            runtime_input_mode=runtime_input_mode,
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            parameters=context.parameters,
+            decode_plan=decode_plan,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            prefill_effective_token_count=effective_token_counts,
+            token_input=context.token_ids,
+        )
+    )
+    _install_context_decode_runtime(
+        context,
+        decode_runtime,
+        page_table_updated=persistent_inputs is None,
+        cache_position_updated=persistent_inputs is None,
+        rotary_state_updated=persistent_inputs is None,
+    )
     decode_runtime_state = context.decode_runtime_state
     rotary_runtime_state = context.rotary_state
     tensor_conversion_count = (
@@ -285,25 +412,31 @@ def run_decode_loop(
             append_json_line(diagnostics_path, diagnostic_step)
         step_reports.append(_compact_step_report(full_step_report))
         context.update_decode_token(token)
+        if persistent_inputs is not None:
+            persistent_inputs.record_token(token)
         if step_index + 1 < decode_step_count:
-            decode_runtime = build_decode_runtime_for_position(
-                ttnn=ttnn,
-                torch=torch,
-                device=device,
-                dtype_seed=dtype_seed,
-                parameters=context.parameters,
-                decode_plan=decode_plan,
-                batch_size=batch_size,
-                cache_len=cache_len,
-                prefill_effective_token_count=(
-                    context.prefill_tokenization.get(
-                        "effective_token_count_by_user",
-                        context.prefill_tokenization["effective_token_count"],
-                    )
-                ),
-                generated_token_index=step_index + 1,
+            if persistent_inputs is not None:
+                decode_runtime = persistent_inputs.advance()
+            else:
+                decode_runtime = build_decode_runtime_for_position(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=device,
+                    dtype_seed=dtype_seed,
+                    parameters=context.parameters,
+                    decode_plan=decode_plan,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    prefill_effective_token_count=effective_token_counts,
+                    generated_token_index=step_index + 1,
+                )
+            _install_context_decode_runtime(
+                context,
+                decode_runtime,
+                page_table_updated=persistent_inputs is None,
+                cache_position_updated=True,
+                rotary_state_updated=True,
             )
-            context.install_decode_runtime(decode_runtime)
             decode_runtime_state = context.decode_runtime_state
             rotary_runtime_state = context.rotary_state
             decode_runtime_state_count += (
@@ -314,6 +447,13 @@ def run_decode_loop(
             )
             tensor_conversion_count += decode_runtime.tensor_conversion_count
 
+    runtime_input_report = _runtime_input_report(
+        requested_mode=runtime_input_mode,
+        decode_step_count=decode_step_count,
+        persistent_inputs=persistent_inputs,
+        fallback_reason=fallback_reason,
+    )
+    _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         generated_token_events=generated_token_events,
         step_reports=step_reports,
@@ -328,6 +468,7 @@ def run_decode_loop(
             else 0
         ),
         diagnostics_reference_count=len(diagnostic_reference_ids),
+        runtime_input_report=runtime_input_report,
     )
 
 
@@ -410,6 +551,7 @@ def run_decode_steady_iterations(
     cache_len: int,
     warmup: int,
     iterations: int,
+    runtime_input_mode: str = "recreate",
 ) -> SimpleNamespace:
     """Run post-prefill decode without per-op profiling or host token copies."""
 
@@ -429,16 +571,9 @@ def run_decode_steady_iterations(
             f"warmup={warmup}, iterations={iterations}, cache_len={cache_len}"
         )
 
-    warmup_samples: list[float] = []
-    measured_samples: list[float] = []
-    cache_positions: list[int] = []
-    tensor_conversion_count = 0
-    decode_runtime_state_count = 0
-    decode_rotary_runtime_count = 0
-
-    for step_index in range(total_steps):
-        step_start = time.perf_counter()
-        decode_runtime = build_decode_runtime_for_position(
+    decode_runtime, persistent_inputs, fallback_reason = (
+        _initial_decode_runtime(
+            runtime_input_mode=runtime_input_mode,
             ttnn=ttnn,
             torch=torch,
             device=device,
@@ -448,9 +583,61 @@ def run_decode_steady_iterations(
             batch_size=batch_size,
             cache_len=cache_len,
             prefill_effective_token_count=effective_token_counts,
-            generated_token_index=step_index,
+            token_input=context.token_ids,
         )
-        context.install_decode_runtime(decode_runtime)
+    )
+    _install_context_decode_runtime(
+        context,
+        decode_runtime,
+        page_table_updated=persistent_inputs is None,
+        cache_position_updated=persistent_inputs is None,
+        rotary_state_updated=persistent_inputs is None,
+    )
+    warmup_samples: list[float] = []
+    measured_samples: list[float] = []
+    cache_positions: list[int] = []
+    tensor_conversion_count = int(decode_runtime.tensor_conversion_count)
+    decode_runtime_state_count = int(
+        decode_runtime.decode_runtime_state_input_tensor_count
+    )
+    decode_rotary_runtime_count = int(
+        decode_runtime.rotary_runtime_input_tensor_count
+    )
+
+    for step_index in range(total_steps):
+        step_start = time.perf_counter()
+        if step_index > 0:
+            if persistent_inputs is not None:
+                decode_runtime = persistent_inputs.advance()
+            else:
+                decode_runtime = build_decode_runtime_for_position(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=device,
+                    dtype_seed=dtype_seed,
+                    parameters=context.parameters,
+                    decode_plan=decode_plan,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    prefill_effective_token_count=effective_token_counts,
+                    generated_token_index=step_index,
+                )
+            _install_context_decode_runtime(
+                context,
+                decode_runtime,
+                page_table_updated=persistent_inputs is None,
+                cache_position_updated=True,
+                rotary_state_updated=True,
+            )
+            tensor_conversion_count += int(
+                decode_runtime.tensor_conversion_count
+            )
+            decode_runtime_state_count += int(
+                decode_runtime.decode_runtime_state_input_tensor_count
+            )
+            decode_rotary_runtime_count += int(
+                decode_runtime.rotary_runtime_input_tensor_count
+            )
         token, kv_cache = context.generated_model.decode_step(
             context.token_ids,
             context.page_table,
@@ -464,22 +651,24 @@ def run_decode_steady_iterations(
 
         context.update_kv_cache(kv_cache)
         context.update_decode_token(token)
+        if persistent_inputs is not None:
+            persistent_inputs.record_token(token)
         position_values = decode_runtime.decode_runtime_state[
             "cache_position_values"
         ]
         cache_positions.append(max(int(value) for value in position_values))
-        tensor_conversion_count += int(decode_runtime.tensor_conversion_count)
-        decode_runtime_state_count += int(
-            decode_runtime.decode_runtime_state_input_tensor_count
-        )
-        decode_rotary_runtime_count += int(
-            decode_runtime.rotary_runtime_input_tensor_count
-        )
         if step_index < warmup:
             warmup_samples.append(latency_ms)
         else:
             measured_samples.append(latency_ms)
 
+    runtime_input_report = _runtime_input_report(
+        requested_mode=runtime_input_mode,
+        decode_step_count=total_steps,
+        persistent_inputs=persistent_inputs,
+        fallback_reason=fallback_reason,
+    )
+    _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         warmup_step_ms_samples=warmup_samples,
         measured_step_ms_samples=measured_samples,
@@ -489,6 +678,7 @@ def run_decode_steady_iterations(
         decode_rotary_runtime_input_tensor_count=decode_rotary_runtime_count,
         final_token=context.token_ids,
         final_kv_cache=context.kv_cache,
+        runtime_input_report=runtime_input_report,
     )
 
 

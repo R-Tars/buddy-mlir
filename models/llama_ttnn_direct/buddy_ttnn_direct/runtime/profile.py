@@ -314,6 +314,26 @@ def profile_generate_from_generate_report(
         "decode_loop_runtime_owned": generate.get("decode_loop_runtime_owned"),
         "runtime_context": generate.get("runtime_context"),
         "parameter_setup": generate.get("parameter_setup"),
+        "runtime_inputs": generate.get("runtime_inputs"),
+        "execution_mode": generate.get("execution_mode"),
+        "runtime_input_mode": generate.get("runtime_input_mode"),
+        "runtime_input_mode_requested": generate.get(
+            "runtime_input_mode_requested"
+        ),
+        "new_device_tensors_per_decode_step": generate.get(
+            "new_device_tensors_per_decode_step"
+        ),
+        "host_to_device_updates_per_decode_step": generate.get(
+            "host_to_device_updates_per_decode_step"
+        ),
+        "page_table_update_count": generate.get("page_table_update_count"),
+        "cache_position_update_count": generate.get(
+            "cache_position_update_count"
+        ),
+        "rotary_buffer_update_count": generate.get(
+            "rotary_buffer_update_count"
+        ),
+        "token_device_copy_count": generate.get("token_device_copy_count"),
         "decode_token_runtime_handoff": generate.get(
             "decode_token_runtime_handoff"
         ),
@@ -413,6 +433,7 @@ def run_profile_generate(
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
+    runtime_input_mode: str | None = None,
 ) -> dict[str, Any]:
     from .generate import run_generate
 
@@ -442,6 +463,7 @@ def run_profile_generate(
         ttnn_module=ttnn_module,
         torch_module=torch_module,
         tokenizer_module=tokenizer_module,
+        runtime_input_mode=runtime_input_mode,
     )
     report = profile_generate_from_generate_report(
         generate_payload,
@@ -475,6 +497,7 @@ def run_profile_decode_steady(
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
+    runtime_input_mode: str | None = None,
 ) -> dict[str, Any]:
     from .steady_profile import run_profile_decode_steady as run
 
@@ -500,6 +523,7 @@ def run_profile_decode_steady(
         ttnn_module=ttnn_module,
         torch_module=torch_module,
         tokenizer_module=tokenizer_module,
+        runtime_input_mode=runtime_input_mode,
     )
 
 def _profile_generate_sections(

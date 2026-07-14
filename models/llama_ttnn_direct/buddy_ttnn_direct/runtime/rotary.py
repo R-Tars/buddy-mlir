@@ -234,6 +234,86 @@ def build_decode_rotary_host_tensors(
     )
 
 
+def build_decode_rotary_cache_host_tensors(
+    *,
+    torch: Any,
+    cache_len: int,
+    head_dim: int,
+    theta: float,
+    scaling: dict[str, Any] | None,
+    dtype_seed: str,
+) -> SimpleNamespace:
+    if cache_len <= 0:
+        raise RotaryConfigurationError("decode cache length must be positive")
+    cos, sin = _cos_sin_values(
+        positions=range(cache_len),
+        head_dim=head_dim,
+        theta=theta,
+        scaling=scaling,
+    )
+    return SimpleNamespace(
+        cos=_named_tensor(
+            torch,
+            cos,
+            dtype_seed=dtype_seed,
+            name="runtime.persistent.decode_rotary_cos_cache",
+        ),
+        sin=_named_tensor(
+            torch,
+            sin,
+            dtype_seed=dtype_seed,
+            name="runtime.persistent.decode_rotary_sin_cache",
+        ),
+    )
+
+
+def install_shared_rotary_parameters(
+    *,
+    parameters: Any,
+    cos_matrix: Any,
+    sin_matrix: Any,
+    transformation_matrix: Any,
+    layer_count: int,
+) -> None:
+    _install_shared_rotary(
+        parameters,
+        SimpleNamespace(
+            cos_matrix=cos_matrix,
+            sin_matrix=sin_matrix,
+            transformation_matrix=transformation_matrix,
+        ),
+        layer_count,
+    )
+
+
+def decode_rotary_cos_sin_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+    head_dim: int,
+) -> Any | None:
+    return _rotary_cos_sin_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+
+
+def decode_rotary_transform_memory_config(
+    ttnn: Any,
+    device: Any,
+    *,
+    batch_size: int,
+) -> Any | None:
+    return _rotary_transform_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+    )
+
+
 def _cos_sin_values(
     *,
     positions: Any,

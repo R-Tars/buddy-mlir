@@ -15,6 +15,7 @@ from .decode import (
     materialize_generate_token_events as _materialize_generate_token_events,
     run_decode_loop,
 )
+from .decode_inputs import resolve_runtime_input_mode
 from .device import maybe_generate_device
 from .errors import NoTTNNDeviceError
 from .plans import decode_step_plan, prefill_plan as build_prefill_plan
@@ -66,6 +67,7 @@ def run_generate(
     tokenizer_module: Any | None = None,
     observer: Any | None = None,
     report_level: str | None = None,
+    runtime_input_mode: str | None = None,
 ) -> dict[str, Any]:
     resolved_report_level = _resolve_report_level(
         out=out,
@@ -77,6 +79,10 @@ def run_generate(
         _diagnostics_reference_path(diagnostics_path).unlink(missing_ok=True)
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
+    resolved_runtime_input_mode = resolve_runtime_input_mode(
+        runtime_input_mode,
+        config=config,
+    )
     layer_count = int(layers)
     token_count = int(max_new_tokens)
     num_layers = int(config["num_layers"])
@@ -129,6 +135,10 @@ def run_generate(
             dtype_seed=dtype_seed,
             decode_plan=decode_plan,
             prefill_plan=prefill_plan,
+        )
+        _install_planned_runtime_input_report(
+            report,
+            resolved_runtime_input_mode,
         )
         return _finalize_report(
             report,
@@ -452,6 +462,7 @@ def run_generate(
                     if diagnostics_path is not None
                     else None
                 ),
+                runtime_input_mode=resolved_runtime_input_mode,
             )
             generated_token_events = decode_loop.generated_token_events
             step_reports = decode_loop.step_reports
@@ -523,6 +534,10 @@ def run_generate(
                 ttnn_module=ttnn,
             )
             report["cache_capacity"] = cache_capacity
+            _install_runtime_input_report(
+                report,
+                decode_loop.runtime_input_report,
+            )
             observation_summary = getattr(observer, "summary", None)
             if callable(observation_summary):
                 report["correctness_observations"] = observation_summary()
@@ -611,6 +626,47 @@ def run_generate(
         report_level=resolved_report_level,
         diagnostics_path=diagnostics_path,
     )
+
+
+def _install_runtime_input_report(
+    report: dict[str, Any],
+    runtime_inputs: dict[str, Any],
+) -> None:
+    report["runtime_inputs"] = dict(runtime_inputs)
+    for name in (
+        "execution_mode",
+        "runtime_input_mode",
+        "runtime_input_mode_requested",
+        "new_device_tensors_per_decode_step",
+        "host_to_device_updates_per_decode_step",
+        "page_table_update_count",
+        "cache_position_update_count",
+        "rotary_buffer_update_count",
+        "token_device_copy_count",
+    ):
+        report[name] = runtime_inputs.get(name)
+    parameter_setup = report.get("parameter_setup")
+    if isinstance(parameter_setup, dict):
+        parameter_setup["runtime_inputs"] = dict(runtime_inputs)
+
+
+def _install_planned_runtime_input_report(
+    report: dict[str, Any],
+    runtime_input_mode: str,
+) -> None:
+    runtime_inputs = {
+        "execution_mode": "eager",
+        "runtime_input_mode": runtime_input_mode,
+        "runtime_input_mode_requested": runtime_input_mode,
+        "new_device_tensors_per_decode_step": None,
+        "host_to_device_updates_per_decode_step": None,
+        "page_table_update_count": None,
+        "cache_position_update_count": None,
+        "rotary_buffer_update_count": None,
+        "token_device_copy_count": None,
+        "status": "planned",
+    }
+    _install_runtime_input_report(report, runtime_inputs)
 
 
 def _resolve_report_level(
