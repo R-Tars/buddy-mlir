@@ -23,6 +23,15 @@ from .runtime_inputs import (
     PromptTokenizationError,
     tokenize_prompt_for_decode,
 )
+from .runtime.model_loader import (
+    load_generated_model as _runtime_load_generated_model,
+    to_namespace as _runtime_to_namespace,
+)
+from .runtime.tensor_meta import (
+    runtime_int_tensor as _runtime_runtime_int_tensor,
+    tensor_dtype as _runtime_tensor_dtype,
+    tensor_shape as _runtime_tensor_shape,
+)
 from .smoke_mlp import (
     NO_TTNN_DEVICE_MESSAGE,
     NoTTNNDeviceError,
@@ -706,6 +715,13 @@ def _shape(tensor: Any) -> list[int] | None:
 def _dtype(tensor: Any) -> str | None:
     dtype = getattr(tensor, "dtype", None)
     return str(dtype) if dtype is not None else None
+
+
+_dtype = _runtime_tensor_dtype
+_load_generated_model = _runtime_load_generated_model
+_runtime_int_tensor = _runtime_runtime_int_tensor
+_shape = _runtime_tensor_shape
+_to_namespace = _runtime_to_namespace
 
 
 def _dry_run_reference(kind: str) -> dict[str, Any]:

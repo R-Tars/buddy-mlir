@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-14T14:39:03+08:00",
+  "purpose": "Goal 1 product/diagnostics dependency inversion with a matched eager steady-decode regression gate.",
+  "device": "p150a",
+  "device_id": 0,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "buddy_execution_head": "681f01091117be43f7241d639f749084801cac08",
+  "tt_metal_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "report": {
+    "path": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal1_dependency_inversion_20260714.json",
+    "sha256": "c28072a69c3d7014ded6bab96d57d406a0b742cd1d066f03aa6b344acfd065f1",
+    "raw_run_root": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal1_dependency_inversion_20260714_runs"
+  },
+  "workload": {
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 256,
+    "cache_len": 1024,
+    "page_block_size": 32,
+    "warmup": 5,
+    "iterations": 50,
+    "repetitions": 3,
+    "sampling": "force argmax",
+    "execution_mode": "eager",
+    "prompt_mode": "official batch prompts with instruct chat template",
+    "input_prompts_sha256": "07d8fc773d27f33c8c114bca30bca78cbbf3bf77a7b40550cd140f8533a1e2c2",
+    "model_config_sha256": "808a9453009fa1a70dd2b820c4915b81b9fa5496806df9ce32723327c944c529"
+  },
+  "performance": {
+    "tokens_per_second_per_user": [
+      27.6102116524882,
+      27.961005081491816,
+      27.22347303782578
+    ],
+    "median_tokens_per_second_per_user": 27.6102116524882,
+    "coefficient_of_variation_percent": 1.09143,
+    "pre_change_median_tokens_per_second_per_user": 27.342235482369325,
+    "relative_change_percent": 0.980081,
+    "regression_percent": -0.980081
+  },
+  "boundaries": {
+    "runtime_imports_smoke": false,
+    "runtime_imports_decode_loop": false,
+    "runtime_imports_profile_template": false,
+    "product_reports_import_diagnostics": false,
+    "cli_top_level_imports_smoke": false,
+    "visible_product_commands": [
+      "build",
+      "diagnose",
+      "generate",
+      "inspect",
+      "profile",
+      "validate"
+    ],
+    "argparse_private_choices_hack_removed": true,
+    "diagnostics_cli_lazy_loaded": true
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "product_tests_passed": 82,
+    "diagnostics_tests_passed": 224,
+    "diagnostics_subtests_passed": 9,
+    "all_three_benchmark_runs_passed": true,
+    "raw_latency_samples_saved": true,
+    "performance_regression_at_most_1_percent": true,
+    "functional_change_expected": false
+  }
+}

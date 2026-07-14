@@ -27,6 +27,17 @@ from .runtime_inputs import (
 from .runtime.kv_cache import (
     build_prompt_decode_kv_cache_tensors as _build_prompt_decode_kv_cache_tensors,
 )
+from .runtime.inputs import (
+    build_prompt_decode_runtime_state_tensors as _runtime_decode_state_tensors,
+)
+from .runtime.plans import (
+    decode_op_sequence as _runtime_decode_op_sequence,
+    decode_output_kind as _runtime_decode_output_kind,
+    decode_step_plan as _runtime_decode_step_plan,
+    embedding_weight_shape as _runtime_embedding_weight_shape,
+    lm_head_split_shapes as _runtime_lm_head_split_shapes,
+    norm_weight_shape as _runtime_norm_weight_shape,
+)
 from .smoke_attention_primitive import (
     _decode_head_shape,
     _decode_hidden_shape,
@@ -2007,6 +2018,9 @@ def _build_prompt_decode_runtime_state_tensors(
     )
 
 
+_build_prompt_decode_runtime_state_tensors = _runtime_decode_state_tensors
+
+
 def _build_prompt_decode_token_ids(
     *,
     ttnn: Any,
@@ -2435,6 +2449,14 @@ def _norm_weight_shape(hidden_size: int) -> list[int]:
     if hidden_size % 32 == 0:
         return [1, 1, hidden_size // 32, 32]
     return [1, 1, 1, hidden_size]
+
+
+_decode_op_sequence = _runtime_decode_op_sequence
+_decode_output_kind = _runtime_decode_output_kind
+_decode_step_plan = _runtime_decode_step_plan
+_embedding_weight_shape = _runtime_embedding_weight_shape
+_lm_head_split_shapes = _runtime_lm_head_split_shapes
+_norm_weight_shape = _runtime_norm_weight_shape
 
 
 def _base_report(

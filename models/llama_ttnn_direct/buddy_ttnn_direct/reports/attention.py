@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..smoke_attention_layer import ATTENTION_LAYER_OPS
-from ..smoke_attention_primitive import ATTENTION_PRIMITIVES
+from .contracts import ATTENTION_LAYER_OPS, ATTENTION_PRIMITIVES
 from .runtime import (
     observed_ops_cover_planned as _observed_ops_cover_planned,
     shape_dict_has_int_lists as _shape_dict_has_int_lists,

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from ..codegen.ttnn_tensorizer import LINEAR_WEIGHT_TRANSFORM
-from ..smoke_single_layer_decode import DECODE_PARAMETER_ROLES
+from ..runtime.plans import DECODE_PARAMETER_ROLES
 from .attention import (
     ATTENTION_LAYER_OPS,
     ATTENTION_PRIMITIVES,

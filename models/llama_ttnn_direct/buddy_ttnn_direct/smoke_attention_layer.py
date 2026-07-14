@@ -34,19 +34,9 @@ from .smoke_decode_shell import (
 )
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .runtime_environment import collect_ttnn_environment
+from .reports.contracts import ATTENTION_LAYER_OPS
 from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
-
-ATTENTION_LAYER_OPS = [
-    "qkv_linear",
-    "nlp_create_qkv_heads_decode",
-    "rotary_embedding_decode",
-    "paged_update_cache.k",
-    "paged_update_cache.v",
-    "paged_scaled_dot_product_attention_decode",
-    "nlp_concat_heads_decode",
-    "o_proj_linear",
-]
 
 ATTENTION_LAYER_EXPECTED_OBSERVED_OPS = [
     "linear",

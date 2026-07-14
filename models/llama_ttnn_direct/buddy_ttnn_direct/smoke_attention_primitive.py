@@ -21,18 +21,9 @@ from .smoke_decode_shell import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .runtime_inputs import build_decode_runtime_state
+from .reports.contracts import ATTENTION_PRIMITIVES
 from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
-
-ATTENTION_PRIMITIVES = (
-    "qkv_linear",
-    "nlp_create_qkv_heads_decode",
-    "rotary_embedding_decode",
-    "paged_update_cache",
-    "paged_scaled_dot_product_attention_decode",
-    "nlp_concat_heads_decode",
-    "o_proj_linear",
-)
 
 PRIMITIVE_EXPECTED_OBSERVED_OPS = {
     "qkv_linear": ["linear"],

@@ -6,12 +6,19 @@ from typing import Any
 
 from .decode import prefill_token_direct_handoff
 from .inputs import build_decode_runtime_state
-from ..smoke_decode_shell import _dtype, _runtime_int_tensor, _shape
-from ..smoke_prefill import _observed_cache_population, _prefill_reference
-from ..smoke_single_layer_decode import (
-    _generated_observed_op_sequence,
-)
 from .rotary import attach_prefill_rotary_parameters
+from .structural import (
+    generated_observed_op_sequence,
+    observed_cache_population,
+    prefill_reference,
+)
+from .tensor_meta import runtime_int_tensor, tensor_dtype, tensor_shape
+
+
+# Compatibility names remain patchable for existing diagnostic tests.
+_generated_observed_op_sequence = generated_observed_op_sequence
+_observed_cache_population = observed_cache_population
+_prefill_reference = prefill_reference
 
 
 def build_prefill_page_table_tensor(
@@ -42,7 +49,7 @@ def build_prefill_page_table_tensor(
     if layout is not None:
         kwargs["layout"] = layout
     page_table = ttnn.from_torch(
-        _runtime_int_tensor(
+        runtime_int_tensor(
             torch,
             runtime_state.page_table,
             name="prefill_page_table",
@@ -77,7 +84,7 @@ def prefill_token_ids_tensor(
     if layout is not None:
         kwargs["layout"] = layout
     return ttnn.from_torch(
-        _runtime_int_tensor(torch, token_ids, name="prefill_prompt_token_ids"),
+        runtime_int_tensor(torch, token_ids, name="prefill_prompt_token_ids"),
         **kwargs,
     )
 
@@ -108,14 +115,14 @@ def run_prefill_prompt(
         synchronize(device)
     latency_ms = (time.perf_counter() - prefill_start) * 1000.0
     output_shapes = {
-        "token": _shape(prefill_token),
-        "key_cache": _shape(kv_cache[0].k),
-        "value_cache": _shape(kv_cache[0].v),
+        "token": tensor_shape(prefill_token),
+        "key_cache": tensor_shape(kv_cache[0].k),
+        "value_cache": tensor_shape(kv_cache[0].v),
         "kv_cache_layers": [
             {
                 "layer_id": layer_id,
-                "key_cache": _shape(layer_cache.k),
-                "value_cache": _shape(layer_cache.v),
+                "key_cache": tensor_shape(layer_cache.k),
+                "value_cache": tensor_shape(layer_cache.v),
             }
             for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
         ],
@@ -131,8 +138,8 @@ def run_prefill_prompt(
         output_shapes=output_shapes,
         output={
             "kind": "token",
-            "shape": _shape(prefill_token),
-            "dtype": _dtype(prefill_token),
+            "shape": tensor_shape(prefill_token),
+            "dtype": tensor_dtype(prefill_token),
         },
         observed_ops=_generated_observed_op_sequence(
             context.generated_model,
@@ -156,7 +163,7 @@ def run_prefill_prompt(
         "cache_position_value": (
             context.prefill_tokenization["effective_token_count"] - 1
         ),
-        "token_shape": _shape(first_token.token_ids),
+        "token_shape": tensor_shape(first_token.token_ids),
     }
     if len(set(prompt_token_counts)) > 1:
         prefill_event["cache_position_value"] = None

@@ -7,29 +7,14 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+from ..reports.contracts import (
+    PROFILE_LAYER_LATENCY_KEYS,
+    PROFILE_SECTION_LATENCY_KEYS,
+)
 from ..smoke_single_layer_decode import profile_decode_step
 
 
 DEFAULT_DECODE_DEPTH_TARGETS = (1, 2, 4, "full")
-
-PROFILE_SECTION_LATENCY_KEYS = (
-    "embedding_ms",
-    "final_norm_ms",
-    "lm_head_ms",
-    "argmax_ms",
-    "host_copy_ms",
-)
-
-PROFILE_LAYER_LATENCY_KEYS = (
-    "rms_norm_attn_ms",
-    "attention_ms",
-    "residual_add_attn_ms",
-    "rms_norm_mlp_ms",
-    "mlp_ms",
-    "residual_add_mlp_ms",
-    "total_ms",
-)
-
 
 def run_decode_depth_sweep(
     *,

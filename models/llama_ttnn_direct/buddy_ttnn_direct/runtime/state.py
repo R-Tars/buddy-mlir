@@ -8,11 +8,6 @@ from ..codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
     to_ttnn_parameters,
 )
-from ..smoke_single_layer_decode import (
-    DECODE_PARAMETER_ROLES,
-    _materialization_summary,
-    _tensorization_summary,
-)
 from .context import TTNNDirectRuntimeContext
 from .kv_cache import build_prompt_decode_kv_cache_tensors
 from .prefill import (
@@ -20,6 +15,8 @@ from .prefill import (
     build_prefill_page_table_tensor,
     prefill_token_ids_tensor,
 )
+from .model_setup import materialization_summary, tensorization_summary
+from .plans import DECODE_PARAMETER_ROLES
 from .tokenizer import PrefillPromptTokenization, tokenize_prompt_for_prefill
 
 
@@ -57,7 +54,7 @@ def build_generate_state(
         tensor_backend="torch",
         layers=range(int(decode_plan["layers"])),
     )
-    materialization_summary = _materialization_summary(host_params)
+    materialization_report = materialization_summary(host_params)
     result = to_ttnn_parameters(
         host_params,
         device,
@@ -131,8 +128,8 @@ def build_generate_state(
             prefill_rotary.tensor_conversion_count
         ),
         parameter_setup={
-            "materialization": materialization_summary,
-            "tensorization": _tensorization_summary(result.report),
+            "materialization": materialization_report,
+            "tensorization": tensorization_summary(result.report),
             "synthetic_runtime_input_tensor_count": 0,
             "synthetic_rotary_tensor_count": 0,
             "synthetic_kv_cache_tensor_count": 0,

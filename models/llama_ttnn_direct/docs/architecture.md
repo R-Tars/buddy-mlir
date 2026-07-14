@@ -96,6 +96,9 @@ weights_manifest.json
 `buddy_ttnn_direct/runtime/` owns the product generate path:
 
 - `context.py`: `TTNNDirectRuntimeContext` and persistent runtime ownership.
+- `plans.py`: canonical prefill/decode execution plans shared with diagnostics.
+- `model_loader.py`: generated Python model loading and config namespaces.
+- `tensor_meta.py`: shape, dtype, and integer host-tensor helpers.
 - `tokenizer.py`: prompt tokenization and generated text decoding.
 - `inputs.py`: token, page-table, cache-position, and rotary inputs.
 - `rotary.py`: HF-compatible Llama RoPE values and TTNN tensor placement.
@@ -113,7 +116,7 @@ re-exports the public runtime entry points.
 ### Reports and validation
 
 `buddy_ttnn_direct/reports/` owns report-only logic. The modules do not open a
-device and do not execute model stages.
+device, execute model stages, or import `buddy_ttnn_direct/diagnostics/`.
 
 - `schema.py`: shared field, path, number, and acceptance helpers.
 - `validation.py`: product suites and retained legacy acceptance assembly.
@@ -139,8 +142,8 @@ The product CLI uses five compact suites:
 - `correctness`: HF top-token, logits, hidden-state, and sampled prefill
   KV-cache comparisons against observations captured from P150A.
 
-Legacy phase gates remain reachable only through hidden compatibility commands
-and diagnostics. Their orchestration lives in
+Legacy phase gates remain available to diagnostics, but they are not registered
+as hidden top-level commands. Their orchestration lives in
 `diagnostics/validation_workflow.py`; the package-root `validation.py` is a
 compatibility module alias. Importing or parsing the product CLI does not load
 the legacy workflow.
@@ -150,9 +153,11 @@ the legacy workflow.
 Smoke, sweep, layered autotune, and legacy decode workflows are development
 tools. The visible CLI exposes them only through `diagnose --stage ...`; their
 tests live under `tests_diagnostics/` and are excluded from the default product
-suite. Current autotune runs one axis at a time with isolated post-prefill
+suite. `diagnostics/cli.py` is loaded only when `diagnose` executes. Current
+autotune runs one axis at a time with isolated post-prefill
 steady-decode subprocesses. Phase-era Cartesian search is quarantined under
-`future/historical_search/` and is loaded only by hidden compatibility paths.
+`future/historical_search/` and is loaded only by diagnostics compatibility
+paths.
 
 ## Runtime Ownership
 
@@ -187,3 +192,8 @@ embedding a private copy of the compatibility layer.
 Legacy validation remains available under diagnostics for compatibility but
 is not part of product validation or default tests. It can be simplified
 without changing the visible command or report contracts described here.
+
+The product parser registers exactly `build`, `generate`, `profile`,
+`validate`, `inspect`, and `diagnose`. Product runtime modules must not import
+`smoke_*`, `decode_loop`, or `profile_template`; boundary tests enforce this
+rule along with the reports-to-diagnostics prohibition.

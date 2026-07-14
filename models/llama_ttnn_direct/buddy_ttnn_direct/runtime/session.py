@@ -4,9 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from ..smoke_decode_shell import _to_namespace
-from ..smoke_single_layer_decode import _load_generated_model
 from .config_runtime import realize_ttnn_config
+from .model_loader import load_generated_model, to_namespace
 from .state import build_generate_state
 from .tokenizer import PrefillPromptTokenization
 
@@ -48,7 +47,7 @@ def build_runtime_session(
         tokenizer_module=tokenizer_module,
         prefill_tokenization=prefill_tokenization,
     )
-    generated = _load_generated_model(program_dir / "model.py", ttnn)
+    generated = load_generated_model(program_dir / "model.py", ttnn)
     runtime_config = realize_ttnn_config(config, ttnn)
     runtime_config["num_layers"] = layer_count
     runtime_config["batch_size"] = batch_size
@@ -59,7 +58,7 @@ def build_runtime_session(
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=context.parameters,
-        config=_to_namespace(runtime_config),
+        config=to_namespace(runtime_config),
         observer=observer,
     )
     context.install_generated_model(

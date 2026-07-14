@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Sequence
+
+from .tensor_meta import runtime_int_tensor
 
 
 @dataclass(frozen=True)
@@ -147,6 +150,61 @@ def build_decode_runtime_state(
         cache_position_values=cache_position_values,
         page_table=page_table,
         cache_position=cache_position_values,
+    )
+
+
+def build_prompt_decode_runtime_state_tensors(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    batch_size: int,
+    cache_len: int,
+    page_block_size: int,
+    prompt_token_count: int | list[int],
+) -> SimpleNamespace:
+    runtime_state = build_decode_runtime_state(
+        batch_size=batch_size,
+        cache_len=cache_len,
+        page_block_size=page_block_size,
+        prompt_token_count=prompt_token_count,
+    )
+    kwargs = {"device": device}
+    memory_config = getattr(ttnn, "DRAM_MEMORY_CONFIG", None)
+    if memory_config is not None:
+        kwargs["memory_config"] = memory_config
+    dtype = getattr(
+        ttnn,
+        "int32",
+        getattr(ttnn, "uint32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    page_table = ttnn.from_torch(
+        runtime_int_tensor(torch, runtime_state.page_table, name="runtime_page_table"),
+        **kwargs,
+    )
+    cache_position = ttnn.from_torch(
+        runtime_int_tensor(
+            torch,
+            runtime_state.cache_position,
+            name="runtime_cache_position",
+        ),
+        **kwargs,
+    )
+    report = runtime_state.to_report()
+    report["memory_config"] = "dram"
+    report["ttnn_memory_config"] = (
+        None if memory_config is None else str(memory_config)
+    )
+    return SimpleNamespace(
+        page_table=page_table,
+        cache_position=cache_position,
+        tensor_conversion_count=2,
+        decode_runtime_state=report,
     )
 
 

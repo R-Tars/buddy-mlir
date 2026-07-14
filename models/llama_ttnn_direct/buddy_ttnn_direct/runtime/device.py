@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..smoke_mlp import NoTTNNDeviceError
+from .errors import NoTTNNDeviceError
 
 
 class GenerateDeviceSession:

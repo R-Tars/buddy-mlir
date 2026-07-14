@@ -6,20 +6,28 @@ import time
 from types import SimpleNamespace
 from typing import Any, Sequence
 
-from ..decode_loop import (
-    _loop_generated_token_ids,
-    _loop_input_shapes,
-    _loop_output_shapes,
-)
-from ..smoke_decode_shell import _dtype, _shape
-from ..smoke_single_layer_decode import (
-    _build_prompt_decode_runtime_state_tensors,
-    _decode_step_reference,
-    _generated_observed_op_sequence,
-    _time_decode_step,
-)
+from .inputs import build_prompt_decode_runtime_state_tensors
 from .reports import append_json_line
 from .rotary import attach_decode_rotary_parameters
+from .structural import (
+    decode_step_reference,
+    generated_observed_op_sequence,
+    loop_generated_token_ids,
+    loop_input_shapes,
+    loop_output_shapes,
+)
+from .tensor_meta import tensor_dtype, tensor_shape
+
+
+# Compatibility names remain patchable for existing diagnostic tests.
+_build_prompt_decode_runtime_state_tensors = (
+    build_prompt_decode_runtime_state_tensors
+)
+_decode_step_reference = decode_step_reference
+_generated_observed_op_sequence = generated_observed_op_sequence
+_loop_generated_token_ids = loop_generated_token_ids
+_loop_input_shapes = loop_input_shapes
+_loop_output_shapes = loop_output_shapes
 
 
 def prefill_token_direct_handoff(*, prefill_token: Any) -> SimpleNamespace:
@@ -31,6 +39,30 @@ def prefill_token_direct_handoff(*, prefill_token: Any) -> SimpleNamespace:
         runtime_handoff="device_tensor_direct",
         runtime_host_roundtrip=False,
     )
+
+
+def _time_decode_step(
+    *,
+    ttnn: Any,
+    model: Any,
+    device: Any,
+    token_ids: Any,
+    page_table: Any,
+    cache_position: Any,
+    kv_cache: Any,
+) -> tuple[Any, Any, float]:
+    start = time.perf_counter()
+    token, kv_cache = model.decode_step(
+        token_ids,
+        page_table,
+        cache_position,
+        kv_cache,
+    )
+    synchronize = getattr(ttnn, "synchronize_device", None)
+    if callable(synchronize):
+        synchronize(device)
+    latency_ms = (time.perf_counter() - start) * 1000.0
+    return token, kv_cache, latency_ms
 
 
 def build_decode_runtime_for_position(
@@ -175,8 +207,8 @@ def run_decode_loop(
         )
         output = {
             "kind": "token",
-            "shape": _shape(token),
-            "dtype": _dtype(token),
+            "shape": tensor_shape(token),
+            "dtype": tensor_dtype(token),
             "repr": repr(token),
         }
         token_event = {
@@ -188,7 +220,7 @@ def run_decode_loop(
                 "cache_position_value"
             ),
             "page_table_shape": input_shapes.get("page_table"),
-            "token_shape": _shape(token),
+            "token_shape": tensor_shape(token),
         }
         position_values = decode_runtime_state.get("cache_position_values")
         if position_values is not None and len(set(position_values)) > 1:

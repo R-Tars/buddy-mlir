@@ -59,6 +59,12 @@ The current baseline evidence is:
   `27.342 t/s/u`. Buddy is `126.25%` of the same-commit official result but
   `81.51%` of the cross-version published release; only the former is a matched
   parity ratio. All profiles pass the three-run `CV <= 1.5%` gate.
+- `p150a_goal1_dependency_inversion_evidence_20260714.json`: Goal 1 removes
+  product runtime dependencies on smoke/legacy modules and the reports-to-
+  diagnostics dependency. Its matched eager 5/50 regression run measures a
+  `27.610 t/s/u` median across three repetitions (`CV 1.09%`), a `0.98%`
+  increase over the pre-change median, so the no-more-than-1% regression gate
+  passes.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

@@ -16,9 +16,11 @@ from .tensorization import (
     tensorized_physical_shape_mismatches,
 )
 from .validation import (
+    final_acceptance_gate_matrix,
     model_end_to_end_readiness,
     real_decode_acceptance_scope,
 )
+from .runtime_diagnostics import real_decode_runtime_diagnostics
 
 
 def artifact_index(paths: dict[str, Path]) -> dict[str, str]:
@@ -276,6 +278,33 @@ def candidate_reference_status_counts(
     return counts
 
 
+def _prefill_cache_population_diagnostics(
+    cache_population: Any,
+) -> list[dict[str, Any]]:
+    if not isinstance(cache_population, list):
+        return []
+    diagnostics = []
+    for entry in cache_population:
+        if not isinstance(entry, dict):
+            continue
+        diagnostics.append(
+            {
+                "layer_id": entry.get("layer_id"),
+                "status": entry.get("status"),
+                "write_policy": entry.get("write_policy"),
+                "update_shape_layout": entry.get("update_shape_layout"),
+                "key_update_shape": entry.get("key_update_shape"),
+                "value_update_shape": entry.get("value_update_shape"),
+                "key_cache_shape": entry.get("key_cache_shape"),
+                "value_cache_shape": entry.get("value_cache_shape"),
+                "page_table_shape": entry.get("page_table_shape"),
+                "planned_user_count": entry.get("planned_user_count"),
+                "filled_user_count": entry.get("filled_user_count"),
+            }
+        )
+    return diagnostics
+
+
 def dump_validation_report(report: dict[str, Any], out: str | Path) -> None:
     write_json_report(Path(out), report)
 
@@ -288,14 +317,6 @@ def real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
 ) -> dict[str, Any]:
-    from ..diagnostics import validation_workflow as validation
-
-    _final_acceptance_gate_matrix = validation._final_acceptance_gate_matrix
-    _prefill_cache_population_diagnostics = validation._prefill_cache_population_diagnostics
-    _real_decode_runtime_diagnostics = validation._real_decode_runtime_diagnostics
-    _step_names_with_status = validation._step_names_with_status
-    _tensorization_evidence = validation._tensorization_evidence
-
     steps = report.get("steps", {})
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})
@@ -339,8 +360,8 @@ def real_decode_evidence_manifest(
         "reproducibility": report.get("reproducibility"),
         "final_acceptance_plan": report.get("final_acceptance_plan"),
         "runtime_diagnostics": report.get("runtime_diagnostics")
-        or _real_decode_runtime_diagnostics(report),
-        "acceptance_gate_matrix": _final_acceptance_gate_matrix(
+        or real_decode_runtime_diagnostics(report),
+        "acceptance_gate_matrix": final_acceptance_gate_matrix(
             report,
             acceptance,
         ),
@@ -418,11 +439,11 @@ def real_decode_evidence_manifest(
                 "require_model_end_to_end"
             ),
             "results": dict(results),
-            "failed_steps": _step_names_with_status(
+            "failed_steps": step_names_with_status(
                 results,
                 failing=True,
             ),
-            "skipped_steps": _step_names_with_status(
+            "skipped_steps": step_names_with_status(
                 results,
                 status="skipped",
             ),
@@ -633,21 +654,21 @@ def real_decode_evidence_manifest(
                 ),
                 "key_tensors": materialize.get("key_tensors", {}),
             },
-            "decode_shell_tensorization": _tensorization_evidence(
+            "decode_shell_tensorization": tensorization_evidence(
                 decode_shell
             ),
-            "single_layer_tensorization": _tensorization_evidence(
+            "single_layer_tensorization": tensorization_evidence(
                 single_layer
             ),
-            "smoke_tensorization": _tensorization_evidence(smoke),
-            "profile_tensorization": _tensorization_evidence(profile),
-            "prompt_decode_loop_tensorization": _tensorization_evidence(
+            "smoke_tensorization": tensorization_evidence(smoke),
+            "profile_tensorization": tensorization_evidence(profile),
+            "prompt_decode_loop_tensorization": tensorization_evidence(
                 prompt_loop
             ),
-            "generate_prefill_decode_tensorization": _tensorization_evidence(
+            "generate_prefill_decode_tensorization": tensorization_evidence(
                 generate_step
             ),
-            "profile_generate_tensorization": _tensorization_evidence(
+            "profile_generate_tensorization": tensorization_evidence(
                 profile_generate
             ),
         },

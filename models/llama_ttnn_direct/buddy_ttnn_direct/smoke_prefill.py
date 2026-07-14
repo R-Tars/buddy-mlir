@@ -8,6 +8,10 @@ from types import SimpleNamespace
 from typing import Any
 
 from .runtime_environment import collect_ttnn_environment
+from .runtime.plans import (
+    prefill_op_sequence as _runtime_prefill_op_sequence,
+    prefill_plan as _runtime_prefill_plan,
+)
 from .smoke_attention_primitive import _maybe_managed_device
 from .smoke_decode_shell import (
     _dry_run_reference,
@@ -632,6 +636,10 @@ def _prefill_op_sequence(layers: int) -> list[str]:
         ops.extend(PREFILL_LAYER_OPS)
     ops.extend(PREFILL_FINAL_OPS)
     return ops
+
+
+_prefill_op_sequence = _runtime_prefill_op_sequence
+_prefill_plan = _runtime_prefill_plan
 
 
 def _prefill_rotary_transform_shape() -> list[int]:

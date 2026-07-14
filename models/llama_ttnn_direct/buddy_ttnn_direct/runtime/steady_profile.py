@@ -48,12 +48,11 @@ def run_profile_decode_steady(
 
     from ..codegen.parameters import ParameterMaterializationError
     from ..codegen.ttnn_tensorizer import TTNNTensorizationError
-    from ..smoke_mlp import NoTTNNDeviceError
-    from ..smoke_prefill import _prefill_plan
-    from ..smoke_single_layer_decode import _decode_step_plan
     from ..ttnn_compat import UnsupportedTTNNOp
     from .decode import run_decode_steady_iterations
     from .device import maybe_generate_device
+    from .errors import NoTTNNDeviceError
+    from .plans import decode_step_plan, prefill_plan as build_prefill_plan
     from .prefill import run_prefill_prompt
     from .session import build_runtime_session
     from .tokenizer import (
@@ -87,13 +86,13 @@ def run_profile_decode_steady(
     if not after_prefill:
         raise ValueError("decode-steady requires after_prefill=True")
 
-    decode_plan = _decode_step_plan(
+    decode_plan = decode_step_plan(
         layers=layer_count,
         batch_size=batch_size,
         cache_len=cache_len,
         config=config,
     )
-    prefill_plan = _prefill_plan(
+    prefill_plan = build_prefill_plan(
         layers=layer_count,
         batch_size=batch_size,
         prefill_len=prefill_len,
