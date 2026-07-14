@@ -19,6 +19,8 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime import (
     reports as runtime_reports,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.decode import (
+    _normalize_teacher_forcing,
+    _teacher_forcing_token_tensor,
     build_decode_runtime_for_position,
     materialize_generate_token_events,
     prefill_token_direct_handoff,
@@ -150,7 +152,9 @@ class _FakeTokenizer:
     pad_token_id = 0
     eos_token_id = 2
 
-    def __call__(self, prompt: str, add_special_tokens: bool = True) -> dict[str, list[int]]:
+    def __call__(
+        self, prompt: str, add_special_tokens: bool = True
+    ) -> dict[str, list[int]]:
         _ = add_special_tokens
         return {"input_ids": [len(word) for word in prompt.split()]}
 
@@ -246,6 +250,32 @@ class _FakeTTNNForPrefill:
 
 
 class RuntimeModuleTest(unittest.TestCase):
+    def test_teacher_forcing_validates_and_builds_batch_token_tensor(self) -> None:
+        normalized = _normalize_teacher_forcing(
+            [[11, 12], [13, 14]],
+            decode_step_count=2,
+            batch_size=2,
+        )
+        self.assertEqual(normalized, [[11, 12], [13, 14]])
+        with self.assertRaisesRegex(ValueError, "batch width"):
+            _normalize_teacher_forcing(
+                [[11]],
+                decode_step_count=1,
+                batch_size=2,
+            )
+
+        ttnn = _FakeTTNNForPrefill()
+        token = _teacher_forcing_token_tensor(
+            ttnn=ttnn,
+            torch=_FakeTorchForPrefill(),
+            device="device0",
+            token_ids=[11, 12],
+            step_index=3,
+        )
+        self.assertEqual(token.source, "teacher_forcing_token_ids_3")
+        self.assertEqual(token.values, [[11], [12]])
+        self.assertEqual(token.shape, [2, 1])
+
     def test_generate_module_reexports_runtime_classes(self) -> None:
         self.assertIs(GenerateCompatContext, TTNNDirectRuntimeContext)
         self.assertIs(GenerateCompatProfiler, GenerateSectionProfiler)
@@ -330,7 +360,9 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(report["decode_layer_profiles"][0]["layer_id"], 0)
         self.assertGreaterEqual(report["sections_ms"]["argmax_ms"], 0.0)
 
-    def test_runtime_tokenizer_module_preserves_reports_and_compat_imports(self) -> None:
+    def test_runtime_tokenizer_module_preserves_reports_and_compat_imports(
+        self,
+    ) -> None:
         tokenization = tokenize_prompt_for_prefill(
             prompt="hello ttnn direct",
             batch_size=2,
@@ -516,15 +548,16 @@ class RuntimeModuleTest(unittest.TestCase):
         context.update_decode_token = update_decode_token
 
         try:
-            runtime_prefill._observed_cache_population = (
-                lambda **_: [{"layer_id": 0, "status": "filled"}]
-            )
-            runtime_prefill._prefill_reference = (
-                lambda **_: {"status": "passed", "passed": True}
-            )
-            runtime_prefill._generated_observed_op_sequence = (
-                lambda *_: ["prefill_prompt"]
-            )
+            runtime_prefill._observed_cache_population = lambda **_: [
+                {"layer_id": 0, "status": "filled"}
+            ]
+            runtime_prefill._prefill_reference = lambda **_: {
+                "status": "passed",
+                "passed": True,
+            }
+            runtime_prefill._generated_observed_op_sequence = lambda *_: [
+                "prefill_prompt"
+            ]
             result = run_prefill_prompt(
                 context=context,
                 ttnn=_FakeTTNN(),
@@ -602,7 +635,9 @@ class RuntimeModuleTest(unittest.TestCase):
                 "layout": "tile",
             },
         )
-        self.assertEqual(result.kv_cache_runtime_state["source"], "kv_cache_runtime_state")
+        self.assertEqual(
+            result.kv_cache_runtime_state["source"], "kv_cache_runtime_state"
+        )
         self.assertEqual(result.kv_cache_runtime_state["physical_shape"], [6, 8, 4, 64])
         self.assertEqual(result.kv_cache_runtime_state["logical_shape"], [2, 10, 8, 64])
         self.assertEqual(result.kv_cache_runtime_state["memory_config"], "dram")
@@ -766,7 +801,9 @@ class RuntimeModuleTest(unittest.TestCase):
             )
 
         try:
-            runtime_decode._build_prompt_decode_runtime_state_tensors = fake_runtime_builder
+            runtime_decode._build_prompt_decode_runtime_state_tensors = (
+                fake_runtime_builder
+            )
             runtime_decode.attach_decode_rotary_parameters = fake_rotary_builder
             runtime_state = build_decode_runtime_for_position(
                 ttnn=object(),
@@ -793,7 +830,9 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(runtime_state.decode_runtime_state_input_tensor_count, 2)
         self.assertEqual(runtime_state.rotary_runtime_input_tensor_count, 3)
 
-    def test_runtime_decode_loop_updates_context_and_counts_runtime_tensors(self) -> None:
+    def test_runtime_decode_loop_updates_context_and_counts_runtime_tensors(
+        self,
+    ) -> None:
         original_builder = runtime_decode.build_decode_runtime_for_position
         original_time_decode = runtime_decode._time_decode_step
         original_input_shapes = runtime_decode._loop_input_shapes
@@ -819,7 +858,9 @@ class RuntimeModuleTest(unittest.TestCase):
 
         decode_tokens = [_FakeTensor((2, 1)), _FakeTensor((2, 1))]
 
-        def fake_time_decode_step(**kwargs: object) -> tuple[object, list[object], float]:
+        def fake_time_decode_step(
+            **kwargs: object,
+        ) -> tuple[object, list[object], float]:
             step_index = len(builder_indexes) - 1
             return (
                 decode_tokens[step_index],
@@ -844,7 +885,9 @@ class RuntimeModuleTest(unittest.TestCase):
             context.rotary_state = runtime_state.rotary_runtime_state
 
         context.install_decode_runtime = install_decode_runtime
-        context.update_kv_cache = lambda kv_cache: setattr(context, "kv_cache", kv_cache)
+        context.update_kv_cache = lambda kv_cache: setattr(
+            context, "kv_cache", kv_cache
+        )
         context.update_decode_token = lambda token: setattr(context, "token_ids", token)
 
         try:
@@ -852,9 +895,10 @@ class RuntimeModuleTest(unittest.TestCase):
             runtime_decode._time_decode_step = fake_time_decode_step
             runtime_decode._loop_input_shapes = lambda **_: {"page_table": [2, 1]}
             runtime_decode._loop_output_shapes = lambda **_: {"token": [2, 1]}
-            runtime_decode._decode_step_reference = (
-                lambda **_: {"status": "passed", "passed": True}
-            )
+            runtime_decode._decode_step_reference = lambda **_: {
+                "status": "passed",
+                "passed": True,
+            }
             runtime_decode._generated_observed_op_sequence = lambda *_: ["decode_step"]
             result = run_decode_loop(
                 context=context,

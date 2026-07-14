@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from .decode import prefill_token_direct_handoff
-from .inputs import build_decode_runtime_state
+from .inputs import build_decode_runtime_state, build_token_ids_tensor
 from .rotary import attach_prefill_rotary_parameters
 from .structural import (
     generated_observed_op_sequence,
@@ -13,7 +13,6 @@ from .structural import (
     prefill_reference,
 )
 from .tensor_meta import runtime_int_tensor, tensor_dtype, tensor_shape
-
 
 # Compatibility names remain patchable for existing diagnostic tests.
 _generated_observed_op_sequence = generated_observed_op_sequence
@@ -72,20 +71,12 @@ def prefill_token_ids_tensor(
     device: Any,
     token_ids: list[list[int]],
 ) -> Any:
-    kwargs = {"device": device}
-    dtype = getattr(
-        ttnn,
-        "uint32",
-        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
-    )
-    if dtype is not None:
-        kwargs["dtype"] = dtype
-    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
-    if layout is not None:
-        kwargs["layout"] = layout
-    return ttnn.from_torch(
-        runtime_int_tensor(torch, token_ids, name="prefill_prompt_token_ids"),
-        **kwargs,
+    return build_token_ids_tensor(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        token_ids=token_ids,
+        name="prefill_prompt_token_ids",
     )
 
 
@@ -110,9 +101,9 @@ def run_prefill_prompt(
         "effective_token_count_by_user",
         context.prefill_tokenization["effective_token_count"],
     )
-    inferred_batch_size = len(valid_seq_len) if isinstance(
-        valid_seq_len, (list, tuple)
-    ) else 1
+    inferred_batch_size = (
+        len(valid_seq_len) if isinstance(valid_seq_len, (list, tuple)) else 1
+    )
     if resolved_execution_mode == "trace":
         if trace_key is None:
             raise ValueError("prefill trace execution requires trace_key")
@@ -143,13 +134,11 @@ def run_prefill_prompt(
         execution_report = trace_session.to_report()
     else:
         prefill_start = time.perf_counter()
-        prefill_token, kv_cache, cache_reports = (
-            context.generated_model.prefill_prompt(
-                context.prefill_token_ids,
-                context.kv_cache,
-                context.prefill_page_table,
-                valid_seq_len=valid_seq_len,
-            )
+        prefill_token, kv_cache, cache_reports = context.generated_model.prefill_prompt(
+            context.prefill_token_ids,
+            context.kv_cache,
+            context.prefill_page_table,
+            valid_seq_len=valid_seq_len,
         )
         synchronize = getattr(ttnn, "synchronize_device", None)
         if callable(synchronize):
@@ -229,8 +218,7 @@ def run_prefill_prompt(
         cache_reports=cache_reports,
         latency_ms=latency_ms,
         average_ttft_ms_per_user=(
-            latency_ms
-            / int(prefill_plan.get("batch_size", inferred_batch_size))
+            latency_ms / int(prefill_plan.get("batch_size", inferred_batch_size))
         ),
         batch_prefill_latency_ms=latency_ms,
         execution_report=execution_report,

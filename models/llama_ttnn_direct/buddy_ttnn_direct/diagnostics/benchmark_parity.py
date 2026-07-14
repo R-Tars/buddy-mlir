@@ -11,6 +11,7 @@ import statistics
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -30,6 +31,7 @@ PYTEST_PROFILE_ENV = "BUDDY_PARITY_OFFICIAL_PROFILE"
 PYTEST_PAGE_PARAMS_ENV = "BUDDY_PARITY_PAGE_PARAMS"
 PYTEST_GRAPH_CAPTURE_DIR_ENV = "BUDDY_PARITY_GRAPH_CAPTURE_DIR"
 EXACT_SAMPLE_PREFIX = "BUDDY_PARITY_SAMPLE"
+ACCURACY_SAMPLE_PREFIX = "BUDDY_ACCURACY_SAMPLE"
 _EXACT_SAMPLE_RE = re.compile(
     rf"{EXACT_SAMPLE_PREFIX} token_iteration=(?P<iteration>\d+) "
     r"duration_ms=(?P<duration_ms>\d+(?:\.\d+)?)"
@@ -38,6 +40,10 @@ _ROUNDED_SAMPLE_RE = re.compile(
     r"Iteration (?P<iteration>\d+): "
     r"(?P<duration_ms>\d+(?:\.\d+)?)ms @ "
     r"(?P<tpsu>\d+(?:\.\d+)?) tok/s/user"
+)
+_ACCURACY_SAMPLE_RE = re.compile(
+    rf"{ACCURACY_SAMPLE_PREFIX} token_iteration=(?P<iteration>\d+) "
+    r"predicted_token=(?P<predicted_token>\d+)"
 )
 
 
@@ -55,9 +61,10 @@ def pytest_configure(config: Any) -> None:
 
     page_params = json.loads(os.environ[PYTEST_PAGE_PARAMS_ENV])
     config.option.page_params = page_params
-    config.option.enable_trace = True
+    profile = os.environ.get(PYTEST_PROFILE_ENV)
+    config.option.enable_trace = profile != "official-token-accuracy"
     config.option.stop_at_eos = 0
-    if os.environ.get(PYTEST_PROFILE_ENV) == "official-greedy":
+    if profile in {"official-greedy", "official-token-accuracy"}:
         config.option.sampling_params = {
             "temperature": 0,
             "top_p": 0.08,
@@ -92,6 +99,46 @@ def pytest_configure(config: Any) -> None:
 
     BenchmarkProfiler.end = end_with_exact_sample
     BenchmarkProfiler._buddy_parity_patched = True
+
+
+def pytest_collection_modifyitems(config: Any, items: list[Any]) -> None:
+    if os.environ.get(PYTEST_PLUGIN_ENABLED_ENV) != "1":
+        return
+    if os.environ.get(PYTEST_PROFILE_ENV) != "official-token-accuracy":
+        return
+    for item in items:
+        module = getattr(item, "module", None)
+        token_accuracy = getattr(module, "TokenAccuracy", None)
+        if token_accuracy is None or getattr(
+            token_accuracy, "_buddy_accuracy_patched", False
+        ):
+            continue
+        original_collect = token_accuracy.collect_predicted_tokens
+
+        def collect_with_sample(self: Any, token: Any) -> Any:
+            iteration = len(self.store_predicted_tokens)
+            token_id = int(getattr(token, "item", lambda: token)())
+            print(
+                f"{ACCURACY_SAMPLE_PREFIX} token_iteration={iteration} "
+                f"predicted_token={token_id}",
+                flush=True,
+            )
+            return original_collect(self, token_id)
+
+        token_accuracy.collect_predicted_tokens = collect_with_sample
+        token_accuracy._buddy_accuracy_patched = True
+        break
+
+
+def parse_official_accuracy_samples(log_path: str | Path) -> list[int]:
+    source = Path(log_path)
+    if not source.is_file():
+        return []
+    indexed = {
+        int(match.group("iteration")): int(match.group("predicted_token"))
+        for match in _ACCURACY_SAMPLE_RE.finditer(source.read_text(errors="replace"))
+    }
+    return [indexed[index] for index in sorted(indexed)]
 
 
 def _install_official_trace_graph_capture(output_dir: Path) -> None:
@@ -217,6 +264,7 @@ def run_benchmark_parity(
     official_python: str | Path | None = None,
     official_release_root: str | Path | None = None,
     official_release_python: str | Path | None = None,
+    official_release_runtime_root: str | Path | None = None,
     timeout_seconds: float | None = 3600.0,
     address_space_limit_bytes: int | None = 95_000_000_000,
     dry_run: bool = False,
@@ -225,6 +273,7 @@ def run_benchmark_parity(
     """Run matched official-demo, official-greedy, and Buddy decode profiles."""
 
     report_path = Path(out).resolve()
+    previous_report = _load_previous_report(report_path)
     program_root = Path(buddy_program).resolve()
     official_root = Path(official_tt_metal_root).resolve()
     model_root = Path(model_path).resolve()
@@ -237,10 +286,17 @@ def run_benchmark_parity(
     release_python_path = (
         _absolute_path(official_release_python) if official_release_python else None
     )
+    release_runtime_root = (
+        Path(official_release_runtime_root).resolve()
+        if official_release_runtime_root
+        else release_root
+    )
     if (release_root is None) != (release_python_path is None):
         raise ValueError(
             "official_release_root and official_release_python must be provided together"
         )
+    if release_root is None and release_runtime_root is not None:
+        raise ValueError("official_release_runtime_root requires official_release_root")
     runs_root = report_path.parent / f"{report_path.stem}_runs"
     tensor_cache_root = (
         report_path.parent.parent / "runtime_artifacts" / "official_tensor_cache"
@@ -267,6 +323,7 @@ def run_benchmark_parity(
         official_python=official_python_path,
         release_root=release_root,
         release_python=release_python_path,
+        release_runtime_root=release_runtime_root,
         batch_size=batch_size,
         requested_prefill_len=prefill_len,
         cache_len=cache_len,
@@ -291,6 +348,7 @@ def run_benchmark_parity(
             official_python=official_python_path,
             release_root=release_root,
             release_python=release_python_path,
+            release_runtime_root=release_runtime_root,
             batch_size=batch_size,
             requested_prefill_len=prefill_len,
             cache_len=cache_len,
@@ -307,6 +365,7 @@ def run_benchmark_parity(
             official_python=official_python_path,
             release_root=release_root,
             release_python=release_python_path,
+            release_runtime_root=release_runtime_root,
             layer_count=int(metadata["layers"]),
             batch_size=batch_size,
             effective_prefill_len=int(metadata["effective_prefill_len"]),
@@ -339,17 +398,39 @@ def run_benchmark_parity(
         runs_root.mkdir(parents=True, exist_ok=True)
         staged_prompts_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(prompts_path, staged_prompts_path)
+        resumable_runs = _resumable_runs(
+            previous_report,
+            current_report=base,
+            plans=commands,
+        )
         for plan in commands:
-            run = _execute_planned_run(
-                plan=plan,
-                page_block_size=page_block_size,
-                cache_len=cache_len,
-                warmup=warmup,
-                iterations=iterations,
-                runner=runner,
-                timeout_seconds=timeout_seconds,
-                address_space_limit_bytes=address_space_limit_bytes,
-            )
+            run_key = (plan["profile"], int(plan["repetition"]))
+            if run_key in resumable_runs:
+                run = dict(resumable_runs[run_key])
+                run["resumed"] = True
+                run["resume_source"] = "previous-report"
+            else:
+                run = _load_resumable_artifact(
+                    plan,
+                    warmup=warmup,
+                    iterations=iterations,
+                )
+                if run is not None:
+                    run["resumed"] = True
+                    run["resume_source"] = "validated-run-artifacts"
+                else:
+                    run = _execute_planned_run(
+                        plan=plan,
+                        page_block_size=page_block_size,
+                        cache_len=cache_len,
+                        warmup=warmup,
+                        iterations=iterations,
+                        runner=runner,
+                        timeout_seconds=timeout_seconds,
+                        address_space_limit_bytes=address_space_limit_bytes,
+                    )
+                    run["resumed"] = False
+                    run["resume_source"] = None
             target = (
                 base["buddy_local_runs"]
                 if plan["implementation"] == "buddy"
@@ -384,6 +465,150 @@ def run_benchmark_parity(
     return base
 
 
+def _load_previous_report(report_path: Path) -> dict[str, Any] | None:
+    if not report_path.is_file():
+        return None
+    try:
+        report = json.loads(report_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def _resumable_runs(
+    previous_report: dict[str, Any] | None,
+    *,
+    current_report: dict[str, Any],
+    plans: list[dict[str, Any]],
+) -> dict[tuple[str, int], dict[str, Any]]:
+    if previous_report is None:
+        return {}
+    contract_keys = (
+        "buddy_program",
+        "official_tt_metal_root",
+        "model_path",
+        "tokenizer_path",
+        "input_prompts",
+        "official_python",
+        "official_release_root",
+        "official_release_python",
+        "official_release_runtime_root",
+        "device",
+        "device_id",
+        "batch_size",
+        "requested_prefill_len",
+        "cache_len",
+        "page_block_size",
+        "warmup",
+        "iterations",
+        "repetitions",
+    )
+    if any(
+        previous_report.get(key) != current_report.get(key) for key in contract_keys
+    ):
+        return {}
+
+    plans_by_key = {(plan["profile"], int(plan["repetition"])): plan for plan in plans}
+    resumed: dict[tuple[str, int], dict[str, Any]] = {}
+    for group in (
+        "official_release_runs",
+        "official_local_runs",
+        "buddy_local_runs",
+    ):
+        for run in previous_report.get(group, []):
+            if not isinstance(run, dict) or not run.get("passed"):
+                continue
+            key = (str(run.get("profile")), int(run.get("repetition", 0)))
+            plan = plans_by_key.get(key)
+            if plan is None or run.get("command") != plan.get("command"):
+                continue
+            resumed[key] = run
+    return resumed
+
+
+def _load_resumable_artifact(
+    plan: dict[str, Any],
+    *,
+    warmup: int,
+    iterations: int,
+) -> dict[str, Any] | None:
+    run_dir = Path(plan["run_dir"])
+    contract = _run_contract(plan, warmup=warmup, iterations=iterations)
+    contract_path = run_dir / "run_contract.json"
+    if contract_path.is_file():
+        try:
+            recorded_contract = json.loads(contract_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return None
+        if recorded_contract != contract:
+            return None
+
+    if plan["implementation"] == "official":
+        if not _pytest_xml_passed(run_dir / "pytest.xml"):
+            return None
+        parsed = _parse_official_log(
+            Path(plan["log_path"]),
+            warmup=warmup,
+            iterations=iterations,
+        )
+    else:
+        parsed = _parse_buddy_report(
+            Path(plan["profile_report"]),
+            warmup=warmup,
+            iterations=iterations,
+        )
+    if not parsed.get("passed"):
+        return None
+    if not contract_path.is_file():
+        write_report(contract_path, contract)
+    return _run_result(
+        plan=plan,
+        parsed=parsed,
+        return_code=0,
+        elapsed_seconds=None,
+        runner_error=None,
+    )
+
+
+def _pytest_xml_passed(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError):
+        return False
+    suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+    return bool(suites) and all(
+        int(suite.attrib.get("errors", "0")) == 0
+        and int(suite.attrib.get("failures", "0")) == 0
+        and int(suite.attrib.get("tests", "0")) > 0
+        for suite in suites
+    )
+
+
+def _run_contract(
+    plan: dict[str, Any],
+    *,
+    warmup: int,
+    iterations: int,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "implementation": plan["implementation"],
+        "profile": plan["profile"],
+        "comparison_scope": plan["comparison_scope"],
+        "repetition": int(plan["repetition"]),
+        "command": plan["command"],
+        "official_root": plan.get("official_root"),
+        "runtime_root": plan.get("runtime_root"),
+        "runtime_mode": plan.get("runtime_mode"),
+        "model_path": plan.get("model_path"),
+        "tensor_cache_path": plan.get("tensor_cache_path"),
+        "warmup": int(warmup),
+        "iterations": int(iterations),
+    }
+
+
 def _base_report(
     *,
     report_path: Path,
@@ -395,6 +620,7 @@ def _base_report(
     official_python: Path,
     release_root: Path | None,
     release_python: Path | None,
+    release_runtime_root: Path | None,
     batch_size: int,
     requested_prefill_len: int,
     cache_len: int,
@@ -434,6 +660,9 @@ def _base_report(
         ),
         "official_release_root": str(release_root) if release_root else None,
         "official_release_python": (str(release_python) if release_python else None),
+        "official_release_runtime_root": (
+            str(release_runtime_root) if release_runtime_root else None
+        ),
         "device": device,
         "device_id": device_id,
         "batch_size": batch_size,
@@ -469,6 +698,7 @@ def _collect_metadata(
     official_python: Path,
     release_root: Path | None,
     release_python: Path | None,
+    release_runtime_root: Path | None,
     batch_size: int,
     requested_prefill_len: int,
     cache_len: int,
@@ -485,6 +715,8 @@ def _collect_metadata(
         required["official release root"] = release_root
     if release_python is not None:
         required["official release Python"] = release_python
+    if release_runtime_root is not None:
+        required["official release runtime root"] = release_runtime_root
     missing = [name for name, path in required.items() if not path.exists()]
     if missing:
         raise ValueError("missing benchmark inputs: " + ", ".join(missing))
@@ -532,10 +764,19 @@ def _collect_metadata(
     release_metadata = None
     if release_root is not None:
         release_commit = _git_value(release_root, "rev-parse", "HEAD")
+        runtime_root = release_runtime_root or release_root
+        runtime_commit = _git_value(runtime_root, "rev-parse", "HEAD")
         release_diff_names = _git_value(
             release_root, "diff", "--name-only"
         ).splitlines()
         release_status = _git_value(release_root, "status", "--porcelain=v1")
+        runtime_diff_names = _git_value(
+            runtime_root, "diff", "--name-only"
+        ).splitlines()
+        runtime_status = _git_value(runtime_root, "status", "--porcelain=v1")
+        runtime_mode = _release_runtime_mode(runtime_root)
+        runtime_ttnn_binary = runtime_root / "ttnn" / "ttnn" / "_ttnn.so"
+        runtime_metal_library = runtime_root / "build" / "lib" / "libtt_metal.so"
         release_metadata = {
             "root": str(release_root),
             "python": str(release_python),
@@ -550,6 +791,29 @@ def _collect_metadata(
             "tracked_source_changes": release_diff_names,
             "source_status": release_status.splitlines(),
             "source_diff_sha256": _git_diff_sha256(release_root),
+            "runtime_root": str(runtime_root),
+            "runtime_commit": runtime_commit,
+            "runtime_matches_release_commit": runtime_commit == release_commit,
+            "runtime_mode": runtime_mode,
+            "runtime_source_dirty": bool(runtime_status),
+            "runtime_tracked_source_dirty": bool(runtime_diff_names),
+            "runtime_tracked_source_changes": runtime_diff_names,
+            "runtime_source_status": runtime_status.splitlines(),
+            "runtime_source_diff_sha256": _git_diff_sha256(runtime_root),
+            "runtime_ttnn_binary": (
+                str(runtime_ttnn_binary) if runtime_ttnn_binary.is_file() else None
+            ),
+            "runtime_ttnn_binary_sha256": (
+                _sha256(runtime_ttnn_binary) if runtime_ttnn_binary.is_file() else None
+            ),
+            "runtime_metal_library": (
+                str(runtime_metal_library) if runtime_metal_library.is_file() else None
+            ),
+            "runtime_metal_library_sha256": (
+                _sha256(runtime_metal_library)
+                if runtime_metal_library.is_file()
+                else None
+            ),
             "sampling": "force argmax (temperature=0) in the release demo",
             "trace_mode": "trace",
             "comparison_scope": "cross-version-reference-only",
@@ -558,6 +822,11 @@ def _collect_metadata(
             raise ValueError(
                 "official release root is not the published reference commit: "
                 f"{release_commit} != {OFFICIAL_EXTERNAL_RELEASE_COMMIT}"
+            )
+        if runtime_commit != release_commit:
+            raise ValueError(
+                "official release model and runtime commits differ: "
+                f"{release_commit} != {runtime_commit}"
             )
 
     official_execution_features = _official_execution_features(
@@ -669,6 +938,14 @@ def _source_mentions_prefetcher(root: Path) -> bool:
     return False
 
 
+def _release_runtime_mode(runtime_root: Path) -> str:
+    ttnn_binary = runtime_root / "ttnn" / "ttnn" / "_ttnn.so"
+    metal_library = runtime_root / "build" / "lib" / "libtt_metal.so"
+    if ttnn_binary.is_file() and metal_library.is_file():
+        return "source-build"
+    return "wheel"
+
+
 def _planned_commands(
     *,
     runs_root: Path,
@@ -681,6 +958,7 @@ def _planned_commands(
     official_python: Path,
     release_root: Path | None,
     release_python: Path | None,
+    release_runtime_root: Path | None,
     layer_count: int,
     batch_size: int,
     effective_prefill_len: int,
@@ -698,13 +976,14 @@ def _planned_commands(
         "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics." "benchmark_parity"
     )
     test_file = "models/tt_transformers/demo/simple_text_demo.py"
-    official_profiles: list[tuple[str, Path, Path, str, str]] = []
+    official_profiles: list[tuple[str, Path, Path, Path, str, str]] = []
     if release_root is not None and release_python is not None:
         official_profiles.append(
             (
                 "official-release-demo",
                 release_root,
                 release_python,
+                release_runtime_root or release_root,
                 "release-reference",
                 OFFICIAL_EXTERNAL_RELEASE_COMMIT,
             )
@@ -714,6 +993,7 @@ def _planned_commands(
             profile,
             official_root,
             official_python,
+            official_root,
             "same-commit-local",
             _git_value(official_root, "rev-parse", "HEAD"),
         )
@@ -723,6 +1003,7 @@ def _planned_commands(
         profile,
         profile_root,
         profile_python,
+        runtime_root,
         comparison_scope,
         cache_name,
     ) in official_profiles:
@@ -770,6 +1051,12 @@ def _planned_commands(
                     "command": command,
                     "model_path": str(model_root),
                     "official_root": str(profile_root),
+                    "runtime_root": str(runtime_root),
+                    "runtime_mode": (
+                        _release_runtime_mode(runtime_root)
+                        if comparison_scope == "release-reference"
+                        else "source-build"
+                    ),
                     "tensor_cache_path": str(tensor_cache_root / cache_name),
                 }
             )
@@ -850,6 +1137,10 @@ def _execute_planned_run(
     run_dir = Path(plan["run_dir"])
     log_path = Path(plan["log_path"])
     run_dir.mkdir(parents=True, exist_ok=True)
+    write_report(
+        run_dir / "run_contract.json",
+        _run_contract(plan, warmup=warmup, iterations=iterations),
+    )
     environment = os.environ.copy()
     cwd = Path.cwd()
     if plan["implementation"] == "official":
@@ -861,7 +1152,19 @@ def _execute_planned_run(
             str(official_root),
             str(official_root / "tools"),
         ]
-        if plan["comparison_scope"] == "same-commit-local":
+        release_source_build = (
+            plan["comparison_scope"] == "release-reference"
+            and plan.get("runtime_mode") == "source-build"
+        )
+        if release_source_build:
+            runtime_root = Path(plan["runtime_root"])
+            python_paths.extend(
+                [
+                    str(runtime_root / "ttnn"),
+                    str(runtime_root / "tt_eager"),
+                ]
+            )
+        elif plan["comparison_scope"] == "same-commit-local":
             python_paths.extend(
                 [
                     str(official_root / "ttnn"),
@@ -892,15 +1195,34 @@ def _execute_planned_run(
         )
         environment.pop("LLAMA_DIR", None)
         if plan["comparison_scope"] == "release-reference":
-            for variable in (
-                "CONDA_PREFIX",
-                "LD_LIBRARY_PATH",
-                "TT_METAL_BUILD_HOME",
-                "TT_METAL_HOME",
-            ):
-                environment.pop(variable, None)
+            environment.pop("CONDA_PREFIX", None)
+            if release_source_build:
+                runtime_root = Path(plan["runtime_root"])
+                release_environment_root = Path(plan["command"][0]).parent.parent
+                environment.update(
+                    {
+                        "TT_METAL_HOME": str(runtime_root),
+                        "TT_METAL_BUILD_HOME": str(runtime_root / "build"),
+                        "TT_METAL_RUNTIME_ROOT": str(runtime_root),
+                        "LD_LIBRARY_PATH": os.pathsep.join(
+                            [
+                                str(runtime_root / "build" / "lib"),
+                                str(release_environment_root / "lib"),
+                            ]
+                        ),
+                    }
+                )
+            else:
+                for variable in (
+                    "LD_LIBRARY_PATH",
+                    "TT_METAL_BUILD_HOME",
+                    "TT_METAL_HOME",
+                    "TT_METAL_RUNTIME_ROOT",
+                ):
+                    environment.pop(variable, None)
         else:
             environment["TT_METAL_HOME"] = str(official_root)
+            environment["TT_METAL_RUNTIME_ROOT"] = str(official_root)
 
     started_at = time.time()
     try:
@@ -930,6 +1252,23 @@ def _execute_planned_run(
             warmup=warmup,
             iterations=iterations,
         )
+    return _run_result(
+        plan=plan,
+        parsed=parsed,
+        return_code=return_code,
+        elapsed_seconds=elapsed_seconds,
+        runner_error=runner_error,
+    )
+
+
+def _run_result(
+    *,
+    plan: dict[str, Any],
+    parsed: dict[str, Any],
+    return_code: int,
+    elapsed_seconds: float | None,
+    runner_error: str | None,
+) -> dict[str, Any]:
     passed = return_code == 0 and bool(parsed["passed"])
     first_samples = [
         *parsed["warmup_step_ms_samples"],
@@ -946,9 +1285,15 @@ def _execute_planned_run(
         "return_code": return_code,
         "elapsed_seconds": elapsed_seconds,
         "command": plan["command"],
-        "cwd": str(cwd),
-        "log_path": str(log_path),
+        "cwd": str(
+            Path(plan["official_root"])
+            if plan["implementation"] == "official"
+            else Path.cwd()
+        ),
+        "log_path": str(plan["log_path"]),
         "profile_report": plan.get("profile_report"),
+        "runtime_root": plan.get("runtime_root"),
+        "runtime_mode": plan.get("runtime_mode"),
         "warmup_step_ms_samples": parsed["warmup_step_ms_samples"],
         "decode_step_ms_samples": parsed["decode_step_ms_samples"],
         "decode_step_ms_mean": parsed["decode_step_ms_mean"],
@@ -1105,6 +1450,22 @@ def _finalize_report(report: dict[str, Any]) -> None:
         "buddy-greedy-percent": _coefficient_of_variation_percent(buddy_values),
         "official-release-percent": _coefficient_of_variation_percent(release_values),
     }
+    latency_statistics = {
+        "official-demo": _latency_statistics(demo_runs),
+        "official-greedy": _latency_statistics(greedy_runs),
+        "buddy-greedy": _latency_statistics(buddy_runs),
+        "official-release-demo": _latency_statistics(release_runs),
+    }
+    local_ratio = (
+        buddy_median / greedy_median
+        if buddy_median is not None and greedy_median
+        else None
+    )
+    release_ratio = (
+        buddy_median / release_median
+        if buddy_median is not None and release_median
+        else None
+    )
     report.update(
         {
             "official_demo_local_median_tpsu": demo_median,
@@ -1118,22 +1479,32 @@ def _finalize_report(report: dict[str, Any]) -> None:
                 if release_first_values
                 else None
             ),
-            "buddy_ratio_of_local_official": (
-                buddy_median / greedy_median
-                if buddy_median is not None and greedy_median
-                else None
-            ),
-            "buddy_ratio_of_release_official": (
-                buddy_median / release_median
-                if buddy_median is not None and release_median
-                else None
-            ),
+            "buddy_ratio_of_local_official": local_ratio,
+            "buddy_ratio_of_release_official": release_ratio,
             "release_ratio_of_external_reference": (
                 release_median / OFFICIAL_EXTERNAL_REFERENCE_TPSU
                 if release_median is not None
                 else None
             ),
             "coefficient_of_variation": cv,
+            "decode_latency_statistics_ms": latency_statistics,
+            "performance_milestones": {
+                "M6_local_official_90_percent": (
+                    local_ratio is not None and local_ratio >= 0.90
+                ),
+                "M7_local_official_95_percent": (
+                    local_ratio is not None and local_ratio >= 0.95
+                ),
+                "M8_local_official_98_percent_cv_1_5_percent": (
+                    local_ratio is not None
+                    and local_ratio >= 0.98
+                    and cv["buddy-greedy-percent"] is not None
+                    and cv["buddy-greedy-percent"] <= 1.5
+                ),
+                "release_reference_98_percent": (
+                    release_ratio is not None and release_ratio >= 0.98
+                ),
+            },
             "semantic_match": {
                 "same_tt_metal_commit": report.get("same_tt_metal_commit"),
                 "same_device": True,
@@ -1149,7 +1520,8 @@ def _finalize_report(report: dict[str, Any]) -> None:
                 "prefill_timing_comparable": False,
                 "official_greedy_matches_buddy_sampling": True,
                 "official_demo_matches_buddy_sampling": False,
-                "official_trace_vs_buddy_eager": True,
+                "official_trace_vs_buddy_eager": False,
+                "official_trace_matches_buddy_trace": True,
                 "decode_workload_comparable": True,
                 "primary_official_profile": "official-greedy",
                 "release_reference_same_tt_metal_commit": False,
@@ -1285,6 +1657,53 @@ def _successful_tpsu(runs: Sequence[dict[str, Any]]) -> list[float]:
         for run in runs
         if run.get("passed") and run.get("tokens_per_second_per_user") is not None
     ]
+
+
+def _latency_statistics(runs: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    samples = [
+        float(sample)
+        for run in runs
+        if run.get("passed")
+        for sample in run.get("decode_step_ms_samples", [])
+    ]
+    if not samples:
+        return {
+            "sample_count": 0,
+            "mean": None,
+            "p50": None,
+            "p90": None,
+            "min": None,
+            "max": None,
+            "stdev": None,
+            "coefficient_of_variation_percent": None,
+        }
+    mean = statistics.fmean(samples)
+    stdev = statistics.pstdev(samples)
+    return {
+        "sample_count": len(samples),
+        "mean": mean,
+        "p50": statistics.median(samples),
+        "p90": _percentile(samples, 0.90),
+        "min": min(samples),
+        "max": max(samples),
+        "stdev": stdev,
+        "coefficient_of_variation_percent": (stdev / mean * 100.0 if mean else None),
+    }
+
+
+def _percentile(values: Sequence[float], quantile: float) -> float:
+    if not values:
+        raise ValueError("percentile requires at least one value")
+    if not 0.0 <= quantile <= 1.0:
+        raise ValueError("quantile must be between zero and one")
+    ordered = sorted(float(value) for value in values)
+    position = (len(ordered) - 1) * quantile
+    lower = int(math.floor(position))
+    upper = int(math.ceil(position))
+    if lower == upper:
+        return ordered[lower]
+    weight = position - lower
+    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
 def _coefficient_of_variation_percent(values: Sequence[float]) -> float | None:

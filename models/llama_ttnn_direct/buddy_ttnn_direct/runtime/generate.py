@@ -79,6 +79,7 @@ def run_generate(
     runtime_input_mode: str | None = None,
     execution_mode: str | None = None,
     prefill_execution_mode: str | None = None,
+    teacher_forcing_token_ids_by_step: list[list[int]] | None = None,
 ) -> dict[str, Any]:
     resolved_report_level = _resolve_report_level(
         out=out,
@@ -103,6 +104,8 @@ def run_generate(
         and resolved_runtime_input_mode != "persistent"
     ):
         raise ValueError("trace execution requires runtime_input_mode=persistent")
+    if teacher_forcing_token_ids_by_step and resolved_execution_mode == "trace":
+        raise ValueError("teacher forcing requires execution_mode=eager")
     layer_count = int(layers)
     token_count = int(max_new_tokens)
     num_layers = int(config["num_layers"])
@@ -248,9 +251,7 @@ def run_generate(
 
     try:
         ttnn = (
-            ttnn_module
-            if ttnn_module is not None
-            else importlib.import_module("ttnn")
+            ttnn_module if ttnn_module is not None else importlib.import_module("ttnn")
         )
     except ImportError as err:
         report = _generate_no_device_report(
@@ -353,9 +354,7 @@ def run_generate(
         int(prefill_tokenization.effective_token_count) + decode_step_count
     )
     cache_capacity = {
-        "effective_prompt_tokens": int(
-            prefill_tokenization.effective_token_count
-        ),
+        "effective_prompt_tokens": int(prefill_tokenization.effective_token_count),
         "decode_steps": decode_step_count,
         "required_cache_len": required_cache_len,
         "configured_cache_len": cache_len,
@@ -481,9 +480,7 @@ def run_generate(
 
             if diagnostics_path is not None:
                 _reset_json_lines(diagnostics_path)
-                _reset_json_lines(
-                    _diagnostics_reference_path(diagnostics_path)
-                )
+                _reset_json_lines(_diagnostics_reference_path(diagnostics_path))
             decode_loop = run_decode_loop(
                 context=context,
                 ttnn=ttnn,
@@ -502,9 +499,7 @@ def run_generate(
                 ),
                 report_level=resolved_report_level,
                 diagnostics_path=(
-                    str(diagnostics_path)
-                    if diagnostics_path is not None
-                    else None
+                    str(diagnostics_path) if diagnostics_path is not None else None
                 ),
                 diagnostics_reference_path=(
                     str(_diagnostics_reference_path(diagnostics_path))
@@ -522,6 +517,7 @@ def run_generate(
                     cache_len=cache_len,
                     dtype_seed=dtype_seed,
                 ),
+                teacher_forcing_token_ids_by_step=(teacher_forcing_token_ids_by_step),
             )
             generated_token_events = decode_loop.generated_token_events
             step_reports = decode_loop.step_reports
@@ -545,9 +541,7 @@ def run_generate(
             generated_token_ids_by_user = (
                 token_materialization.generated_token_ids_by_user
             )
-            per_step_token_metadata = (
-                token_materialization.per_step_token_metadata
-            )
+            per_step_token_metadata = token_materialization.per_step_token_metadata
             text_report = detokenize_generated_token_ids(
                 token_ids_by_user=generated_token_ids_by_user,
                 tokenizer_path=tokenizer_path or model_path,
@@ -582,33 +576,30 @@ def run_generate(
                 decode_runtime_state=decode_runtime_state,
                 rotary_runtime_state=rotary_runtime_state,
                 tensor_conversion_count=tensor_conversion_count,
-                decode_runtime_state_input_tensor_count=(
-                    decode_runtime_state_count
-                ),
-                decode_rotary_runtime_input_tensor_count=(
-                    decode_rotary_runtime_count
-                ),
+                decode_runtime_state_input_tensor_count=(decode_runtime_state_count),
+                decode_rotary_runtime_input_tensor_count=(decode_rotary_runtime_count),
                 latency_ms=latency_ms,
                 section_profiler=section_profiler,
                 ttnn_module=ttnn,
             )
             report["cache_capacity"] = cache_capacity
-            report["prefill_execution_mode"] = (
-                resolved_prefill_execution_mode
-            )
+            report["prefill_execution_mode"] = resolved_prefill_execution_mode
             report["prefill_execution"] = prefill_result.execution_report
-            report["prefill"]["batch_latency_ms"] = (
-                prefill_result.batch_prefill_latency_ms
-            )
-            report["prefill"]["average_ttft_ms_per_user"] = (
-                prefill_result.average_ttft_ms_per_user
-            )
-            report["prefill"]["official_metric_formula"] = (
-                "batch_prefill_latency_ms / batch_size"
-            )
-            report["prefill"]["execution"] = (
-                prefill_result.execution_report
-            )
+            report["prefill"][
+                "batch_latency_ms"
+            ] = prefill_result.batch_prefill_latency_ms
+            report["prefill"][
+                "average_ttft_ms_per_user"
+            ] = prefill_result.average_ttft_ms_per_user
+            report["prefill"][
+                "official_metric_formula"
+            ] = "batch_prefill_latency_ms / batch_size"
+            report["prefill"]["execution"] = prefill_result.execution_report
+            report["teacher_forcing"] = {
+                "enabled": bool(teacher_forcing_token_ids_by_step),
+                "step_count": len(teacher_forcing_token_ids_by_step or []),
+                "scope": "correctness_diagnostic_only",
+            }
             _install_runtime_input_report(
                 report,
                 decode_loop.runtime_input_report,
@@ -769,9 +760,7 @@ def _resolve_report_level(
         return "full" if out is not None else "none"
     normalized = str(report_level).lower()
     if normalized not in {"none", "summary", "full"}:
-        raise ValueError(
-            "report_level must be one of: none, summary, full"
-        )
+        raise ValueError("report_level must be one of: none, summary, full")
     if normalized == "none" and out is not None:
         raise ValueError("report_level=none cannot be combined with out")
     if normalized in {"summary", "full"} and out is None:
@@ -809,9 +798,7 @@ def _finalize_report(
         reference_path = _diagnostics_reference_path(diagnostics_path)
         report["diagnostics"] = {
             "decode_steps": str(diagnostics_path),
-            "references": (
-                str(reference_path) if reference_path.is_file() else None
-            ),
+            "references": (str(reference_path) if reference_path.is_file() else None),
             "format": "jsonl",
             "status": "written",
         }

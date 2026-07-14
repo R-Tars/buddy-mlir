@@ -92,6 +92,12 @@ The current baseline evidence is:
   prefetcher path, the newer same-commit official source defaults it off, the
   Goal 0 commands do not request it, and the Goal 4 graph has no global-CB or
   sub-device path. No production prefetcher implementation is promoted.
+- `p150a_goal7_correctness_performance_evidence_20260714.json`: Goal 7 retains
+  full-depth all-BF16 PCC, adds a 500-token fixed-corpus accuracy contract for
+  the compressed recipe, and records final 5/100 x 3 decode evidence. The
+  corresponding release reproduces `33.321 t/s/u`; Buddy measures
+  `33.938 t/s/u` (`101.85%`) with `0.0139%` repetition CV, reaching M8. A
+  separate batch32 trace generation run produces eight tokens for all users.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

@@ -25,6 +25,7 @@ Available stages are:
 - `autotune`
 - `benchmark-parity`
 - `execution-graph-diff`
+- `performance-correctness`
 
 Use `--dry-run` whenever the selected stage supports it and no device should be
 opened.
@@ -116,6 +117,64 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
 The diagnostic runs official and Buddy sequentially. It captures compile-time
 trace graphs only when requested, normalizes release and current TTNN graph
 formats, and compares operation counts plus tensor/layout/memory metadata.
+
+Final corresponding-release and same-commit parity benchmark:
+
+```bash
+export OFFICIAL_TT_METAL_ROOT="$BUDDY_REPO_ROOT/thirdparty/tt-mlir/third_party/tt-metal/src/tt-metal"
+export OFFICIAL_PYTHON="$TTNN_DIRECT_BUILD/official-benchmark-venv/bin/python"
+export OFFICIAL_RELEASE_CLEAN_ROOT="$RUNTIME_ARTIFACTS/official_release_clean_b76035f"
+export OFFICIAL_RELEASE_RUNTIME_ROOT=/wafer/zhuxinye/tt-metal-official-repro
+export OFFICIAL_RELEASE_PYTHON="$OFFICIAL_RELEASE_RUNTIME_ROOT/python_env_wheel_0_64_0/bin/python"
+export OFFICIAL_RELEASE_PROMPTS="$OFFICIAL_RELEASE_CLEAN_ROOT/models/tt_transformers/demo/sample_prompts/input_data_questions_prefill_128.json"
+
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
+  --stage benchmark-parity \
+  --buddy-program "$PROGRAM" \
+  --official-tt-metal-root "$OFFICIAL_TT_METAL_ROOT" \
+  --official-python "$OFFICIAL_PYTHON" \
+  --official-release-root "$OFFICIAL_RELEASE_CLEAN_ROOT" \
+  --official-release-python "$OFFICIAL_RELEASE_PYTHON" \
+  --official-release-runtime-root "$OFFICIAL_RELEASE_RUNTIME_ROOT" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --input-prompts "$OFFICIAL_RELEASE_PROMPTS" \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 128 \
+  --cache-len 1024 \
+  --page-block-size 32 \
+  --warmup 5 \
+  --iterations 100 \
+  --repetitions 3 \
+  --out "$REPORTS/diagnostics/final_parity.json"
+```
+
+The release model root must be a clean checkout at the published commit. A
+separate runtime root is allowed only for compiled `ttnn`/`tt_eager` artifacts
+from that same commit; the report records source status, commits, paths, and
+binary hashes. Passed runs are resumable only when their contract matches.
+
+Performance-recipe token correctness:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
+  --stage performance-correctness \
+  --buddy-program "$PROGRAM" \
+  --official-tt-metal-root "$OFFICIAL_TT_METAL_ROOT" \
+  --official-python "$OFFICIAL_PYTHON" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 512 \
+  --cache-len 1024 \
+  --accuracy-tokens 500 \
+  --out "$REPORTS/diagnostics/performance_correctness.json"
+```
+
+This diagnostic is intentionally eager and teacher-forced. It does not change
+the normal autoregressive generate path.
 
 ## Legacy Compatibility
 

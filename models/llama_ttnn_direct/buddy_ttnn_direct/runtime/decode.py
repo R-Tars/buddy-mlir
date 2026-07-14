@@ -10,7 +10,10 @@ from .decode_inputs import (
     DecodeInputBuffers,
     PersistentDecodeInputsUnsupported,
 )
-from .inputs import build_prompt_decode_runtime_state_tensors
+from .inputs import (
+    build_prompt_decode_runtime_state_tensors,
+    build_token_ids_tensor,
+)
 from .reports import append_json_line
 from .rotary import attach_decode_rotary_parameters
 from .structural import (
@@ -23,11 +26,8 @@ from .structural import (
 from .tensor_meta import tensor_dtype, tensor_shape
 from .trace import DecodeTraceKey, DecodeTraceSession
 
-
 # Compatibility names remain patchable for existing diagnostic tests.
-_build_prompt_decode_runtime_state_tensors = (
-    build_prompt_decode_runtime_state_tensors
-)
+_build_prompt_decode_runtime_state_tensors = build_prompt_decode_runtime_state_tensors
 _decode_step_reference = decode_step_reference
 _generated_observed_op_sequence = generated_observed_op_sequence
 _loop_generated_token_ids = loop_generated_token_ids
@@ -85,9 +85,7 @@ def build_decode_runtime_for_position(
 ) -> SimpleNamespace:
     if isinstance(prefill_effective_token_count, int):
         prompt_token_counts: int | list[int] = (
-            int(prefill_effective_token_count)
-            + int(generated_token_index)
-            + 1
+            int(prefill_effective_token_count) + int(generated_token_index) + 1
         )
     else:
         prompt_token_counts = [
@@ -103,9 +101,7 @@ def build_decode_runtime_for_position(
         page_block_size=int(decode_plan["kv_cache"]["page_block_size"]),
         prompt_token_count=prompt_token_counts,
     )
-    cache_position_value = runtime_state.decode_runtime_state[
-        "cache_position_value"
-    ]
+    cache_position_value = runtime_state.decode_runtime_state["cache_position_value"]
     cache_position_values = runtime_state.decode_runtime_state.get(
         "cache_position_values"
     )
@@ -130,9 +126,7 @@ def build_decode_runtime_for_position(
             int(runtime_state.tensor_conversion_count)
             + int(rotary_runtime.tensor_conversion_count)
         ),
-        decode_runtime_state_input_tensor_count=(
-            runtime_state.tensor_conversion_count
-        ),
+        decode_runtime_state_input_tensor_count=(runtime_state.tensor_conversion_count),
         rotary_runtime_input_tensor_count=rotary_runtime.tensor_conversion_count,
     )
 
@@ -271,25 +265,43 @@ def run_decode_loop(
     runtime_input_mode: str = "recreate",
     execution_mode: str = "eager",
     trace_key: DecodeTraceKey | None = None,
+    teacher_forcing_token_ids_by_step: Sequence[Sequence[int]] | None = None,
 ) -> SimpleNamespace:
+    teacher_forcing = _normalize_teacher_forcing(
+        teacher_forcing_token_ids_by_step,
+        decode_step_count=decode_step_count,
+        batch_size=batch_size,
+    )
+    if teacher_forcing and execution_mode == "trace":
+        raise ValueError("teacher forcing requires eager decode execution")
+    teacher_forcing_conversion_count = 0
+    if teacher_forcing:
+        context.update_decode_token(
+            _teacher_forcing_token_tensor(
+                ttnn=ttnn,
+                torch=torch,
+                device=device,
+                token_ids=teacher_forcing[0],
+                step_index=0,
+            )
+        )
+        teacher_forcing_conversion_count += 1
     effective_token_counts = context.prefill_tokenization.get(
         "effective_token_count_by_user",
         context.prefill_tokenization["effective_token_count"],
     )
-    decode_runtime, persistent_inputs, fallback_reason = (
-        _initial_decode_runtime(
-            runtime_input_mode=runtime_input_mode,
-            ttnn=ttnn,
-            torch=torch,
-            device=device,
-            dtype_seed=dtype_seed,
-            parameters=context.parameters,
-            decode_plan=decode_plan,
-            batch_size=batch_size,
-            cache_len=cache_len,
-            prefill_effective_token_count=effective_token_counts,
-            token_input=context.token_ids,
-        )
+    decode_runtime, persistent_inputs, fallback_reason = _initial_decode_runtime(
+        runtime_input_mode=runtime_input_mode,
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+        parameters=context.parameters,
+        decode_plan=decode_plan,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        prefill_effective_token_count=effective_token_counts,
+        token_input=context.token_ids,
     )
     _install_context_decode_runtime(
         context,
@@ -303,13 +315,10 @@ def run_decode_loop(
     tensor_conversion_count = (
         int(initial_tensor_conversion_count)
         + decode_runtime.tensor_conversion_count
+        + teacher_forcing_conversion_count
     )
-    decode_runtime_state_count = (
-        decode_runtime.decode_runtime_state_input_tensor_count
-    )
-    decode_rotary_runtime_count = (
-        decode_runtime.rotary_runtime_input_tensor_count
-    )
+    decode_runtime_state_count = decode_runtime.decode_runtime_state_input_tensor_count
+    decode_rotary_runtime_count = decode_runtime.rotary_runtime_input_tensor_count
     step_reports = []
     diagnostic_reference_ids: set[str] = set()
     observed_op_cursor = _observed_op_cursor(context.generated_model, ttnn)
@@ -380,9 +389,11 @@ def run_decode_loop(
                 "page_table_shape": input_shapes.get("page_table"),
                 "token_shape": tensor_shape(token),
             }
-            position_values = step_decode_runtime_state.get(
-                "cache_position_values"
-            )
+            if teacher_forcing:
+                token_event["teacher_forced_input_token_ids"] = list(
+                    teacher_forcing[step_index]
+                )
+            position_values = step_decode_runtime_state.get("cache_position_values")
             if position_values is not None and len(set(position_values)) > 1:
                 token_event["cache_position_values"] = position_values
             if trace_session is not None:
@@ -392,9 +403,9 @@ def run_decode_loop(
                     ttnn=ttnn,
                     batch_size=batch_size,
                 )
-                token_event["materialized_token_ids_by_user"] = (
-                    materialization["token_ids_by_user"]
-                )
+                token_event["materialized_token_ids_by_user"] = materialization[
+                    "token_ids_by_user"
+                ]
                 token_event["materialization"] = materialization
                 token_event["materialization_ms"] = (
                     time.perf_counter() - materialization_start
@@ -427,11 +438,7 @@ def run_decode_loop(
             reference["observed_ops_source"] = observed_ops_source
             full_step_report = {
                 "step_index": step_index,
-                "status": (
-                    "passed"
-                    if reference["passed"]
-                    else "reference_mismatch"
-                ),
+                "status": ("passed" if reference["passed"] else "reference_mismatch"),
                 "passed": bool(reference["passed"]),
                 "latency_ms": latency_ms,
                 "cache_position_value": step_decode_runtime_state.get(
@@ -452,9 +459,7 @@ def run_decode_loop(
                         "source": "reporting_after_decode_loop",
                     },
                 ),
-                "token_materialization_ms": token_event.get(
-                    "materialization_ms"
-                ),
+                "token_materialization_ms": token_event.get("materialization_ms"),
                 "token_runtime_handoff": "device_tensor_direct",
                 "runtime_host_roundtrip": False,
                 "reference": reference,
@@ -480,11 +485,22 @@ def run_decode_loop(
                     }
                 append_json_line(diagnostics_path, diagnostic_step)
             step_reports.append(_compact_step_report(full_step_report))
-            context.update_decode_token(token)
+            next_token = token
+            if teacher_forcing and step_index + 1 < decode_step_count:
+                next_token = _teacher_forcing_token_tensor(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=device,
+                    token_ids=teacher_forcing[step_index + 1],
+                    step_index=step_index + 1,
+                )
+                teacher_forcing_conversion_count += 1
+                tensor_conversion_count += 1
+            context.update_decode_token(next_token)
             if trace_session is not None:
                 decode_runtime = execution.runtime_state
             elif persistent_inputs is not None:
-                persistent_inputs.record_token(token)
+                persistent_inputs.record_token(next_token)
             if trace_session is not None:
                 _install_context_decode_runtime(
                     context,
@@ -526,9 +542,7 @@ def run_decode_loop(
                 decode_rotary_runtime_count += (
                     decode_runtime.rotary_runtime_input_tensor_count
                 )
-                tensor_conversion_count += (
-                    decode_runtime.tensor_conversion_count
-                )
+                tensor_conversion_count += decode_runtime.tensor_conversion_count
     finally:
         if trace_session is not None:
             trace_session.close()
@@ -539,11 +553,15 @@ def run_decode_loop(
         persistent_inputs=persistent_inputs,
         fallback_reason=fallback_reason,
     )
+    runtime_input_report["teacher_forcing"] = {
+        "enabled": bool(teacher_forcing),
+        "step_count": len(teacher_forcing),
+        "device_tensor_creation_count": teacher_forcing_conversion_count,
+        "execution_mode": "eager" if teacher_forcing else None,
+    }
     if trace_session is not None:
         runtime_input_report.update(trace_session.to_report())
-        runtime_input_report["runtime_input_mode_requested"] = (
-            runtime_input_mode
-        )
+        runtime_input_report["runtime_input_mode_requested"] = runtime_input_mode
     _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         generated_token_events=generated_token_events,
@@ -560,6 +578,48 @@ def run_decode_loop(
         ),
         diagnostics_reference_count=len(diagnostic_reference_ids),
         runtime_input_report=runtime_input_report,
+    )
+
+
+def _normalize_teacher_forcing(
+    token_ids_by_step: Sequence[Sequence[int]] | None,
+    *,
+    decode_step_count: int,
+    batch_size: int,
+) -> list[list[int]]:
+    if token_ids_by_step is None:
+        return []
+    steps = [[int(token_id) for token_id in row] for row in token_ids_by_step]
+    if len(steps) != int(decode_step_count):
+        raise ValueError(
+            "teacher forcing step count must match decode_step_count: "
+            f"{len(steps)} != {decode_step_count}"
+        )
+    for step_index, row in enumerate(steps):
+        if len(row) != int(batch_size):
+            raise ValueError(
+                "teacher forcing batch width must match batch_size at step "
+                f"{step_index}: {len(row)} != {batch_size}"
+            )
+        if any(token_id < 0 for token_id in row):
+            raise ValueError("teacher forcing token IDs must be non-negative")
+    return steps
+
+
+def _teacher_forcing_token_tensor(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    token_ids: Sequence[int],
+    step_index: int,
+) -> Any:
+    return build_token_ids_tensor(
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        token_ids=[[int(token_id)] for token_id in token_ids],
+        name=f"teacher_forcing_token_ids_{step_index}",
     )
 
 
@@ -664,20 +724,18 @@ def run_decode_steady_iterations(
             f"warmup={warmup}, iterations={iterations}, cache_len={cache_len}"
         )
 
-    decode_runtime, persistent_inputs, fallback_reason = (
-        _initial_decode_runtime(
-            runtime_input_mode=runtime_input_mode,
-            ttnn=ttnn,
-            torch=torch,
-            device=device,
-            dtype_seed=dtype_seed,
-            parameters=context.parameters,
-            decode_plan=decode_plan,
-            batch_size=batch_size,
-            cache_len=cache_len,
-            prefill_effective_token_count=effective_token_counts,
-            token_input=context.token_ids,
-        )
+    decode_runtime, persistent_inputs, fallback_reason = _initial_decode_runtime(
+        runtime_input_mode=runtime_input_mode,
+        ttnn=ttnn,
+        torch=torch,
+        device=device,
+        dtype_seed=dtype_seed,
+        parameters=context.parameters,
+        decode_plan=decode_plan,
+        batch_size=batch_size,
+        cache_len=cache_len,
+        prefill_effective_token_count=effective_token_counts,
+        token_input=context.token_ids,
     )
     _install_context_decode_runtime(
         context,
@@ -693,9 +751,7 @@ def run_decode_steady_iterations(
     decode_runtime_state_count = int(
         decode_runtime.decode_runtime_state_input_tensor_count
     )
-    decode_rotary_runtime_count = int(
-        decode_runtime.rotary_runtime_input_tensor_count
-    )
+    decode_rotary_runtime_count = int(decode_runtime.rotary_runtime_input_tensor_count)
 
     trace_session = None
     if execution_mode == "trace":
@@ -744,9 +800,7 @@ def run_decode_steady_iterations(
                             decode_plan=decode_plan,
                             batch_size=batch_size,
                             cache_len=cache_len,
-                            prefill_effective_token_count=(
-                                effective_token_counts
-                            ),
+                            prefill_effective_token_count=(effective_token_counts),
                             generated_token_index=step_index,
                         )
                     _install_context_decode_runtime(
@@ -783,9 +837,7 @@ def run_decode_steady_iterations(
             context.update_decode_token(token)
             if persistent_inputs is not None and trace_session is None:
                 persistent_inputs.record_token(token)
-            cache_positions.append(
-                max(int(value) for value in position_values)
-            )
+            cache_positions.append(max(int(value) for value in position_values))
             if step_index < warmup:
                 warmup_samples.append(latency_ms)
             else:
@@ -802,9 +854,7 @@ def run_decode_steady_iterations(
     )
     if trace_session is not None:
         runtime_input_report.update(trace_session.to_report())
-        runtime_input_report["runtime_input_mode_requested"] = (
-            runtime_input_mode
-        )
+        runtime_input_report["runtime_input_mode_requested"] = runtime_input_mode
     _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         warmup_step_ms_samples=warmup_samples,
@@ -851,9 +901,7 @@ def materialize_generate_token_events(
                 ttnn=ttnn,
                 batch_size=batch_size,
             )
-            materialization_ms = (
-                time.perf_counter() - materialization_start
-            ) * 1000.0
+            materialization_ms = (time.perf_counter() - materialization_start) * 1000.0
             token_ids = materialization["token_ids_by_user"]
             materialization_phase = "reporting_after_decode_loop"
         for user_index, row in enumerate(token_ids):
@@ -867,9 +915,7 @@ def materialize_generate_token_events(
             "token_materialization_ms": materialization_ms,
             "token_materialization_phase": materialization_phase,
             "runtime_handoff": event.get("runtime_handoff"),
-            "runtime_host_roundtrip": bool(
-                event.get("runtime_host_roundtrip")
-            ),
+            "runtime_host_roundtrip": bool(event.get("runtime_host_roundtrip")),
             "cache_position_value": event.get("cache_position_value"),
             "page_table_shape": event.get("page_table_shape"),
             "token_shape": event.get("token_shape"),

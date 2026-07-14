@@ -140,6 +140,14 @@ comparison metrics. HF reference capture runs on CPU, supports a truncated
 layer count, and records deterministic samples for layer hidden states,
 final hidden state, logits, and prefill KV cache.
 
+`correctness/performance_recipe.py` owns the lower-precision token contract.
+The corresponding diagnostic loads TT-Transformers' fixed `.refpt` corpus,
+measures top-1/top-5 teacher-forced accuracy, and compares multi-token greedy
+predictions. When the 512-token reference prompt exceeds Buddy's static
+prefill bucket, the first 256 tokens run through prefill and the remaining 256
+are replayed exactly through eager decode before target-token observations are
+collected. This does not alter normal generation.
+
 The product CLI uses five compact suites:
 
 - `dryrun`: required bundle artifacts plus generate/profile dry-runs.
@@ -229,6 +237,14 @@ does expose it, but its fixture and command-line defaults are disabled and the
 matched benchmark does not request it. Buddy therefore keeps prefetcher and
 sub-device execution disabled unless a future matched official A/B clears the
 documented one-percent promotion threshold.
+
+Final parity runs keep three comparison scopes explicit: corresponding-release
+official, same-commit current official, and Buddy. Each run writes a contract
+beside its raw log/profile so a matching passed run can be resumed safely. A
+damaged top-level report can recover only artifacts with complete sample counts
+and, for pytest runs, a zero-error JUnit result. Release execution isolates
+`TT_METAL_HOME`, `TT_METAL_BUILD_HOME`, and `TT_METAL_RUNTIME_ROOT`; clean
+release model source precedes the same-commit compiled runtime on `PYTHONPATH`.
 
 Execution-graph capture is diagnostic-only. `execution-graph-diff` wraps the
 corresponding-release official trace through the parity pytest plugin and asks

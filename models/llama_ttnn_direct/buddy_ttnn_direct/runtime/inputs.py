@@ -8,6 +8,31 @@ from typing import Any, Sequence
 from .tensor_meta import runtime_int_tensor
 
 
+def build_token_ids_tensor(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    token_ids: list[list[int]],
+    name: str,
+) -> Any:
+    kwargs = {"device": device}
+    dtype = getattr(
+        ttnn,
+        "uint32",
+        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    return ttnn.from_torch(
+        runtime_int_tensor(torch, token_ids, name=name),
+        **kwargs,
+    )
+
+
 @dataclass(frozen=True)
 class DecodeRuntimeState:
     batch_size: int
@@ -119,9 +144,7 @@ def build_decode_runtime_state(
     else:
         prompt_token_counts = [int(value) for value in prompt_token_count]
     if len(prompt_token_counts) != batch_size:
-        raise ValueError(
-            "prompt_token_count sequence length must match batch_size"
-        )
+        raise ValueError("prompt_token_count sequence length must match batch_size")
     if any(value <= 0 for value in prompt_token_counts):
         raise ValueError("prompt_token_count values must be positive")
 
@@ -132,9 +155,7 @@ def build_decode_runtime_state(
         for prompt_count in prompt_token_counts
     ]
     cache_position_value = (
-        cache_position_values[0]
-        if len(set(cache_position_values)) == 1
-        else None
+        cache_position_values[0] if len(set(cache_position_values)) == 1 else None
     )
     page_table = [
         [batch_id * page_count + page_id for page_id in range(page_count)]
@@ -197,9 +218,7 @@ def build_prompt_decode_runtime_state_tensors(
     )
     report = runtime_state.to_report()
     report["memory_config"] = "dram"
-    report["ttnn_memory_config"] = (
-        None if memory_config is None else str(memory_config)
-    )
+    report["ttnn_memory_config"] = None if memory_config is None else str(memory_config)
     return SimpleNamespace(
         page_table=page_table,
         cache_position=cache_position,

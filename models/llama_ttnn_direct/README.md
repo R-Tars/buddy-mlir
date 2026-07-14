@@ -56,11 +56,21 @@ HF config and weights
 - The dedicated all-BF16 correctness recipe passes the Hugging Face reference
   gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
   minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
+- The compressed performance recipe passes a separate fixed-corpus contract:
+  over 500 teacher-forced target tokens, official TT-Transformers reaches
+  `0.91/0.98` top-1/top-5 accuracy and all 32 Buddy users reach
+  `0.908/0.98`, with `0.97` greedy agreement against official.
+- The final P150A trace benchmark uses five warmups, 100 measured decode
+  iterations, and three repetitions. The corresponding
+  `v0.64.0-dev20251030` release reproduces `33.321 tokens/s/user`; Buddy
+  reaches `33.938 tokens/s/user`, or `101.85%`, with `0.0139%` repetition CV.
+  Goal 7 therefore reaches the M8 performance parity band.
 - The production greedy path follows TT-Transformers force-argmax: concatenate
   LM-head logits, untilize with multicore, then run multicore argmax. A composed
   shard-local/global reduction remains available for diagnostics but was slower
-  on P150A. The steady benchmark reaches milestone M5 but remains below the M6
-  greater-than-90% threshold, so official performance parity is not claimed.
+  on P150A. The retained force-argmax path now reaches M8 with full decode
+  trace and persistent inputs. Same-commit and corresponding-release results
+  remain separately labeled because their official runtimes differ.
 
 See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 [docs/evidence/README.md](docs/evidence/README.md) for the frozen measurements.
@@ -80,8 +90,8 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
 | Layered autotune | Four levels complete; official incumbent retained |
-| Steady decode benchmark | Step E confirmation: 28.436 tokens/s/user, 85.91% of target |
-| Official performance parity | Not achieved |
+| Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
+| Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 
 ## Quick Start
 
@@ -231,8 +241,8 @@ imported by runtime code.
 - The composed local/global LM-head reduction needs a fused TTNN operation to
   become competitive with the official force-argmax path.
 - Numerical correctness is proven with the dedicated all-BF16 recipe. The
-  compressed performance recipe has a separate, lower-precision acceptance
-  profile and is not claimed to pass the `0.99` full-depth PCC gate.
+  compressed performance recipe is intentionally judged by its separate
+  fixed-corpus token-accuracy and greedy-agreement contract, which passes.
 - Full decode trace reaches a post-cleanup three-run median of `33.997 t/s/u`
   on the matched P150A workload (`101.35%` of the corresponding-release local
   official median), with zero per-step input allocation and zero post-capture

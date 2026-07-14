@@ -9,26 +9,56 @@ from unittest.mock import patch
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity import (
     _finalize_report,
+    _execute_planned_run,
+    _latency_statistics,
+    _load_resumable_artifact,
     _official_execution_features,
     _planned_commands,
     _parse_buddy_report,
     _parse_official_log,
+    _resumable_runs,
+    parse_official_accuracy_samples,
     run_benchmark_parity,
 )
 
 
 class BenchmarkParityTest(unittest.TestCase):
+    def test_parse_official_accuracy_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_path = Path(tmpdir) / "official.log"
+            log_path.write_text(
+                "BUDDY_ACCURACY_SAMPLE token_iteration=1 predicted_token=22\n"
+                "BUDDY_ACCURACY_SAMPLE token_iteration=0 predicted_token=11\n"
+            )
+            self.assertEqual(
+                parse_official_accuracy_samples(log_path),
+                [11, 22],
+            )
+
+    def test_latency_statistics_reports_required_distribution(self) -> None:
+        statistics = _latency_statistics(
+            [
+                {
+                    "passed": True,
+                    "decode_step_ms_samples": [10.0, 20.0, 30.0, 40.0],
+                }
+            ]
+        )
+        self.assertEqual(statistics["sample_count"], 4)
+        self.assertEqual(statistics["mean"], 25.0)
+        self.assertEqual(statistics["p50"], 25.0)
+        self.assertEqual(statistics["p90"], 37.0)
+        self.assertEqual(statistics["min"], 10.0)
+        self.assertEqual(statistics["max"], 40.0)
+        self.assertIsNotNone(statistics["stdev"])
+
     def test_official_execution_features_record_disabled_prefetcher(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             current = root / "current"
             release = root / "release"
-            current_source = (
-                current / "models/tt_transformers/demo/conftest.py"
-            )
-            release_source = (
-                release / "models/tt_transformers/demo/conftest.py"
-            )
+            current_source = current / "models/tt_transformers/demo/conftest.py"
+            release_source = release / "models/tt_transformers/demo/conftest.py"
             current_source.parent.mkdir(parents=True)
             release_source.parent.mkdir(parents=True)
             current_source.write_text("use_prefetcher = False\n")
@@ -156,6 +186,10 @@ class BenchmarkParityTest(unittest.TestCase):
             report["official_local_primary_profile"],
             "official-greedy",
         )
+        self.assertEqual(
+            report["decode_latency_statistics_ms"]["buddy-greedy"]["sample_count"],
+            12,
+        )
 
     def test_finalize_keeps_release_reference_out_of_primary_ratio(self) -> None:
         def run(profile: str, tpsu: float) -> dict[str, object]:
@@ -242,6 +276,7 @@ class BenchmarkParityTest(unittest.TestCase):
                     official_python=root / "python",
                     release_root=None,
                     release_python=None,
+                    release_runtime_root=None,
                     layer_count=32,
                     batch_size=32,
                     effective_prefill_len=256,
@@ -254,11 +289,7 @@ class BenchmarkParityTest(unittest.TestCase):
                     device_id=0,
                 )
 
-        buddy = next(
-            plan
-            for plan in plans
-            if plan["implementation"] == "buddy"
-        )
+        buddy = next(plan for plan in plans if plan["implementation"] == "buddy")
         self.assertIn("persistent", buddy["command"])
         self.assertIn("trace", buddy["command"])
 
@@ -287,6 +318,8 @@ class BenchmarkParityTest(unittest.TestCase):
                     str(root / "release-root"),
                     "--official-release-python",
                     str(root / "release-python"),
+                    "--official-release-runtime-root",
+                    str(root / "release-runtime-root"),
                     "--model-path",
                     str(root / "model"),
                     "--input-prompts",
@@ -319,6 +352,190 @@ class BenchmarkParityTest(unittest.TestCase):
             kwargs["official_release_python"],
             root / "release-python",
         )
+        self.assertEqual(
+            kwargs["official_release_runtime_root"],
+            root / "release-runtime-root",
+        )
+
+    def test_release_source_build_uses_separate_runtime_root(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_root = root / "clean-model-source"
+            runtime_root = root / "same-commit-runtime"
+            release_python = root / "release-env" / "bin" / "python"
+            run_dir = root / "run"
+            for path in (
+                model_root,
+                runtime_root / "ttnn",
+                runtime_root / "tt_eager",
+                runtime_root / "build" / "lib",
+                release_python.parent,
+            ):
+                path.mkdir(parents=True, exist_ok=True)
+            release_python.write_text("")
+            captured: dict[str, object] = {}
+
+            def runner(
+                _command: object,
+                cwd: Path,
+                environment: dict[str, str],
+                log_path: Path,
+                _timeout: object,
+                _limit: object,
+            ) -> int:
+                captured.update({"cwd": cwd, "environment": environment})
+                log_path.write_text(
+                    "BUDDY_PARITY_SAMPLE token_iteration=1 " "duration_ms=30.000000\n"
+                )
+                return 0
+
+            result = _execute_planned_run(
+                plan={
+                    "implementation": "official",
+                    "profile": "official-release-demo",
+                    "comparison_scope": "release-reference",
+                    "repetition": 1,
+                    "run_dir": str(run_dir),
+                    "log_path": str(run_dir / "run.log"),
+                    "command": [str(release_python), "-m", "pytest"],
+                    "model_path": str(root / "model"),
+                    "official_root": str(model_root),
+                    "runtime_root": str(runtime_root),
+                    "runtime_mode": "source-build",
+                    "tensor_cache_path": str(root / "cache"),
+                },
+                page_block_size=32,
+                cache_len=1024,
+                warmup=0,
+                iterations=1,
+                runner=runner,
+                timeout_seconds=10,
+                address_space_limit_bytes=None,
+            )
+
+        environment = captured["environment"]
+        self.assertTrue(result["passed"])
+        self.assertEqual(captured["cwd"], model_root)
+        self.assertEqual(environment["TT_METAL_HOME"], str(runtime_root))
+        self.assertEqual(
+            environment["TT_METAL_RUNTIME_ROOT"],
+            str(runtime_root),
+        )
+        self.assertIn(str(runtime_root / "ttnn"), environment["PYTHONPATH"])
+        self.assertIn(
+            str(runtime_root / "build" / "lib"),
+            environment["LD_LIBRARY_PATH"],
+        )
+
+    def test_resumable_runs_only_reuses_matching_passes(self) -> None:
+        current = {
+            "buddy_program": "/program",
+            "official_tt_metal_root": "/official",
+            "model_path": "/model",
+            "tokenizer_path": "/model",
+            "input_prompts": "/prompts.json",
+            "official_python": "/python",
+            "official_release_root": None,
+            "official_release_python": None,
+            "official_release_runtime_root": None,
+            "device": "p150a",
+            "device_id": 0,
+            "batch_size": 32,
+            "requested_prefill_len": 128,
+            "cache_len": 1024,
+            "page_block_size": 32,
+            "warmup": 5,
+            "iterations": 100,
+            "repetitions": 1,
+        }
+        command = ["python", "benchmark"]
+        plans = [
+            {
+                "profile": "official-demo",
+                "repetition": 1,
+                "command": command,
+            }
+        ]
+        previous = dict(current)
+        previous.update(
+            {
+                "official_release_runs": [],
+                "official_local_runs": [
+                    {
+                        "profile": "official-demo",
+                        "repetition": 1,
+                        "command": command,
+                        "passed": True,
+                    }
+                ],
+                "buddy_local_runs": [],
+            }
+        )
+
+        resumed = _resumable_runs(
+            previous,
+            current_report=current,
+            plans=plans,
+        )
+        self.assertEqual(set(resumed), {("official-demo", 1)})
+
+        previous["iterations"] = 50
+        self.assertEqual(
+            _resumable_runs(
+                previous,
+                current_report=current,
+                plans=plans,
+            ),
+            {},
+        )
+
+    def test_resumable_artifact_requires_successful_junit_and_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            run_dir = Path(tmpdir)
+            log_path = run_dir / "run.log"
+            (run_dir / "pytest.xml").write_text(
+                '<testsuites><testsuite errors="0" failures="0" '
+                'tests="1" /></testsuites>'
+            )
+            log_path.write_text(
+                "BUDDY_PARITY_SAMPLE token_iteration=1 duration_ms=30.0\n"
+            )
+            plan = {
+                "implementation": "official",
+                "profile": "official-demo",
+                "comparison_scope": "same-commit-local",
+                "repetition": 1,
+                "run_dir": str(run_dir),
+                "log_path": str(log_path),
+                "command": ["python", "benchmark"],
+                "model_path": "/model",
+                "official_root": "/official",
+                "runtime_root": "/official",
+                "runtime_mode": "source-build",
+                "tensor_cache_path": "/cache",
+            }
+
+            resumed = _load_resumable_artifact(
+                plan,
+                warmup=0,
+                iterations=1,
+            )
+            self.assertIsNotNone(resumed)
+            self.assertTrue(resumed["passed"])
+            self.assertTrue((run_dir / "run_contract.json").is_file())
+
+            (run_dir / "pytest.xml").write_text(
+                '<testsuites><testsuite errors="1" failures="0" '
+                'tests="1" /></testsuites>'
+            )
+            (run_dir / "run_contract.json").unlink()
+            self.assertIsNone(
+                _load_resumable_artifact(
+                    plan,
+                    warmup=0,
+                    iterations=1,
+                )
+            )
 
 
 if __name__ == "__main__":

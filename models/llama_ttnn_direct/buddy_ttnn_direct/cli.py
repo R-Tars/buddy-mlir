@@ -814,8 +814,7 @@ def build_parser() -> argparse.ArgumentParser:
     profile_decode_step_parser = subparsers.add_parser(
         "profile-decode-step",
         help=(
-            "Profile generated decode_step by section for bottleneck "
-            "attribution."
+            "Profile generated decode_step by section for bottleneck " "attribution."
         ),
     )
     profile_decode_step_parser.add_argument(
@@ -1695,9 +1694,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--prefill-len",
         type=int,
         default=None,
-        help=(
-            "Prompt length used by the prefill+decode generate evidence step."
-        ),
+        help=("Prompt length used by the prefill+decode generate evidence step."),
     )
     validate_real.add_argument(
         "--device",
@@ -2095,6 +2092,7 @@ def build_parser() -> argparse.ArgumentParser:
             "autotune",
             "benchmark-parity",
             "execution-graph-diff",
+            "performance-correctness",
         ),
         required=True,
     )
@@ -2104,6 +2102,15 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--official-python", type=Path, default=None)
     diagnose.add_argument("--official-release-root", type=Path, default=None)
     diagnose.add_argument("--official-release-python", type=Path, default=None)
+    diagnose.add_argument(
+        "--official-release-runtime-root",
+        type=Path,
+        default=None,
+        help=(
+            "Optional same-commit source-build runtime root for a clean "
+            "official release model checkout."
+        ),
+    )
     diagnose.add_argument("--model-path", type=Path, default=None)
     diagnose.add_argument("--config", type=Path, default=None)
     add_prompt_runtime_args(diagnose, batch_prompts=True)
@@ -2133,6 +2140,7 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--warmup", type=int, default=5)
     diagnose.add_argument("--iterations", type=int, default=10)
     diagnose.add_argument("--repetitions", type=int, default=3)
+    diagnose.add_argument("--accuracy-tokens", type=int, default=500)
     diagnose.add_argument("--page-block-size", type=int, default=32)
     diagnose.add_argument("--benchmark-timeout", type=float, default=3600.0)
     diagnose.add_argument(
@@ -2497,28 +2505,19 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         report_level=args.report_level,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
         execution_mode=getattr(args, "execution_mode", "eager"),
-        prefill_execution_mode=getattr(
-            args, "prefill_execution_mode", "eager"
-        ),
+        prefill_execution_mode=getattr(args, "prefill_execution_mode", "eager"),
     )
     _print_generated_text(report)
     if args.out is not None:
         print(f"wrote generate report: {args.out}")
         diagnostics = report.get("diagnostics")
         if isinstance(diagnostics, dict) and diagnostics.get("decode_steps"):
-            print(
-                "wrote generate step diagnostics: "
-                f"{diagnostics['decode_steps']}"
-            )
+            print("wrote generate step diagnostics: " f"{diagnostics['decode_steps']}")
     if report.get("status") == "no_device":
         print(NO_TTNN_DEVICE_MESSAGE)
         return 2
     if not report.get("passed"):
-        error = (
-            report.get("error")
-            or report.get("detail")
-            or report.get("status")
-        )
+        error = report.get("error") or report.get("detail") or report.get("status")
         print(f"generate failed: {error}", file=sys.stderr)
     return 0 if report.get("passed") else 1
 
@@ -2557,9 +2556,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             warmup=args.warmup,
             iterations=args.iterations,
             dry_run=args.dry_run,
-            prefill_execution_mode=getattr(
-                args, "prefill_execution_mode", "eager"
-            ),
+            prefill_execution_mode=getattr(args, "prefill_execution_mode", "eager"),
         )
         print(f"wrote steady prefill profile report: {args.out}")
         if report.get("status") == "no_device":
@@ -2589,9 +2586,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             runtime_input_mode=getattr(args, "runtime_input_mode", None),
             execution_mode=getattr(args, "execution_mode", "eager"),
-            prefill_execution_mode=getattr(
-                args, "prefill_execution_mode", "eager"
-            ),
+            prefill_execution_mode=getattr(args, "prefill_execution_mode", "eager"),
         )
         print(f"wrote steady decode profile report: {args.out}")
         if report.get("status") == "no_device":
@@ -2619,9 +2614,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         generate_report=args.generate_report,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
         execution_mode=getattr(args, "execution_mode", "eager"),
-        prefill_execution_mode=getattr(
-            args, "prefill_execution_mode", "eager"
-        ),
+        prefill_execution_mode=getattr(args, "prefill_execution_mode", "eager"),
     )
     print(f"wrote generate profile report: {args.out}")
     if report.get("status") == "no_device":
@@ -2985,9 +2978,7 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             require_full_depth=args.require_full_depth,
             require_program_runtime_shape=args.require_program_runtime_shape,
             require_batch32_decode_step=args.require_batch32_decode_step,
-            min_tokens_per_second_per_user=(
-                args.min_tokens_per_second_per_user
-            ),
+            min_tokens_per_second_per_user=(args.min_tokens_per_second_per_user),
             baseline_tokens_per_second_per_user=(
                 args.baseline_tokens_per_second_per_user
             ),
@@ -3005,7 +2996,11 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
             guard_device_health=args.guard_device_health,
         )
         report_path = args.out_dir / "real_decode_preflight_report.json"
-        print(json.dumps({"status": report["status"], "report": str(report_path)}, indent=2))
+        print(
+            json.dumps(
+                {"status": report["status"], "report": str(report_path)}, indent=2
+            )
+        )
         return 0 if report["status"] == "pass" else 1
 
     if (
@@ -3037,18 +3032,14 @@ def _cmd_validate_real_decode(args: argparse.Namespace) -> int:
         skip_profile_decode_step=args.skip_profile_decode_step,
         require_full_decode_step=args.require_full_decode_step,
         require_model_end_to_end=args.require_model_end_to_end,
-        require_official_performance_parity=(
-            args.require_official_performance_parity
-        ),
+        require_official_performance_parity=(args.require_official_performance_parity),
         require_trace=args.require_trace,
         require_official_config_match=args.require_official_config_match,
         require_full_depth=args.require_full_depth,
         require_program_runtime_shape=args.require_program_runtime_shape,
         require_batch32_decode_step=args.require_batch32_decode_step,
         min_tokens_per_second_per_user=args.min_tokens_per_second_per_user,
-        baseline_tokens_per_second_per_user=(
-            args.baseline_tokens_per_second_per_user
-        ),
+        baseline_tokens_per_second_per_user=(args.baseline_tokens_per_second_per_user),
         performance_baselines_path=args.performance_baselines,
         baseline_reference=args.baseline_reference,
         min_baseline_ratio=args.min_baseline_ratio,
@@ -3120,10 +3111,7 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
             command=command,
         )
         report_path = args.out_dir / "real_decode_validation_report.json"
-        print(
-            "wrote TTNN Direct real decode validation report: "
-            f"{report_path}"
-        )
+        print("wrote TTNN Direct real decode validation report: " f"{report_path}")
         print(f"  status: {report['status']}")
         return 1
     if result.stdout:
@@ -3145,10 +3133,7 @@ def _cmd_validate_real_decode_isolated(args: argparse.Namespace) -> int:
         command=command,
     )
     report_path = args.out_dir / "real_decode_validation_report.json"
-    print(
-        "wrote TTNN Direct real decode validation report: "
-        f"{report_path}"
-    )
+    print("wrote TTNN Direct real decode validation report: " f"{report_path}")
     print(f"  status: {report['status']}")
     return 1
 
@@ -3165,8 +3150,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     if args.suite == "dryrun":
         if args.program_dir is None:
             print(
-                "validate --suite dryrun requires --program-dir; run build "
-                "first",
+                "validate --suite dryrun requires --program-dir; run build " "first",
                 file=sys.stderr,
             )
             return 1
@@ -3174,8 +3158,7 @@ def _cmd_validate(args: argparse.Namespace) -> int:
 
     if args.program_dir is None or args.model_path is None:
         print(
-            f"validate --suite {args.suite} requires --program-dir and "
-            "--model-path",
+            f"validate --suite {args.suite} requires --program-dir and " "--model-path",
             file=sys.stderr,
         )
         return 1
@@ -3237,9 +3220,7 @@ def _cmd_validate_program_dryrun(args: argparse.Namespace) -> int:
             "reports": {
                 "generate": str(generate_report),
                 "profile": str(profile_report),
-                "profile_underlying_generate": str(
-                    underlying_generate_report
-                ),
+                "profile_underlying_generate": str(underlying_generate_report),
             },
         }
     )
@@ -3406,10 +3387,7 @@ def _correctness_checks(
     if not values:
         return default
     return tuple(
-        check.strip()
-        for value in values
-        for check in value.split(",")
-        if check.strip()
+        check.strip() for value in values for check in value.split(",") if check.strip()
     )
 
 

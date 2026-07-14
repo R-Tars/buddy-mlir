@@ -62,6 +62,17 @@ profile, including compressed dtypes, compute kernels, DRAM-sharded weights,
 memory layouts, and program grids. `CORRECTNESS_CONFIG` intentionally remains
 all-BF16 and does not import the performance profile.
 
+Full-depth 8B execution needs enough virtual address space to map all weight
+shards and TTNN runtime objects. Check `ulimit -v`; when the shell has a lower
+finite limit, use at least the benchmark harness default before launching:
+
+```bash
+ulimit -v 95000000
+```
+
+A low limit can raise `mmap ... Cannot allocate memory` even when `free -h`
+shows ample available RAM.
+
 ## Build
 
 Build imports the HF Llama graph, creates the template plan, emits normalized

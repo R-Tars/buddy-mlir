@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 
-
 DIAGNOSE_STAGES = (
     "mlp",
     "attention-primitive",
@@ -15,10 +14,39 @@ DIAGNOSE_STAGES = (
     "autotune",
     "benchmark-parity",
     "execution-graph-diff",
+    "performance-correctness",
 )
 
 
 def run_stage(args: argparse.Namespace) -> dict[str, object]:
+    if args.stage == "performance-correctness":
+        _require_args(
+            args,
+            "buddy_program",
+            "official_tt_metal_root",
+            "model_path",
+        )
+        from .performance_correctness import run_performance_correctness
+
+        return run_performance_correctness(
+            out=args.out,
+            buddy_program=args.buddy_program,
+            official_tt_metal_root=args.official_tt_metal_root,
+            model_path=args.model_path,
+            tokenizer_path=args.tokenizer_path,
+            official_python=args.official_python,
+            token_count=args.accuracy_tokens,
+            layers=args.layers,
+            batch_size=args.batch_size or 32,
+            prefill_len=args.prefill_len or 512,
+            cache_len=args.cache_len or 1024,
+            page_block_size=args.page_block_size,
+            device=args.device,
+            device_id=args.device_id,
+            timeout_seconds=args.benchmark_timeout,
+            address_space_limit_bytes=int(args.address_space_limit_gb * 1_000_000_000),
+            dry_run=args.dry_run,
+        )
     if args.stage == "execution-graph-diff":
         _require_args(
             args,
@@ -43,9 +71,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             device_id=args.device_id,
             official_python=args.official_python,
             timeout_seconds=args.benchmark_timeout,
-            address_space_limit_bytes=int(
-                args.address_space_limit_gb * 1_000_000_000
-            ),
+            address_space_limit_bytes=int(args.address_space_limit_gb * 1_000_000_000),
             dry_run=args.dry_run,
         )
     if args.stage == "benchmark-parity":
@@ -76,10 +102,9 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             official_python=args.official_python,
             official_release_root=args.official_release_root,
             official_release_python=args.official_release_python,
+            official_release_runtime_root=(args.official_release_runtime_root),
             timeout_seconds=args.benchmark_timeout,
-            address_space_limit_bytes=int(
-                args.address_space_limit_gb * 1_000_000_000
-            ),
+            address_space_limit_bytes=int(args.address_space_limit_gb * 1_000_000_000),
             dry_run=args.dry_run,
         )
     if args.stage == "mlp":

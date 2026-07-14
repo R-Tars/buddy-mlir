@@ -212,6 +212,17 @@ The second command should resolve beneath
 `$TT_METAL_HOME/ttnn/ttnn/__init__.py`. A different path means that another
 TTNN installation is shadowing the source runtime.
 
+Before loading an 8B model, also verify the shell's virtual-memory limit:
+
+```bash
+ulimit -v
+ulimit -v 95000000
+```
+
+The second command raises the soft limit to about 95 GB when the hard limit
+permits it. A lower finite limit can make a safetensors `mmap` fail even while
+the host still reports substantial available physical memory.
+
 ## Keep Model Artifacts in the Build Tree
 
 Generated programs, reports, and retained runtime logs belong under the active
