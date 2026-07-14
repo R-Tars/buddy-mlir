@@ -42,6 +42,11 @@ from .tokenizer import (
 )
 from .session import build_runtime_session
 from .state import build_generate_state
+from .trace import (
+    P150_LLAMA31_8B_TRACE_REGION_SIZE,
+    build_decode_trace_key,
+    resolve_execution_mode,
+)
 
 
 def run_generate(
@@ -68,6 +73,7 @@ def run_generate(
     observer: Any | None = None,
     report_level: str | None = None,
     runtime_input_mode: str | None = None,
+    execution_mode: str | None = None,
 ) -> dict[str, Any]:
     resolved_report_level = _resolve_report_level(
         out=out,
@@ -83,6 +89,12 @@ def run_generate(
         runtime_input_mode,
         config=config,
     )
+    resolved_execution_mode = resolve_execution_mode(execution_mode)
+    if (
+        resolved_execution_mode == "trace"
+        and resolved_runtime_input_mode != "persistent"
+    ):
+        raise ValueError("trace execution requires runtime_input_mode=persistent")
     layer_count = int(layers)
     token_count = int(max_new_tokens)
     num_layers = int(config["num_layers"])
@@ -139,6 +151,7 @@ def run_generate(
         _install_planned_runtime_input_report(
             report,
             resolved_runtime_input_mode,
+            execution_mode=resolved_execution_mode,
         )
         return _finalize_report(
             report,
@@ -371,7 +384,16 @@ def run_generate(
         )
 
     try:
-        with maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
+        with maybe_generate_device(
+            ttnn,
+            device_id,
+            ttnn_module,
+            trace_region_size=(
+                P150_LLAMA31_8B_TRACE_REGION_SIZE
+                if resolved_execution_mode == "trace"
+                else None
+            ),
+        ) as ttnn_device:
             session = build_runtime_session(
                 ttnn=ttnn,
                 torch=torch,
@@ -394,11 +416,13 @@ def run_generate(
             )
             context = session.context
             model = session.generated_model
-            section_profiler = GenerateSectionProfiler(
-                ttnn=ttnn,
-                device=ttnn_device,
-            )
-            section_profiler.install(model)
+            section_profiler = None
+            if resolved_execution_mode == "eager":
+                section_profiler = GenerateSectionProfiler(
+                    ttnn=ttnn,
+                    device=ttnn_device,
+                )
+                section_profiler.install(model)
 
             total_start = time.perf_counter()
             prefill_result = run_prefill_prompt(
@@ -463,6 +487,16 @@ def run_generate(
                     else None
                 ),
                 runtime_input_mode=resolved_runtime_input_mode,
+                execution_mode=resolved_execution_mode,
+                trace_key=build_decode_trace_key(
+                    device_id=device_id,
+                    config=config,
+                    decode_plan=decode_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
             )
             generated_token_events = decode_loop.generated_token_events
             step_reports = decode_loop.step_reports
@@ -643,6 +677,13 @@ def _install_runtime_input_report(
         "cache_position_update_count",
         "rotary_buffer_update_count",
         "token_device_copy_count",
+        "trace_key",
+        "trace_capture_count",
+        "trace_execute_count",
+        "compile_run_count",
+        "persistent_input_count",
+        "trace_input_update_count",
+        "program_compile_count_after_capture",
     ):
         report[name] = runtime_inputs.get(name)
     parameter_setup = report.get("parameter_setup")
@@ -653,9 +694,11 @@ def _install_runtime_input_report(
 def _install_planned_runtime_input_report(
     report: dict[str, Any],
     runtime_input_mode: str,
+    *,
+    execution_mode: str = "eager",
 ) -> None:
     runtime_inputs = {
-        "execution_mode": "eager",
+        "execution_mode": execution_mode,
         "runtime_input_mode": runtime_input_mode,
         "runtime_input_mode_requested": runtime_input_mode,
         "new_device_tensors_per_decode_step": None,
@@ -664,6 +707,13 @@ def _install_planned_runtime_input_report(
         "cache_position_update_count": None,
         "rotary_buffer_update_count": None,
         "token_device_copy_count": None,
+        "trace_key": None,
+        "trace_capture_count": 0,
+        "trace_execute_count": 0,
+        "compile_run_count": 0,
+        "persistent_input_count": 0,
+        "trace_input_update_count": 0,
+        "program_compile_count_after_capture": None,
         "status": "planned",
     }
     _install_runtime_input_report(report, runtime_inputs)

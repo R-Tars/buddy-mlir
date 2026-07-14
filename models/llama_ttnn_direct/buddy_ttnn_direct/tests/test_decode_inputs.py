@@ -176,6 +176,57 @@ def test_persistent_decode_inputs_allocate_once_and_reuse_page_table() -> None:
     assert report["token_device_copy_count"] == 0
 
 
+def test_trace_uses_dedicated_token_input_buffer() -> None:
+    ttnn = _TTNN()
+    ttnn.clone = lambda tensor: SimpleNamespace(
+        shape=list(tensor.shape),
+        cloned_from=tensor,
+    )
+    token = SimpleNamespace(shape=[4, 1])
+    buffers = DecodeInputBuffers(
+        ttnn=ttnn,
+        torch=_Torch(),
+        device=object(),
+        dtype_seed="bf16",
+        parameters=_parameters(),
+        decode_plan=_decode_plan(),
+        batch_size=4,
+        cache_len=64,
+        prefill_effective_token_count=[8, 9, 10, 11],
+        token_input=token,
+    )
+
+    buffers.prepare_token_for_trace()
+    buffers.prepare_token_for_trace()
+
+    assert buffers.token_input is not token
+    assert buffers.token_input.cloned_from is token
+    assert buffers.device_tensor_creation_count == 7
+    assert buffers.trace_token_input_creation_count == 1
+
+
+def test_trace_capacity_allows_last_slot_then_rejects_next_step() -> None:
+    ttnn = _TTNN()
+    buffers = DecodeInputBuffers(
+        ttnn=ttnn,
+        torch=_Torch(),
+        device=object(),
+        dtype_seed="bf16",
+        parameters=_parameters(),
+        decode_plan=_decode_plan(),
+        batch_size=4,
+        cache_len=64,
+        prefill_effective_token_count=[63, 63, 63, 63],
+        token_input=SimpleNamespace(shape=[4, 1]),
+    )
+
+    buffers.record_trace_execution(SimpleNamespace(shape=[4, 1]))
+
+    assert buffers.positions == [64, 64, 64, 64]
+    with pytest.raises(ValueError, match="cache capacity"):
+        buffers.validate_trace_execution()
+
+
 @pytest.mark.parametrize(
     ("requested", "config", "expected"),
     [

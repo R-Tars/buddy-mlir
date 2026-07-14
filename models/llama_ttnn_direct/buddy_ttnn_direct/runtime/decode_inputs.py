@@ -135,6 +135,7 @@ class DecodeInputBuffers:
         self.cache_position_update_count = 0
         self.rotary_buffer_update_count = 0
         self.token_device_copy_count = 0
+        self.trace_token_input_creation_count = 0
         self.step_count = 0
         self._materialize_rotary()
 
@@ -163,6 +164,31 @@ class DecodeInputBuffers:
         self.rotary_buffer_update_count += 1
         return self._runtime_state(tensor_conversion_count=0)
 
+    def materialize_rotary_for_trace(self) -> None:
+        """Record rotary lookup operations into a trace capture."""
+        self._materialize_rotary()
+
+    def prepare_token_for_trace(self) -> None:
+        if self.trace_token_input_creation_count:
+            return
+        self.token_input = self.ttnn.clone(self.token_input)
+        self.device_tensor_creation_count += 1
+        self.trace_token_input_creation_count += 1
+
+    def validate_trace_execution(self) -> None:
+        if any(position >= self.cache_len for position in self.positions):
+            raise ValueError("decode trace execution exceeds cache capacity")
+
+    def record_trace_execution(self, token_input: Any) -> SimpleNamespace:
+        self.validate_trace_execution()
+        self.token_input = token_input
+        self.positions = [position + 1 for position in self.positions]
+        self.step_count += 1
+        self.cache_position_update_count += 1
+        self.rotary_buffer_update_count += 1
+        self.token_device_copy_count += 1
+        return self._runtime_state(tensor_conversion_count=0)
+
     def to_report(self) -> dict[str, Any]:
         return {
             "execution_mode": "eager",
@@ -173,6 +199,9 @@ class DecodeInputBuffers:
             "cache_position_update_count": self.cache_position_update_count,
             "rotary_buffer_update_count": self.rotary_buffer_update_count,
             "token_device_copy_count": self.token_device_copy_count,
+            "trace_token_input_creation_count": (
+                self.trace_token_input_creation_count
+            ),
             "persistent_input_count": self.device_tensor_creation_count,
             "initial_device_tensor_creation_count": (
                 self.device_tensor_creation_count

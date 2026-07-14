@@ -1008,6 +1008,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Select per-step recreation or persistent decode inputs.",
     )
     generate.add_argument(
+        "--execution-mode",
+        choices=("eager", "trace"),
+        default="eager",
+        help="Execute decode eagerly or replay one full-device trace.",
+    )
+    generate.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate generate planning without opening a device.",
@@ -1971,6 +1977,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Select per-step recreation or persistent decode inputs.",
     )
+    product_profile.add_argument(
+        "--execution-mode",
+        choices=("eager", "trace"),
+        default="eager",
+        help="Execute decode eagerly or replay one full-device trace.",
+    )
     product_profile.add_argument("--dry-run", action="store_true")
     product_profile.add_argument("--generate-report", type=Path, default=None)
     product_profile.add_argument("--out", type=Path, required=True)
@@ -2470,6 +2482,7 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         report_level=args.report_level,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
+        execution_mode=getattr(args, "execution_mode", "eager"),
     )
     _print_generated_text(report)
     if args.out is not None:
@@ -2529,6 +2542,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             after_prefill=True,
             dry_run=args.dry_run,
             runtime_input_mode=getattr(args, "runtime_input_mode", None),
+            execution_mode=getattr(args, "execution_mode", "eager"),
         )
         print(f"wrote steady decode profile report: {args.out}")
         if report.get("status") == "no_device":
@@ -2555,6 +2569,7 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
         generate_report=args.generate_report,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
+        execution_mode=getattr(args, "execution_mode", "eager"),
     )
     print(f"wrote generate profile report: {args.out}")
     if report.get("status") == "no_device":

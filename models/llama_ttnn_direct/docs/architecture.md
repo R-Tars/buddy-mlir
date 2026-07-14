@@ -104,6 +104,8 @@ weights_manifest.json
 - `decode_inputs.py`: A/B-selectable persistent decode input ownership. The
   persistent path allocates page table, current position, rotary index, full
   cos/sin caches, and rotary transformation once per runtime session.
+- `trace.py`: full decode trace key/session ownership, compile run, capture,
+  nonblocking replay, device token feedback, and program-cache accounting.
 - `rotary.py`: HF-compatible Llama RoPE values and TTNN tensor placement.
 - `kv_cache.py`: paged KV-cache allocation and metadata.
 - `prefill.py`: prompt prefill orchestration.
@@ -179,6 +181,12 @@ The intended invariants are:
 - persistent decode mode updates current position and rotary index on device,
   gathers cos/sin from full device caches, and performs no per-step
   `ttnn.from_torch` calls;
+- trace decode mode clones one stable token input, captures rotary lookup,
+  embedding, all decoder layers, final norm, split LM-head, force-argmax,
+  token feedback, and position increments in one device trace;
+- trace replay performs one nonblocking `execute_trace` and one device
+  synchronization per step without recreating model, weights, KV cache, or
+  trace inputs;
 - host token materialization is limited to reporting and detokenization.
 
 `runtime_input_mode` selects `recreate` or `persistent`. The P150A performance
@@ -186,6 +194,19 @@ configuration defaults to `persistent`; `recreate` remains available as a
 matched A/B control. Generate and steady-profile reports expose per-step
 device-tensor creation, host-to-device updates, page-table updates,
 cache-position updates, rotary updates, and token device copies.
+
+`execution_mode` selects `eager` or `trace`. Trace mode requires persistent
+inputs and opens P150A with the official Llama 3.1 8B trace-region reservation
+of 52,000,000 bytes. Steady profiling leaves generated tokens entirely on the
+device. Generate mode materializes token IDs only for reporting while the
+captured device-to-device feedback remains the autoregressive input. Per-op
+section profiling is disabled during trace capture because TTNN forbids event
+synchronization inside a trace.
+
+Trace reports expose the complete `DecodeTraceKey`, capture/replay/compile-run
+counts, persistent input and update counts, and the number of program-cache
+entries added after capture. A successful steady run has one capture, one
+compile run, `warmup + iterations` replays, and zero post-capture programs.
 
 ## Evidence Boundary
 

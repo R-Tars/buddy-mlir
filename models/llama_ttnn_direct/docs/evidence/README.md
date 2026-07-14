@@ -65,6 +65,15 @@ The current baseline evidence is:
   `27.610 t/s/u` median across three repetitions (`CV 1.09%`), a `0.98%`
   increase over the pre-change median, so the no-more-than-1% regression gate
   passes.
+- `p150a_goal2_persistent_inputs_evidence_20260714.json`: Goal 2 keeps page
+  table, positions, and rotary caches on device. The matched eager median is
+  `29.294 t/s/u`, a `6.10%` improvement over Goal 1, with zero per-step TTNN
+  input allocation, but it remains below the 90% release threshold.
+- `p150a_goal3_full_trace_evidence_20260714.json`: Goal 3 captures and replays
+  one full 32-layer decode trace. Eager and trace token IDs match at depth 1
+  and full depth. Three 5/50 runs measure a `34.022 t/s/u` median (`101.42%`
+  of the corresponding-release local official median) with `0.037%` CV and
+  zero post-capture program compilation.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

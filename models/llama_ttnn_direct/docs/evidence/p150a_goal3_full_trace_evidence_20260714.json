@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-07-14T16:12:00+08:00",
+  "purpose": "Goal 3 full decode trace capture/replay correctness and matched P150A 5/50 performance evidence.",
+  "device": "p150a",
+  "device_id": 0,
+  "trace_region_size_bytes": 52000000,
+  "model_path": "/wafer/share/models/Llama-3.1-8B-Instruct",
+  "buddy_execution_base_head": "5840c9d",
+  "tt_metal_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+  "official_release": {
+    "tag": "v0.64.0-dev20251030",
+    "commit": "b76035fbdac81d8f9974976471dc60fc005e1bfb",
+    "published_tokens_per_second_per_user": 33.1,
+    "local_median_tokens_per_second_per_user": 33.5458575
+  },
+  "report": {
+    "path": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal3_full_decode_trace_20260714.json",
+    "sha256": "8354971ae2f8fc0b23255f877dd7f989e8e014c212c9f3c75164dafebb2ddd38",
+    "raw_run_root": "/wafer/zhuxinye/buddy-mlir/build-tenstorrent/models/llama31_ttnn_direct/reports/goal3_full_trace_20260714_runs"
+  },
+  "workload": {
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 256,
+    "cache_len": 1024,
+    "warmup": 5,
+    "iterations": 50,
+    "repetitions": 3,
+    "execution_mode": "trace",
+    "runtime_input_mode": "persistent",
+    "prompt_mode": "official batch prompts with instruct chat template"
+  },
+  "trace_contract": {
+    "trace_capture_count_per_run": 1,
+    "trace_execute_count_per_run": 55,
+    "compile_run_count_per_run": 1,
+    "persistent_input_count": 7,
+    "trace_input_update_count_per_run": 165,
+    "program_compile_count_during_capture": [
+      0,
+      0,
+      0
+    ],
+    "program_compile_count_after_capture": [
+      0,
+      0,
+      0
+    ]
+  },
+  "performance": {
+    "tokens_per_second_per_user": [
+      33.9952882536593,
+      34.02177336161135,
+      34.02190401159319
+    ],
+    "median_tokens_per_second_per_user": 34.02177336161135,
+    "coefficient_of_variation_percent": 0.036798024239768995,
+    "goal2_eager_median_tokens_per_second_per_user": 29.294057375120975,
+    "improvement_over_goal2_eager_percent": 16.138822717352763,
+    "ratio_of_official_release_local_median_percent": 101.41870232892796,
+    "ratio_of_official_published_percent": 102.78481378130317
+  },
+  "correctness": {
+    "depth1_eager_trace_token_ids_equal": true,
+    "depth1_eager_trace_text_equal": true,
+    "depth1_trace_structural_reference_passed": true,
+    "depth1_captured_model_op_count": 48,
+    "full_depth_eager_trace_token_ids_equal": true,
+    "full_depth_trace_generate_passed": true,
+    "full_depth_trace_structural_reference_passed": true,
+    "kv_cache_structural_invariants_passed": true,
+    "goal2_all_bf16_minimum_pcc": 0.9925982836726808
+  },
+  "acceptance": {
+    "status": "pass",
+    "passed": true,
+    "mandatory_90_percent_local_official_passed": true,
+    "goal_95_percent_local_official_passed": true,
+    "run_to_run_cv_at_most_1_5_percent_passed": true,
+    "zero_program_compiles_after_capture_passed": true,
+    "product_tests_passed": 98,
+    "diagnostics_tests_passed": 224,
+    "diagnostics_subtests_passed": 9,
+    "compileall_passed": true,
+    "git_diff_check_passed": true
+  }
+}

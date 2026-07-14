@@ -147,6 +147,13 @@ def compact_generate_report(
             "cache_position_update_count",
             "rotary_buffer_update_count",
             "token_device_copy_count",
+            "trace_key",
+            "trace_capture_count",
+            "trace_execute_count",
+            "compile_run_count",
+            "persistent_input_count",
+            "trace_input_update_count",
+            "program_compile_count_after_capture",
             "diagnostics",
             "ttnn_version",
             "error",
@@ -862,8 +869,10 @@ def generate_success_report(
             "synthetic_rotary_tensor_count": 0,
             "synthetic_kv_cache_tensor_count": 0,
             "host_copy_profile": host_copy,
-            "section_profile": section_profiler.to_report(
-                host_copy_profile=host_copy,
+            "section_profile": (
+                section_profiler.to_report(host_copy_profile=host_copy)
+                if section_profiler is not None
+                else section_profile_not_run("trace_execution")
             ),
             "latency_ms": latency_ms,
             "throughput_summary": generate_throughput_summary(

@@ -44,6 +44,7 @@ def run_profile_decode_steady(
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
+    execution_mode: str | None = None,
 ) -> dict[str, Any]:
     """Measure repeated full decode iterations after one prompt prefill."""
 
@@ -62,6 +63,11 @@ def run_profile_decode_steady(
         load_prompt_batch,
         tokenize_prompts_for_prefill,
     )
+    from .trace import (
+        P150_LLAMA31_8B_TRACE_REGION_SIZE,
+        build_decode_trace_key,
+        resolve_execution_mode,
+    )
 
     profile_path = Path(out)
     program_root = Path(program_dir)
@@ -70,6 +76,12 @@ def run_profile_decode_steady(
         runtime_input_mode,
         config=config,
     )
+    resolved_execution_mode = resolve_execution_mode(execution_mode)
+    if (
+        resolved_execution_mode == "trace"
+        and resolved_runtime_input_mode != "persistent"
+    ):
+        raise ValueError("trace execution requires runtime_input_mode=persistent")
     num_layers = int(config["num_layers"])
     layer_count = num_layers if layers is None else int(layers)
     batch_size = int(batch_size or config["batch_size"])
@@ -119,6 +131,7 @@ def run_profile_decode_steady(
         device_id=device_id,
         dtype_seed=dtype_seed,
         runtime_input_mode=resolved_runtime_input_mode,
+        execution_mode=resolved_execution_mode,
     )
     if dry_run:
         report = {
@@ -201,7 +214,16 @@ def run_profile_decode_steady(
         return report
 
     try:
-        with maybe_generate_device(ttnn, device_id, ttnn_module) as ttnn_device:
+        with maybe_generate_device(
+            ttnn,
+            device_id,
+            ttnn_module,
+            trace_region_size=(
+                P150_LLAMA31_8B_TRACE_REGION_SIZE
+                if resolved_execution_mode == "trace"
+                else None
+            ),
+        ) as ttnn_device:
             setup_start = time.perf_counter()
             session = build_runtime_session(
                 ttnn=ttnn,
@@ -243,6 +265,16 @@ def run_profile_decode_steady(
                 warmup=warmup,
                 iterations=iterations,
                 runtime_input_mode=resolved_runtime_input_mode,
+                execution_mode=resolved_execution_mode,
+                trace_key=build_decode_trace_key(
+                    device_id=device_id,
+                    config=config,
+                    decode_plan=decode_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
             )
 
             samples = list(decode_result.measured_step_ms_samples)
@@ -347,6 +379,25 @@ def run_profile_decode_steady(
                 "token_device_copy_count": runtime_inputs[
                     "token_device_copy_count"
                 ],
+                "trace_key": runtime_inputs.get("trace_key"),
+                "trace_capture_count": runtime_inputs.get(
+                    "trace_capture_count", 0
+                ),
+                "trace_execute_count": runtime_inputs.get(
+                    "trace_execute_count", 0
+                ),
+                "compile_run_count": runtime_inputs.get(
+                    "compile_run_count", 0
+                ),
+                "persistent_input_count": runtime_inputs.get(
+                    "persistent_input_count", 0
+                ),
+                "trace_input_update_count": runtime_inputs.get(
+                    "trace_input_update_count", 0
+                ),
+                "program_compile_count_after_capture": runtime_inputs.get(
+                    "program_compile_count_after_capture"
+                ),
                 "decode_runtime_state_input_tensor_count": (
                     decode_result.decode_runtime_state_input_tensor_count
                 ),
@@ -414,6 +465,7 @@ def _decode_steady_report_base(
     device_id: int,
     dtype_seed: str,
     runtime_input_mode: str,
+    execution_mode: str,
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -430,9 +482,16 @@ def _decode_steady_report_base(
         "device": device,
         "device_id": device_id,
         "dtype_seed": dtype_seed,
-        "execution_mode": "eager",
+        "execution_mode": execution_mode,
         "runtime_input_mode": runtime_input_mode,
         "runtime_input_mode_requested": runtime_input_mode,
+        "trace_key": None,
+        "trace_capture_count": 0,
+        "trace_execute_count": 0,
+        "compile_run_count": 0,
+        "persistent_input_count": 0,
+        "trace_input_update_count": 0,
+        "program_compile_count_after_capture": None,
         "after_prefill": True,
         "warmup": warmup,
         "iterations": iterations,

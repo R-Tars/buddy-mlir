@@ -434,6 +434,7 @@ def run_profile_generate(
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
+    execution_mode: str | None = None,
 ) -> dict[str, Any]:
     from .generate import run_generate
 
@@ -464,6 +465,7 @@ def run_profile_generate(
         torch_module=torch_module,
         tokenizer_module=tokenizer_module,
         runtime_input_mode=runtime_input_mode,
+        execution_mode=execution_mode,
     )
     report = profile_generate_from_generate_report(
         generate_payload,
@@ -498,6 +500,7 @@ def run_profile_decode_steady(
     torch_module: Any | None = None,
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
+    execution_mode: str | None = None,
 ) -> dict[str, Any]:
     from .steady_profile import run_profile_decode_steady as run
 
@@ -524,6 +527,7 @@ def run_profile_decode_steady(
         torch_module=torch_module,
         tokenizer_module=tokenizer_module,
         runtime_input_mode=runtime_input_mode,
+        execution_mode=execution_mode,
     )
 
 def _profile_generate_sections(

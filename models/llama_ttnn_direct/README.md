@@ -166,6 +166,33 @@ Profile the same workflow or post-prefill steady decode with the `profile`
 command. Detailed examples and suite semantics are in
 [docs/commands.md](docs/commands.md).
 
+Run the official-style full decode trace benchmark with persistent inputs:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
+  --mode decode-steady \
+  --execution-mode trace \
+  --runtime-input-mode persistent \
+  --program-dir "$PROGRAM" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --input-prompts "$OFFICIAL_PROMPTS" \
+  --instruct \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 256 \
+  --cache-len 1024 \
+  --warmup 5 \
+  --iterations 50 \
+  --device p150a \
+  --after-prefill \
+  --out "$REPORTS/performance/decode_trace.json"
+```
+
+Use `--execution-mode eager` as the matched control. Trace mode captures one
+complete decode step and reports trace identity, capture/replay counts,
+persistent inputs, and post-capture program-cache growth.
+
 ## Commands
 
 The user-facing CLI exposes only:
@@ -206,9 +233,11 @@ imported by runtime code.
 - Numerical correctness is proven with the dedicated all-BF16 recipe. The
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.
-- The steady decode path still creates five runtime metadata/rotary tensors per
-  iteration and the Step E confirmation reaches `85.91%`, not the M6
-  greater-than-90% milestone.
+- Full decode trace reaches a three-run median of `34.022 t/s/u` on the matched
+  P150A workload (`101.42%` of the corresponding-release local official
+  median), with zero per-step input allocation and zero post-capture program
+  compilation. The next performance work is execution-graph parity rather
+  than further static configuration tuning.
 - Buddy prefill represents 32 users in one tensor, so the imported QKV and WO
   prefill configs disable TT-Transformers' single-sequence batch fusion while
   retaining the extracted grid and block geometry.
@@ -217,7 +246,7 @@ imported by runtime code.
 
 ## Development
 
-Run the eight-file product test set:
+Run the product test set:
 
 ```bash
 pytest models/llama_ttnn_direct/buddy_ttnn_direct/tests -q
