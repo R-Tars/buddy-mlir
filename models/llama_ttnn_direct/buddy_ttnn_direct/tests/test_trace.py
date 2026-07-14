@@ -11,6 +11,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.trace import (
     build_decode_trace_key,
     resolve_execution_mode,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill_trace import (
+    PrefillTraceKey,
+    PrefillTraceSession,
+    build_prefill_trace_key,
+    resolve_prefill_execution_mode,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.device import (
     GenerateDeviceSession,
 )
@@ -115,6 +121,33 @@ class _Model:
         return self.output_token, args[-1]
 
 
+class _PrefillModel:
+    def __init__(self, calls: list[tuple[object, ...]]) -> None:
+        self.calls = calls
+        self.prefill_count = 0
+        self.output_token = object()
+
+    def prefill_prompt(
+        self,
+        token_ids: object,
+        kv_cache: object,
+        page_table: object,
+        *,
+        valid_seq_len: object,
+    ) -> tuple[object, object, list[dict[str, object]]]:
+        self.prefill_count += 1
+        self.calls.append(
+            (
+                "prefill_prompt",
+                token_ids,
+                kv_cache,
+                page_table,
+                valid_seq_len,
+            )
+        )
+        return self.output_token, kv_cache, [{"layer_id": 0}]
+
+
 def _key() -> DecodeTraceKey:
     return DecodeTraceKey(
         device_id=0,
@@ -126,6 +159,108 @@ def _key() -> DecodeTraceKey:
         dtype_recipe="mixed_bfp8_bf16",
         argmax_strategy="full_logits_untilize_multicore_argmax",
     )
+
+
+def _prefill_key() -> PrefillTraceKey:
+    return PrefillTraceKey(
+        prefill_len=128,
+        batch_size=32,
+        config_hash="prefill-abc",
+        device_id=0,
+        layer_count=32,
+        cache_len=1024,
+    )
+
+
+def test_prefill_trace_captures_batch_and_replays_nonblocking() -> None:
+    device = _Device()
+    ttnn = _TTNN(device)
+    model = _PrefillModel(ttnn.calls)
+    token_ids = object()
+    page_table = object()
+    kv_cache = [object(), object()]
+    session = PrefillTraceSession(
+        ttnn=ttnn,
+        device=device,
+        model=model,
+        token_ids=token_ids,
+        page_table=page_table,
+        kv_cache=kv_cache,
+        valid_seq_len=[17] * 32,
+        key=_prefill_key(),
+    )
+
+    session.capture()
+    session.update_inputs(token_ids=token_ids, page_table=page_table)
+    result = session.execute()
+    session.close()
+    report = session.to_report()
+
+    assert model.prefill_count == 2
+    assert result.token is model.output_token
+    assert result.kv_cache is kv_cache
+    assert result.cache_reports == [{"layer_id": 0}]
+    assert report["execution_mode"] == "trace"
+    assert report["trace_capture_count"] == 1
+    assert report["trace_execute_count"] == 1
+    assert report["compile_run_count"] == 1
+    assert report["persistent_input_count"] == 3
+    assert report["trace_input_update_count"] == 0
+    assert report["host_cache_fill_dispatches_per_replay"] == 0
+    assert report["program_compile_count_after_capture"] == 0
+    assert report["program_compile_count_during_capture"] == 0
+    assert report["trace_released"] is True
+    assert ("execute", device, "trace-7", {"cq_id": 0, "blocking": False}) in ttnn.calls
+    assert ttnn.calls[-1] == ("release", device, "trace-7")
+
+
+def test_prefill_trace_key_is_stable_and_shape_sensitive() -> None:
+    config = {"prefill": {"cache_write_policy": "fill_cache_per_user"}}
+    plan = {"batch_size": 32, "prefill_len": 128}
+    first = build_prefill_trace_key(
+        device_id=0,
+        config=config,
+        prefill_plan=plan,
+        layer_count=32,
+        batch_size=32,
+        prefill_len=128,
+        cache_len=1024,
+        dtype_seed="bf16",
+    )
+    second = build_prefill_trace_key(
+        device_id=0,
+        config=config,
+        prefill_plan=plan,
+        layer_count=32,
+        batch_size=32,
+        prefill_len=128,
+        cache_len=1024,
+        dtype_seed="bf16",
+    )
+    changed = build_prefill_trace_key(
+        device_id=0,
+        config=config,
+        prefill_plan=plan,
+        layer_count=32,
+        batch_size=32,
+        prefill_len=256,
+        cache_len=1024,
+        dtype_seed="bf16",
+    )
+
+    assert first == second
+    assert first.config_hash != changed.config_hash
+    assert first.to_report()["prefill_len"] == 128
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [(None, "eager"), ("eager", "eager"), ("trace", "trace")],
+)
+def test_resolve_prefill_execution_mode(
+    requested: str | None, expected: str
+) -> None:
+    assert resolve_prefill_execution_mode(requested) == expected
 
 
 def test_decode_trace_captures_full_step_and_replays_nonblocking() -> None:

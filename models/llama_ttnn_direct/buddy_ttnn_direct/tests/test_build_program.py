@@ -164,6 +164,14 @@ class BuildProgramTest(unittest.TestCase):
                 'op_name="reshape_prefill_selected_hidden"',
                 source,
             )
+            self.assertIn(
+                'op_name="reshape_prefill_attention_for_residual"',
+                source,
+            )
+            self.assertIn(
+                'op_name="reshape_prefill_mlp_for_residual"',
+                source,
+            )
             self.assertIn("observer=None", source)
             self.assertIn('self._observe("prefill.final_hidden"', source)
             self.assertIn('self._observe(f"{stage}.logits"', source)

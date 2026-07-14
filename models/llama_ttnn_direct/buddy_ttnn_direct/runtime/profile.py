@@ -372,6 +372,19 @@ def profile_generate_from_generate_report(
         "generated_token_count_by_user": _generated_token_counts(generate),
         "latency_ms": _float_or_none(generate.get("latency_ms")),
         "prefill_ms": prefill_ms,
+        "prefill_batch_latency_ms": _float_or_none(
+            (generate.get("prefill") or {}).get("batch_latency_ms")
+        ),
+        "prefill_average_ttft_ms_per_user": _float_or_none(
+            (generate.get("prefill") or {}).get(
+                "average_ttft_ms_per_user"
+            )
+        ),
+        "prefill_official_metric_formula": (
+            (generate.get("prefill") or {}).get("official_metric_formula")
+        ),
+        "prefill_execution_mode": generate.get("prefill_execution_mode"),
+        "prefill_execution": generate.get("prefill_execution"),
         "decode_step_ms_mean": decode_step_ms_mean,
         "decode_step_ms_min": min(step_latencies) if step_latencies else None,
         "decode_step_ms_max": max(step_latencies) if step_latencies else None,
@@ -435,6 +448,7 @@ def run_profile_generate(
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
     execution_mode: str | None = None,
+    prefill_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     from .generate import run_generate
 
@@ -466,6 +480,7 @@ def run_profile_generate(
         tokenizer_module=tokenizer_module,
         runtime_input_mode=runtime_input_mode,
         execution_mode=execution_mode,
+        prefill_execution_mode=prefill_execution_mode,
     )
     report = profile_generate_from_generate_report(
         generate_payload,
@@ -501,6 +516,7 @@ def run_profile_decode_steady(
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
     execution_mode: str | None = None,
+    prefill_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     from .steady_profile import run_profile_decode_steady as run
 
@@ -528,6 +544,7 @@ def run_profile_decode_steady(
         tokenizer_module=tokenizer_module,
         runtime_input_mode=runtime_input_mode,
         execution_mode=execution_mode,
+        prefill_execution_mode=prefill_execution_mode,
     )
 
 def _profile_generate_sections(

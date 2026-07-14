@@ -196,6 +196,52 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         )
         self.assertEqual(ops.op_log, ["select_sequence_positions"])
 
+    def test_model_ops_normalizes_prefill_hidden_to_residual_shape(self) -> None:
+        calls = []
+
+        def reshape(tensor, logical_shape, padded_shape):
+            calls.append((tensor, logical_shape, padded_shape))
+            return types.SimpleNamespace(shape=logical_shape)
+
+        ops = TTNNCompatOps(
+            types.SimpleNamespace(reshape=reshape), record_ops=True
+        )
+        hidden = types.SimpleNamespace(shape=(1, 32, 256, 4096))
+        residual = types.SimpleNamespace(shape=(32, 1, 256, 4096))
+
+        result = ops.reshape_prefill_hidden_like(hidden, residual)
+
+        self.assertEqual(result.shape, (32, 1, 256, 4096))
+        self.assertEqual(
+            calls,
+            [
+                (
+                    hidden,
+                    (32, 1, 256, 4096),
+                    (32, 1, 256, 4096),
+                )
+            ],
+        )
+        self.assertEqual(ops.op_log, ["reshape_prefill_hidden_like"])
+
+    def test_model_ops_canonicalizes_prefill_layer_input(self) -> None:
+        calls = []
+
+        def reshape(tensor, logical_shape, padded_shape):
+            calls.append((tensor, logical_shape, padded_shape))
+            return types.SimpleNamespace(shape=logical_shape)
+
+        ops = TTNNCompatOps(types.SimpleNamespace(reshape=reshape))
+        hidden = types.SimpleNamespace(shape=(32, 256, 4096))
+
+        result = ops.reshape_prefill_hidden_for_layer(hidden)
+
+        self.assertEqual(result.shape, (1, 32, 256, 4096))
+        self.assertEqual(
+            calls,
+            [(hidden, (1, 32, 256, 4096), (1, 32, 256, 4096))],
+        )
+
     def test_model_ops_local_global_argmax_stays_on_device(self) -> None:
         calls = []
 

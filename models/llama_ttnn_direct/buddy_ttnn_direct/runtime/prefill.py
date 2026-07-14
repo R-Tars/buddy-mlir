@@ -96,24 +96,70 @@ def run_prefill_prompt(
     device: Any,
     prefill_plan: dict[str, Any],
     layer_count: int,
+    execution_mode: str = "eager",
+    trace_key: Any | None = None,
 ) -> SimpleNamespace:
-    prefill_start = time.perf_counter()
-    prefill_token, kv_cache, cache_reports = (
-        context.generated_model.prefill_prompt(
-            context.prefill_token_ids,
-            context.kv_cache,
-            context.prefill_page_table,
-            valid_seq_len=context.prefill_tokenization.get(
-                "effective_token_count_by_user",
-                context.prefill_tokenization["effective_token_count"],
-            ),
-        )
+    from .prefill_trace import (
+        PrefillTraceSession,
+        eager_prefill_execution_report,
+        resolve_prefill_execution_mode,
     )
+
+    resolved_execution_mode = resolve_prefill_execution_mode(execution_mode)
+    valid_seq_len = context.prefill_tokenization.get(
+        "effective_token_count_by_user",
+        context.prefill_tokenization["effective_token_count"],
+    )
+    inferred_batch_size = len(valid_seq_len) if isinstance(
+        valid_seq_len, (list, tuple)
+    ) else 1
+    if resolved_execution_mode == "trace":
+        if trace_key is None:
+            raise ValueError("prefill trace execution requires trace_key")
+        trace_session = PrefillTraceSession(
+            ttnn=ttnn,
+            device=device,
+            model=context.generated_model,
+            token_ids=context.prefill_token_ids,
+            page_table=context.prefill_page_table,
+            kv_cache=context.kv_cache,
+            valid_seq_len=valid_seq_len,
+            key=trace_key,
+        )
+        try:
+            trace_session.capture()
+            trace_session.update_inputs(
+                token_ids=context.prefill_token_ids,
+                page_table=context.prefill_page_table,
+                force_token_update=True,
+            )
+            execution = trace_session.execute()
+            prefill_token = execution.token
+            kv_cache = execution.kv_cache
+            cache_reports = execution.cache_reports
+            latency_ms = execution.latency_ms
+        finally:
+            trace_session.close()
+        execution_report = trace_session.to_report()
+    else:
+        prefill_start = time.perf_counter()
+        prefill_token, kv_cache, cache_reports = (
+            context.generated_model.prefill_prompt(
+                context.prefill_token_ids,
+                context.kv_cache,
+                context.prefill_page_table,
+                valid_seq_len=valid_seq_len,
+            )
+        )
+        synchronize = getattr(ttnn, "synchronize_device", None)
+        if callable(synchronize):
+            synchronize(device)
+        latency_ms = (time.perf_counter() - prefill_start) * 1000.0
+        execution_report = eager_prefill_execution_report(
+            batch_size=int(prefill_plan.get("batch_size", inferred_batch_size)),
+            layer_count=layer_count,
+        )
     context.update_kv_cache(kv_cache)
-    synchronize = getattr(ttnn, "synchronize_device", None)
-    if callable(synchronize):
-        synchronize(device)
-    latency_ms = (time.perf_counter() - prefill_start) * 1000.0
     output_shapes = {
         "token": tensor_shape(prefill_token),
         "key_cache": tensor_shape(kv_cache[0].k),
@@ -182,6 +228,12 @@ def run_prefill_prompt(
         kv_cache=kv_cache,
         cache_reports=cache_reports,
         latency_ms=latency_ms,
+        average_ttft_ms_per_user=(
+            latency_ms
+            / int(prefill_plan.get("batch_size", inferred_batch_size))
+        ),
+        batch_prefill_latency_ms=latency_ms,
+        execution_report=execution_report,
         output_shapes=output_shapes,
         cache_population=cache_population,
         reference=reference,

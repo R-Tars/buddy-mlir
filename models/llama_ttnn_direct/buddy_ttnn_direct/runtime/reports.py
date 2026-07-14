@@ -139,6 +139,8 @@ def compact_generate_report(
             "end_to_end_contract",
             "runtime_inputs",
             "execution_mode",
+            "prefill_execution_mode",
+            "prefill_execution",
             "runtime_input_mode",
             "runtime_input_mode_requested",
             "new_device_tensors_per_decode_step",

@@ -1198,6 +1198,7 @@ def _make_fake_ttnn(
     with_transformer: bool = True,
     with_to_torch: bool = False,
     with_reshape: bool = False,
+    with_noop_reshape: bool = False,
 ):
     module = types.ModuleType("ttnn")
     module.calls = []
@@ -1260,6 +1261,8 @@ def _make_fake_ttnn(
         return [[23], [23]]
 
     def reshape(tensor, logical_shape, padded_shape=None):
+        if with_noop_reshape:
+            return tensor
         module.calls.append(
             {
                 "op": "reshape",
@@ -1600,7 +1603,7 @@ def _make_fake_ttnn(
     module.from_torch = from_torch
     if with_to_torch:
         module.to_torch = to_torch
-    if with_reshape:
+    if with_reshape or with_noop_reshape:
         module.reshape = reshape
     module.embedding = embedding
     module.rms_norm = rms_norm

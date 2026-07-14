@@ -106,9 +106,13 @@ weights_manifest.json
   cos/sin caches, and rotary transformation once per runtime session.
 - `trace.py`: full decode trace key/session ownership, compile run, capture,
   nonblocking replay, device token feedback, and program-cache accounting.
+- `prefill_trace.py`: shape-specific prefill trace keys and experimental
+  capture/replay ownership.
 - `rotary.py`: HF-compatible Llama RoPE values and TTNN tensor placement.
 - `kv_cache.py`: paged KV-cache allocation and metadata.
 - `prefill.py`: prompt prefill orchestration.
+- `prefill_profile.py`: repeated batched-prefill timing and TTFT/reference
+  comparison reports.
 - `decode.py`: decode-step and token handoff orchestration.
 - `generate.py`: high-level generate entry point.
 - `profile.py`: generate section profiling and profile report assembly.
@@ -207,6 +211,16 @@ Trace reports expose the complete `DecodeTraceKey`, capture/replay/compile-run
 counts, persistent input and update counts, and the number of program-cache
 entries added after capture. A successful steady run has one capture, one
 compile run, `warmup + iterations` replays, and zero post-capture programs.
+
+Prefill profiling is independent from steady decode. It times one complete
+batched prefill and reports average TTFT per user as batch latency divided by
+batch size, matching the official demo's convention. Reference provenance is
+explicit: the published P150 target is tied to
+`v0.64.0-dev20251030` (`b76035f`), and a newer same-commit local official run is
+reported separately. The eager path is the production default. Prefill trace
+keys include prefill length, batch size, and a configuration hash, but the
+current TTNN runtime synchronizes at the large residual add during trace
+capture; this candidate therefore remains disabled instead of falling back.
 
 Execution-graph capture is diagnostic-only. `execution-graph-diff` wraps the
 corresponding-release official trace through the parity pytest plugin and asks

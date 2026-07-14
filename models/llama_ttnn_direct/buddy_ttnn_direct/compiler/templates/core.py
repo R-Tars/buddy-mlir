@@ -107,7 +107,10 @@ class BuddyLlama31TTNN:
         page_table=None,
         valid_seq_len=None,
     ):
-        hidden = self.embed(token_ids)
+        hidden = self.ops.reshape_prefill_hidden_for_layer(
+            self.embed(token_ids),
+            op_name="reshape_prefill_hidden_input",
+        )
         cache_reports = []
         for layer_id in range(self.config.num_layers):
             hidden, kv_cache, cache_report = self.prefill_layer(
@@ -165,6 +168,11 @@ class BuddyLlama31TTNN:
             page_table,
             valid_seq_len=valid_seq_len,
         )
+        hidden = self.ops.reshape_prefill_hidden_like(
+            hidden,
+            residual,
+            op_name="reshape_prefill_attention_for_residual",
+        )
         hidden = self.ops.add(
             residual,
             hidden,
@@ -175,6 +183,11 @@ class BuddyLlama31TTNN:
             hidden, layer_id, kind="mlp", stage="prefill"
         )
         hidden = self.mlp_decode(layer_id, hidden, stage="prefill")
+        hidden = self.ops.reshape_prefill_hidden_like(
+            hidden,
+            residual,
+            op_name="reshape_prefill_mlp_for_residual",
+        )
         hidden = self.ops.add(
             residual,
             hidden,

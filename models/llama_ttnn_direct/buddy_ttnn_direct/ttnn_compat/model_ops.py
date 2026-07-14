@@ -293,6 +293,71 @@ class TTNNCompatOps:
         self._record(op_name)
         return reshape(qkv, logical_shape)
 
+    def reshape_prefill_hidden_for_layer(
+        self,
+        hidden,
+        *,
+        op_name="reshape_prefill_hidden_for_layer",
+    ):
+        shape = _tensor_shape(hidden)
+        if shape is None:
+            return hidden
+        if len(shape) == 3:
+            target_shape = (1, shape[0], shape[1], shape[2])
+        elif len(shape) == 4 and shape[0] == 1:
+            return hidden
+        elif len(shape) == 4 and shape[1] == 1:
+            target_shape = (1, shape[0], shape[2], shape[3])
+        else:
+            return hidden
+        reshape = getattr(self.ttnn, "reshape", None)
+        if not callable(reshape):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "reshape_prefill_hidden_for_layer",
+                (("reshape",),),
+            )
+        self._record(op_name)
+        try:
+            return reshape(hidden, target_shape, target_shape)
+        except TypeError:
+            return reshape(hidden, target_shape)
+
+    def reshape_prefill_hidden_like(
+        self,
+        hidden,
+        reference,
+        *,
+        op_name="reshape_prefill_hidden_like",
+    ):
+        hidden_shape = _tensor_shape(hidden)
+        reference_shape = _tensor_shape(reference)
+        if hidden_shape is None or reference_shape is None:
+            return hidden
+        if hidden_shape == reference_shape:
+            return hidden
+        hidden_elements = 1
+        for dim in hidden_shape:
+            hidden_elements *= dim
+        reference_elements = 1
+        for dim in reference_shape:
+            reference_elements *= dim
+        if hidden_elements != reference_elements:
+            raise ValueError(
+                "prefill residual tensors must have the same element count: "
+                f"hidden={hidden_shape}, reference={reference_shape}"
+            )
+        reshape = getattr(self.ttnn, "reshape", None)
+        if not callable(reshape):
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "reshape_prefill_hidden_like",
+                (("reshape",),),
+            )
+        self._record(op_name)
+        try:
+            return reshape(hidden, tuple(reference_shape), tuple(reference_shape))
+        except TypeError:
+            return reshape(hidden, tuple(reference_shape))
+
     def to_memory_config(
         self,
         tensor,

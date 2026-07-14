@@ -45,6 +45,7 @@ def run_profile_decode_steady(
     tokenizer_module: Any | None = None,
     runtime_input_mode: str | None = None,
     execution_mode: str | None = None,
+    prefill_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     """Measure repeated full decode iterations after one prompt prefill."""
 
@@ -57,6 +58,10 @@ def run_profile_decode_steady(
     from .errors import NoTTNNDeviceError
     from .plans import decode_step_plan, prefill_plan as build_prefill_plan
     from .prefill import run_prefill_prompt
+    from .prefill_trace import (
+        build_prefill_trace_key,
+        resolve_prefill_execution_mode,
+    )
     from .session import build_runtime_session
     from .tokenizer import (
         PromptTokenizationError,
@@ -77,6 +82,9 @@ def run_profile_decode_steady(
         config=config,
     )
     resolved_execution_mode = resolve_execution_mode(execution_mode)
+    resolved_prefill_execution_mode = resolve_prefill_execution_mode(
+        prefill_execution_mode
+    )
     if (
         resolved_execution_mode == "trace"
         and resolved_runtime_input_mode != "persistent"
@@ -133,6 +141,7 @@ def run_profile_decode_steady(
         runtime_input_mode=resolved_runtime_input_mode,
         execution_mode=resolved_execution_mode,
     )
+    base["prefill_execution_mode"] = resolved_prefill_execution_mode
     if dry_run:
         report = {
             **base,
@@ -140,6 +149,10 @@ def run_profile_decode_steady(
             "passed": True,
             "dry_run": True,
             "prefill_status": "planned",
+            "prefill_execution": {
+                "execution_mode": resolved_prefill_execution_mode,
+                "status": "planned",
+            },
             "acceptance": {
                 "status": "dry_run",
                 "passed": True,
@@ -221,6 +234,7 @@ def run_profile_decode_steady(
             trace_region_size=(
                 P150_LLAMA31_8B_TRACE_REGION_SIZE
                 if resolved_execution_mode == "trace"
+                or resolved_prefill_execution_mode == "trace"
                 else None
             ),
         ) as ttnn_device:
@@ -252,6 +266,17 @@ def run_profile_decode_steady(
                 device=ttnn_device,
                 prefill_plan=prefill_plan,
                 layer_count=layer_count,
+                execution_mode=resolved_prefill_execution_mode,
+                trace_key=build_prefill_trace_key(
+                    device_id=device_id,
+                    config=config,
+                    prefill_plan=prefill_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    prefill_len=prefill_len,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
             )
             decode_result = run_decode_steady_iterations(
                 context=context,
@@ -320,6 +345,16 @@ def run_profile_decode_steady(
                 "setup_ms": setup_ms,
                 "prefill_status": "passed" if prefill_passed else "failed",
                 "prefill_ms": float(prefill_result.latency_ms),
+                "prefill_batch_latency_ms": float(
+                    prefill_result.batch_prefill_latency_ms
+                ),
+                "prefill_average_ttft_ms_per_user": float(
+                    prefill_result.average_ttft_ms_per_user
+                ),
+                "prefill_official_metric_formula": (
+                    "batch_prefill_latency_ms / batch_size"
+                ),
+                "prefill_execution": prefill_result.execution_report,
                 "prefill_cache_population": prefill_result.cache_population,
                 "warmup_step_ms_samples": warmup_samples,
                 "warmup_total_ms": sum(warmup_samples),

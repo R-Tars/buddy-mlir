@@ -22,6 +22,10 @@ from .plans import decode_step_plan, prefill_plan as build_prefill_plan
 from .prefill import (
     run_prefill_prompt,
 )
+from .prefill_trace import (
+    build_prefill_trace_key,
+    resolve_prefill_execution_mode,
+)
 from .profile import (
     GenerateSectionProfiler,
 )
@@ -74,6 +78,7 @@ def run_generate(
     report_level: str | None = None,
     runtime_input_mode: str | None = None,
     execution_mode: str | None = None,
+    prefill_execution_mode: str | None = None,
 ) -> dict[str, Any]:
     resolved_report_level = _resolve_report_level(
         out=out,
@@ -90,6 +95,9 @@ def run_generate(
         config=config,
     )
     resolved_execution_mode = resolve_execution_mode(execution_mode)
+    resolved_prefill_execution_mode = resolve_prefill_execution_mode(
+        prefill_execution_mode
+    )
     if (
         resolved_execution_mode == "trace"
         and resolved_runtime_input_mode != "persistent"
@@ -153,6 +161,11 @@ def run_generate(
             resolved_runtime_input_mode,
             execution_mode=resolved_execution_mode,
         )
+        report["prefill_execution_mode"] = resolved_prefill_execution_mode
+        report["prefill_execution"] = {
+            "execution_mode": resolved_prefill_execution_mode,
+            "status": "planned",
+        }
         return _finalize_report(
             report,
             out=out,
@@ -391,6 +404,7 @@ def run_generate(
             trace_region_size=(
                 P150_LLAMA31_8B_TRACE_REGION_SIZE
                 if resolved_execution_mode == "trace"
+                or resolved_prefill_execution_mode == "trace"
                 else None
             ),
         ) as ttnn_device:
@@ -431,6 +445,17 @@ def run_generate(
                 device=ttnn_device,
                 prefill_plan=prefill_plan,
                 layer_count=layer_count,
+                execution_mode=resolved_prefill_execution_mode,
+                trace_key=build_prefill_trace_key(
+                    device_id=device_id,
+                    config=config,
+                    prefill_plan=prefill_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    prefill_len=prefill_len,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
             )
             prefill_token = prefill_result.prefill_token
             kv_cache = prefill_result.kv_cache
@@ -568,6 +593,22 @@ def run_generate(
                 ttnn_module=ttnn,
             )
             report["cache_capacity"] = cache_capacity
+            report["prefill_execution_mode"] = (
+                resolved_prefill_execution_mode
+            )
+            report["prefill_execution"] = prefill_result.execution_report
+            report["prefill"]["batch_latency_ms"] = (
+                prefill_result.batch_prefill_latency_ms
+            )
+            report["prefill"]["average_ttft_ms_per_user"] = (
+                prefill_result.average_ttft_ms_per_user
+            )
+            report["prefill"]["official_metric_formula"] = (
+                "batch_prefill_latency_ms / batch_size"
+            )
+            report["prefill"]["execution"] = (
+                prefill_result.execution_report
+            )
             _install_runtime_input_report(
                 report,
                 decode_loop.runtime_input_report,

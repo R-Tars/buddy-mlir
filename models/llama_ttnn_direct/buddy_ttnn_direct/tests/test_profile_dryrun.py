@@ -9,6 +9,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
     run_profile_decode_steady,
     run_profile_generate,
+    run_profile_prefill_steady,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate_dryrun import (
     _make_generate_fake_ttnn,
@@ -31,6 +32,111 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_sin
 
 
 class ProfileGenerateTest(unittest.TestCase):
+    def test_cli_profile_prefill_steady_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "prefill_steady_profile.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            exit_code = main(
+                [
+                    "profile",
+                    "--mode",
+                    "prefill-steady",
+                    "--program-dir",
+                    str(program_dir),
+                    "--prefill-len",
+                    "8",
+                    "--batch-size",
+                    "2",
+                    "--cache-len",
+                    "16",
+                    "--warmup",
+                    "2",
+                    "--iterations",
+                    "4",
+                    "--dry-run",
+                    "--out",
+                    str(report_json),
+                ]
+            )
+
+            self.assertEqual(exit_code, 0)
+            report = json.loads(report_json.read_text())
+            self.assertEqual(report["command"], "profile")
+            self.assertEqual(report["mode"], "prefill-steady")
+            self.assertEqual(report["status"], "dry_run")
+            self.assertTrue(report["passed"])
+            self.assertEqual(report["warmup"], 2)
+            self.assertEqual(report["iterations"], 4)
+            self.assertEqual(report["prefill_execution_mode"], "eager")
+            references = report["official_references"]
+            self.assertEqual(
+                references["release_tag"],
+                "v0.64.0-dev20251030",
+            )
+            self.assertEqual(
+                references["release_commit"],
+                "b76035fbdac81d8f9974976471dc60fc005e1bfb",
+            )
+            self.assertEqual(
+                references["matched_tt_metal_commit"],
+                "61e690c25202111b52cbc1fbc9148b6524070c6f",
+            )
+
+    def test_prefill_trace_candidate_fails_before_device_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            report_json = root / "prefill_trace_profile.json"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+
+            report = run_profile_prefill_steady(
+                out=report_json,
+                program_dir=program_dir,
+                prefill_execution_mode="trace",
+            )
+
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["status"], "unsupported_prefill_trace")
+            self.assertIn("residual add", report["error"])
+            self.assertEqual(json.loads(report_json.read_text()), report)
+
     def test_cli_profile_decode_steady_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

@@ -5134,7 +5134,10 @@ class ValidateDirectTest(unittest.TestCase):
                     prompt="hello tenstorrent",
                     tokenizer_path=model_dir,
                     tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
-                    ttnn_module=_make_fake_ttnn(with_to_torch=True),
+                    ttnn_module=_make_fake_ttnn(
+                        with_to_torch=True,
+                        with_noop_reshape=True,
+                    ),
                     torch_module=_fake_torch(),
                 )
 
@@ -5698,7 +5701,10 @@ class ValidateDirectTest(unittest.TestCase):
                         tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
                         skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
-                        ttnn_module=_make_fake_ttnn(with_to_torch=True),
+                        ttnn_module=_make_fake_ttnn(
+                            with_to_torch=True,
+                            with_noop_reshape=True,
+                        ),
                         torch_module=_fake_torch(),
                     )
 

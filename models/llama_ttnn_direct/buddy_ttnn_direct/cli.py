@@ -43,6 +43,7 @@ from .generate import (
     run_generate,
     run_profile_decode_steady,
     run_profile_generate,
+    run_profile_prefill_steady,
 )
 from .reports.performance import default_performance_baselines_path
 from .reports.contracts import ATTENTION_PRIMITIVES
@@ -1014,6 +1015,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute decode eagerly or replay one full-device trace.",
     )
     generate.add_argument(
+        "--prefill-execution-mode",
+        choices=("eager", "trace"),
+        default="eager",
+        help="Execute prefill eagerly or replay a prompt-shape trace.",
+    )
+    generate.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate generate planning without opening a device.",
@@ -1942,14 +1949,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     product_profile = subparsers.add_parser(
         "profile",
-        help="Profile generate or post-prefill steady decode.",
+        help="Profile generate, prefill, or post-prefill steady decode.",
     )
     product_profile.add_argument("--program-dir", type=Path, required=True)
     product_profile.add_argument("--model-path", type=Path, default=None)
     add_prompt_runtime_args(product_profile, batch_prompts=True)
     product_profile.add_argument(
         "--mode",
-        choices=("generate", "decode-steady"),
+        choices=("generate", "decode-steady", "prefill-steady"),
         default="generate",
     )
     product_profile.add_argument("--max-new-tokens", type=int, default=2)
@@ -1982,6 +1989,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("eager", "trace"),
         default="eager",
         help="Execute decode eagerly or replay one full-device trace.",
+    )
+    product_profile.add_argument(
+        "--prefill-execution-mode",
+        choices=("eager", "trace"),
+        default="eager",
+        help="Execute prefill eagerly or replay a prompt-shape trace.",
     )
     product_profile.add_argument("--dry-run", action="store_true")
     product_profile.add_argument("--generate-report", type=Path, default=None)
@@ -2484,6 +2497,9 @@ def _cmd_generate(args: argparse.Namespace) -> int:
         report_level=args.report_level,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
         execution_mode=getattr(args, "execution_mode", "eager"),
+        prefill_execution_mode=getattr(
+            args, "prefill_execution_mode", "eager"
+        ),
     )
     _print_generated_text(report)
     if args.out is not None:
@@ -2522,6 +2538,35 @@ def _print_generated_text(report: dict[str, object]) -> None:
 
 
 def _cmd_profile_generate(args: argparse.Namespace) -> int:
+    if getattr(args, "mode", "generate") == "prefill-steady":
+        report = run_profile_prefill_steady(
+            out=args.out,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            input_prompts=args.input_prompts,
+            instruct=args.instruct,
+            tokenizer_path=args.tokenizer_path,
+            layers=args.layers,
+            prefill_len=args.prefill_len,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            warmup=args.warmup,
+            iterations=args.iterations,
+            dry_run=args.dry_run,
+            prefill_execution_mode=getattr(
+                args, "prefill_execution_mode", "eager"
+            ),
+        )
+        print(f"wrote steady prefill profile report: {args.out}")
+        if report.get("status") == "no_device":
+            print(NO_TTNN_DEVICE_MESSAGE)
+            return 2
+        return 0 if report.get("passed") else 1
+
     if getattr(args, "mode", "generate") == "decode-steady":
         report = run_profile_decode_steady(
             out=args.out,
@@ -2544,6 +2589,9 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
             dry_run=args.dry_run,
             runtime_input_mode=getattr(args, "runtime_input_mode", None),
             execution_mode=getattr(args, "execution_mode", "eager"),
+            prefill_execution_mode=getattr(
+                args, "prefill_execution_mode", "eager"
+            ),
         )
         print(f"wrote steady decode profile report: {args.out}")
         if report.get("status") == "no_device":
@@ -2571,6 +2619,9 @@ def _cmd_profile_generate(args: argparse.Namespace) -> int:
         generate_report=args.generate_report,
         runtime_input_mode=getattr(args, "runtime_input_mode", None),
         execution_mode=getattr(args, "execution_mode", "eager"),
+        prefill_execution_mode=getattr(
+            args, "prefill_execution_mode", "eager"
+        ),
     )
     print(f"wrote generate profile report: {args.out}")
     if report.get("status") == "no_device":

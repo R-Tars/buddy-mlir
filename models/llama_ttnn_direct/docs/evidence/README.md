@@ -79,6 +79,14 @@ The current baseline evidence is:
   operation counts match, redundant RMSNorm `to_layout` calls fall from 65 to
   one required initial tilize, and three 5/50 runs measure a `33.997 t/s/u`
   median (`101.35%` of local release official) with no correctness regression.
+- `p150a_goal5_prefill_evidence_20260714.json`: Goal 5 records full-depth
+  batched-prefill graph structure, versioned official TTFT references, and the
+  prefill-trace experiment. The warmed eager batch32 path measures about
+  `43.96 ms/user`, passing P5 against both the same-commit and corresponding-
+  release local baselines. TTNN exposes only scalar-user paged cache fill in
+  this runtime, while prefill trace capture is blocked by synchronization at
+  the residual add; both constraints are recorded without changing the eager
+  default.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

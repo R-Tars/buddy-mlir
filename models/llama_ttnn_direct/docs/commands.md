@@ -246,6 +246,46 @@ replace `--prompt` in the command above with:
 --input-prompts "$OFFICIAL_PROMPTS" --instruct --prefill-len 256
 ```
 
+### Batched prefill and TTFT
+
+Prefill steady mode reuses one loaded model session, excludes warmup runs, and
+measures the complete batch32 prefill. It reports both the batch latency and
+the official demo's average-TTFT convention:
+
+```text
+average_ttft_ms_per_user = batch_prefill_latency_ms / batch_size
+```
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli profile \
+  --mode prefill-steady \
+  --program-dir "$PROGRAM" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --input-prompts "$OFFICIAL_PROMPTS" \
+  --instruct \
+  --layers 32 \
+  --batch-size 32 \
+  --prefill-len 256 \
+  --cache-len 1024 \
+  --warmup 1 \
+  --iterations 3 \
+  --prefill-execution-mode eager \
+  --device p150a \
+  --out "$REPORTS/performance/prefill_steady.json"
+```
+
+Official references in this report are versioned. The published P150 numbers
+belong to `tt-metal v0.64.0-dev20251030` (`b76035f`), while the same-commit
+local comparison uses the Buddy runtime's `tt-metal` commit (`61e690c`). These
+are separate comparison scopes. The corresponding-release local TTFT, the
+same-commit local TTFT, and the published `57 ms` reference are all reported.
+
+`--prefill-execution-mode trace` is an explicit experiment. On the current
+runtime, TTNN synchronizes at the large prefill residual add during capture, so
+the production default remains eager and the failed trace candidate is retained
+as evidence rather than silently falling back.
+
 ## Layered Autotune
 
 Autotune is a development diagnostic, not a product validation gate. It varies
