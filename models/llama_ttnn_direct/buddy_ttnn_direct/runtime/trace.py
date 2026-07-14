@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
-
 
 EXECUTION_MODES = ("eager", "trace")
 P150_LLAMA31_8B_TRACE_REGION_SIZE = 52_000_000
+GRAPH_CAPTURE_PATH_ENV = "BUDDY_TTNN_DECODE_GRAPH_PATH"
 
 
 class DecodeTraceUnsupported(RuntimeError):
@@ -52,6 +54,7 @@ class DecodeTraceSession:
         kv_cache: Any,
         key: DecodeTraceKey,
         cq_id: int = 0,
+        graph_capture_path: str | Path | None = None,
     ) -> None:
         _require_trace_apis(ttnn)
         self.ttnn = ttnn
@@ -61,6 +64,12 @@ class DecodeTraceSession:
         self.kv_cache_handles = kv_cache
         self.key = key
         self.cq_id = int(cq_id)
+        configured_graph_path = graph_capture_path or os.environ.get(
+            GRAPH_CAPTURE_PATH_ENV
+        )
+        self.graph_capture_path = (
+            Path(configured_graph_path).resolve() if configured_graph_path else None
+        )
         self.trace_id: Any | None = None
         self.output_token: Any | None = None
         self.capture_count = 0
@@ -68,9 +77,7 @@ class DecodeTraceSession:
         self.compile_run_count = 0
         self.trace_input_update_count = 0
         self.captured_model_ops: list[str] | None = None
-        self.program_cache_entries_before_compile = _program_cache_entries(
-            device
-        )
+        self.program_cache_entries_before_compile = _program_cache_entries(device)
         self.program_cache_entries_after_compile: int | None = None
         self.program_cache_entries_after_capture: int | None = None
         self.program_cache_entries_after_execute: int | None = None
@@ -93,12 +100,8 @@ class DecodeTraceSession:
             self.kv_cache_handles,
         )
         token_scratch = self.ttnn.clone(self.persistent_inputs.token_input)
-        cache_position_scratch = self.ttnn.clone(
-            self.persistent_inputs.cache_position
-        )
-        rotary_index_scratch = self.ttnn.clone(
-            self.persistent_inputs.rotary_index
-        )
+        cache_position_scratch = self.ttnn.clone(self.persistent_inputs.cache_position)
+        rotary_index_scratch = self.ttnn.clone(self.persistent_inputs.rotary_index)
         self.ttnn.copy(token, token_scratch)
         self.ttnn.plus_one(
             cache_position_scratch,
@@ -108,17 +111,20 @@ class DecodeTraceSession:
         _synchronize(self.ttnn, self.device)
         del token_scratch, cache_position_scratch, rotary_index_scratch
         self.compile_run_count += 1
-        self.program_cache_entries_after_compile = _program_cache_entries(
-            self.device
-        )
+        self.program_cache_entries_after_compile = _program_cache_entries(self.device)
 
-        trace_id = self.ttnn.begin_trace_capture(
-            self.device,
-            cq_id=self.cq_id,
+        graph_capture_state = _begin_graph_capture(
+            self.ttnn,
+            self.graph_capture_path,
         )
+        trace_id = None
         op_log = getattr(getattr(self.model, "ops", None), "op_log", None)
         op_cursor = len(op_log) if isinstance(op_log, list) else None
         try:
+            trace_id = self.ttnn.begin_trace_capture(
+                self.device,
+                cq_id=self.cq_id,
+            )
             self.persistent_inputs.materialize_rotary_for_trace()
             token, kv_cache = self.model.decode_step(
                 self.persistent_inputs.token_input,
@@ -133,30 +139,39 @@ class DecodeTraceSession:
             )
             self.ttnn.plus_one(self.persistent_inputs.rotary_index)
         except Exception:
-            self.ttnn.end_trace_capture(
-                self.device,
-                trace_id,
-                cq_id=self.cq_id,
-            )
-            _release_trace(self.ttnn, self.device, trace_id)
+            if trace_id is not None:
+                self.ttnn.end_trace_capture(
+                    self.device,
+                    trace_id,
+                    cq_id=self.cq_id,
+                )
+                _release_trace(self.ttnn, self.device, trace_id)
+            if graph_capture_state is not None:
+                _end_graph_capture(
+                    self.ttnn,
+                    self.graph_capture_path,
+                    graph_capture_state,
+                )
             raise
         self.ttnn.end_trace_capture(
             self.device,
             trace_id,
             cq_id=self.cq_id,
         )
+        if graph_capture_state is not None:
+            _end_graph_capture(
+                self.ttnn,
+                self.graph_capture_path,
+                graph_capture_state,
+            )
 
         self.trace_id = trace_id
         self.output_token = token
         self.kv_cache_handles = kv_cache
         self.capture_count += 1
         if isinstance(op_log, list) and op_cursor is not None:
-            self.captured_model_ops = [
-                str(item) for item in op_log[op_cursor:]
-            ]
-        self.program_cache_entries_after_capture = _program_cache_entries(
-            self.device
-        )
+            self.captured_model_ops = [str(item) for item in op_log[op_cursor:]]
+        self.program_cache_entries_after_capture = _program_cache_entries(self.device)
 
     def execute(self) -> DecodeTraceExecution:
         if self.trace_id is None or self.output_token is None:
@@ -175,12 +190,8 @@ class DecodeTraceSession:
 
         self.execute_count += 1
         self.trace_input_update_count += 3
-        runtime_state = self.persistent_inputs.record_trace_execution(
-            self.output_token
-        )
-        self.program_cache_entries_after_execute = _program_cache_entries(
-            self.device
-        )
+        runtime_state = self.persistent_inputs.record_trace_execution(self.output_token)
+        self.program_cache_entries_after_execute = _program_cache_entries(self.device)
         return DecodeTraceExecution(
             token=self.output_token,
             kv_cache=self.kv_cache_handles,
@@ -220,12 +231,8 @@ class DecodeTraceSession:
                 if self.captured_model_ops is not None
                 else None
             ),
-            "program_compile_count_after_capture": (
-                compile_count_after_capture
-            ),
-            "program_compile_count_during_capture": (
-                compile_count_during_capture
-            ),
+            "program_compile_count_after_capture": (compile_count_after_capture),
+            "program_compile_count_during_capture": (compile_count_during_capture),
             "program_cache_entries_before_compile": (
                 self.program_cache_entries_before_compile
             ),
@@ -239,6 +246,11 @@ class DecodeTraceSession:
             "rotary_update": "captured_device_embedding_from_cache",
             "page_table_reused": True,
             "trace_released": self._released,
+            "execution_graph_path": (
+                str(self.graph_capture_path)
+                if self.graph_capture_path is not None
+                else None
+            ),
         }
 
     def close(self) -> None:
@@ -294,9 +306,7 @@ def build_decode_trace_key(
 def resolve_execution_mode(requested: str | None) -> str:
     mode = requested or "eager"
     if mode not in EXECUTION_MODES:
-        raise ValueError(
-            "execution_mode must be one of: " + ", ".join(EXECUTION_MODES)
-        )
+        raise ValueError("execution_mode must be one of: " + ", ".join(EXECUTION_MODES))
     return mode
 
 
@@ -317,6 +327,75 @@ def _release_trace(ttnn: Any, device: Any, trace_id: Any) -> None:
     release = getattr(ttnn, "release_trace", None)
     if callable(release):
         release(device, trace_id)
+
+
+def _begin_graph_capture(ttnn: Any, path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    graph = getattr(ttnn, "graph", None)
+    begin = getattr(graph, "begin_graph_capture", None)
+    if not callable(begin):
+        raise DecodeTraceUnsupported(
+            "execution graph diagnostics require ttnn.graph.begin_graph_capture"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    original_safe_arg_str = getattr(graph, "_safe_arg_str", None)
+    if callable(original_safe_arg_str):
+        graph._safe_arg_str = _recursive_safe_arg_str(original_safe_arg_str)
+    run_mode = getattr(getattr(graph, "RunMode", None), "NORMAL", None)
+    try:
+        if run_mode is None:
+            begin()
+        else:
+            begin(run_mode)
+    except Exception:
+        if callable(original_safe_arg_str):
+            graph._safe_arg_str = original_safe_arg_str
+        raise
+    return {"original_safe_arg_str": original_safe_arg_str}
+
+
+def _end_graph_capture(
+    ttnn: Any,
+    path: Path | None,
+    state: dict[str, Any],
+) -> None:
+    if path is None:
+        return
+    graph = getattr(ttnn, "graph", None)
+    end_to_file = getattr(graph, "end_graph_capture_to_file", None)
+    try:
+        if callable(end_to_file):
+            end_to_file(str(path))
+            return
+        end = getattr(graph, "end_graph_capture", None)
+        if not callable(end):
+            raise DecodeTraceUnsupported(
+                "execution graph diagnostics require ttnn.graph.end_graph_capture"
+            )
+        captured = end()
+        path.write_text(json.dumps(captured, indent=2, default=str) + "\n")
+    finally:
+        original = state.get("original_safe_arg_str")
+        if callable(original):
+            graph._safe_arg_str = original
+
+
+def _recursive_safe_arg_str(original: Any) -> Any:
+    def stringify(value: Any) -> str:
+        if isinstance(value, list):
+            return "[" + ", ".join(stringify(item) for item in value) + "]"
+        if isinstance(value, tuple):
+            return "(" + ", ".join(stringify(item) for item in value) + ")"
+        if isinstance(value, dict):
+            return (
+                "{"
+                + ", ".join(f"{key}: {stringify(item)}" for key, item in value.items())
+                + "}"
+            )
+        return original(value)
+
+    return stringify
 
 
 def _missing_trace_apis(ttnn: Any) -> list[str]:

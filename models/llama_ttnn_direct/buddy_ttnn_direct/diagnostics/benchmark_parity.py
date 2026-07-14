@@ -28,6 +28,7 @@ DEFAULT_PROMPTS = (
 PYTEST_PLUGIN_ENABLED_ENV = "BUDDY_PARITY_PYTEST_PLUGIN"
 PYTEST_PROFILE_ENV = "BUDDY_PARITY_OFFICIAL_PROFILE"
 PYTEST_PAGE_PARAMS_ENV = "BUDDY_PARITY_PAGE_PARAMS"
+PYTEST_GRAPH_CAPTURE_DIR_ENV = "BUDDY_PARITY_GRAPH_CAPTURE_DIR"
 EXACT_SAMPLE_PREFIX = "BUDDY_PARITY_SAMPLE"
 _EXACT_SAMPLE_RE = re.compile(
     rf"{EXACT_SAMPLE_PREFIX} token_iteration=(?P<iteration>\d+) "
@@ -63,6 +64,10 @@ def pytest_configure(config: Any) -> None:
             "top_k": 32,
         }
 
+    graph_capture_dir = os.environ.get(PYTEST_GRAPH_CAPTURE_DIR_ENV)
+    if graph_capture_dir:
+        _install_official_trace_graph_capture(Path(graph_capture_dir))
+
     from models.perf.benchmarking_utils import BenchmarkProfiler
 
     if getattr(BenchmarkProfiler, "_buddy_parity_patched", False):
@@ -87,6 +92,109 @@ def pytest_configure(config: Any) -> None:
 
     BenchmarkProfiler.end = end_with_exact_sample
     BenchmarkProfiler._buddy_parity_patched = True
+
+
+def _install_official_trace_graph_capture(output_dir: Path) -> None:
+    """Wrap official trace capture without modifying the tt-metal checkout."""
+
+    import ttnn
+
+    if getattr(ttnn, "_buddy_graph_capture_patched", False):
+        return
+    original_begin = ttnn.begin_trace_capture
+    original_end = ttnn.end_trace_capture
+    state: dict[str, Any] = {
+        "active": None,
+        "captures": [],
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    def begin_with_graph(device: Any, *args: Any, **kwargs: Any) -> Any:
+        if state["active"] is not None:
+            raise RuntimeError("nested official trace graph capture is unsupported")
+        graph = ttnn.graph
+        run_mode = getattr(getattr(graph, "RunMode", None), "NORMAL", None)
+        if run_mode is None:
+            graph.begin_graph_capture()
+        else:
+            graph.begin_graph_capture(run_mode)
+        entry = {
+            "index": len(state["captures"]),
+            "program_cache_entries_before": _device_program_cache_entries(device),
+        }
+        state["active"] = entry
+        try:
+            trace_id = original_begin(device, *args, **kwargs)
+        except Exception:
+            graph.end_graph_capture()
+            state["active"] = None
+            raise
+        entry["trace_id"] = str(trace_id)
+        entry["device"] = device
+        return trace_id
+
+    def end_with_graph(
+        device: Any,
+        trace_id: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        result = original_end(device, trace_id, *args, **kwargs)
+        entry = state["active"]
+        if entry is None:
+            raise RuntimeError("official trace ended without graph capture state")
+        captured_graph = ttnn.graph.end_graph_capture()
+        graph_path = output_dir / f"trace_{entry['index']:03d}.json"
+        payload: dict[str, Any] = {
+            "schema_version": 1,
+            "source": "official-tt-metal-trace-capture",
+            "raw_graph": captured_graph,
+        }
+        try:
+            from ttnn.graph_tracer_utils import GraphTracerUtils
+
+            payload["serialized_graph"] = GraphTracerUtils.serialize_graph(
+                captured_graph
+            )
+        except (ImportError, AttributeError, TypeError, ValueError) as error:
+            payload["serialization_error"] = f"{type(error).__name__}: {error}"
+        graph_path.write_text(json.dumps(payload, indent=2, default=str) + "\n")
+        entry.pop("device", None)
+        entry.update(
+            {
+                "graph_path": str(graph_path),
+                "program_cache_entries_after": (_device_program_cache_entries(device)),
+            }
+        )
+        state["captures"].append(entry)
+        state["active"] = None
+        manifest = output_dir / "manifest.json"
+        manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "captures": state["captures"],
+                },
+                indent=2,
+                default=str,
+            )
+            + "\n"
+        )
+        return result
+
+    ttnn.begin_trace_capture = begin_with_graph
+    ttnn.end_trace_capture = end_with_graph
+    ttnn._buddy_graph_capture_patched = True
+
+
+def _device_program_cache_entries(device: Any) -> int | None:
+    count = getattr(device, "num_program_cache_entries", None)
+    if not callable(count):
+        return None
+    try:
+        return int(count())
+    except (RuntimeError, TypeError, ValueError):
+        return None
 
 
 def run_benchmark_parity(
@@ -627,6 +735,10 @@ def _planned_commands(
             "--iterations",
             str(iterations),
             "--after-prefill",
+            "--runtime-input-mode",
+            "persistent",
+            "--execution-mode",
+            "trace",
             "--device",
             device,
             "--device-id",

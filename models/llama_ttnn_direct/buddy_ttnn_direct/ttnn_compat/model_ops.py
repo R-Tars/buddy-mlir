@@ -7,7 +7,14 @@ def _tensor_memory_config(tensor):
     memory_config = getattr(tensor, "memory_config", None)
     if callable(memory_config):
         return memory_config()
-    return None
+    return memory_config
+
+
+def _tensor_layout(tensor):
+    layout = getattr(tensor, "layout", None)
+    if callable(layout):
+        return layout()
+    return layout
 
 
 def _tensor_shape(tensor):
@@ -18,12 +25,17 @@ def _tensor_shape(tensor):
 
 
 class TTNNCompatOps:
-    def __init__(self, ttnn_module):
+    def __init__(self, ttnn_module, *, record_ops=False):
         self.ttnn = ttnn_module
-        self.op_log = []
+        self.op_log = [] if record_ops else None
 
     def _record(self, op_name):
-        self.op_log.append(op_name)
+        if self.op_log is not None:
+            self.op_log.append(op_name)
+
+    def enable_recording(self):
+        if self.op_log is None:
+            self.op_log = []
 
     def resolve_memory_config(self, memory_config):
         if memory_config is None:
@@ -189,6 +201,8 @@ class TTNNCompatOps:
         tile_layout = getattr(self.ttnn, "TILE_LAYOUT", None)
         if to_layout is None or tile_layout is None:
             return tensor
+        if _tensor_layout(tensor) == tile_layout:
+            return tensor
         self._record(op_name)
         return to_layout(tensor, tile_layout)
 
@@ -289,6 +303,8 @@ class TTNNCompatOps:
         memory_config = self.resolve_memory_config(memory_config)
         if memory_config is None:
             return tensor
+        if _tensor_memory_config(tensor) == memory_config:
+            return tensor
         op = getattr(self.ttnn, "to_memory_config", None)
         if op is None:
             return tensor
@@ -383,9 +399,7 @@ class TTNNCompatOps:
         batch_size = shape[batch_dim]
         positions = [int(position) for position in positions]
         if len(positions) != batch_size:
-            raise ValueError(
-                "sequence position count must match tensor batch size"
-            )
+            raise ValueError("sequence position count must match tensor batch size")
         if len(set(positions)) == 1:
             return self.select_sequence_position(
                 tensor,
@@ -797,11 +811,7 @@ class TTNNCompatOps:
         slice_op = getattr(self.ttnn, "slice", None)
         squeeze_op = getattr(self.ttnn, "squeeze", None)
         reshape_op = getattr(self.ttnn, "reshape", None)
-        if (
-            len(shape) == 3
-            and shape[1] == 1
-            and shape[2] == 1
-        ):
+        if len(shape) == 3 and shape[1] == 1 and shape[2] == 1:
             logical_batch = shape[0]
             if callable(reshape_op):
                 self._record(f"{op_name}.reshape")

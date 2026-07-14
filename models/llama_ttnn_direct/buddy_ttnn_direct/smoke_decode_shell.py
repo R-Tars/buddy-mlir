@@ -319,6 +319,7 @@ def _run_generated_decode_shell(
         parameters=parameters,
         config=_to_namespace(config),
     )
+    model.ops.enable_recording()
     if token_ids is None:
         raise ValueError("token_ids must be provided for decode shell execution")
 

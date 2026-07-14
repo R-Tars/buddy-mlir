@@ -154,7 +154,9 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             calls.append((tensor, starts, ends, steps))
             return "selected"
 
-        ops = TTNNCompatOps(types.SimpleNamespace(slice=slice_op))
+        ops = TTNNCompatOps(
+            types.SimpleNamespace(slice=slice_op), record_ops=True
+        )
         tensor = types.SimpleNamespace(shape=(2, 8, 16))
 
         result = ops.select_sequence_position(tensor, 2)
@@ -177,7 +179,8 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             return (list(tensors), dim)
 
         ops = TTNNCompatOps(
-            types.SimpleNamespace(slice=slice_op, concat=concat)
+            types.SimpleNamespace(slice=slice_op, concat=concat),
+            record_ops=True,
         )
         tensor = types.SimpleNamespace(shape=(2, 8, 16))
 
@@ -267,6 +270,36 @@ class TTNNOpsWrapperTest(unittest.TestCase):
 
         self.assertEqual(result, "normalized")
         self.assertEqual(calls, [((32, 1), (32, 1))])
+
+    def test_model_ops_skips_tile_layout_when_already_tiled(self) -> None:
+        calls = []
+        module = types.SimpleNamespace(
+            TILE_LAYOUT="tile",
+            to_layout=lambda *args: calls.append(args) or "converted",
+        )
+        ops = TTNNCompatOps(module)
+        tensor = types.SimpleNamespace(layout="tile")
+
+        result = ops.ensure_tile_layout(tensor, op_name="to_layout.tile")
+
+        self.assertIs(result, tensor)
+        self.assertEqual(calls, [])
+
+    def test_model_ops_skips_equal_memory_config(self) -> None:
+        calls = []
+        module = types.SimpleNamespace(
+            to_memory_config=(
+                lambda *args, **kwargs: calls.append((args, kwargs))
+                or "converted"
+            )
+        )
+        ops = TTNNCompatOps(module)
+        tensor = types.SimpleNamespace(memory_config=lambda: "l1")
+
+        result = ops.to_memory_config(tensor, memory_config="l1")
+
+        self.assertIs(result, tensor)
+        self.assertEqual(calls, [])
 
     def test_model_ops_force_argmax_uses_official_multicore_path(self) -> None:
         calls = []

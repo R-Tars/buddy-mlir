@@ -233,11 +233,11 @@ imported by runtime code.
 - Numerical correctness is proven with the dedicated all-BF16 recipe. The
   compressed performance recipe has a separate, lower-precision acceptance
   profile and is not claimed to pass the `0.99` full-depth PCC gate.
-- Full decode trace reaches a three-run median of `34.022 t/s/u` on the matched
-  P150A workload (`101.42%` of the corresponding-release local official
-  median), with zero per-step input allocation and zero post-capture program
-  compilation. The next performance work is execution-graph parity rather
-  than further static configuration tuning.
+- Full decode trace reaches a post-cleanup three-run median of `33.997 t/s/u`
+  on the matched P150A workload (`101.35%` of the corresponding-release local
+  official median), with zero per-step input allocation and zero post-capture
+  program compilation. Execution-graph parity removes 64 redundant RMSNorm
+  layout calls while retaining one required initial tilize.
 - Buddy prefill represents 32 users in one tensor, so the imported QKV and WO
   prefill configs disable TT-Transformers' single-sequence batch fusion while
   retaining the extracted grid and block geometry.

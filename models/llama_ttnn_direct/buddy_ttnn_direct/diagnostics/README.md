@@ -23,6 +23,8 @@ Available stages are:
 - `depth-sweep`
 - `generate-depth-sweep`
 - `autotune`
+- `benchmark-parity`
+- `execution-graph-diff`
 
 Use `--dry-run` whenever the selected stage supports it and no device should be
 opened.
@@ -93,6 +95,27 @@ Autotune checks device ownership before each unique candidate and runs every
 hardware profile in a separate process so 8B parameter mappings and TTNN state
 are released between candidates. Add `--dry-run` to build all candidate bundles
 without opening a device.
+
+Full decode execution-graph comparison:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
+  --stage execution-graph-diff \
+  --buddy-program "$PROGRAM" \
+  --official-tt-metal-root "$OFFICIAL_TT_METAL_ROOT" \
+  --official-python "$OFFICIAL_PYTHON" \
+  --model-path "$MODEL" \
+  --tokenizer-path "$MODEL" \
+  --input-prompts "$OFFICIAL_PROMPTS" \
+  --batch-size 32 \
+  --prefill-len 256 \
+  --cache-len 1024 \
+  --out "$REPORTS/diagnostics/execution_graph_diff.json"
+```
+
+The diagnostic runs official and Buddy sequentially. It captures compile-time
+trace graphs only when requested, normalizes release and current TTNN graph
+formats, and compares operation counts plus tensor/layout/memory metadata.
 
 ## Legacy Compatibility
 

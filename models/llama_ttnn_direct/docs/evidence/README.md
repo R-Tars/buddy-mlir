@@ -74,6 +74,11 @@ The current baseline evidence is:
   and full depth. Three 5/50 runs measure a `34.022 t/s/u` median (`101.42%`
   of the corresponding-release local official median) with `0.037%` CV and
   zero post-capture program compilation.
+- `p150a_goal4_execution_graph_evidence_20260714.json`: Goal 4 captures Buddy
+  and corresponding-release official decode execution graphs. Core per-layer
+  operation counts match, redundant RMSNorm `to_layout` calls fall from 65 to
+  one required initial tilize, and three 5/50 runs measure a `33.997 t/s/u`
+  median (`101.35%` of local release official) with no correctness regression.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

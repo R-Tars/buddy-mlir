@@ -2081,6 +2081,7 @@ def build_parser() -> argparse.ArgumentParser:
             "generate-depth-sweep",
             "autotune",
             "benchmark-parity",
+            "execution-graph-diff",
         ),
         required=True,
     )

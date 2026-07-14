@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -37,9 +38,7 @@ class _TTNN:
     ) -> None:
         self.calls.append(("end", device, trace_id, kwargs))
 
-    def execute_trace(
-        self, device: object, trace_id: object, **kwargs: object
-    ) -> None:
+    def execute_trace(self, device: object, trace_id: object, **kwargs: object) -> None:
         self.calls.append(("execute", device, trace_id, kwargs))
 
     def copy(self, source: object, target: object) -> None:
@@ -58,6 +57,20 @@ class _TTNN:
 
     def release_trace(self, device: object, trace_id: object) -> None:
         self.calls.append(("release", device, trace_id))
+
+
+class _Graph:
+    RunMode = SimpleNamespace(NORMAL="normal")
+
+    def __init__(self, calls: list[tuple[object, ...]]) -> None:
+        self.calls = calls
+
+    def begin_graph_capture(self, mode: object) -> None:
+        self.calls.append(("begin_graph", mode))
+
+    def end_graph_capture_to_file(self, path: str) -> None:
+        self.calls.append(("end_graph", path))
+        Path(path).write_text("[]\n")
 
 
 class _Inputs:
@@ -156,6 +169,38 @@ def test_decode_trace_captures_full_step_and_replays_nonblocking() -> None:
     assert ttnn.calls[-1] == ("release", device, "trace-7")
 
 
+def test_decode_trace_exports_graph_only_when_requested(tmp_path: Path) -> None:
+    device = _Device()
+    ttnn = _TTNN(device)
+    ttnn.graph = _Graph(ttnn.calls)
+    graph_path = tmp_path / "decode.json"
+    session = DecodeTraceSession(
+        ttnn=ttnn,
+        device=device,
+        model=_Model(ttnn.calls),
+        persistent_inputs=_Inputs(),
+        kv_cache=[object(), object()],
+        key=_key(),
+        graph_capture_path=graph_path,
+    )
+
+    session.capture()
+    report = session.to_report()
+    session.close()
+
+    assert graph_path.is_file()
+    assert report["execution_graph_path"] == str(graph_path)
+    begin_graph = ttnn.calls.index(("begin_graph", "normal"))
+    begin_trace = next(
+        index for index, call in enumerate(ttnn.calls) if call[0] == "begin"
+    )
+    end_trace = next(index for index, call in enumerate(ttnn.calls) if call[0] == "end")
+    end_graph = next(
+        index for index, call in enumerate(ttnn.calls) if call[0] == "end_graph"
+    )
+    assert begin_graph < begin_trace < end_trace < end_graph
+
+
 def test_decode_trace_key_is_stable_and_configuration_sensitive() -> None:
     config = {
         "template_config": {"dtype_recipe": "mixed"},
@@ -201,9 +246,7 @@ def test_decode_trace_key_is_stable_and_configuration_sensitive() -> None:
     ("requested", "expected"),
     [(None, "eager"), ("eager", "eager"), ("trace", "trace")],
 )
-def test_resolve_execution_mode(
-    requested: str | None, expected: str
-) -> None:
+def test_resolve_execution_mode(requested: str | None, expected: str) -> None:
     assert resolve_execution_mode(requested) == expected
 
 

@@ -550,7 +550,14 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertIs(context.token_ids, model.prefill_token)
         self.assertEqual(result.output_shapes["token"], [2, 1])
         self.assertEqual(result.cache_population, [{"layer_id": 0, "status": "filled"}])
-        self.assertEqual(result.reference, {"status": "passed", "passed": True})
+        self.assertEqual(
+            result.reference,
+            {
+                "status": "passed",
+                "passed": True,
+                "observed_ops_source": "runtime_instrumentation",
+            },
+        )
         self.assertEqual(result.first_token.runtime_handoff, "device_tensor_direct")
         self.assertEqual(
             result.generated_token_events,

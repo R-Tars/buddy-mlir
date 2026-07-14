@@ -3,11 +3,20 @@ from __future__ import annotations
 
 _SOURCE = """\
 class BuddyLlama31TTNN:
-    def __init__(self, device, parameters, config, observer=None):
+    def __init__(
+        self,
+        device,
+        parameters,
+        config,
+        observer=None,
+        record_ops=None,
+    ):
         self.device = device
         self.parameters = parameters
         self.config = config
-        self.ops = TTNNCompatOps(ttnn)
+        if record_ops is None:
+            record_ops = observer is not None
+        self.ops = TTNNCompatOps(ttnn, record_ops=bool(record_ops))
         self.observer = observer
 
     def _observe(self, name, tensor, **metadata):

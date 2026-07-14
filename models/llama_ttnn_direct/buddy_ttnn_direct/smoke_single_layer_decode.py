@@ -839,6 +839,7 @@ def _run_generated_decode_step(
         parameters=parameters,
         config=_to_namespace(decode_config),
     )
+    model.ops.enable_recording()
 
     trace_report = _trace_report(requested=trace, status="disabled")
     if trace:
@@ -1083,6 +1084,7 @@ def _run_generated_decode_profile(
         parameters=parameters,
         config=_to_namespace(decode_config),
     )
+    model.ops.enable_recording()
 
     section_latency = _empty_section_latency()
     layer_profiles: list[dict[str, Any]] = []

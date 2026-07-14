@@ -332,6 +332,7 @@ def _run_generated_prefill(
         parameters=parameters,
         config=_to_namespace(prefill_config),
     )
+    model.ops.enable_recording()
 
     start = time.perf_counter()
     token, kv_cache, cache_reports = model.prefill_prompt(

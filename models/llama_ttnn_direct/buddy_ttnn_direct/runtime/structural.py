@@ -16,6 +16,8 @@ def generated_observed_op_sequence(model: Any, ttnn: Any) -> list[str] | None:
     op_log = getattr(ops, "op_log", None)
     if isinstance(op_log, list):
         return [str(item) for item in op_log]
+    if ops is not None:
+        return None
     calls = getattr(ttnn, "calls", None)
     if not isinstance(calls, list):
         return None

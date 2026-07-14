@@ -115,7 +115,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             self.assertIn("def decode_step", source)
             self.assertIn("def decode_layer", source)
             self.assertNotIn("class TTNNCompatOps", source)
-            self.assertIn("self.op_log = []", inspect.getsource(TTNNCompatOps))
+            self.assertIn(
+                "self.op_log = [] if record_ops else None",
+                inspect.getsource(TTNNCompatOps),
+            )
             self.assertIn('op_name="residual_add.attn"', source)
             self.assertIn('op_name="residual_add.mlp"', source)
             self.assertIn("self.ops.linear", source)

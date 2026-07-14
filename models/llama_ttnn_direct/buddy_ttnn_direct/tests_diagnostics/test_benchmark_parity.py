@@ -9,6 +9,7 @@ from unittest.mock import patch
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity import (
     _finalize_report,
+    _planned_commands,
     _parse_buddy_report,
     _parse_official_log,
     run_benchmark_parity,
@@ -185,6 +186,45 @@ class BenchmarkParityTest(unittest.TestCase):
             self.assertTrue(report_path.is_file())
             on_disk = json.loads(report_path.read_text())
             self.assertEqual(on_disk["error"]["type"], "ValueError")
+
+    def test_dry_run_plans_buddy_full_trace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            with patch(
+                "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics."
+                "benchmark_parity._git_value",
+                return_value="fake-commit",
+            ):
+                plans = _planned_commands(
+                    runs_root=root / "runs",
+                    tensor_cache_root=root / "cache",
+                    program_root=root / "program",
+                    official_root=root / "official",
+                    model_root=root / "model",
+                    tokenizer_root=root / "tokenizer",
+                    prompts_path=root / "prompts.json",
+                    official_python=root / "python",
+                    release_root=None,
+                    release_python=None,
+                    layer_count=32,
+                    batch_size=32,
+                    effective_prefill_len=256,
+                    cache_len=1024,
+                    page_block_size=32,
+                    warmup=5,
+                    iterations=50,
+                    repetitions=1,
+                    device="p150a",
+                    device_id=0,
+                )
+
+        buddy = next(
+            plan
+            for plan in plans
+            if plan["implementation"] == "buddy"
+        )
+        self.assertIn("persistent", buddy["command"])
+        self.assertIn("trace", buddy["command"])
 
     @patch(
         "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics."

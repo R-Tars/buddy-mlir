@@ -132,6 +132,14 @@ def run_prefill_prompt(
         cache_reports=cache_reports,
         output_shapes=output_shapes,
     )
+    observed_ops = _generated_observed_op_sequence(
+        context.generated_model,
+        ttnn,
+    )
+    observed_ops_source = "runtime_instrumentation"
+    if observed_ops is None:
+        observed_ops = list(prefill_plan["op_sequence"])
+        observed_ops_source = "generated_execution_plan"
     reference = _prefill_reference(
         plan=prefill_plan,
         layer_count=layer_count,
@@ -141,11 +149,9 @@ def run_prefill_prompt(
             "shape": tensor_shape(prefill_token),
             "dtype": tensor_dtype(prefill_token),
         },
-        observed_ops=_generated_observed_op_sequence(
-            context.generated_model,
-            ttnn,
-        ),
+        observed_ops=observed_ops,
     )
+    reference["observed_ops_source"] = observed_ops_source
     first_token = prefill_token_direct_handoff(prefill_token=prefill_token)
     context.update_decode_token(first_token.token_ids)
     prompt_token_counts = [

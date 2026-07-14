@@ -404,12 +404,19 @@ def run_decode_loop(
                 observed_ops = trace_session.captured_model_ops
                 if not observed_ops:
                     observed_ops = list(decode_plan["op_sequence"])
+                    observed_ops_source = "generated_execution_plan"
+                else:
+                    observed_ops_source = "runtime_instrumentation"
             else:
                 observed_ops, observed_op_cursor = _observed_ops_since(
                     context.generated_model,
                     ttnn,
                     observed_op_cursor,
                 )
+                observed_ops_source = "runtime_instrumentation"
+                if observed_ops is None:
+                    observed_ops = list(decode_plan["op_sequence"])
+                    observed_ops_source = "generated_execution_plan"
             reference = _decode_step_reference(
                 plan=decode_plan,
                 layer_count=layer_count,
@@ -417,6 +424,7 @@ def run_decode_loop(
                 output=output,
                 observed_ops=observed_ops,
             )
+            reference["observed_ops_source"] = observed_ops_source
             full_step_report = {
                 "step_index": step_index,
                 "status": (

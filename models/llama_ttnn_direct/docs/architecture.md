@@ -208,6 +208,13 @@ counts, persistent input and update counts, and the number of program-cache
 entries added after capture. A successful steady run has one capture, one
 compile run, `warmup + iterations` replays, and zero post-capture programs.
 
+Execution-graph capture is diagnostic-only. `execution-graph-diff` wraps the
+corresponding-release official trace through the parity pytest plugin and asks
+the Buddy trace session to emit TTNN graph plus Python I/O metadata. Normal
+generate/profile runs do not create graph files. `TTNNCompatOps` semantic op
+recording is also disabled by default and enabled only by observers and smoke
+diagnostics.
+
 ## Evidence Boundary
 
 Runtime reference data lives under `buddy_ttnn_direct/reference/` and may be

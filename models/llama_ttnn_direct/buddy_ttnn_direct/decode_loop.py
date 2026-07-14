@@ -259,6 +259,7 @@ def run_prompt_decode_loop(
                 parameters=state.parameters,
                 config=_to_namespace(decode_config),
             )
+            model.ops.enable_recording()
 
             prompt_token_count = int(
                 state.prompt_tokenization["token_count"]
