@@ -52,6 +52,13 @@ The current baseline evidence is:
   matched 5/50 confirmation improved on the root incumbent by only `0.64%`,
   below the `1%` promotion threshold. The official config therefore remains the
   default; its final confirmation measured `28.436 t/s/u` (`85.91%` of target).
+- `p150a_matched_parity_evidence_20260714.json`: Goal 0 separates the published
+  release reference from the same-commit comparison. The corresponding
+  `v0.64.0-dev20251030` release reproduces `33.546 t/s/u`, while the current
+  same-commit official greedy median is `21.657 t/s/u` and Buddy is
+  `27.342 t/s/u`. Buddy is `126.25%` of the same-commit official result but
+  `81.51%` of the cross-version published release; only the former is a matched
+  parity ratio. All profiles pass the three-run `CV <= 1.5%` gate.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

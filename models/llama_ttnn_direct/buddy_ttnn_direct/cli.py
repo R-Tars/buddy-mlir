@@ -77,6 +77,7 @@ from .templates.diff import (
     dump_plan_diff,
     load_official_template,
 )
+
 PRODUCT_COMMANDS = (
     "build",
     "generate",
@@ -2060,13 +2061,19 @@ def build_parser() -> argparse.ArgumentParser:
             "depth-sweep",
             "generate-depth-sweep",
             "autotune",
+            "benchmark-parity",
         ),
         required=True,
     )
     diagnose.add_argument("--program-dir", type=Path, default=None)
+    diagnose.add_argument("--buddy-program", type=Path, default=None)
+    diagnose.add_argument("--official-tt-metal-root", type=Path, default=None)
+    diagnose.add_argument("--official-python", type=Path, default=None)
+    diagnose.add_argument("--official-release-root", type=Path, default=None)
+    diagnose.add_argument("--official-release-python", type=Path, default=None)
     diagnose.add_argument("--model-path", type=Path, default=None)
     diagnose.add_argument("--config", type=Path, default=None)
-    add_prompt_runtime_args(diagnose)
+    add_prompt_runtime_args(diagnose, batch_prompts=True)
     diagnose.add_argument("--out", type=Path, required=True)
     diagnose.add_argument("--device", default="p150a")
     diagnose.add_argument("--device-id", type=int, default=0)
@@ -2092,6 +2099,14 @@ def build_parser() -> argparse.ArgumentParser:
     diagnose.add_argument("--candidates-dir", type=Path, default=None)
     diagnose.add_argument("--warmup", type=int, default=5)
     diagnose.add_argument("--iterations", type=int, default=10)
+    diagnose.add_argument("--repetitions", type=int, default=3)
+    diagnose.add_argument("--page-block-size", type=int, default=32)
+    diagnose.add_argument("--benchmark-timeout", type=float, default=3600.0)
+    diagnose.add_argument(
+        "--address-space-limit-gb",
+        type=float,
+        default=95.0,
+    )
     diagnose.add_argument("--confirm-warmup", type=int, default=5)
     diagnose.add_argument("--confirm-iterations", type=int, default=50)
     diagnose.add_argument("--min-relative-improvement", type=float, default=0.01)
@@ -3340,6 +3355,38 @@ def _cmd_diagnose(args: argparse.Namespace) -> int:
 
 
 def _run_diagnose_stage(args: argparse.Namespace) -> dict[str, object]:
+    if args.stage == "benchmark-parity":
+        _require_diagnose_args(
+            args,
+            "buddy_program",
+            "official_tt_metal_root",
+            "model_path",
+        )
+        from .diagnostics.benchmark_parity import run_benchmark_parity
+
+        return run_benchmark_parity(
+            out=args.out,
+            buddy_program=args.buddy_program,
+            official_tt_metal_root=args.official_tt_metal_root,
+            model_path=args.model_path,
+            input_prompts=args.input_prompts,
+            tokenizer_path=args.tokenizer_path,
+            batch_size=args.batch_size or 32,
+            prefill_len=args.prefill_len or 128,
+            cache_len=args.cache_len or 1024,
+            page_block_size=args.page_block_size,
+            warmup=args.warmup,
+            iterations=args.iterations,
+            repetitions=args.repetitions,
+            device=args.device,
+            device_id=args.device_id,
+            official_python=args.official_python,
+            official_release_root=args.official_release_root,
+            official_release_python=args.official_release_python,
+            timeout_seconds=args.benchmark_timeout,
+            address_space_limit_bytes=int(args.address_space_limit_gb * 1_000_000_000),
+            dry_run=args.dry_run,
+        )
     if args.stage == "mlp":
         _require_diagnose_args(
             args,
