@@ -350,6 +350,27 @@ the legal SDPA `q_chunk_size=32` challenger reached `33.9103 t/s/u` with
 so `best_config.json` retained the official q-chunk and rebuilt directly into
 a complete generated program bundle.
 
+`autotune/generalization.py` coordinates the same hierarchical algorithm
+across distinct model/target shapes. Every workload records a shape and
+campaign fingerprint, uses the same template/op/layout group structure, and
+either executes or imports a matched search report with a compatible frozen
+target. Official hand configurations may be the root incumbent only; they
+cannot enter as challenger proposals. Suite acceptance also requires no
+Cartesian exhaustive search, a passing directly buildable config for every
+workload, and publication breadth of either two models or one model with at
+least three workloads. Interrupted suites atomically retain the active
+workload and reuse completed search reports on resume.
+
+The Phase 9 P150A campaign met the one-model/three-workload criterion with
+Llama 3.1 8B batch32/prefill256 and cache lengths 512, 1024, and 2048. The two
+new shapes independently enumerated 224 and 226 legal SDPA candidates after
+static pruning, then selected the same shape-derived `q_chunk_size=32` axis
+without an official challenger seed. Under matched `5x100x3` confirmation,
+the incumbent medians were `34.0405`, `33.9425`, and `34.0052 t/s/u`; the
+challengers changed throughput by `-0.0833%`, `-0.0948%`, and `-0.0090%`.
+All arm CVs were below 0.33%, so the conservative 1% gate retained each
+incumbent and all three final configs rebuilt successfully.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

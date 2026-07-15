@@ -125,7 +125,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Contracts through hierarchical template/program/layout search, full-model trace, strict matched A/B confirmation, budget, and resume are complete; workload generalization remains |
+| Semantic autotune | Hierarchical template/program/layout search, strict matched A/B confirmation, budget/resume, and one-model/three-workload shape generalization are complete |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 
@@ -321,6 +321,18 @@ identity; correctness and quality must pass, each arm must have CV at most
 P150A batch32/cache1024 campaign, an enumerated SDPA `q_chunk_size=32`
 challenger measured `33.9103 t/s/u` median versus the incumbent's
 `33.9425 t/s/u`, so the orchestrator correctly retained the incumbent.
+
+`autotune/generalization.py` applies that same orchestrator to distinct model
+shapes and rejects campaigns that change the template/op/layout group
+structure, inject an official hand-tuned challenger, use Cartesian exhaustive
+search, omit a directly buildable final config, or fail to cover either two
+models or one model with three workloads. The Phase 9 P150A campaign used
+Llama 3.1 8B batch32/prefill256 at cache lengths 512, 1024, and 2048. The
+incumbent medians were `34.0405`, `33.9425`, and `34.0052 t/s/u`; independently
+enumerated `q_chunk_size=32` challengers changed them by `-0.0833%`,
+`-0.0948%`, and `-0.0090%`. Every arm met the 1.5% CV bound, all three
+campaigns retained the incumbent under the 1% promotion threshold, and every
+selected config rebuilt directly.
 
 Layout reports preserve measured conversion costs, removed and retained
 conversions, rejected sharding constraints, and the whole-layer

@@ -24,6 +24,13 @@ from .confirmation import (
     confirm_matched_ab,
     write_confirmation_report,
 )
+from .generalization import (
+    GENERALIZATION_SCHEMA_VERSION,
+    GeneralizationError,
+    GeneralizationPolicy,
+    GeneralizationWorkload,
+    run_generalization_suite,
+)
 from .layout_graph import (
     ATTENTION_DAG_NODES,
     ATTENTION_REGION,
@@ -178,6 +185,10 @@ __all__ = (
     "DeviceDescriptor",
     "ExecutionContract",
     "EvaluationRecord",
+    "GENERALIZATION_SCHEMA_VERSION",
+    "GeneralizationError",
+    "GeneralizationPolicy",
+    "GeneralizationWorkload",
     "DEFAULT_TEMPLATE_SELECTION",
     "FUSED_PAGED_UPDATE",
     "FUSED_QK_ROPE",
@@ -283,6 +294,7 @@ __all__ = (
     "resolve_runtime_commit",
     "run_microbenchmark",
     "run_hierarchical_search",
+    "run_generalization_suite",
     "run_compile_validation",
     "search_layout_graph",
     "select_matmul_microbenchmark_winner",
