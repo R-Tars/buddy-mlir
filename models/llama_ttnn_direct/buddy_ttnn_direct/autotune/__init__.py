@@ -21,6 +21,15 @@ from .measurement import (
     candidate_fingerprint,
     resolve_runtime_commit,
 )
+from .matmul import (
+    MATMUL_OPERATORS,
+    MatmulCandidate,
+    MatmulEnumerationError,
+    MatmulEnumerationResult,
+    enumerate_all_matmul_programs,
+    enumerate_matmul_programs,
+    select_matmul_microbenchmark_winner,
+)
 from .microbench import (
     BenchmarkTarget,
     MeasurementCache,
@@ -104,6 +113,10 @@ __all__ = (
     "LegalityIssue",
     "LegalityReport",
     "MatmulProgramConfig",
+    "MatmulCandidate",
+    "MatmulEnumerationError",
+    "MatmulEnumerationResult",
+    "MATMUL_OPERATORS",
     "MatmulWorkload",
     "MeasurementContract",
     "MeasurementCache",
@@ -144,6 +157,8 @@ __all__ = (
     "classify_validation_error",
     "dry_run_template",
     "evaluate_template_reference",
+    "enumerate_all_matmul_programs",
+    "enumerate_matmul_programs",
     "get_template_definition",
     "list_template_definitions",
     "make_worker_response",
@@ -152,6 +167,7 @@ __all__ = (
     "resolve_runtime_commit",
     "run_microbenchmark",
     "run_compile_validation",
+    "select_matmul_microbenchmark_winner",
     "template_registry_schema",
     "transfer_representative_states",
     "validate_candidate",

@@ -374,6 +374,25 @@ Retained search runs should place `measurement_cache/`, `process_logs/`, and
 are valid only for their exact key; failed or partial subprocess runs are not
 reused.
 
+### MatMul Program Enumeration
+
+`enumerate_all_matmul_programs(...)` consumes the schema-v2 baseline,
+representative workload, P150A descriptor, and frozen precision contract. It
+returns legal and rejected candidates for QKV, O projection, MLP gate/up/down,
+and LM-head shards. The official program vector is included exactly once for
+each operator. Candidate spaces can be materialized with
+`candidate.search_space.apply_to_runtime_config(...)`.
+
+Run the device-free enumerator and Phase 4 selection integration tests:
+
+```bash
+python -m pytest -q \
+  models/llama_ttnn_direct/buddy_ttnn_direct/tests/test_autotune_matmul.py
+```
+
+The selected microbenchmark winner is a pruning/ranking result only. It must
+still pass whole-layer and full-model confirmation before promotion.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \

@@ -259,6 +259,21 @@ measurement settings, so a runtime change cannot reuse an old result. Cache
 writes are atomic, and failed, timed-out, malformed, or partial measurements
 are never cached.
 
+`autotune/matmul.py` enumerates the six decode MatMul regions: QKV, O
+projection, gate, up, down, and the LM-head shard vector. The official program
+vector is always proposal zero. Additional DRAM-sharded programs are derived
+from common K-tile divisors, padded N tiles, the device DRAM width, and bounded
+worker-core targets. The family does not expose a compute-grid argument, so
+the candidate records its derived worker count and the device grid rather than
+inventing an unsupported runtime field.
+
+Every proposal replaces only one schema-v2 operator and reruns the complete
+Phase 2 legality engine, including shape divisibility and conservative L1/CB
+estimation. Illegal proposals retain stable error evidence; legal proposals
+retain only target-local L1 evidence and a hash of the materializable search
+space. Microbenchmark selection ranks passed Phase 4 reports, but labels its
+winner as representative-only and never grants promotion to the default.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

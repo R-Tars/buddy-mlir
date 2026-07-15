@@ -69,6 +69,10 @@ HF config and weights
   statistics including CV, and atomically caches only complete measurements.
   Llama 3.1 8B transfer is explicit: layer 0 represents layers 0-30, while the
   frozen layer-31 MLP precision override is measured separately.
+- The MatMul program enumerator covers QKV, O projection, MLP gate/up/down, and
+  every LM-head shard. It derives bounded DRAM-sharded candidates from tile
+  divisibility and P150A worker capacity, injects the exact official vector,
+  and retains only candidates accepted by the shared legality/L1 engine.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
@@ -114,7 +118,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Contracts, schema-v2 space, legality, template registry, and representative microbenchmark engine complete; enumerators/search orchestration pending |
+| Semantic autotune | Contracts, schema-v2 space, legality, templates, representative microbench, and MatMul enumeration complete; SDPA/layout/search orchestration pending |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 
