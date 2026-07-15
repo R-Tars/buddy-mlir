@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -166,7 +167,7 @@ def build_execution_plan(
             for layer in graph.layers
         ]
 
-    return {
+    plan = {
         "schema_version": 1,
         "model_name": graph.model_name,
         "mode": graph.mode,
@@ -213,6 +214,9 @@ def build_execution_plan(
             config["generation_template"],
         ],
     }
+    if config.get("autotune") is not None:
+        plan["template_config"]["autotune"] = copy.deepcopy(config["autotune"])
+    return plan
 
 
 def dump_execution_plan(plan: dict[str, Any], out: str | Path) -> None:

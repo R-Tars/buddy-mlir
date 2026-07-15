@@ -313,6 +313,43 @@ measured DRAM-to-height-sharded conversion. Whole-layer confirmation always
 selects either a passing challenger or the incumbent, so a runtime rejection
 or latency regression cannot be promoted.
 
+`autotune/search.py` composes the earlier search layers without constructing a
+Cartesian product. Each template axis first retains an independent top-K,
+each operator group retains a latency/L1/conversion Pareto frontier, and each
+layout group contributes compatible path mutations. These local JSON-path
+mutations are applied to the current beam instead of replacing a complete
+candidate snapshot, so an SDPA choice cannot silently erase an earlier
+template choice and a layout choice can intentionally refine producer memory.
+The beam is capped to 4-16 states after every group and always protects the
+root incumbent for later matched comparison.
+
+The orchestrator then ranks representative whole-layer runs, sends only the
+configured top candidates to a complete 32-layer post-prefill trace, and
+compares the top non-incumbent with the root incumbent. Candidate cache keys
+cover the full search request plus frozen `CandidateConfig` identity, including
+TTNN commit, device descriptor, precision, graph, model, weights, prompt, and
+target. Each callback result is atomically complete or absent. Checkpoints
+retain candidate and device-minute usage; a matching completed campaign or
+individual result can be resumed, while an identity mismatch is rejected.
+Exceptions and budget exhaustion update `search_report.json` before returning.
+
+`autotune/confirmation.py` owns the final promotion decision. It requires a
+matched pair of final `CandidateConfig` objects and exactly three reports per
+arm under the frozen 5-warmup/100-iteration contract. It validates trace,
+persistent inputs, post-prefill execution, correctness, and quality; computes
+per-arm median and population CV; and promotes only when both CV values are at
+most 1.5% and the configured metric improves by at least 1%. The campaign runs
+arms in A-B, B-A, A-B order. A valid but sub-threshold candidate produces a
+passed confirmation that explicitly selects the incumbent.
+
+The Phase 8 P150A campaign exercised all six stages with batch 32, cache 1024,
+prefill bucket 256, the official 32-prompt corpus, and full 32-layer traces.
+The incumbent reached a three-run median of `33.9425 t/s/u` with `0.0365%` CV;
+the legal SDPA `q_chunk_size=32` challenger reached `33.9103 t/s/u` with
+`0.3255%` CV. Its `-0.0948%` relative change failed the 1% improvement gate,
+so `best_config.json` retained the official q-chunk and rebuilt directly into
+a complete generated program bundle.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

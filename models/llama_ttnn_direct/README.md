@@ -125,7 +125,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Contracts, schema-v2 space, legality, templates, representative microbench, MatMul enumeration, and SDPA enumeration complete; layout/search orchestration pending |
+| Semantic autotune | Contracts through hierarchical template/program/layout search, full-model trace, strict matched A/B confirmation, budget, and resume are complete; workload generalization remains |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 
@@ -304,9 +304,26 @@ Run retained bring-up and legacy coverage explicitly:
 pytest models/llama_ttnn_direct/buddy_ttnn_direct/tests_diagnostics -q
 ```
 
-Autotune development includes bounded per-op enumeration and cross-op layout
-beam search. Layout reports preserve measured conversion costs, removed and
-retained conversions, rejected sharding constraints, and the whole-layer
+Autotune development includes bounded per-op enumeration, cross-op layout beam
+search, and a hierarchical campaign orchestrator. The orchestrator evaluates
+template groups, per-op Pareto frontiers, and layout mutations one group at a
+time with a bounded beam; it never materializes the full Cartesian product.
+Every device result is written atomically under its candidate fingerprint,
+budget counters survive resume, and callback failures retain classified
+reports. `best_config.json` is a template config accepted directly by
+`buddy-ttnn-direct build`.
+
+Final promotion uses alternating matched A/B order with exactly 5 warmup, 100
+iterations, and 3 repetitions. Both arms must preserve the frozen runtime,
+device, precision, semantic graph, model, weights, prompt, and measurement
+identity; correctness and quality must pass, each arm must have CV at most
+1.5%, and the challenger median must improve by at least 1%. On the Phase 8
+P150A batch32/cache1024 campaign, an enumerated SDPA `q_chunk_size=32`
+challenger measured `33.9103 t/s/u` median versus the incumbent's
+`33.9425 t/s/u`, so the orchestrator correctly retained the incumbent.
+
+Layout reports preserve measured conversion costs, removed and retained
+conversions, rejected sharding constraints, and the whole-layer
 incumbent/challenger decision. For the Llama 3.1 8B GQA shape, the current TTNN
 runtime requires interleaved SDPA output, so the SDPA-to-concat conversion is
 retained rather than replaced by an illegal sharded producer output.
