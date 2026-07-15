@@ -371,6 +371,27 @@ challengers changed throughput by `-0.0833%`, `-0.0948%`, and `-0.0090%`.
 All arm CVs were below 0.33%, so the conservative 1% gate retained each
 incumbent and all three final configs rebuilt successfully.
 
+`autotune/artifact.py` closes the experiment by loading the Phase 3-9 reports
+as immutable inputs. It rejects missing or failed evidence, inconsistent
+enumeration counts, incomplete accuracy/generalization gates, absent final
+configs, and any ablation matrix that omits or mislabels a required row. The
+output bundle contains canonical JSON, an ablation CSV, a Markdown result
+table, a normalized rebuild spec, source and output SHA256 manifests, compact
+checked-in evidence, and a non-device verification/rebuild script. Atomic
+failure reports remain available even when the input spec is invalid.
+
+The Phase 10 artifact records 456 total search entities: 8 template variants,
+174 MatMul programs, 256 SDPA programs, and 18 layout states. Analytical
+checks reject 79 before timing, including 78 of 430 program candidates, for a
+program pruning ratio of `18.14%`. The campaign accounts for 8 microbenchmark
+experiments, 2 short and 6 strict full-model profiles, and `775.54 s` of
+candidate subprocess device time. The selected `33.9425 t/s/u` result is
+`101.866%` of the locally reproduced corresponding release. Fixed-corpus
+top-1/top-5 and greedy agreement plus logits, hidden, and KV PCC remain
+passing. Nine ablation rows cover every required search-axis combination,
+representative-layer transfer on/off, and analytical pruning on/off; reused
+performance is allowed only when the selected config SHA256 is identical.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

@@ -103,6 +103,13 @@ The current baseline evidence is:
   of the corresponding release, official core operation counts match, and no
   unsupported residual region clears the required one-millisecond entry gate.
   No custom operation or kernel is implemented.
+- `p150a_semantic_autotune_paper_evidence_20260715.json`: Phase 10 hashes the
+  complete Phase 3-9 evidence chain and packages the semantic-autotune paper
+  metrics. It records 456 search entities, a `18.14%` program-candidate
+  pruning ratio, 8 microbench experiments, 8 full-model profiles, `775.54 s`
+  of accounted device process time, `33.9425 t/s/u`, and `101.866%` of the
+  corresponding release. Accuracy and one-model/three-workload
+  generalization pass, and all nine required ablation rows are present.
 
 Keep runtime reference files under `buddy_ttnn_direct/reference/`. Historical
 run evidence belongs here so refactors do not accidentally turn local evidence

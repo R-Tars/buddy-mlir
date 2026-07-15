@@ -317,7 +317,7 @@ programs, sharding, layouts, and conservative L1/CB capacity before a device
 command can launch. Legal candidates may then use the isolated compile-only
 validator. Reports retain accepted and rejected candidates with stable error
 classes. The command below remains the historical compatibility runner; the
-semantic search orchestrator will consume this legality API in a later phase.
+hierarchical semantic search orchestrator consumes the same legality API.
 
 ### Existing-API Template Registry
 
@@ -418,6 +418,40 @@ each short-measurement level and to matched 5/50 confirmations of the
 provisional winner and root incumbent. This prevents a noisy short-run delta
 from replacing the default. Add `--dry-run` to generate the four unique
 candidate bundles without opening a device.
+
+### Paper Artifact
+
+The Phase 10 artifact CLI is a development tool and does not open a device. It
+loads completed raw reports, validates their pass state, records all source
+hashes, derives the paper metrics and required ablations, and creates a
+self-verifying bundle beneath the active build tree:
+
+```bash
+export PAPER_ARTIFACT="$AUTOTUNE/doc6_phase10_artifact/bundle"
+
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.autotune.artifact_cli \
+  verify \
+  --artifact-dir "$PAPER_ARTIFACT"
+```
+
+Rebuild from the normalized, hash-pinned spec without overwriting the captured
+bundle:
+
+```bash
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.autotune.artifact_cli \
+  build \
+  --spec "$PAPER_ARTIFACT/spec.json" \
+  --out-dir "$AUTOTUNE/doc6_phase10_artifact/manual-rebuild"
+
+python -m models.llama_ttnn_direct.buddy_ttnn_direct.autotune.artifact_cli \
+  verify \
+  --artifact-dir "$AUTOTUNE/doc6_phase10_artifact/manual-rebuild"
+```
+
+`paper_artifact.json` is the machine-readable result, `ablation.csv` and
+`RESULTS.md` are presentation views, and both source and generated files are
+covered by SHA256 manifests. `reproduce.sh` verifies the original first and
+then writes each rebuild to a unique child directory.
 
 ## Validate
 

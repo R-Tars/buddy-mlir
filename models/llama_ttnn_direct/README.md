@@ -125,7 +125,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Hierarchical template/program/layout search, strict matched A/B confirmation, budget/resume, and one-model/three-workload shape generalization are complete |
+| Semantic autotune | Hierarchical search, strict matched A/B, one-model/three-workload generalization, and a hash-verified paper artifact with all required ablations are complete |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 
@@ -333,6 +333,19 @@ enumerated `q_chunk_size=32` challengers changed them by `-0.0833%`,
 `-0.0948%`, and `-0.0090%`. Every arm met the 1.5% CV bound, all three
 campaigns retained the incumbent under the 1% promotion threshold, and every
 selected config rebuilt directly.
+
+Phase 10 packages the complete experiment with `autotune/artifact.py`. The
+builder validates and hashes every Phase 3-9 source report, derives search
+time, enumeration/pruning, microbench and full-model counts, performance,
+official ratio, and accuracy, then writes JSON, CSV, Markdown, source and
+artifact manifests, and a rebuild script. The captured campaign records 456
+search entities, 79 analytical rejections, 8 microbench experiments, 8
+full-model profiles, and `775.54 s` of orchestrator-accounted device process
+time. Its selected incumbent measures `33.9425 t/s/u`, or `101.866%` of the
+corresponding release, while preserving the 500-token accuracy and full-depth
+PCC gates. The required config/template/layout, transfer on/off, and pruning
+on/off ablations are all present; rows that select an identical config are
+explicitly marked as evidence reuse or analytical cost studies.
 
 Layout reports preserve measured conversion costs, removed and retained
 conversions, rejected sharding constraints, and the whole-layer
