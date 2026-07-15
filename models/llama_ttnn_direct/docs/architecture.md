@@ -195,6 +195,23 @@ preserved during serialization. Schema-v1 preset names are accepted only by a
 compatibility adapter; generated programs and candidate fingerprints contain
 the resulting structured fields.
 
+`autotune/legality.py` validates schema-v2 candidates before measurement. Its
+static pass checks shape and tile divisibility, program-family constraints,
+physical grid and worker limits, shard coverage, dtype/layout compatibility,
+template-specific inputs, CB page count, and conservative L1 usage. The P150A
+descriptor models an `11x10` logical worker grid, `110` workers, and
+`1,572,864` bytes of worker L1. The default usable limit is `0.8` of L1.
+
+L1 estimates report input, output, double-buffered CB, intermediate, and
+program-local scratch components for every supported matmul and SDPA program.
+Static rejection prevents compile launch. Candidates that pass may run a
+representative compile-only command in an isolated process; its output is
+classified as `shape_incompatible`, `l1_overflow`, `unsupported_layout`,
+`invalid_program_config`, `invalid_core_grid`, `api_unavailable`,
+`compile_error`, or `runtime_error`. A legality report is complete when every
+candidate has an accepted or rejected result; rejected search candidates do
+not make report generation itself fail.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

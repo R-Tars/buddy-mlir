@@ -53,6 +53,11 @@ HF config and weights
   template choices, matmul/SDPA programs, memory and sharding, core grids, and
   layout edges. Historical preset strings are expanded by a compatibility
   adapter before fingerprinting or code generation.
+- The schema-v2 legality engine rejects incompatible shapes, grids, sharding,
+  program configs, layouts, and conservative L1/CB footprints before device
+  execution. It covers the current P150A matmul/SDPA configuration plus paged
+  fused cache update and fused QK RoPE, and exposes isolated compile-only
+  validation with stable error classes.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
@@ -98,7 +103,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Layered autotune | Four levels complete; official incumbent retained |
+| Layered autotune | Frozen contracts, schema-v2 space, and legality engine complete; semantic search orchestration pending |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 

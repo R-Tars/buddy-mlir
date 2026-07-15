@@ -312,6 +312,13 @@ each preset is immediately expanded to schema v2. Candidate artifacts expose
 typed `templates`, `operators`, `memory_configs`, `core_grids`, and `edges`;
 generated runtime configs do not retain the old preset strings.
 
+The schema-v2 legality layer statically checks candidate shapes, grids,
+programs, sharding, layouts, and conservative L1/CB capacity before a device
+command can launch. Legal candidates may then use the isolated compile-only
+validator. Reports retain accepted and rejected candidates with stable error
+classes. The command below remains the historical compatibility runner; the
+semantic search orchestrator will consume this legality API in a later phase.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \
