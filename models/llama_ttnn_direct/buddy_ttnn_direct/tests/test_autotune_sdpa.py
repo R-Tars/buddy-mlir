@@ -100,6 +100,21 @@ class SDPAEnumeratorTest(unittest.TestCase):
             {"exp_approx_mode": False},
         )
 
+    def test_gqa_sharded_kernel_outputs_are_rejected(self) -> None:
+        enumeration = self._enumerate(self.runtime)
+        self.assertTrue(
+            all(
+                candidate.kernel_output_memory.layout == "interleaved"
+                for candidate in enumeration.candidates
+            )
+        )
+        issue_codes = {
+            issue["code"]
+            for candidate in enumeration.rejected
+            for issue in candidate["legality"]["issues"]
+        }
+        self.assertIn("SDPA_GQA_SHARDED_OUTPUT_UNSUPPORTED", issue_codes)
+
     def test_official_runtime_config_is_preserved_exactly(self) -> None:
         official = self._enumerate(self.runtime).official_candidates[0]
         generated = official.search_space.apply_to_runtime_config(self.runtime)
@@ -140,6 +155,12 @@ class SDPAEnumeratorTest(unittest.TestCase):
             generated["attention"]["sdpa_kernel_output_memory_config"]["name"],
             "L1_MEMORY_CONFIG",
         )
+        edge = candidate.search_space.edges["sdpa_to_concat_heads"]
+        self.assertEqual(
+            edge["producer_output_memory"]["runtime_name"],
+            "L1_MEMORY_CONFIG",
+        )
+        self.assertEqual(edge["conversion"], "explicit")
         sub_core_candidate = next(
             item
             for item in enumeration.candidates

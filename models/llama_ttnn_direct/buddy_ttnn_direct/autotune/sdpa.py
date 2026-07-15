@@ -553,6 +553,17 @@ def _replace_sdpa(
         payload["memory_configs"][
             _KERNEL_OUTPUT_MEMORY_PATH
         ] = kernel_output_memory.to_dict()
+    edge = payload["edges"].get("sdpa_to_concat_heads")
+    if isinstance(edge, dict):
+        consumer = edge.get("consumer_input_memory")
+        producer = kernel_output_memory.to_dict()
+        edge["producer_output_memory"] = producer
+        edge["conversion"] = (
+            "none"
+            if isinstance(consumer, Mapping)
+            and canonical_json(producer) == canonical_json(consumer)
+            else "explicit"
+        )
     return SearchSpaceConfig.from_dict(payload)
 
 

@@ -1646,9 +1646,10 @@ def _validate_sdpa(
     for key in ("kernel_output_memory", "output_memory"):
         value = operator.get(key)
         if value is not None:
+            memory = MemoryConfig.from_dict(value)
             _validate_memory_config(
                 f"{path}.{key}",
-                MemoryConfig.from_dict(value),
+                memory,
                 device,
                 issues,
                 tensor_shape=(
@@ -1656,6 +1657,21 @@ def _validate_sdpa(
                     workload.head_dim,
                 ),
             )
+            if (
+                key == "kernel_output_memory"
+                and workload.num_heads != workload.num_kv_heads
+                and memory.layout != "interleaved"
+            ):
+                _issue(
+                    issues,
+                    "SDPA_GQA_SHARDED_OUTPUT_UNSUPPORTED",
+                    "unsupported_layout",
+                    f"{path}.{key}",
+                    "TTNN SDPA decode does not support sharded output for GQA",
+                    num_heads=workload.num_heads,
+                    num_kv_heads=workload.num_kv_heads,
+                    output_layout=memory.layout,
+                )
     q_chunk = program.q_chunk_size or TILE_HEIGHT
     k_chunk = program.k_chunk_size or min(workload.cache_len, 128)
     head_tiles = math.ceil(workload.head_dim / TILE_WIDTH)

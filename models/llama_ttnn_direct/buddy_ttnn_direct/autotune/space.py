@@ -93,7 +93,7 @@ _TYPED_PROGRAM_PATHS = {
 }
 _EDGE_PATHS = {
     "sdpa_to_concat_heads": (
-        "attention.sdpa_output_memory_config",
+        "attention.sdpa_kernel_output_memory_config",
         "attention.concat_heads_input_memory_config",
     ),
     "final_norm_to_lm_head": (

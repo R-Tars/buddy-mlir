@@ -69,6 +69,14 @@ class StructuredAutotuneSpaceTest(unittest.TestCase):
                 "lm_head_shards_to_concat",
             },
         )
+        self.assertEqual(
+            serialized["edges"]["sdpa_to_concat_heads"]["conversion"],
+            "explicit",
+        )
+        self.assertEqual(
+            serialized["edges"]["sdpa_to_concat_heads"]["producer_path"],
+            "attention.sdpa_kernel_output_memory_config",
+        )
 
     def test_schema_v2_directly_generates_the_current_runtime_config(self) -> None:
         runtime = _official_runtime_config()

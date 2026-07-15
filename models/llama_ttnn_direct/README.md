@@ -304,6 +304,13 @@ Run retained bring-up and legacy coverage explicitly:
 pytest models/llama_ttnn_direct/buddy_ttnn_direct/tests_diagnostics -q
 ```
 
+Autotune development includes bounded per-op enumeration and cross-op layout
+beam search. Layout reports preserve measured conversion costs, removed and
+retained conversions, rejected sharding constraints, and the whole-layer
+incumbent/challenger decision. For the Llama 3.1 8B GQA shape, the current TTNN
+runtime requires interleaved SDPA output, so the SDPA-to-concat conversion is
+retained rather than replaced by an illegal sharded producer output.
+
 Additional references:
 
 - [Architecture](docs/architecture.md)

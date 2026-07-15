@@ -296,6 +296,23 @@ The active TTNN binding materializes every retained descriptor, and the smoke
 attention APIs accept an explicit candidate runtime config for isolated SDPA
 and full-attention validation without changing the product default.
 
+`autotune/layout_graph.py` performs the next cross-op step as three explicit
+region DAGs: Attention, MLP, and LM-head. Node candidates carry measured op
+costs and producer/consumer memory ports; edges carry tensor shapes and an
+optional measured conversion cost. A topological beam of width 4-16 rejects
+unmeasured transitions and illegal explicit shards before ranking paths by
+operator plus conversion latency. Reports name removed, retained, and already
+elided conversions separately and retain every rejected transition.
+
+The P150A Llama 3.1 workload exposes an important device constraint here.
+TTNN decode SDPA rejects sharded output when query and KV head counts differ,
+so the tempting direct SDPA-to-concat height-sharded path is illegal for the
+32/8 GQA shape. The shared legality engine records
+`SDPA_GQA_SHARDED_OUTPUT_UNSUPPORTED`; the layout beam therefore retains the
+measured DRAM-to-height-sharded conversion. Whole-layer confirmation always
+selects either a passing challenger or the incumbent, so a runtime rejection
+or latency regression cannot be promoted.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,
