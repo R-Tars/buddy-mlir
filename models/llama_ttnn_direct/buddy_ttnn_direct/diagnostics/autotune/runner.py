@@ -4,6 +4,18 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from ...autotune.measurement import (
+    build_candidate_config,
+    candidate_fingerprint,
+    prompt_corpus_sha256,
+    resolve_runtime_commit,
+)
+from ...autotune.schema import (
+    ContractViolation,
+    ExecutionContract,
+    MeasurementContract,
+    PrecisionContract,
+)
 from ...compiler.tuning import (
     OFFICIAL_LINEAR_OUTPUTS,
     OFFICIAL_PROGRAM_CONFIG,
@@ -13,8 +25,6 @@ from ...templates.registry import load_template_config
 from .candidate import (
     ProfileRunner,
     measure_state as _measure_state,
-    sha256_text as _sha256_text,
-    state_fingerprint as _state_fingerprint,
     write_json as _write_report,
 )
 from .selection import (
@@ -67,7 +77,7 @@ def run_layered_autotune(
 
     seed = load_template_config(seed_path)
     if not seed.get("official_config_profile"):
-        raise ValueError(
+        raise ContractViolation(
             "layered autotune requires an imported official_config_profile"
         )
     if not dry_run and not prompt:
@@ -80,6 +90,11 @@ def run_layered_autotune(
     )
     if float(min_relative_improvement) < 0.0:
         raise ValueError("min_relative_improvement must be non-negative")
+    if dtype_seed != "bf16":
+        raise ContractViolation(
+            "autotune runtime dtype seed is frozen to 'bf16'; "
+            f"observed {dtype_seed!r}"
+        )
 
     graph = import_hf_llama(
         model_root,
@@ -99,27 +114,50 @@ def run_layered_autotune(
 
     selected_state = {
         "lm_head_split_count": int(seed["lm_head_split_count"]),
-        "dtype_recipe": str(seed["dtype_recipe"]),
         "memory_layout": OFFICIAL_LINEAR_OUTPUTS,
         "program_config": OFFICIAL_PROGRAM_CONFIG,
     }
     root_incumbent_state = copy.deepcopy(selected_state)
+    precision_contract = PrecisionContract.from_template_config(seed)
+    precision_hash = precision_contract.hash
+    execution_contract = ExecutionContract.from_template_config(
+        seed,
+        prompt_corpus_sha256=prompt_corpus_sha256(prompt),
+    )
+    runtime_commit = resolve_runtime_commit()
+    effective_prefill_len = int(
+        seed["prefill_seq_len"] if prefill_len is None else prefill_len
+    )
+    effective_batch_size = int(seed["batch_size"] if batch_size is None else batch_size)
+    effective_cache_len = int(seed["max_cache_len"] if cache_len is None else cache_len)
+    target = {
+        "device": device,
+        "batch_size": effective_batch_size,
+        "decode_seq_len": int(seed["decode_seq_len"]),
+        "prefill_len": effective_prefill_len,
+        "cache_len": effective_cache_len,
+        "page_block_size": 32,
+        "runtime_dtype_seed": dtype_seed,
+    }
     invocation = {
         "model_path": str(model_root.resolve()),
         "config_path": str(seed_path.resolve()),
-        "prompt_sha256": _sha256_text(prompt or ""),
-        "tokenizer_path": str(Path(tokenizer_path).resolve())
-        if tokenizer_path is not None
-        else None,
+        "prompt_sha256": execution_contract.prompt_corpus_sha256,
+        "tokenizer_path": (
+            str(Path(tokenizer_path).resolve()) if tokenizer_path is not None else None
+        ),
         "layers": layer_count,
-        "prefill_len": prefill_len,
-        "batch_size": batch_size,
-        "cache_len": cache_len,
+        "prefill_len": effective_prefill_len,
+        "batch_size": effective_batch_size,
+        "cache_len": effective_cache_len,
         "device": device,
         "device_id": int(device_id),
         "dtype_seed": dtype_seed,
         "warmup": int(warmup),
         "iterations": int(iterations),
+        "runtime_commit": runtime_commit,
+        "precision_contract": precision_contract.to_dict(),
+        "execution_contract": execution_contract.to_dict(),
     }
     report = _base_report(
         report_path=report_path,
@@ -131,6 +169,11 @@ def run_layered_autotune(
         min_relative_improvement=float(min_relative_improvement),
     )
     measurements: dict[str, dict[str, Any]] = {}
+    search_measurement = MeasurementContract(
+        warmup=int(warmup),
+        iterations=int(iterations),
+        kind="candidate_search",
+    )
 
     for level_index, (level_name, state_key) in enumerate(
         AUTOTUNE_LEVELS,
@@ -140,7 +183,20 @@ def run_layered_autotune(
         for value in _level_values(state_key, selected_state[state_key]):
             state = copy.deepcopy(selected_state)
             state[state_key] = value
-            fingerprint = _state_fingerprint(state, invocation)
+            candidate_config = build_candidate_config(
+                graph=graph,
+                model_root=model_root,
+                precision_contract=precision_contract,
+                expected_precision_hash=precision_hash,
+                execution_contract=execution_contract,
+                measurement_contract=search_measurement,
+                runtime_commit=runtime_commit,
+                device=device,
+                device_id=device_id,
+                target=target,
+                tunable_state=state,
+            )
+            fingerprint = candidate_fingerprint(candidate_config)
             report["active_candidate"] = {
                 "level": level_index,
                 "level_name": level_name,
@@ -156,7 +212,7 @@ def run_layered_autotune(
             else:
                 record = _measure_state(
                     state=state,
-                    fingerprint=fingerprint,
+                    candidate_config=candidate_config,
                     state_root=state_root,
                     graph=graph,
                     seed=seed,
@@ -164,9 +220,9 @@ def run_layered_autotune(
                     prompt=prompt,
                     tokenizer_path=tokenizer_path,
                     layer_count=layer_count,
-                    prefill_len=prefill_len,
-                    batch_size=batch_size,
-                    cache_len=cache_len,
+                    prefill_len=effective_prefill_len,
+                    batch_size=effective_batch_size,
+                    cache_len=effective_cache_len,
                     device=device,
                     device_id=device_id,
                     dtype_seed=dtype_seed,
@@ -241,14 +297,26 @@ def run_layered_autotune(
         _write_report(report_path, report)
         return report
 
-    confirmation_invocation = {
-        **invocation,
-        "warmup": int(confirm_warmup),
-        "iterations": int(confirm_iterations),
-        "measurement_kind": "winner_confirmation",
-    }
     def confirm_state(state: dict[str, Any], label: str) -> dict[str, Any]:
-        fingerprint = _state_fingerprint(state, confirmation_invocation)
+        measurement_contract = MeasurementContract(
+            warmup=int(confirm_warmup),
+            iterations=int(confirm_iterations),
+            kind="winner_confirmation",
+        )
+        candidate_config = build_candidate_config(
+            graph=graph,
+            model_root=model_root,
+            precision_contract=precision_contract,
+            expected_precision_hash=precision_hash,
+            execution_contract=execution_contract,
+            measurement_contract=measurement_contract,
+            runtime_commit=runtime_commit,
+            device=device,
+            device_id=device_id,
+            target=target,
+            tunable_state=state,
+        )
+        fingerprint = candidate_fingerprint(candidate_config)
         report["active_candidate"] = {
             "level": "confirmation",
             "level_name": label,
@@ -258,7 +326,7 @@ def run_layered_autotune(
         _write_report(report_path, report)
         result = _measure_state(
             state=state,
-            fingerprint=fingerprint,
+            candidate_config=candidate_config,
             state_root=state_root,
             graph=graph,
             seed=seed,
@@ -266,9 +334,9 @@ def run_layered_autotune(
             prompt=prompt,
             tokenizer_path=tokenizer_path,
             layer_count=layer_count,
-            prefill_len=prefill_len,
-            batch_size=batch_size,
-            cache_len=cache_len,
+            prefill_len=effective_prefill_len,
+            batch_size=effective_batch_size,
+            cache_len=effective_cache_len,
             device=device,
             device_id=device_id,
             dtype_seed=dtype_seed,
@@ -314,9 +382,7 @@ def run_layered_autotune(
             "challenger_metric": confirmation.get("metric_value"),
             "incumbent_metric": confirmation.get("metric_value"),
             "relative_improvement": 0.0,
-            "minimum_relative_improvement": float(
-                min_relative_improvement
-            ),
+            "minimum_relative_improvement": float(min_relative_improvement),
         }
 
     passed = bool(confirmation.get("passed"))
@@ -335,8 +401,8 @@ def run_layered_autotune(
                 "passed": passed,
                 "checks": [
                     {
-                        "name": "autotune.four_levels_selected",
-                        "passed": len(report["levels"]) == 4,
+                        "name": "autotune.precision_frozen_levels_selected",
+                        "passed": len(report["levels"]) == 3,
                     },
                     {
                         "name": "autotune.winner_confirmed_with_steady_decode",
@@ -344,9 +410,7 @@ def run_layered_autotune(
                     },
                 ],
                 "failed_checks": (
-                    []
-                    if passed
-                    else ["autotune.winner_confirmed_with_steady_decode"]
+                    [] if passed else ["autotune.winner_confirmed_with_steady_decode"]
                 ),
             },
         }
@@ -369,7 +433,7 @@ def _base_report(
         "schema_version": 1,
         "command": "diagnose",
         "stage": "autotune",
-        "strategy": "progressive_four_level_decode_steady",
+        "strategy": "progressive_precision_frozen_decode_steady",
         "metric": AUTOTUNE_METRIC,
         "metric_direction": "maximize",
         "selection_policy": {

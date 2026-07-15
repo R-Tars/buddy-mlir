@@ -26,6 +26,21 @@ class LayeredAutotuneTest(unittest.TestCase):
         self.assertFalse(decision["promoted"])
         self.assertEqual(decision["status"], "rejected")
 
+    def test_runtime_dtype_seed_is_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_path, config_path = _write_inputs(root)
+            with self.assertRaisesRegex(ValueError, "frozen to 'bf16'"):
+                run_layered_autotune(
+                    model_path=model_path,
+                    config_path=config_path,
+                    out=root / "autotune.json",
+                    prompt=None,
+                    layers=2,
+                    dtype_seed="fp32",
+                    dry_run=True,
+                )
+
     def test_selection_keeps_incumbent_below_improvement_threshold(self) -> None:
         incumbent = {
             "candidate_id": "incumbent",
@@ -44,7 +59,7 @@ class LayeredAutotuneTest(unittest.TestCase):
         )
         self.assertIs(winner, incumbent)
 
-    def test_dry_run_builds_four_progressive_levels(self) -> None:
+    def test_dry_run_builds_three_precision_frozen_levels(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_path, config_path = _write_inputs(root)
@@ -63,12 +78,11 @@ class LayeredAutotuneTest(unittest.TestCase):
                 [level["name"] for level in report["levels"]],
                 [
                     "lm_head_split_count",
-                    "dtype_recipe",
                     "memory_config_layout",
                     "program_config_core_grid",
                 ],
             )
-            self.assertEqual(report["unique_measurement_count"], 5)
+            self.assertEqual(report["unique_measurement_count"], 4)
             self.assertTrue(
                 all(level["candidate_count"] == 2 for level in report["levels"])
             )
@@ -79,9 +93,7 @@ class LayeredAutotuneTest(unittest.TestCase):
                 if candidate["varied_value"] == 16
             )
             program_dir = Path(split16["program_dir"])
-            runtime_config = json.loads(
-                (program_dir / "config.json").read_text()
-            )
+            runtime_config = json.loads((program_dir / "config.json").read_text())
             self.assertEqual(runtime_config["lm_head"]["split_count"], 16)
             self.assertEqual(
                 len(runtime_config["lm_head"]["program_configs"]),
@@ -102,17 +114,14 @@ class LayeredAutotuneTest(unittest.TestCase):
             )
             self.assertEqual(lm_head_weight["memory_config"]["n"], 8016)
 
-            all_bf16 = next(
-                candidate
-                for candidate in report["levels"][1]["candidates"]
-                if candidate["varied_value"] == "all_bf16_correctness"
+            candidate_payload = json.loads(
+                (program_dir.parent / "candidate.json").read_text()
             )
-            all_bf16_config = json.loads(
-                (Path(all_bf16["program_dir"]) / "config.json").read_text()
-            )
-            self.assertNotIn(
-                "parameter_intermediate_dtype",
-                all_bf16_config["mlp"]["layer_overrides"]["31"],
+            self.assertNotIn("dtype_recipe", candidate_payload["state"])
+            self.assertTrue(candidate_payload["config"]["precision_contract"]["frozen"])
+            self.assertEqual(
+                candidate_payload["config"]["execution_contract"]["execution_mode"],
+                "trace",
             )
 
     def test_real_selection_reuses_previous_level_winner(self) -> None:
@@ -126,17 +135,18 @@ class LayeredAutotuneTest(unittest.TestCase):
                     (Path(kwargs["program_dir"]) / "config.json").read_text()
                 )
                 state = {
-                    "lm_head_split_count": runtime_config["lm_head"][
-                        "split_count"
-                    ],
-                    "dtype_recipe": runtime_config["template_config"][
-                        "dtype_recipe"
-                    ],
+                    "lm_head_split_count": runtime_config["lm_head"]["split_count"],
                     **runtime_config["autotune"],
                 }
+                self.assertEqual(
+                    runtime_config["template_config"]["dtype_recipe"],
+                    "official_like_performance_seed",
+                )
+                self.assertTrue(kwargs["after_prefill"])
+                self.assertEqual(kwargs["execution_mode"], "trace")
+                self.assertEqual(kwargs["runtime_input_mode"], "persistent")
                 score = 10.0
                 score += state["lm_head_split_count"] == 16
-                score += state["dtype_recipe"] == "all_bf16_correctness"
                 score += state["memory_layout"] == "lm_head_dram_concat"
                 score += state["program_config"] == "sdpa_grid_8x4"
                 calls.append(state)
@@ -175,13 +185,12 @@ class LayeredAutotuneTest(unittest.TestCase):
 
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "passed")
-            self.assertEqual(report["unique_measurement_count"], 5)
-            self.assertEqual(len(calls), 7)
+            self.assertEqual(report["unique_measurement_count"], 4)
+            self.assertEqual(len(calls), 6)
             self.assertEqual(
                 report["selected_state"],
                 {
                     "lm_head_split_count": 16,
-                    "dtype_recipe": "all_bf16_correctness",
                     "memory_layout": "lm_head_dram_concat",
                     "program_config": "sdpa_grid_8x4",
                 },
@@ -197,6 +206,10 @@ class LayeredAutotuneTest(unittest.TestCase):
                 3,
             )
             self.assertTrue(report["promotion_decision"]["promoted"])
+            self.assertEqual(
+                report["invocation"]["execution_contract"]["runtime_input_mode"],
+                "persistent",
+            )
 
 
 def _write_inputs(root: Path) -> tuple[Path, Path]:
@@ -230,19 +243,16 @@ def _write_inputs(root: Path) -> tuple[Path, Path]:
                 "decode_seq_len": 1,
                 "prefill_seq_len": 128,
                 "max_cache_len": 1024,
+                "runtime_input_mode": "persistent",
                 "attention_template": "official_paged_attention_decode",
                 "mlp_template": "official_gated_mlp_decode",
                 "lm_head_template": "official_split_lm_head",
                 "kv_cache_template": "paged_kv_cache",
                 "generation_template": "device_argmax_greedy",
-                "lm_head_argmax_strategy": (
-                    "full_logits_untilize_multicore_argmax"
-                ),
+                "lm_head_argmax_strategy": ("full_logits_untilize_multicore_argmax"),
                 "lm_head_split_count": 8,
                 "dtype_recipe": "official_like_performance_seed",
-                "official_config_profile": (
-                    "p150a_llama31_8b_b32_performance"
-                ),
+                "official_config_profile": ("p150a_llama31_8b_b32_performance"),
             }
         )
     )

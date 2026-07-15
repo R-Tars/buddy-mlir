@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import os
 import subprocess
@@ -9,11 +8,16 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
+from ...autotune.measurement import candidate_fingerprint
+from ...autotune.schema import (
+    CandidateConfig,
+    ContractViolation,
+    ExecutionContract,
+)
 from ...codegen.program import write_decode_program_bundle
 from ...runtime.profile import run_profile_decode_steady
 from ...templates.registry import build_execution_plan
 from .selection import AUTOTUNE_METRIC
-
 
 ProfileRunner = Callable[..., dict[str, Any]]
 
@@ -21,7 +25,7 @@ ProfileRunner = Callable[..., dict[str, Any]]
 def measure_state(
     *,
     state: dict[str, Any],
-    fingerprint: str,
+    candidate_config: CandidateConfig,
     state_root: Path,
     graph: Any,
     seed: dict[str, Any],
@@ -41,6 +45,11 @@ def measure_state(
     resume: bool,
     profile_runner: ProfileRunner | None,
 ) -> dict[str, Any]:
+    if state != candidate_config.tunable_state:
+        raise ContractViolation(
+            "measured state differs from the validated CandidateConfig state"
+        )
+    fingerprint = candidate_fingerprint(candidate_config)
     candidate_id = _candidate_id(state, fingerprint)
     candidate_dir = state_root / candidate_id
     program_dir = candidate_dir / "program"
@@ -80,10 +89,7 @@ def measure_state(
 
     try:
         candidate_seed = copy.deepcopy(seed)
-        candidate_seed["lm_head_split_count"] = int(
-            state["lm_head_split_count"]
-        )
-        candidate_seed["dtype_recipe"] = str(state["dtype_recipe"])
+        candidate_seed["lm_head_split_count"] = int(state["lm_head_split_count"])
         plan = build_execution_plan(graph, candidate_seed)
         plan["template_config"]["autotune"] = {
             "schema_version": 1,
@@ -101,10 +107,11 @@ def measure_state(
         write_json(
             candidate_dir / "candidate.json",
             {
-                "schema_version": 1,
+                "schema_version": candidate_config.schema_version,
                 "candidate_id": candidate_id,
                 "fingerprint": fingerprint,
                 "state": state,
+                "config": candidate_config.to_dict(),
             },
         )
         profile = _run_candidate_profile(
@@ -124,6 +131,7 @@ def measure_state(
             warmup=warmup,
             iterations=iterations,
             dry_run=dry_run,
+            execution_contract=candidate_config.execution_contract,
         )
         record = {
             "candidate_id": candidate_id,
@@ -134,13 +142,14 @@ def measure_state(
             "metric_value": profile.get(AUTOTUNE_METRIC),
             "decode_step_ms_p50": profile.get("decode_step_ms_p50"),
             "decode_step_ms_mean": profile.get("decode_step_ms_mean"),
-            "aggregate_tokens_per_second": profile.get(
-                "aggregate_tokens_per_second"
-            ),
+            "aggregate_tokens_per_second": profile.get("aggregate_tokens_per_second"),
             "setup_ms": profile.get("setup_ms"),
             "prefill_ms": profile.get("prefill_ms"),
             "warmup": int(warmup),
             "iterations": int(iterations),
+            "precision_hash": candidate_config.precision_contract.hash,
+            "execution_contract": (candidate_config.execution_contract.to_dict()),
+            "measurement_contract": (candidate_config.measurement_contract.to_dict()),
             "device_ownership": ownership,
             "program_dir": str(program_dir),
             "profile_report": str(profile_path),
@@ -206,19 +215,6 @@ def check_device_ownership(device_id: int) -> dict[str, Any]:
     }
 
 
-def state_fingerprint(state: dict[str, Any], invocation: dict[str, Any]) -> str:
-    payload = json.dumps(
-        {"state": state, "invocation": invocation},
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return sha256_text(payload)
-
-
-def sha256_text(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
-
-
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -244,6 +240,7 @@ def _run_candidate_profile(
     warmup: int,
     iterations: int,
     dry_run: bool,
+    execution_contract: ExecutionContract,
 ) -> dict[str, Any]:
     kwargs = {
         "out": profile_path,
@@ -260,7 +257,9 @@ def _run_candidate_profile(
         "dtype_seed": dtype_seed,
         "warmup": warmup,
         "iterations": iterations,
-        "after_prefill": True,
+        "after_prefill": execution_contract.after_prefill,
+        "execution_mode": execution_contract.execution_mode,
+        "runtime_input_mode": execution_contract.runtime_input_mode,
         "dry_run": dry_run,
     }
     if profile_runner is not None:
@@ -298,6 +297,10 @@ def _run_profile_subprocess(**kwargs: Any) -> dict[str, Any]:
         "--iterations",
         str(kwargs["iterations"]),
         "--after-prefill",
+        "--execution-mode",
+        str(kwargs["execution_mode"]),
+        "--runtime-input-mode",
+        str(kwargs["runtime_input_mode"]),
         "--out",
         str(profile_path),
     ]
@@ -330,8 +333,7 @@ def _run_profile_subprocess(**kwargs: Any) -> dict[str, Any]:
         "error": {
             "type": "subprocess_exit",
             "message": (
-                f"profile subprocess exited {result.returncode}; "
-                f"see {process_log}"
+                f"profile subprocess exited {result.returncode}; " f"see {process_log}"
             ),
         },
     }
@@ -340,7 +342,6 @@ def _run_profile_subprocess(**kwargs: Any) -> dict[str, Any]:
 def _candidate_id(state: dict[str, Any], fingerprint: str) -> str:
     return (
         f"split{state['lm_head_split_count']}-"
-        f"{_slug(state['dtype_recipe'])}-"
         f"{_slug(state['memory_layout'])}-"
         f"{_slug(state['program_config'])}-"
         f"{fingerprint[:12]}"
@@ -349,8 +350,7 @@ def _candidate_id(state: dict[str, Any], fingerprint: str) -> str:
 
 def _slug(value: Any) -> str:
     return "".join(
-        character if character.isalnum() else "-"
-        for character in str(value).lower()
+        character if character.isalnum() else "-" for character in str(value).lower()
     ).strip("-")
 
 
@@ -369,9 +369,7 @@ def _load_resumable_measurement(
         return None
     if record.get("profile_report") and not profile_path.is_file():
         return None
-    if record.get("passed") is not True and not _terminal_candidate_failure(
-        record
-    ):
+    if record.get("passed") is not True and not _terminal_candidate_failure(record):
         return None
     return copy.deepcopy(record)
 

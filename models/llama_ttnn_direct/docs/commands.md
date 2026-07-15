@@ -299,11 +299,13 @@ as evidence rather than silently falling back.
 
 ## Layered Autotune
 
-Autotune is a development diagnostic, not a product validation gate. It varies
-one axis at a time in this order: LM-head split count, dtype recipe, memory
-layout, then program config/core grid. Every candidate uses post-prefill steady
-decode; repeated incumbents reuse the same measurement rather than expanding a
-Cartesian product.
+Autotune is a development diagnostic, not a product validation gate. Its
+compatibility runner varies one axis at a time in this order: LM-head split
+count, memory layout, then program config/core grid. The production precision
+recipe and all compute fidelity fields are frozen by the candidate contract.
+Every candidate explicitly uses post-prefill steady decode, full trace, and
+persistent inputs; repeated incumbents reuse the same measurement rather than
+expanding a Cartesian product.
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
@@ -328,7 +330,7 @@ Hardware candidates run in isolated subprocesses and are resumable by state
 fingerprint. The default `1%` minimum relative improvement applies both during
 each short-measurement level and to matched 5/50 confirmations of the
 provisional winner and root incumbent. This prevents a noisy short-run delta
-from replacing the default. Add `--dry-run` to generate the five unique
+from replacing the default. Add `--dry-run` to generate the four unique
 candidate bundles without opening a device.
 
 ## Validate

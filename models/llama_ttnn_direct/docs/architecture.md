@@ -176,6 +176,18 @@ steady-decode subprocesses. Phase-era Cartesian search is quarantined under
 `future/historical_search/` and is loaded only by diagnostics compatibility
 paths.
 
+### Semantic autotune contracts
+
+`buddy_ttnn_direct/autotune/` owns the schema-v2 candidate identity. Its frozen
+precision contract is derived from the checked-in official performance profile
+and includes weight/activation/KV dtypes, per-layer overrides, math fidelity,
+FP32 accumulation, approximation, and packer settings. Execution is fixed to
+post-prefill full decode trace with persistent inputs, fixed page tables, and
+force-argmax sampling. Candidate fingerprints include these contracts plus the
+semantic graph, model config, weights/recipe identity, runtime commit, device,
+workload, tunable state, and measurement counts. The legacy layered runner is
+an adapter to this contract and cannot search dtype or fidelity fields.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

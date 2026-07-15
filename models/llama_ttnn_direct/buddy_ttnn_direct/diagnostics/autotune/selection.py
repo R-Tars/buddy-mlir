@@ -9,12 +9,9 @@ from ...compiler.tuning import (
     OFFICIAL_PROGRAM_CONFIG,
     SDPA_GRID_8X4_PROGRAM_CONFIG,
 )
-from ...dtype_recipes import CORRECTNESS_RECIPE, PERFORMANCE_RECIPE
-
 
 AUTOTUNE_LEVELS = (
     ("lm_head_split_count", "lm_head_split_count"),
-    ("dtype_recipe", "dtype_recipe"),
     ("memory_config_layout", "memory_layout"),
     ("program_config_core_grid", "program_config"),
 )
@@ -24,7 +21,6 @@ AUTOTUNE_METRIC = "tokens_per_second_per_user"
 def level_values(state_key: str, current: Any) -> list[Any]:
     alternatives = {
         "lm_head_split_count": (8, 16),
-        "dtype_recipe": (PERFORMANCE_RECIPE, CORRECTNESS_RECIPE),
         "memory_layout": (OFFICIAL_LINEAR_OUTPUTS, LM_HEAD_DRAM_CONCAT),
         "program_config": (
             OFFICIAL_PROGRAM_CONFIG,
@@ -79,14 +75,10 @@ def selection_summary(
         and float(incumbent_metric) > 0.0
         and isinstance(winner_metric, (int, float))
     ):
-        relative_improvement = (
-            float(winner_metric) / float(incumbent_metric) - 1.0
-        )
+        relative_improvement = float(winner_metric) / float(incumbent_metric) - 1.0
     return {
         "incumbent_candidate_id": (
-            incumbent.get("candidate_id")
-            if isinstance(incumbent, dict)
-            else None
+            incumbent.get("candidate_id") if isinstance(incumbent, dict) else None
         ),
         "winner_candidate_id": (
             winner.get("candidate_id") if winner is not None else None
@@ -127,9 +119,7 @@ def confirmation_promotion_decision(
         and isinstance(incumbent_metric, (int, float))
         and float(incumbent_metric) > 0.0
     ):
-        relative_improvement = (
-            float(challenger_metric) / float(incumbent_metric) - 1.0
-        )
+        relative_improvement = float(challenger_metric) / float(incumbent_metric) - 1.0
         promoted = relative_improvement >= min_relative_improvement
         reason = (
             "confirmed improvement met promotion threshold"

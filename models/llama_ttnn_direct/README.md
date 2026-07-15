@@ -42,11 +42,13 @@ HF config and weights
   `28.627 tokens/s/user` (`86.49%` of target). This is `2.78%` slower than the
   Step C baseline, so config parity is complete but performance parity remains
   a Step E optimization target.
-- Step E now uses four progressive levels instead of the historical Cartesian
-  search: LM-head splits, dtype recipe, memory layout, then program/grid. Each
-  unique hardware candidate runs in an isolated process and is measured with
-  post-prefill steady decode. A `1%` promotion threshold keeps the incumbent
-  when a challenger is within run-to-run noise.
+- Historical Step E used four progressive levels instead of a Cartesian
+  search. The precision-preserving semantic-autotune contract now freezes the
+  production dtype/fidelity recipe, so the compatibility runner varies only
+  LM-head splits, memory layout, and program/grid. Every candidate uses full
+  decode trace, persistent inputs, and post-prefill steady decode in an
+  isolated process. A `1%` promotion threshold keeps the incumbent when a
+  challenger is within run-to-run noise.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
