@@ -2093,22 +2093,28 @@ def _validate_sub_core_grids(
             )
         selected.update(coordinates)
     for x, y in selected:
-        if (
-            x >= program.grid.x
-            or y >= program.grid.y
-            or x >= device.compute_grid.x
-            or y >= device.compute_grid.y
-        ):
+        if x >= device.compute_grid.x or y >= device.compute_grid.y:
             _issue(
                 issues,
                 "SDPA_SUB_CORE_OUT_OF_BOUNDS",
                 "invalid_core_grid",
                 f"{path}.sub_core_grids",
-                "SDPA sub-core lies outside its program/device grid",
+                "SDPA sub-core lies outside the physical device grid",
                 core=[x, y],
-                program_grid=program.grid.to_list(),
                 device_grid=device.compute_grid.to_list(),
             )
+    expected = program.grid.x * program.grid.y
+    if len(selected) != expected:
+        _issue(
+            issues,
+            "SDPA_SUB_CORE_COUNT_MISMATCH",
+            "invalid_core_grid",
+            f"{path}.sub_core_grids",
+            "SDPA sub-core set must contain exactly the logical grid core count",
+            selected_core_count=len(selected),
+            expected_core_count=expected,
+            program_grid=program.grid.to_list(),
+        )
     return len(selected)
 
 

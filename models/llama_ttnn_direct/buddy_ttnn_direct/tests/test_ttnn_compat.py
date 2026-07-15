@@ -53,6 +53,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                 {
                     "kind": "ttnn_sdpa_program_config",
                     "core_grid": [8, 8],
+                    "sub_core_grids": [[1, 0, 8, 7]],
                     "q_chunk_size": 0,
                     "k_chunk_size": 0,
                     "exp_approx_mode": False,
@@ -132,6 +133,13 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             "unary:silu",
         )
         self.assertEqual(resolved["programs"][1]["constructor"], "sdpa")
+        self.assertEqual(
+            resolved["programs"][1]["sub_core_grids"],
+            (
+                "core_range_set",
+                (("core_range", (1, 0), (8, 7)),),
+            ),
+        )
         self.assertEqual(resolved["programs"][2]["constructor"], "norm")
         self.assertEqual(
             resolved["programs"][3]["constructor"],

@@ -73,6 +73,13 @@ HF config and weights
   every LM-head shard. It derives bounded DRAM-sharded candidates from tile
   divisibility and P150A worker capacity, injects the exact official vector,
   and retains only candidates accepted by the shared legality/L1 engine.
+- The SDPA enumerator searches logical grid, physical sub-core placement,
+  q/k chunks, per-head-batch core caps, and kernel output memory while keeping
+  exp approximation frozen. Cache lengths 128/512/1024 produce distinct
+  bounded spaces, and all retained descriptors materialize through the active
+  TTNN API. A non-official q-chunk candidate passes both the P150A single-op
+  and full-attention paths; the single-op PyTorch reference reaches `0.99965`
+  PCC at a `0.99` threshold.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
@@ -118,7 +125,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Contracts, schema-v2 space, legality, templates, representative microbench, and MatMul enumeration complete; SDPA/layout/search orchestration pending |
+| Semantic autotune | Contracts, schema-v2 space, legality, templates, representative microbench, MatMul enumeration, and SDPA enumeration complete; layout/search orchestration pending |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 

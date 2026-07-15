@@ -143,12 +143,20 @@ def _matmul_multicore_reuse_mcast_program_config(
 def _sdpa_program_config(spec: dict[str, Any], ttnn: Any) -> Any:
     constructor = _required_attr(ttnn, "SDPAProgramConfig")
     grid = tuple(int(value) for value in spec["core_grid"])
+    kwargs = {
+        "compute_with_storage_grid_size": grid,
+        "q_chunk_size": int(spec["q_chunk_size"]),
+        "k_chunk_size": int(spec["k_chunk_size"]),
+        "exp_approx_mode": bool(spec["exp_approx_mode"]),
+        "max_cores_per_head_batch": int(spec["max_cores_per_head_batch"]),
+    }
+    if spec.get("sub_core_grids") is not None:
+        kwargs["sub_core_grids"] = _core_range_set(
+            spec["sub_core_grids"],
+            ttnn,
+        )
     return constructor(
-        compute_with_storage_grid_size=grid,
-        q_chunk_size=int(spec["q_chunk_size"]),
-        k_chunk_size=int(spec["k_chunk_size"]),
-        exp_approx_mode=bool(spec["exp_approx_mode"]),
-        max_cores_per_head_batch=int(spec["max_cores_per_head_batch"]),
+        **kwargs,
     )
 
 

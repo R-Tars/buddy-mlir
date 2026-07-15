@@ -274,6 +274,28 @@ retain only target-local L1 evidence and a hash of the materializable search
 space. Microbenchmark selection ranks passed Phase 4 reports, but labels its
 winner as representative-only and never grants promotion to the default.
 
+`autotune/sdpa.py` enumerates decode SDPA as a bounded, cache-aware space. It
+always inserts the exact official program and then covers logical grids,
+physical sub-core placements, q/k chunks, per-head-batch core caps, and kernel
+output memory. Cache length limits k chunks directly: the 128, 512, and 1024
+workloads add 128, 256, and 512-sized terminal choices respectively. Candidate
+identity includes the complete SDPA workload and device descriptor, so results
+cannot collide across cache lengths or targets.
+
+Sub-core rectangles use physical device coordinates. Their union must be
+disjoint, lie inside the device descriptor, and contain exactly the logical
+program-grid core count; an offset `8x8` placement is therefore valid on the
+P150A `11x10` worker grid. Runtime realization converts those rectangles to a
+real `ttnn.CoreRangeSet`. The enumerator also updates the duplicated schema-v2
+grid and memory paths when materializing a candidate, preventing later config
+application from silently restoring official values.
+
+`exp_approx_mode` remains precision-frozen and is absent from the tunable
+identity. Every proposal passes the shared legality/L1 engine before exposure.
+The active TTNN binding materializes every retained descriptor, and the smoke
+attention APIs accept an explicit candidate runtime config for isolated SDPA
+and full-attention validation without changing the product default.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

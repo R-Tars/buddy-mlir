@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .smoke_mlp import (
     NO_TTNN_DEVICE_MESSAGE,
@@ -20,6 +21,7 @@ from .smoke_decode_shell import (
     _shape_check,
 )
 from .runtime_environment import collect_ttnn_environment
+from .runtime.config_runtime import realize_ttnn_config
 from .runtime_inputs import build_decode_runtime_state
 from .reports.contracts import ATTENTION_PRIMITIVES
 from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
@@ -58,9 +60,17 @@ def run_smoke_attention_primitive(
     max_cache_len: int = 1024,
     dtype_seed: str = "bf16",
     dry_run: bool = False,
+    sdpa_runtime_config: Mapping[str, Any] | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
+    if (
+        sdpa_runtime_config is not None
+        and primitive != "paged_scaled_dot_product_attention_decode"
+    ):
+        raise ValueError(
+            "sdpa_runtime_config is only valid for the paged SDPA primitive"
+        )
     _validate_args(
         primitive=primitive,
         batch_size=batch_size,
@@ -107,6 +117,10 @@ def run_smoke_attention_primitive(
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
+        if sdpa_runtime_config is not None:
+            report["sdpa_runtime_config"] = copy.deepcopy(
+                dict(sdpa_runtime_config)
+            )
         _write_report(out, report)
         return report
 
@@ -175,6 +189,7 @@ def run_smoke_attention_primitive(
                 num_heads=num_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
+                sdpa_runtime_config=sdpa_runtime_config,
             )
             synchronize = getattr(ttnn, "synchronize_device", None)
             if callable(synchronize):
@@ -280,6 +295,8 @@ def run_smoke_attention_primitive(
             ttnn_module=ttnn,
         )
 
+    if sdpa_runtime_config is not None:
+        report["sdpa_runtime_config"] = copy.deepcopy(dict(sdpa_runtime_config))
     _write_report(out, report)
     return report
 
@@ -295,6 +312,7 @@ def _run_primitive(
     num_heads: int,
     num_kv_heads: int,
     head_dim: int,
+    sdpa_runtime_config: Mapping[str, Any] | None = None,
 ) -> Any:
     dtype = _ttnn_dtype(ttnn, dtype_seed)
     layout = getattr(ttnn, "TILE_LAYOUT", None)
@@ -319,6 +337,7 @@ def _run_primitive(
     index_layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
     index_dtype = getattr(ttnn, "int32", dtype)
     page_state = _page_state_from_plan(plan)
+    sdpa_config = _realize_sdpa_runtime_config(sdpa_runtime_config, ttnn)
 
     def tensor(name: str) -> Any:
         shape = plan["input_shapes"][name]
@@ -400,7 +419,11 @@ def _run_primitive(
             tensor("page_table"),
             tensor("cache_position"),
             scale=float(head_dim) ** -0.5,
-            memory_config=memory_config,
+            memory_config=sdpa_config.get(
+                "kernel_output_memory_config",
+                memory_config,
+            ),
+            program_config=sdpa_config.get("program_config"),
         )
     if primitive == "nlp_concat_heads_decode":
         return ttnn_ops.nlp_concat_heads_decode(
@@ -410,6 +433,28 @@ def _run_primitive(
             memory_config=height_sharded_memory_config,
         )
     raise AssertionError(f"unhandled primitive: {primitive}")
+
+
+def _realize_sdpa_runtime_config(
+    value: Mapping[str, Any] | None,
+    ttnn: Any,
+) -> dict[str, Any]:
+    if value is None:
+        return {}
+    allowed = {
+        "program_config",
+        "kernel_output_memory_config",
+        "post_sdpa_output_memory_config",
+    }
+    unknown = set(value) - allowed
+    if unknown:
+        raise ValueError(f"unknown SDPA runtime config fields: {sorted(unknown)}")
+    result = {}
+    for key, descriptor in value.items():
+        if not isinstance(descriptor, Mapping):
+            raise ValueError(f"SDPA runtime config {key} must be a descriptor")
+        result[key] = realize_ttnn_config(dict(descriptor), ttnn)
+    return result
 
 
 def _primitive_plan(

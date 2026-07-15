@@ -46,6 +46,13 @@ from .schema import (
     MeasurementContract,
     PrecisionContract,
 )
+from .sdpa import (
+    SDPA_OPERATOR,
+    SDPACandidate,
+    SDPAEnumerationError,
+    SDPAEnumerationResult,
+    enumerate_sdpa_programs,
+)
 from .space import (
     CoreGrid,
     EdgeConfig,
@@ -130,6 +137,10 @@ __all__ = (
     "PACKED_GATE_UP",
     "PrecisionContract",
     "SDPAProgramConfig",
+    "SDPA_OPERATOR",
+    "SDPACandidate",
+    "SDPAEnumerationError",
+    "SDPAEnumerationResult",
     "SDPAWorkload",
     "ROPE_AXIS",
     "SEPARATE_GATE_UP",
@@ -159,6 +170,7 @@ __all__ = (
     "evaluate_template_reference",
     "enumerate_all_matmul_programs",
     "enumerate_matmul_programs",
+    "enumerate_sdpa_programs",
     "get_template_definition",
     "list_template_definitions",
     "make_worker_response",

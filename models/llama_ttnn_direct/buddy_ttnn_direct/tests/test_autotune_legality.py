@@ -142,10 +142,10 @@ class AutotuneLegalityTest(unittest.TestCase):
         self.assertIn("L1_SAFETY_LIMIT_EXCEEDED", codes)
         self.assertIn("CB_PAGE_COUNT_EXCEEDED", codes)
 
-    def test_sdpa_sub_core_grids_must_be_disjoint_and_bounded(self) -> None:
+    def test_sdpa_sub_core_grids_must_be_disjoint_sized_and_bounded(self) -> None:
         payload = self.space.to_dict()
         sdpa = payload["operators"]["attention.sdpa"]
-        sdpa["sub_core_grids"] = [[0, 0, 4, 3], [4, 3, 8, 7]]
+        sdpa["sub_core_grids"] = [[0, 0, 4, 3], [4, 3, 11, 7]]
 
         report = validate_candidate(
             SearchSpaceConfig.from_dict(payload),
@@ -156,6 +156,20 @@ class AutotuneLegalityTest(unittest.TestCase):
 
         self.assertIn("SDPA_SUB_CORE_OVERLAP", codes)
         self.assertIn("SDPA_SUB_CORE_OUT_OF_BOUNDS", codes)
+        self.assertIn("SDPA_SUB_CORE_COUNT_MISMATCH", codes)
+
+    def test_sdpa_sub_core_grid_may_be_offset_on_the_physical_grid(self) -> None:
+        payload = self.space.to_dict()
+        sdpa = payload["operators"]["attention.sdpa"]
+        sdpa["sub_core_grids"] = [[1, 0, 8, 7]]
+
+        report = validate_candidate(
+            SearchSpaceConfig.from_dict(payload),
+            self.workload,
+            self.device,
+        )
+
+        self.assertTrue(report.passed, [issue.to_dict() for issue in report.issues])
 
     def test_paged_fused_update_legal_and_overlap_rejected(self) -> None:
         fused = _fused_cache_workload()

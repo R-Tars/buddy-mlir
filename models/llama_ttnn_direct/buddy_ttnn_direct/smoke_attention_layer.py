@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import copy
 import importlib
 import json
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from .smoke_attention_primitive import (
     _decode_head_shape,
@@ -20,6 +21,7 @@ from .smoke_attention_primitive import (
     _rotary_cos_sin_height_sharded_memory_config,
     _rotary_transform_height_sharded_memory_config,
     _runtime_index_tensor,
+    _realize_sdpa_runtime_config,
     _ttnn_dtype,
     _validate_args,
     _without_none,
@@ -63,6 +65,7 @@ def run_smoke_attention_layer(
     cache_len: int | None = None,
     dtype_seed: str = "bf16",
     dry_run: bool = False,
+    sdpa_runtime_config: Mapping[str, Any] | None = None,
     ttnn_module: Any | None = None,
     torch_module: Any | None = None,
 ) -> dict[str, Any]:
@@ -135,6 +138,10 @@ def run_smoke_attention_layer(
                 "message": "Dry run only; TTNN device is not required.",
             }
         )
+        if sdpa_runtime_config is not None:
+            report["sdpa_runtime_config"] = copy.deepcopy(
+                dict(sdpa_runtime_config)
+            )
         _write_report(out, report)
         return report
 
@@ -204,6 +211,7 @@ def run_smoke_attention_layer(
                 num_heads=num_heads,
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
+                sdpa_runtime_config=sdpa_runtime_config,
             )
             synchronize = getattr(ttnn, "synchronize_device", None)
             if callable(synchronize):
@@ -315,6 +323,8 @@ def run_smoke_attention_layer(
             ttnn_module=ttnn,
         )
 
+    if sdpa_runtime_config is not None:
+        report["sdpa_runtime_config"] = copy.deepcopy(dict(sdpa_runtime_config))
     _write_report(out, report)
     return report
 
@@ -329,6 +339,7 @@ def _run_attention_layer(
     num_heads: int,
     num_kv_heads: int,
     head_dim: int,
+    sdpa_runtime_config: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     dtype = _ttnn_dtype(ttnn, dtype_seed)
     dtype_name = _dtype_name(dtype_seed)
@@ -355,6 +366,7 @@ def _run_attention_layer(
     index_layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", layout)
     index_dtype = getattr(ttnn, "int32", dtype)
     page_state = _page_state_from_plan(plan)
+    sdpa_config = _realize_sdpa_runtime_config(sdpa_runtime_config, ttnn)
     tensor_conversion_count = 0
     memory_config_conversion_count = 0
 
@@ -494,7 +506,11 @@ def _run_attention_layer(
             page_table,
             cache_position,
             scale=float(head_dim) ** -0.5,
-            memory_config=memory_config,
+            memory_config=sdpa_config.get(
+                "kernel_output_memory_config",
+                memory_config,
+            ),
+            program_config=sdpa_config.get("program_config"),
         ),
         input_shapes=_op_input_shapes(
             "paged_scaled_dot_product_attention_decode",
@@ -505,14 +521,21 @@ def _run_attention_layer(
             plan,
         ),
         dtype=dtype_name,
-        memory_config=memory_config,
+        memory_config=sdpa_config.get(
+            "kernel_output_memory_config",
+            memory_config,
+        ),
     )
     attention_for_concat = attention
-    if height_sharded_memory_config is not None:
+    concat_memory_config = sdpa_config.get(
+        "post_sdpa_output_memory_config",
+        height_sharded_memory_config,
+    )
+    if concat_memory_config is not None:
         memory_config_conversion_count += 1
         attention_for_concat = ttnn.to_memory_config(
             attention,
-            memory_config=height_sharded_memory_config,
+            memory_config=concat_memory_config,
         )
     concat = _time_op(
         primitive_reports,
@@ -529,7 +552,7 @@ def _run_attention_layer(
             plan,
         ),
         dtype=dtype_name,
-        memory_config=height_sharded_memory_config,
+        memory_config=concat_memory_config,
     )
 
     o_proj_weight = tensor("o_proj_weight")
