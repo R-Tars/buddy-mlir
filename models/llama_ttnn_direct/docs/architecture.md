@@ -238,6 +238,27 @@ weights are concatenated offline on the output-feature axis, tensorized once,
 projected once, and split through the public `ttnn.split` API. No C++ or Metal
 implementation is introduced by the registry.
 
+`autotune/transfer.py` defines representative-layer ownership as a complete,
+non-overlapping partition. For Llama 3.1 8B, `group_default` measures layer 0
+and transfers the selected state to layers 0-30. `group_override` measures
+layer 31 only because its frozen MLP precision recipe differs. Expansion emits
+the representative, destination layers, and state hash for every assignment.
+
+`autotune/microbench.py` measures an `op` or `region` target through a versioned
+JSON worker protocol. Every repetition runs in a fresh subprocess, explicitly
+acknowledges the trace/persistent execution contract and warmup count, and
+returns exactly the configured number of synchronized samples. Reports retain
+raw per-repetition samples, mean, p50, p90, population standard deviation, CV,
+process logs, program-cache count, trace-capture count, and replay allocation
+count.
+
+The measurement-cache key covers the complete candidate fingerprint, target,
+representative group, worker protocol, worker callable, and payload hash. The
+candidate fingerprint already includes the TTNN/tt-metal runtime commit and
+measurement settings, so a runtime change cannot reuse an old result. Cache
+writes are atomic, and failed, timed-out, malformed, or partial measurements
+are never cached.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

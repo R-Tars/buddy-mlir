@@ -253,6 +253,28 @@ class MeasurementContract:
             raise ContractViolation("device synchronization cannot be disabled")
 
     @classmethod
+    def short_microbenchmark(cls, *, iterations: int = 10) -> "MeasurementContract":
+        if not 10 <= iterations <= 20:
+            raise ContractViolation(
+                "short microbenchmark iterations must be in [10, 20]"
+            )
+        return cls(
+            warmup=3,
+            iterations=iterations,
+            repetitions=1,
+            kind="microbenchmark_short",
+        )
+
+    @classmethod
+    def microbenchmark_confirmation(cls) -> "MeasurementContract":
+        return cls(
+            warmup=5,
+            iterations=50,
+            repetitions=2,
+            kind="microbenchmark_confirmation",
+        )
+
+    @classmethod
     def final_confirmation(cls) -> "MeasurementContract":
         return cls(
             warmup=5,

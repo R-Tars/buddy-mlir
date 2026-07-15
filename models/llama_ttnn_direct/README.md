@@ -64,6 +64,11 @@ HF config and weights
   legality, codegen, schema, and reference-semantics contracts. Each template
   passes device-free dry-run and generated single-layer execution on P150A;
   packed gate/up remains opt-in.
+- The representative microbenchmark engine measures op and region targets in
+  one isolated process per repetition, retains raw samples and distribution
+  statistics including CV, and atomically caches only complete measurements.
+  Llama 3.1 8B transfer is explicit: layer 0 represents layers 0-30, while the
+  frozen layer-31 MLP precision override is measured separately.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
@@ -109,7 +114,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Semantic autotune | Frozen contracts, schema-v2 space, legality engine, and eight-template existing-API registry complete; microbenchmark/search orchestration pending |
+| Semantic autotune | Contracts, schema-v2 space, legality, template registry, and representative microbenchmark engine complete; enumerators/search orchestration pending |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 

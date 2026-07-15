@@ -348,6 +348,32 @@ each template independently; P150A acceptance reports belong under
 `$AUTOTUNE`, not in the source tree. First-call diagnostic latency includes
 compilation and must not be reported as template performance.
 
+### Representative Microbenchmark Engine
+
+The product API in `autotune/microbench.py` accepts op and region targets. A
+worker is named as `module:callable`; the parent writes a frozen request and
+runs one isolated Python process per repetition. Workers should construct the
+response with `make_worker_response(...)` so warmup, trace/persistent mode,
+sample count, and instrumentation are validated before caching.
+
+Llama 3.1 8B uses the transfer plan returned by
+`build_llama31_8b_transfer_plan()`: layer 0 represents layers 0-30 and layer 31
+is a singleton override. The short, confirmation, and final measurement
+presets are respectively `3x10-20x1`, `5x50x2`, and `5x100x3`.
+
+Run the device-free protocol and cache acceptance tests:
+
+```bash
+python -m pytest -q \
+  models/llama_ttnn_direct/buddy_ttnn_direct/tests/test_autotune_microbench.py \
+  models/llama_ttnn_direct/buddy_ttnn_direct/tests/test_autotune_contracts.py
+```
+
+Retained search runs should place `measurement_cache/`, `process_logs/`, and
+`microbench_report.json` beneath the active model build tree. Cached reports
+are valid only for their exact key; failed or partial subprocess runs are not
+reused.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \

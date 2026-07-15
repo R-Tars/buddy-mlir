@@ -126,6 +126,24 @@ class AutotuneContractTest(unittest.TestCase):
             (5, 100, 3),
         )
 
+    def test_microbenchmark_contract_presets_match_measurement_rules(self) -> None:
+        short = MeasurementContract.short_microbenchmark(iterations=20)
+        confirmation = MeasurementContract.microbenchmark_confirmation()
+        self.assertEqual(
+            (short.warmup, short.iterations, short.repetitions),
+            (3, 20, 1),
+        )
+        self.assertEqual(
+            (
+                confirmation.warmup,
+                confirmation.iterations,
+                confirmation.repetitions,
+            ),
+            (5, 50, 2),
+        )
+        with self.assertRaisesRegex(ContractViolation, r"\[10, 20\]"):
+            MeasurementContract.short_microbenchmark(iterations=9)
+
     def _candidate(
         self,
         *,
