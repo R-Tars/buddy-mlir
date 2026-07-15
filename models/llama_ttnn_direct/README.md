@@ -49,6 +49,10 @@ HF config and weights
   decode trace, persistent inputs, and post-prefill steady decode in an
   isolated process. A `1%` promotion threshold keeps the incumbent when a
   challenger is within run-to-run noise.
+- Autotune candidate state now uses a lossless schema-v2 representation for
+  template choices, matmul/SDPA programs, memory and sharding, core grids, and
+  layout edges. Historical preset strings are expanded by a compatibility
+  adapter before fingerprinting or code generation.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to

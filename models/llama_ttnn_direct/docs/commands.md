@@ -307,6 +307,11 @@ Every candidate explicitly uses post-prefill steady decode, full trace, and
 persistent inputs; repeated incumbents reuse the same measurement rather than
 expanding a Cartesian product.
 
+The compatibility CLI still accepts its historical preset progression, but
+each preset is immediately expanded to schema v2. Candidate artifacts expose
+typed `templates`, `operators`, `memory_configs`, `core_grids`, and `edges`;
+generated runtime configs do not retain the old preset strings.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \

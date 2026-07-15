@@ -25,6 +25,7 @@ from ...templates.registry import load_template_config
 from .candidate import (
     ProfileRunner,
     measure_state as _measure_state,
+    structured_candidate_state as _structured_candidate_state,
     write_json as _write_report,
 )
 from .selection import (
@@ -183,6 +184,11 @@ def run_layered_autotune(
         for value in _level_values(state_key, selected_state[state_key]):
             state = copy.deepcopy(selected_state)
             state[state_key] = value
+            structured_state = _structured_candidate_state(
+                graph=graph,
+                seed=seed,
+                state=state,
+            )
             candidate_config = build_candidate_config(
                 graph=graph,
                 model_root=model_root,
@@ -194,13 +200,14 @@ def run_layered_autotune(
                 device=device,
                 device_id=device_id,
                 target=target,
-                tunable_state=state,
+                tunable_state=structured_state,
             )
             fingerprint = candidate_fingerprint(candidate_config)
             report["active_candidate"] = {
                 "level": level_index,
                 "level_name": level_name,
                 "state": copy.deepcopy(state),
+                "config": structured_state,
                 "fingerprint": fingerprint,
             }
             _write_report(report_path, report)
@@ -279,6 +286,11 @@ def run_layered_autotune(
             return report
         selected_state = copy.deepcopy(winner["state"])
         report["selected_state"] = copy.deepcopy(selected_state)
+        report["selected_config"] = _structured_candidate_state(
+            graph=graph,
+            seed=seed,
+            state=selected_state,
+        )
         _write_report(report_path, report)
 
     if dry_run:
@@ -303,6 +315,11 @@ def run_layered_autotune(
             iterations=int(confirm_iterations),
             kind="winner_confirmation",
         )
+        structured_state = _structured_candidate_state(
+            graph=graph,
+            seed=seed,
+            state=state,
+        )
         candidate_config = build_candidate_config(
             graph=graph,
             model_root=model_root,
@@ -314,13 +331,14 @@ def run_layered_autotune(
             device=device,
             device_id=device_id,
             target=target,
-            tunable_state=state,
+            tunable_state=structured_state,
         )
         fingerprint = candidate_fingerprint(candidate_config)
         report["active_candidate"] = {
             "level": "confirmation",
             "level_name": label,
             "state": copy.deepcopy(state),
+            "config": structured_state,
             "fingerprint": fingerprint,
         }
         _write_report(report_path, report)
@@ -392,6 +410,11 @@ def run_layered_autotune(
             "passed": passed,
             "provisional_selected_state": provisional_selected_state,
             "selected_state": copy.deepcopy(selected_state),
+            "selected_config": _structured_candidate_state(
+                graph=graph,
+                seed=seed,
+                state=selected_state,
+            ),
             "confirmation": confirmation,
             "provisional_winner_confirmation": challenger_confirmation,
             "root_incumbent_confirmation": incumbent_confirmation,
@@ -451,6 +474,7 @@ def _base_report(
         "levels": [],
         "unique_measurement_count": 0,
         "selected_state": None,
+        "selected_config": None,
         "provisional_selected_state": None,
         "confirmation": None,
         "provisional_winner_confirmation": None,

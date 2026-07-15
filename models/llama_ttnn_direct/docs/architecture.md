@@ -188,6 +188,13 @@ semantic graph, model config, weights/recipe identity, runtime commit, device,
 workload, tunable state, and measurement counts. The legacy layered runner is
 an adapter to this contract and cannot search dtype or fidelity fields.
 
+`autotune/space.py` defines the lossless schema-v2 execution space: template
+choices, typed matmul and SDPA descriptors, memory placement and sharding,
+core grids, and producer-consumer edges. Runtime descriptor extensions are
+preserved during serialization. Schema-v1 preset names are accepted only by a
+compatibility adapter; generated programs and candidate fingerprints contain
+the resulting structured fields.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

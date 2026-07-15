@@ -118,6 +118,11 @@ class LayeredAutotuneTest(unittest.TestCase):
                 (program_dir.parent / "candidate.json").read_text()
             )
             self.assertNotIn("dtype_recipe", candidate_payload["state"])
+            self.assertEqual(candidate_payload["state"]["space"]["schema_version"], 2)
+            self.assertNotIn(
+                "exp_approx_mode",
+                candidate_payload["state"]["space"]["operators"]["attention.sdpa"],
+            )
             self.assertTrue(candidate_payload["config"]["precision_contract"]["frozen"])
             self.assertEqual(
                 candidate_payload["config"]["execution_contract"]["execution_mode"],
@@ -136,8 +141,24 @@ class LayeredAutotuneTest(unittest.TestCase):
                 )
                 state = {
                     "lm_head_split_count": runtime_config["lm_head"]["split_count"],
-                    **runtime_config["autotune"],
+                    "memory_layout": (
+                        "lm_head_dram_concat"
+                        if runtime_config["lm_head"]["concat_memory_config"]["name"]
+                        == "DRAM_MEMORY_CONFIG"
+                        else "official_l1_sharded"
+                    ),
+                    "program_config": (
+                        "sdpa_grid_8x4"
+                        if runtime_config["attention"]["sdpa_program_config"][
+                            "core_grid"
+                        ]
+                        == [8, 4]
+                        else "official"
+                    ),
                 }
+                self.assertEqual(runtime_config["autotune"]["schema_version"], 2)
+                self.assertNotIn("memory_layout", runtime_config["autotune"])
+                self.assertNotIn("program_config", runtime_config["autotune"])
                 self.assertEqual(
                     runtime_config["template_config"]["dtype_recipe"],
                     "official_like_performance_seed",

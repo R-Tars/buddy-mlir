@@ -14,7 +14,9 @@ from ...autotune.schema import (
     ContractViolation,
     ExecutionContract,
 )
+from ...autotune.space import SearchSpaceConfig
 from ...codegen.program import write_decode_program_bundle
+from ...compiler.config import build_codegen_config
 from ...runtime.profile import run_profile_decode_steady
 from ...templates.registry import build_execution_plan
 from .selection import AUTOTUNE_METRIC
@@ -45,7 +47,12 @@ def measure_state(
     resume: bool,
     profile_runner: ProfileRunner | None,
 ) -> dict[str, Any]:
-    if state != candidate_config.tunable_state:
+    candidate_seed, plan, structured_state, search_space = _candidate_plan(
+        graph=graph,
+        seed=seed,
+        state=state,
+    )
+    if structured_state != candidate_config.tunable_state:
         raise ContractViolation(
             "measured state differs from the validated CandidateConfig state"
         )
@@ -88,14 +95,6 @@ def measure_state(
         ownership = {"checked": False, "available": None}
 
     try:
-        candidate_seed = copy.deepcopy(seed)
-        candidate_seed["lm_head_split_count"] = int(state["lm_head_split_count"])
-        plan = build_execution_plan(graph, candidate_seed)
-        plan["template_config"]["autotune"] = {
-            "schema_version": 1,
-            "memory_layout": state["memory_layout"],
-            "program_config": state["program_config"],
-        }
         write_decode_program_bundle(
             graph=graph,
             plan=plan,
@@ -110,7 +109,9 @@ def measure_state(
                 "schema_version": candidate_config.schema_version,
                 "candidate_id": candidate_id,
                 "fingerprint": fingerprint,
-                "state": state,
+                "state": structured_state,
+                "legacy_selection": state,
+                "search_space": search_space,
                 "config": candidate_config.to_dict(),
             },
         )
@@ -177,6 +178,20 @@ def measure_state(
         {"schema_version": 1, "fingerprint": fingerprint, "record": record},
     )
     return record
+
+
+def structured_candidate_state(
+    *,
+    graph: Any,
+    seed: dict[str, Any],
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    _, _, structured_state, _ = _candidate_plan(
+        graph=graph,
+        seed=seed,
+        state=state,
+    )
+    return structured_state
 
 
 def check_device_ownership(device_id: int) -> dict[str, Any]:
@@ -267,6 +282,34 @@ def _run_candidate_profile(
     if dry_run:
         return run_profile_decode_steady(**kwargs)
     return _run_profile_subprocess(**kwargs)
+
+
+def _candidate_plan(
+    *,
+    graph: Any,
+    seed: dict[str, Any],
+    state: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    candidate_seed = copy.deepcopy(seed)
+    candidate_seed["lm_head_split_count"] = int(state["lm_head_split_count"])
+    plan = build_execution_plan(graph, candidate_seed)
+    plan["template_config"]["autotune"] = {
+        "schema_version": 1,
+        "memory_layout": state["memory_layout"],
+        "program_config": state["program_config"],
+    }
+    runtime_config = build_codegen_config(plan)
+    search_space = runtime_config.get("autotune")
+    if not isinstance(search_space, dict) or search_space.get("schema_version") != 2:
+        raise ContractViolation(
+            "legacy preset adapter did not produce a schema-v2 search space"
+        )
+    normalized = SearchSpaceConfig.from_dict(search_space)
+    structured_state = {
+        "lm_head_split_count": int(state["lm_head_split_count"]),
+        "space": normalized.tunable_dict(),
+    }
+    return candidate_seed, plan, structured_state, normalized.to_dict()
 
 
 def _run_profile_subprocess(**kwargs: Any) -> dict[str, Any]:
