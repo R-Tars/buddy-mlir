@@ -92,6 +92,36 @@ def rotary_embedding_decode(
     )
 
 
+def rotary_embedding_fused_qk(
+    ttnn_module: Any,
+    query: Any,
+    key: Any,
+    *,
+    cos_matrix: Any,
+    sin_matrix: Any,
+    transformation_matrix: Any,
+    compute_kernel_config: Any | None = None,
+) -> tuple[Any, Any]:
+    op_name = "rotary_embedding_llama_fused_qk"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(compute_kernel_config=compute_kernel_config)
+    return op(
+        query,
+        key,
+        cos_matrix,
+        sin_matrix,
+        transformation_matrix,
+        **kwargs,
+    )
+
+
 def rotary_embedding_prefill(
     ttnn_module: Any,
     query: Any,
@@ -140,6 +170,34 @@ def paged_update_cache(
         page_table=page_table,
     )
     return op(cache_tensor, update_tensor, **kwargs)
+
+
+def paged_fused_update_cache(
+    ttnn_module: Any,
+    key_cache: Any,
+    key: Any,
+    value_cache: Any,
+    value: Any,
+    *,
+    update_idxs_tensor: Any | None = None,
+    update_idxs: Any | None = None,
+    page_table: Any | None = None,
+) -> tuple[Any, Any]:
+    op_name = "paged_fused_update_cache"
+    op = _resolve_op(
+        ttnn_module,
+        op_name,
+        (
+            ("experimental", op_name),
+            (op_name,),
+        ),
+    )
+    kwargs = _without_none(
+        update_idxs_tensor=update_idxs_tensor,
+        update_idxs=update_idxs,
+        page_table=page_table,
+    )
+    return op(key_cache, key, value_cache, value, **kwargs)
 
 
 def paged_sdpa_decode(
@@ -348,8 +406,4 @@ def _resolve_path(root: Any, path: Sequence[str]) -> Any | None:
 
 
 def _without_none(**kwargs: Any) -> dict[str, Any]:
-    return {
-        name: value
-        for name, value in kwargs.items()
-        if value is not None
-    }
+    return {name: value for name, value in kwargs.items() if value is not None}

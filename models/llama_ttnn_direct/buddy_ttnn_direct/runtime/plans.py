@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-
 DECODE_LAYER_OPS = [
     "rms_norm.attn",
     "qkv_linear",
@@ -44,10 +43,18 @@ PREFILL_LAYER_OPS = [
 ]
 PREFILL_FINAL_OPS = ["rms_norm.final", "split_lm_head", "argmax_or_sampling"]
 
+_DEFAULT_TEMPLATES = {
+    "attention.kv_update": "separate_paged_update",
+    "attention.rope": "separate_qk_rope",
+    "mlp.activation_placement": "mul_fused_silu",
+    "mlp.gate_up": "separate_gate_up",
+}
+
 
 def decode_step_plan(
     *, layers: int, batch_size: int, cache_len: int, config: dict[str, Any]
 ) -> dict[str, Any]:
+    templates = _template_selection(config)
     dimensions = _dimensions(config)
     hidden_size = dimensions["hidden_size"]
     intermediate_size = dimensions["intermediate_size"]
@@ -60,9 +67,7 @@ def decode_step_plan(
     lm_head_splits = lm_head_split_shapes(config, hidden_size, vocab_size)
     output_kind = decode_output_kind(config)
     expected_decode_output = (
-        [batch_size, 1, vocab_size]
-        if output_kind == "logits"
-        else [batch_size, 1]
+        [batch_size, 1, vocab_size] if output_kind == "logits" else [batch_size, 1]
     )
     input_shapes = {
         "token_ids": [batch_size, 1],
@@ -81,6 +86,30 @@ def decode_step_plan(
         head_dim=head_dim,
         qkv_size=qkv_size,
     )
+    if templates["attention.rope"] == "fused_qk_rope":
+        layer_parameter_shapes["rotary_cos_matrix"] = [
+            1,
+            2 * batch_size,
+            1,
+            head_dim,
+        ]
+        layer_parameter_shapes["rotary_sin_matrix"] = [
+            1,
+            2 * batch_size,
+            1,
+            head_dim,
+        ]
+        layer_parameter_shapes["rotary_transformation_matrix"] = [
+            1,
+            1,
+            2 * batch_size * 32,
+            32,
+        ]
+    if templates["mlp.gate_up"] == "packed_gate_up":
+        layer_parameter_shapes["mlp_gate_up"] = linear_weight_shape(
+            hidden_size,
+            2 * intermediate_size,
+        )
     return {
         "layers": layers,
         "vocab_size": vocab_size,
@@ -93,6 +122,7 @@ def decode_step_plan(
         },
         "layer_parameter_shapes": layer_parameter_shapes,
         "rotary": dict(config.get("rotary") or {}),
+        "templates": templates,
         "expected_intermediate_shapes": {
             "embedding": decode_hidden_shape(batch_size, hidden_size),
             "qkv": decode_hidden_shape(batch_size, qkv_size),
@@ -111,8 +141,20 @@ def decode_step_plan(
         },
         "output_kind": output_kind,
         "kv_cache": kv,
-        "tensor_conversion_count": 5 + len(lm_head_splits) + 12 * layers,
-        "op_sequence": decode_op_sequence(layers, output_kind=output_kind),
+        "tensor_conversion_count": (
+            5
+            + len(lm_head_splits)
+            + (
+                11 * layers
+                if templates["mlp.gate_up"] == "packed_gate_up"
+                else 12 * layers
+            )
+        ),
+        "op_sequence": decode_op_sequence(
+            layers,
+            output_kind=output_kind,
+            config=config,
+        ),
     }
 
 
@@ -124,6 +166,7 @@ def prefill_plan(
     cache_len: int,
     config: dict[str, Any],
 ) -> dict[str, Any]:
+    templates = _template_selection(config)
     dimensions = _dimensions(config)
     hidden_size = dimensions["hidden_size"]
     intermediate_size = dimensions["intermediate_size"]
@@ -144,6 +187,11 @@ def prefill_plan(
         head_dim=head_dim,
         qkv_size=qkv_size,
     )
+    if templates["mlp.gate_up"] == "packed_gate_up":
+        layer_parameter_shapes["mlp_gate_up"] = linear_weight_shape(
+            hidden_size,
+            2 * intermediate_size,
+        )
     input_shapes = {
         "token_ids": [batch_size, prefill_len],
         "key_cache": kv["physical_shape"],
@@ -171,6 +219,7 @@ def prefill_plan(
         },
         "layer_parameter_shapes": layer_parameter_shapes,
         "rotary": dict(config.get("rotary") or {}),
+        "templates": templates,
         "expected_intermediate_shapes": {
             "embedding": [batch_size, prefill_len, hidden_size],
             "qkv": [batch_size, prefill_len, qkv_size],
@@ -188,37 +237,125 @@ def prefill_plan(
             "value_cache": kv["physical_shape"],
         },
         "kv_cache": kv,
-        "tensor_conversion_count": 4 + len(lm_head_splits) + 12 * layers,
-        "op_sequence": prefill_op_sequence(layers),
+        "tensor_conversion_count": (
+            4
+            + len(lm_head_splits)
+            + (
+                11 * layers
+                if templates["mlp.gate_up"] == "packed_gate_up"
+                else 12 * layers
+            )
+        ),
+        "op_sequence": prefill_op_sequence(layers, config=config),
     }
 
 
-def decode_op_sequence(layers: int, *, output_kind: str = "token") -> list[str]:
+def decode_op_sequence(
+    layers: int,
+    *,
+    output_kind: str = "token",
+    config: dict[str, Any] | None = None,
+) -> list[str]:
+    layer_ops = _decode_layer_ops(config)
     ops = ["embedding"]
     for _ in range(layers):
-        ops.extend(DECODE_LAYER_OPS)
+        ops.extend(layer_ops)
     ops.extend(DECODE_FINAL_LOGITS_OPS if output_kind == "logits" else DECODE_FINAL_OPS)
     return ops
 
 
-def prefill_op_sequence(layers: int) -> list[str]:
+def prefill_op_sequence(
+    layers: int,
+    *,
+    config: dict[str, Any] | None = None,
+) -> list[str]:
+    layer_ops = _prefill_layer_ops(config)
     ops = ["embedding"]
     for _ in range(layers):
-        ops.extend(PREFILL_LAYER_OPS)
+        ops.extend(layer_ops)
     ops.extend(PREFILL_FINAL_OPS)
     return ops
+
+
+def _decode_layer_ops(config: dict[str, Any] | None) -> list[str]:
+    templates = _template_selection(config or {})
+    ops = list(DECODE_LAYER_OPS)
+    if templates["attention.rope"] == "fused_qk_rope":
+        ops[ops.index("rotary_embedding_decode")] = "rotary_embedding_llama_fused_qk"
+    if templates["attention.kv_update"] == "fused_paged_update":
+        update_index = ops.index("paged_update_cache.k")
+        ops[update_index : update_index + 2] = ["paged_fused_update_cache.kv"]
+    return _apply_mlp_template_ops(ops, templates)
+
+
+def _prefill_layer_ops(config: dict[str, Any] | None) -> list[str]:
+    return _apply_mlp_template_ops(
+        list(PREFILL_LAYER_OPS),
+        _template_selection(config or {}),
+    )
+
+
+def _apply_mlp_template_ops(ops: list[str], templates: dict[str, str]) -> list[str]:
+    if templates["mlp.gate_up"] == "packed_gate_up":
+        gate_index = ops.index("mlp_gate")
+        ops[gate_index : gate_index + 2] = [
+            "mlp_gate_up_packed",
+            "split_gate_up",
+        ]
+    if templates["mlp.activation_placement"] == "gate_linear_fused_silu":
+        ops[ops.index("mul_silu")] = "mul_gate_up"
+    return ops
+
+
+def _template_selection(config: dict[str, Any]) -> dict[str, str]:
+    templates: Any = None
+    template_config = config.get("template_config")
+    if isinstance(template_config, dict):
+        autotune = template_config.get("autotune")
+        if isinstance(autotune, dict):
+            templates = autotune.get("templates")
+    if not isinstance(templates, dict):
+        autotune = config.get("autotune")
+        if isinstance(autotune, dict):
+            templates = autotune.get("templates")
+    result = dict(_DEFAULT_TEMPLATES)
+    if isinstance(templates, dict):
+        for axis in result:
+            if isinstance(templates.get(axis), str):
+                result[axis] = str(templates[axis])
+    attention = config.get("attention")
+    operations = (
+        set(attention.get("op_sequence") or [])
+        if isinstance(attention, dict)
+        else set()
+    )
+    if "rotary_embedding_llama_fused_qk" in operations:
+        result["attention.rope"] = "fused_qk_rope"
+    if "paged_fused_update_cache" in operations:
+        result["attention.kv_update"] = "fused_paged_update"
+    mlp = config.get("mlp")
+    if isinstance(mlp, dict):
+        if mlp.get("gate_linear_activation") == "silu":
+            result["mlp.activation_placement"] = "gate_linear_fused_silu"
+        if (
+            mlp.get("template") == "packed_gate_up"
+            or mlp.get("packed_gate_up_program_config") is not None
+        ):
+            result["mlp.gate_up"] = "packed_gate_up"
+    return result
 
 
 def decode_output_kind(config: dict[str, Any]) -> str:
     lm_head = config.get("lm_head") if isinstance(config.get("lm_head"), dict) else {}
     generation = (
-        config.get("generation")
-        if isinstance(config.get("generation"), dict)
-        else {}
+        config.get("generation") if isinstance(config.get("generation"), dict) else {}
     )
     if lm_head.get("retain_logits") or generation.get("retain_logits"):
         return "logits"
-    if generation.get("mode") == "full_logits" or generation.get("template") == "full_logits":
+    if (
+        generation.get("mode") == "full_logits"
+        or generation.get("template") == "full_logits"
+    ):
         return "logits"
     return "token"
 
@@ -261,7 +398,11 @@ def embedding_weight_shape(vocab_size: int, hidden_size: int) -> list[int]:
 
 
 def norm_weight_shape(hidden_size: int) -> list[int]:
-    return [1, 1, hidden_size // 32, 32] if hidden_size % 32 == 0 else [1, 1, 1, hidden_size]
+    return (
+        [1, 1, hidden_size // 32, 32]
+        if hidden_size % 32 == 0
+        else [1, 1, 1, hidden_size]
+    )
 
 
 def _dimensions(config: dict[str, Any]) -> dict[str, int]:
@@ -282,7 +423,9 @@ def _kv_shapes(
     num_kv_heads: int,
     head_dim: int,
 ) -> dict[str, Any]:
-    kv_config = config.get("kv_cache") if isinstance(config.get("kv_cache"), dict) else {}
+    kv_config = (
+        config.get("kv_cache") if isinstance(config.get("kv_cache"), dict) else {}
+    )
     page_block_size = int(kv_config.get("page_block_size", 32))
     page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
     max_num_blocks = batch_size * page_count

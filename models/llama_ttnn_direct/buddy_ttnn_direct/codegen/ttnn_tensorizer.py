@@ -9,6 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from ..autotune.templates import (
+    GATE_UP_AXIS,
+    PACKED_GATE_UP,
+    template_choice_from_runtime_config,
+)
 from .artifacts import write_json
 from .config_emit import emit_parameter_config
 from ..compiler.official_config import (
@@ -17,7 +22,6 @@ from ..compiler.official_config import (
 )
 from ..runtime.config_runtime import realize_ttnn_config
 from ..semantic.dump import load_graph_json
-
 
 DEFAULT_ROLE_GROUPS = ("mlp", "lm_head")
 LINEAR_WEIGHT_TRANSFORM = "transpose_2d_to_4d"
@@ -35,6 +39,7 @@ NORM_ROLE_PATHS = {
 MLP_ROLE_PATHS = {
     "mlp_gate": "gate_proj",
     "mlp_up": "up_proj",
+    "mlp_gate_up": "gate_up_proj",
     "mlp_down": "down_proj",
 }
 ATTENTION_ROLE_PATHS = {
@@ -60,8 +65,7 @@ def parse_role_groups(value: str | None) -> list[str]:
     unsupported = sorted(set(roles).difference(SUPPORTED_ROLE_GROUPS))
     if unsupported:
         raise TTNNTensorizationError(
-            "unsupported tensorization role group(s): "
-            + ", ".join(unsupported)
+            "unsupported tensorization role group(s): " + ", ".join(unsupported)
         )
     return roles
 
@@ -76,7 +80,7 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
     lm_head = config.get("lm_head", {})
     if not isinstance(lm_head, Mapping):
         lm_head = {}
-    return emit_parameter_config(
+    parameter_config = emit_parameter_config(
         graph,
         recipe=str(
             template_config.get(
@@ -100,6 +104,10 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
             vocab_size=graph.vocab_size,
         ),
     )
+    parameter_config["templates"] = {
+        GATE_UP_AXIS: template_choice_from_runtime_config(config, GATE_UP_AXIS)
+    }
+    return parameter_config
 
 
 def build_tensorization_plan(
@@ -236,31 +244,79 @@ def build_tensorization_plan(
             )
 
     if "mlp" in role_groups:
-        for source_key, entry in sorted(weights.items()):
-            if not isinstance(entry, Mapping):
-                continue
-            role = str(entry.get("role"))
-            if role not in MLP_ROLE_PATHS:
-                continue
-            layer_id = int(entry["layer_id"])
-            if selected_layers is not None and layer_id not in selected_layers:
-                continue
-            records.append(
-                {
-                    "path": (
-                        f"layers.{layer_id}.mlp."
-                        f"{MLP_ROLE_PATHS[role]}.weight"
-                    ),
-                    "role_group": "mlp",
-                    "role": role,
-                    "layer_id": layer_id,
-                    "source_key": str(source_key),
-                    "target_dtype": str(entry.get("target_dtype")),
-                    "layout": str(entry.get("layout")),
-                    "memory_config": _entry_memory_config(entry),
-                    "transform": LINEAR_WEIGHT_TRANSFORM,
-                }
-            )
+        templates = parameter_config.get("templates")
+        gate_up_template = (
+            templates.get(GATE_UP_AXIS) if isinstance(templates, Mapping) else None
+        )
+        if gate_up_template == PACKED_GATE_UP:
+            for layer_id in _layer_ids_for_roles(
+                weights,
+                {"mlp_gate": "gate_proj"},
+                selected_layers,
+            ):
+                gate_key, gate_entry = _find_parameter_config_item(
+                    weights, "mlp_gate", layer_id
+                )
+                up_key, up_entry = _find_parameter_config_item(
+                    weights, "mlp_up", layer_id
+                )
+                _check_packed_gate_up_config(layer_id, gate_entry, up_entry)
+                records.append(
+                    {
+                        "path": f"layers.{layer_id}.mlp.gate_up_proj.weight",
+                        "role_group": "mlp",
+                        "role": "mlp_gate_up",
+                        "layer_id": layer_id,
+                        "source_key": f"{gate_key},{up_key}",
+                        "source_keys": [gate_key, up_key],
+                        "target_dtype": str(gate_entry.get("target_dtype")),
+                        "layout": str(gate_entry.get("layout")),
+                        "memory_config": _packed_gate_up_memory_config(gate_entry),
+                        "packing": "gate_up_concat",
+                        "transform": LINEAR_WEIGHT_TRANSFORM,
+                    }
+                )
+                down_key, down_entry = _find_parameter_config_item(
+                    weights, "mlp_down", layer_id
+                )
+                records.append(
+                    {
+                        "path": f"layers.{layer_id}.mlp.down_proj.weight",
+                        "role_group": "mlp",
+                        "role": "mlp_down",
+                        "layer_id": layer_id,
+                        "source_key": down_key,
+                        "target_dtype": str(down_entry.get("target_dtype")),
+                        "layout": str(down_entry.get("layout")),
+                        "memory_config": _entry_memory_config(down_entry),
+                        "transform": LINEAR_WEIGHT_TRANSFORM,
+                    }
+                )
+        else:
+            for source_key, entry in sorted(weights.items()):
+                if not isinstance(entry, Mapping):
+                    continue
+                role = str(entry.get("role"))
+                if role not in MLP_ROLE_PATHS:
+                    continue
+                layer_id = int(entry["layer_id"])
+                if selected_layers is not None and layer_id not in selected_layers:
+                    continue
+                records.append(
+                    {
+                        "path": (
+                            f"layers.{layer_id}.mlp." f"{MLP_ROLE_PATHS[role]}.weight"
+                        ),
+                        "role_group": "mlp",
+                        "role": role,
+                        "layer_id": layer_id,
+                        "source_key": str(source_key),
+                        "target_dtype": str(entry.get("target_dtype")),
+                        "layout": str(entry.get("layout")),
+                        "memory_config": _entry_memory_config(entry),
+                        "transform": LINEAR_WEIGHT_TRANSFORM,
+                    }
+                )
 
     if "lm_head" in role_groups:
         lm_source_key, lm_entry = _find_parameter_config_item(
@@ -317,10 +373,7 @@ def tensorization_dry_run_report(
         "device": device,
         "roles": list(roles),
         "tensor_count": len(plan),
-        "tensors": [
-            {**record, "status": "planned", "shape": None}
-            for record in plan
-        ],
+        "tensors": [{**record, "status": "planned", "shape": None} for record in plan],
     }
 
 
@@ -345,9 +398,7 @@ def to_ttnn_parameters(
             ),
         )
     if torch_params is None:
-        raise TTNNTensorizationError(
-            "torch_params are required unless dry_run=True"
-        )
+        raise TTNNTensorizationError("torch_params are required unless dry_run=True")
     ttnn = ttnn_module or importlib.import_module("ttnn")
     if not hasattr(ttnn, "from_torch"):
         raise TTNNTensorizationError("ttnn module must provide from_torch")
@@ -384,9 +435,7 @@ def to_ttnn_parameters(
                 "ttnn_dtype": str(_resolve_ttnn_dtype(ttnn, record["target_dtype"])),
                 "ttnn_layout": str(_resolve_ttnn_layout(ttnn, record["layout"])),
                 "ttnn_memory_config": (
-                    str(ttnn_memory_config)
-                    if ttnn_memory_config is not None
-                    else None
+                    str(ttnn_memory_config) if ttnn_memory_config is not None else None
                 ),
             }
         )
@@ -677,6 +726,28 @@ def _check_packed_qkv_config(
                 f"layer {layer_id} packed QKV {field} entries must match; "
                 f"got {sorted(str(value) for value in values)}"
             )
+
+
+def _check_packed_gate_up_config(
+    layer_id: int,
+    gate_entry: Mapping[str, Any],
+    up_entry: Mapping[str, Any],
+) -> None:
+    for field in ("target_dtype", "layout", "memory_config"):
+        if gate_entry.get(field) != up_entry.get(field):
+            raise TTNNTensorizationError(
+                f"layer {layer_id} packed gate/up {field} entries must match"
+            )
+
+
+def _packed_gate_up_memory_config(entry: Mapping[str, Any]) -> Any | None:
+    value = _entry_memory_config(entry)
+    if not isinstance(value, Mapping):
+        return value
+    packed = copy.deepcopy(dict(value))
+    if packed.get("kind") == "ttnn_dram_sharded_memory_config" and "n" in packed:
+        packed["n"] = 2 * int(packed["n"])
+    return packed
 
 
 def _find_parameter_config_item(

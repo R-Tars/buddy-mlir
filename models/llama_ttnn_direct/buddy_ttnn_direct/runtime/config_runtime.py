@@ -15,10 +15,7 @@ def realize_ttnn_config(value: Any, ttnn: Any) -> Any:
         return value
     kind = value.get("kind")
     if kind is None or not str(kind).startswith("ttnn_"):
-        return {
-            key: realize_ttnn_config(item, ttnn)
-            for key, item in value.items()
-        }
+        return {key: realize_ttnn_config(item, ttnn) for key, item in value.items()}
     resolver = _RESOLVERS.get(str(kind))
     if resolver is None:
         raise TTNNConfigResolutionError(
@@ -44,9 +41,14 @@ def _sharded_memory_config(spec: dict[str, Any], ttnn: Any) -> Any:
         orientation_type,
         str(spec.get("orientation", "row_major")).upper(),
     )
+    core_grid = (
+        _core_range_set(spec["core_ranges"], ttnn)
+        if spec.get("core_ranges") is not None
+        else _core_grid_value(spec["core_grid"], ttnn)
+    )
     return create(
         shape=tuple(int(value) for value in spec["shard_shape"]),
-        core_grid=_core_grid_value(spec["core_grid"], ttnn),
+        core_grid=core_grid,
         strategy=strategy,
         orientation=orientation,
         use_height_and_width_as_shard_shape=True,
@@ -113,6 +115,7 @@ def _matmul_dram_sharded_program_config(
         in0_block_w=int(spec["in0_block_w"]),
         per_core_M=int(spec["per_core_M"]),
         per_core_N=int(spec["per_core_N"]),
+        fused_activation=_fused_activation(spec, ttnn),
     )
 
 
@@ -125,16 +128,14 @@ def _matmul_multicore_reuse_mcast_program_config(
         "MatmulMultiCoreReuseMultiCastProgramConfig",
     )
     return constructor(
-        compute_with_storage_grid_size=tuple(
-            int(value) for value in spec["core_grid"]
-        ),
+        compute_with_storage_grid_size=tuple(int(value) for value in spec["core_grid"]),
         in0_block_w=int(spec["in0_block_w"]),
         out_subblock_h=int(spec["out_subblock_h"]),
         out_subblock_w=int(spec["out_subblock_w"]),
         per_core_M=int(spec["per_core_M"]),
         per_core_N=int(spec["per_core_N"]),
         transpose_mcast=bool(spec.get("transpose_mcast", False)),
-        fused_activation=None,
+        fused_activation=_fused_activation(spec, ttnn),
         fuse_batch=bool(spec.get("fuse_batch", False)),
     )
 
@@ -192,6 +193,32 @@ def _core_grid_value(value: Any, ttnn: Any) -> Any:
         return constructor(y, x)
 
 
+def _core_range_set(value: Any, ttnn: Any) -> Any:
+    if not isinstance(value, list) or not value:
+        raise TTNNConfigResolutionError("core_ranges must be a non-empty list")
+    core_coord = _required_attr(ttnn, "CoreCoord")
+    core_range = _required_attr(ttnn, "CoreRange")
+    core_range_set = _required_attr(ttnn, "CoreRangeSet")
+    ranges = set()
+    for item in value:
+        if not isinstance(item, (list, tuple)) or len(item) != 4:
+            raise TTNNConfigResolutionError("each core range must be [x0, y0, x1, y1]")
+        x0, y0, x1, y1 = (int(component) for component in item)
+        ranges.add(core_range(core_coord(x0, y0), core_coord(x1, y1)))
+    return core_range_set(ranges)
+
+
+def _fused_activation(spec: dict[str, Any], ttnn: Any) -> Any | None:
+    value = spec.get("fused_activation")
+    if value is None:
+        return None
+    unary_op_type = _required_attr(ttnn, "UnaryOpType")
+    activation = getattr(unary_op_type, str(value).upper(), None)
+    if activation is None:
+        raise TTNNConfigResolutionError(f"unsupported fused activation: {value!r}")
+    return activation
+
+
 def _required_attr(owner: Any, name: str) -> Any:
     value = getattr(owner, name, None)
     if value is None:
@@ -207,15 +234,11 @@ _RESOLVERS = {
     "ttnn_sharded_memory_config": _sharded_memory_config,
     "ttnn_dram_sharded_memory_config": _dram_sharded_memory_config,
     "ttnn_core_grid": _core_grid,
-    "ttnn_matmul_dram_sharded_program_config": (
-        _matmul_dram_sharded_program_config
-    ),
+    "ttnn_matmul_dram_sharded_program_config": (_matmul_dram_sharded_program_config),
     "ttnn_matmul_multicore_reuse_mcast_program_config": (
         _matmul_multicore_reuse_mcast_program_config
     ),
     "ttnn_sdpa_program_config": _sdpa_program_config,
     "ttnn_layer_norm_program_config": _layer_norm_program_config,
-    "ttnn_wormhole_compute_kernel_config": (
-        _wormhole_compute_kernel_config
-    ),
+    "ttnn_wormhole_compute_kernel_config": (_wormhole_compute_kernel_config),
 }

@@ -319,6 +319,35 @@ validator. Reports retain accepted and rejected candidates with stable error
 classes. The command below remains the historical compatibility runner; the
 semantic search orchestrator will consume this legality API in a later phase.
 
+### Existing-API Template Registry
+
+The semantic registry contains eight candidates across KV update, QK RoPE,
+MLP activation placement, and gate/up projection. It changes no precision
+field and uses only public APIs from the active TTNN runtime. The default gate
+and up projections remain separate.
+
+Run all template hooks without opening a device against an existing program:
+
+```bash
+python -c '
+import json
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+    dry_run_template,
+    list_template_definitions,
+)
+runtime = json.load(open("build-tenstorrent/models/llama31_ttnn_direct/program/config.json"))
+for definition in list_template_definitions():
+    report = dry_run_template(definition.name, runtime)
+    print(definition.name, report["status"])
+'
+```
+
+Availability probing accepts the imported `ttnn` module and checks the exact
+API groups without opening a device. Generated single-layer regression covers
+each template independently; P150A acceptance reports belong under
+`$AUTOTUNE`, not in the source tree. First-call diagnostic latency includes
+compilation and must not be reported as template performance.
+
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \

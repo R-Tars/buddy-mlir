@@ -7,6 +7,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
+    DEFAULT_TEMPLATE_SELECTION,
+    apply_template_selection,
+    list_template_definitions,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_single_layer_decode import (
     SINGLE_LAYER_DECODE_OPS,
@@ -30,6 +35,93 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer
 
 
 class SmokeSingleLayerDecodeTest(unittest.TestCase):
+    def test_phase3_templates_execute_generated_single_layer(self) -> None:
+        expected_marker = {
+            "separate_paged_update": "paged_update_cache.k",
+            "fused_paged_update": "paged_fused_update_cache.kv",
+            "separate_qk_rope": "rotary_embedding_decode",
+            "fused_qk_rope": "rotary_embedding_llama_fused_qk",
+            "mul_fused_silu": "mul_silu",
+            "gate_linear_fused_silu": "mul_gate_up",
+            "separate_gate_up": "mlp_gate",
+            "packed_gate_up": "mlp_gate_up_packed",
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            program_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            baseline = json.loads((program_dir / "config.json").read_text())
+
+            for definition in list_template_definitions():
+                with self.subTest(template=definition.name):
+                    selection = dict(DEFAULT_TEMPLATE_SELECTION)
+                    selection[definition.axis] = definition.name
+                    configured = apply_template_selection(baseline, selection)
+                    (program_dir / "config.json").write_text(
+                        json.dumps(configured, indent=2) + "\n"
+                    )
+                    fake_ttnn = _make_fake_ttnn()
+                    report = run_smoke_single_layer_decode(
+                        out=root / f"{definition.name}.json",
+                        program_dir=program_dir,
+                        device="p150a",
+                        batch_size=2,
+                        cache_len=16,
+                        ttnn_module=fake_ttnn,
+                        parameters=_fake_parameters(split_count=8),
+                        token_ids=FakeTensor("token_ids", [2, 1]),
+                        page_table=FakeTensor("page_table", [2, 1]),
+                        cache_position=FakeTensor("cache_position", [2]),
+                        kv_cache=[
+                            types.SimpleNamespace(
+                                k=FakeTensor("key_cache", [2, 2, 32, 4]),
+                                v=FakeTensor("value_cache", [2, 2, 32, 4]),
+                            )
+                        ],
+                    )
+
+                    self.assertTrue(report["passed"], report.get("error"))
+                    self.assertIn(
+                        expected_marker[definition.name],
+                        report["reference"]["planned_ops"],
+                    )
+                    self.assertIn(
+                        expected_marker[definition.name],
+                        report["reference"]["observed_ops"],
+                    )
+                    if definition.name == "gate_linear_fused_silu":
+                        gate_call = next(
+                            call
+                            for call in fake_ttnn.calls
+                            if call.get("weight") == "gate_weight"
+                        )
+                        self.assertEqual(
+                            gate_call["kwargs"]["activation"],
+                            "silu",
+                        )
+                    if definition.name == "packed_gate_up":
+                        self.assertIn(
+                            "split_gate_up",
+                            report["reference"]["observed_ops"],
+                        )
+
     def test_write_report_sanitizes_runtime_objects(self) -> None:
         class FakeMemoryConfig:
             def __repr__(self) -> str:
@@ -400,9 +492,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["input_source"], "synthetic")
             self.assertEqual(report["tensor_conversion_count"], 25)
             self.assertEqual(
-                report["parameter_setup"]["materialization"][
-                    "materialized_layer_ids"
-                ],
+                report["parameter_setup"]["materialization"]["materialized_layer_ids"],
                 [0],
             )
             self.assertEqual(
@@ -418,21 +508,15 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 17,
             )
             self.assertEqual(
-                report["parameter_setup"]["tensorization"][
-                    "memory_config_counts"
-                ],
+                report["parameter_setup"]["tensorization"]["memory_config_counts"],
                 {"dram": 17},
             )
             self.assertEqual(
-                report["parameter_setup"]["tensorization"][
-                    "ttnn_memory_config_counts"
-                ],
+                report["parameter_setup"]["tensorization"]["ttnn_memory_config_counts"],
                 {"ttnn.DRAM_MEMORY_CONFIG": 17},
             )
             self.assertEqual(
-                report["parameter_setup"]["tensorization"][
-                    "transform_counts"
-                ],
+                report["parameter_setup"]["tensorization"]["transform_counts"],
                 {
                     "reshape_embedding_weight_4d": 1,
                     "reshape_norm_weight_4d": 3,
@@ -441,21 +525,21 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             )
             self.assertIn(
                 "embedding.weight",
-                report["parameter_setup"]["tensorization"][
-                    "transform_paths_by_kind"
-                ]["reshape_embedding_weight_4d"],
+                report["parameter_setup"]["tensorization"]["transform_paths_by_kind"][
+                    "reshape_embedding_weight_4d"
+                ],
             )
             self.assertIn(
                 "layers.0.input_norm.weight",
-                report["parameter_setup"]["tensorization"][
-                    "transform_paths_by_kind"
-                ]["reshape_norm_weight_4d"],
+                report["parameter_setup"]["tensorization"]["transform_paths_by_kind"][
+                    "reshape_norm_weight_4d"
+                ],
             )
             self.assertIn(
                 "layers.0.attention.wqkv_packed.weight",
-                report["parameter_setup"]["tensorization"][
-                    "transform_paths_by_kind"
-                ]["transpose_2d_to_4d"],
+                report["parameter_setup"]["tensorization"]["transform_paths_by_kind"][
+                    "transpose_2d_to_4d"
+                ],
             )
             self.assertEqual(
                 report["parameter_setup"]["tensorization"]["key_tensors"][
@@ -556,9 +640,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 1,
             )
             self.assertEqual(
-                report["parameter_setup"][
-                    "decode_runtime_state_input_tensor_count"
-                ],
+                report["parameter_setup"]["decode_runtime_state_input_tensor_count"],
                 2,
             )
             self.assertEqual(
@@ -566,15 +648,11 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 0,
             )
             self.assertEqual(
-                report["parameter_setup"][
-                    "rotary_runtime_input_tensor_count"
-                ],
+                report["parameter_setup"]["rotary_runtime_input_tensor_count"],
                 3,
             )
             self.assertEqual(
-                report["parameter_setup"][
-                    "kv_cache_runtime_input_tensor_count"
-                ],
+                report["parameter_setup"]["kv_cache_runtime_input_tensor_count"],
                 2,
             )
             self.assertEqual(
@@ -909,10 +987,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(report["layers"], 2)
             self.assertEqual(len(report["layer_profiles"]), 2)
             self.assertTrue(
-                all(
-                    "reshape_hidden_ms" in layer
-                    for layer in report["layer_profiles"]
-                )
+                all("reshape_hidden_ms" in layer for layer in report["layer_profiles"])
             )
             self.assertEqual(report["tensor_conversion_count"], 37)
             self.assertGreaterEqual(report["tensor_conversion_ms"], 0.0)
@@ -1148,6 +1223,9 @@ def _fake_parameters(split_count: int):
                     up_proj=types.SimpleNamespace(
                         weight=FakeTensor("up_weight", [1, 1, 16, 32])
                     ),
+                    gate_up_proj=types.SimpleNamespace(
+                        weight=FakeTensor("gate_up_weight", [1, 1, 16, 64])
+                    ),
                     down_proj=types.SimpleNamespace(
                         weight=FakeTensor("down_weight", [1, 1, 32, 16])
                     ),
@@ -1209,9 +1287,7 @@ def _make_fake_ttnn(
     module.TILE_LAYOUT = "ttnn.TILE_LAYOUT"
     module.ROW_MAJOR_LAYOUT = "ttnn.ROW_MAJOR_LAYOUT"
     module.L1_MEMORY_CONFIG = "ttnn.L1_MEMORY_CONFIG"
-    module.L1_HEIGHT_SHARDED_MEMORY_CONFIG = (
-        "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
-    )
+    module.L1_HEIGHT_SHARDED_MEMORY_CONFIG = "ttnn.L1_HEIGHT_SHARDED_MEMORY_CONFIG"
     module.DRAM_MEMORY_CONFIG = "ttnn.DRAM_MEMORY_CONFIG"
     module.uint32 = "ttnn.uint32"
 
@@ -1285,13 +1361,13 @@ def _make_fake_ttnn(
         )
         return FakeTensor("rms_norm", hidden.shape)
 
-    def linear(activation, weight, **kwargs):
-        out_shape = list(activation.shape)
+    def linear(input_tensor, weight, **kwargs):
+        out_shape = list(input_tensor.shape)
         out_shape[-1] = weight.shape[-1]
         module.calls.append(
             {
                 "op": "linear",
-                "activation": activation.name,
+                "activation": input_tensor.name,
                 "weight": weight.name,
                 "kwargs": dict(kwargs),
             }
@@ -1314,21 +1390,27 @@ def _make_fake_ttnn(
         return (
             FakeTensor(
                 "query",
-                [1, batch, num_heads, head_dim]
-                if physical_decode
-                else [batch, num_heads, 1, head_dim],
+                (
+                    [1, batch, num_heads, head_dim]
+                    if physical_decode
+                    else [batch, num_heads, 1, head_dim]
+                ),
             ),
             FakeTensor(
                 "key",
-                [1, batch, num_kv_heads, head_dim]
-                if physical_decode
-                else [batch, num_kv_heads, 1, head_dim],
+                (
+                    [1, batch, num_kv_heads, head_dim]
+                    if physical_decode
+                    else [batch, num_kv_heads, 1, head_dim]
+                ),
             ),
             FakeTensor(
                 "value",
-                [1, batch, num_kv_heads, head_dim]
-                if physical_decode
-                else [batch, num_kv_heads, 1, head_dim],
+                (
+                    [1, batch, num_kv_heads, head_dim]
+                    if physical_decode
+                    else [batch, num_kv_heads, 1, head_dim]
+                ),
             ),
         )
 
@@ -1347,9 +1429,7 @@ def _make_fake_ttnn(
         return (
             FakeTensor("query_prefill", [batch, num_heads, seq_len, head_dim]),
             FakeTensor("key_prefill", [batch, num_kv_heads, seq_len, head_dim]),
-            FakeTensor(
-                "value_prefill", [batch, num_kv_heads, seq_len, head_dim]
-            ),
+            FakeTensor("value_prefill", [batch, num_kv_heads, seq_len, head_dim]),
         )
 
     def rotary_embedding_llama(tensor, cos, sin, transform, **kwargs):
@@ -1361,6 +1441,20 @@ def _make_fake_ttnn(
             }
         )
         return FakeTensor(f"rotary:{tensor.name}", tensor.shape)
+
+    def rotary_embedding_llama_fused_qk(q, k, cos, sin, transform, **kwargs):
+        module.calls.append(
+            {
+                "op": "rotary_embedding_llama_fused_qk",
+                "query": q.name,
+                "key": k.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return (
+            FakeTensor(f"rotary:{q.name}", q.shape),
+            FakeTensor(f"rotary:{k.name}", k.shape),
+        )
 
     def scaled_dot_product_attention(query, key, value, **kwargs):
         module.calls.append(
@@ -1419,6 +1513,26 @@ def _make_fake_ttnn(
         )
         return FakeTensor("cache", cache.shape)
 
+    def paged_fused_update_cache(
+        key_cache,
+        key,
+        value_cache,
+        value,
+        **kwargs,
+    ):
+        module.calls.append(
+            {
+                "op": "paged_fused_update_cache",
+                "key_cache": key_cache.name,
+                "value_cache": value_cache.name,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return (
+            FakeTensor("key_cache", key_cache.shape),
+            FakeTensor("value_cache", value_cache.shape),
+        )
+
     def paged_scaled_dot_product_attention_decode(q, k_cache, v_cache, **kwargs):
         module.calls.append(
             {
@@ -1464,9 +1578,11 @@ def _make_fake_ttnn(
         )
         return FakeTensor(
             "concat_heads",
-            [1, 1, batch, num_heads * head_dim]
-            if physical_decode
-            else [batch, 1, num_heads * head_dim],
+            (
+                [1, 1, batch, num_heads * head_dim]
+                if physical_decode
+                else [batch, 1, num_heads * head_dim]
+            ),
         )
 
     def mul(lhs, rhs, **kwargs):
@@ -1503,6 +1619,25 @@ def _make_fake_ttnn(
             }
         )
         return FakeTensor("concat", shape, dtype=tensors[0].dtype)
+
+    def split(tensor, split_size, dim=-1, **kwargs):
+        dim = int(dim)
+        if dim < 0:
+            dim += len(tensor.shape)
+        if tensor.shape[dim] != 2 * int(split_size):
+            raise ValueError("fake packed split requires two equal chunks")
+        shape = list(tensor.shape)
+        shape[dim] = int(split_size)
+        module.calls.append(
+            {
+                "op": "split",
+                "tensor": tensor.name,
+                "split_size": int(split_size),
+                "dim": dim,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return FakeTensor("split:0", shape), FakeTensor("split:1", shape)
 
     def argmax(tensor, **kwargs):
         dim = int(kwargs.get("dim", -1))
@@ -1542,9 +1677,7 @@ def _make_fake_ttnn(
         )
 
     def typecast(tensor, dtype):
-        module.calls.append(
-            {"op": "typecast", "tensor": tensor.name, "dtype": dtype}
-        )
+        module.calls.append({"op": "typecast", "tensor": tensor.name, "dtype": dtype})
         return FakeTensor(f"typecast:{tensor.name}", tensor.shape, dtype=dtype)
 
     def gather(tensor, dim, index):
@@ -1614,6 +1747,7 @@ def _make_fake_ttnn(
     module.mul = mul
     module.add = add
     module.concat = concat
+    module.split = split
     module.argmax = argmax
     module.untilize = untilize
     module.topk = topk
@@ -1626,7 +1760,9 @@ def _make_fake_ttnn(
     module.experimental = types.SimpleNamespace(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         rotary_embedding_llama=rotary_embedding_llama,
+        rotary_embedding_llama_fused_qk=rotary_embedding_llama_fused_qk,
         paged_update_cache=paged_update_cache,
+        paged_fused_update_cache=paged_fused_update_cache,
         paged_fill_cache=paged_fill_cache,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )
@@ -1639,7 +1775,7 @@ def _make_fake_ttnn(
             concatenate_heads=concatenate_heads,
             paged_scaled_dot_product_attention_decode=(
                 paged_scaled_dot_product_attention_decode
-            )
+            ),
         )
     return module
 

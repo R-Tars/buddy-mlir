@@ -6,6 +6,22 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 from .schema import AUTOTUNE_SCHEMA_VERSION, canonical_json
+from .templates import (
+    ACTIVATION_AXIS,
+    FUSED_PAGED_UPDATE,
+    FUSED_QK_ROPE,
+    GATE_UP_AXIS,
+    KV_UPDATE_AXIS,
+    MUL_FUSED_SILU,
+    PACKED_GATE_UP,
+    ROPE_AXIS,
+    SEPARATE_GATE_UP,
+    SEPARATE_PAGED_UPDATE,
+    SEPARATE_QK_ROPE,
+    TemplateSelectionError,
+    apply_template_selection,
+    normalize_template_selection,
+)
 
 OFFICIAL_LINEAR_OUTPUTS = "official_l1_sharded"
 LM_HEAD_DRAM_CONCAT = "lm_head_dram_concat"
@@ -591,8 +607,12 @@ class SearchSpaceConfig:
             str(name): EdgeConfig.from_dict(value).to_dict()
             for name, value in edges.items()
         }
+        try:
+            normalized_templates = normalize_template_selection(templates)
+        except TemplateSelectionError as exc:
+            raise SpaceSchemaError(str(exc)) from exc
         return cls(
-            _templates_json=canonical_json(dict(templates)),
+            _templates_json=canonical_json(normalized_templates),
             _operators_json=canonical_json(normalized_operators),
             _memory_configs_json=canonical_json(normalized_memory),
             _core_grids_json=canonical_json(normalized_grids),
@@ -649,7 +669,6 @@ class SearchSpaceConfig:
     ) -> dict[str, Any]:
         result = copy.deepcopy(dict(runtime_config))
         result.pop("autotune", None)
-        _apply_templates(result, self.templates)
         _apply_operators(result, self.operators)
         for path, descriptor in self.memory_configs.items():
             _set_path(
@@ -661,6 +680,7 @@ class SearchSpaceConfig:
             _set_path(result, path, CoreGrid.from_value(grid).to_list())
         for path, descriptor in self.extra_program_configs.items():
             _set_path(result, path, copy.deepcopy(descriptor))
+        result = _apply_templates(result, self.templates)
         result["autotune"] = self.to_dict()
         template_config = result.get("template_config")
         if isinstance(template_config, dict):
@@ -724,22 +744,27 @@ def _extract_templates(config: Mapping[str, Any]) -> dict[str, str]:
     mlp = config.get("mlp") or {}
     lm_head = config.get("lm_head") or {}
     return {
-        "attention.kv_update": (
-            "paged_fused_update_cache"
+        KV_UPDATE_AXIS: (
+            FUSED_PAGED_UPDATE
             if "paged_fused_update_cache" in operations
-            else "separate_paged_update"
+            else SEPARATE_PAGED_UPDATE
         ),
-        "attention.rope": (
-            "fused_qk_rope"
+        ROPE_AXIS: (
+            FUSED_QK_ROPE
             if "rotary_embedding_llama_fused_qk" in operations
-            else "separate_qk_rope"
+            else SEPARATE_QK_ROPE
         ),
-        "mlp.gate_up": (
-            "packed_projection"
-            if mlp.get("template") == "packed_gate_up"
-            else "separate_projection"
+        GATE_UP_AXIS: (
+            PACKED_GATE_UP
+            if mlp.get("packed_gate_up_program_config") is not None
+            or mlp.get("template") == PACKED_GATE_UP
+            else SEPARATE_GATE_UP
         ),
-        "mlp.activation_placement": "mul_fused_silu",
+        ACTIVATION_AXIS: (
+            "gate_linear_fused_silu"
+            if mlp.get("gate_linear_activation") == "silu"
+            else MUL_FUSED_SILU
+        ),
         "lm_head": (
             "official_split_force_argmax"
             if lm_head.get("argmax_strategy") == "full_logits_untilize_multicore_argmax"
@@ -749,18 +774,13 @@ def _extract_templates(config: Mapping[str, Any]) -> dict[str, str]:
 
 
 def _validate_templates(templates: Mapping[str, Any]) -> None:
-    required = {
-        "attention.kv_update",
-        "attention.rope",
-        "mlp.gate_up",
-        "mlp.activation_placement",
-        "lm_head",
-    }
-    missing = sorted(required - set(templates))
-    if missing:
-        raise SpaceSchemaError(f"template choices are missing: {missing}")
-    if any(not isinstance(value, str) or not value for value in templates.values()):
-        raise SpaceSchemaError("template choices must be non-empty strings")
+    try:
+        normalize_template_selection(templates)
+    except TemplateSelectionError as exc:
+        raise SpaceSchemaError(str(exc)) from exc
+    lm_head = templates.get("lm_head")
+    if not isinstance(lm_head, str) or not lm_head:
+        raise SpaceSchemaError("template choice 'lm_head' must be a non-empty string")
 
 
 def _extract_operators(config: Mapping[str, Any]) -> dict[str, Any]:
@@ -776,6 +796,12 @@ def _extract_operators(config: Mapping[str, Any]) -> dict[str, Any]:
             descriptors = section.get(metadata["programs"])
             if not isinstance(descriptors, list) or not descriptors:
                 continue
+            if not all(isinstance(descriptor, Mapping) for descriptor in descriptors):
+                if all(descriptor is None for descriptor in descriptors):
+                    continue
+                raise SpaceSchemaError(
+                    f"operator {name} program list mixes descriptors and null entries"
+                )
             programs = [
                 MatmulProgramConfig.from_runtime_descriptor(descriptor)
                 for descriptor in descriptors
@@ -915,23 +941,14 @@ def _extract_edges(memory_configs: Mapping[str, Any]) -> dict[str, Any]:
     return edges
 
 
-def _apply_templates(result: dict[str, Any], templates: Mapping[str, Any]) -> None:
+def _apply_templates(
+    result: dict[str, Any], templates: Mapping[str, Any]
+) -> dict[str, Any]:
     _validate_templates(templates)
-    supported = {
-        "attention.kv_update": "separate_paged_update",
-        "attention.rope": "separate_qk_rope",
-        "mlp.gate_up": "separate_projection",
-        "mlp.activation_placement": "mul_fused_silu",
-        "lm_head": "official_split_force_argmax",
-    }
-    unsupported = {
-        key: value for key, value in templates.items() if supported.get(key) != value
-    }
-    if unsupported:
-        raise SpaceSchemaError(
-            "template alternatives require the Phase 3 registry: "
-            + canonical_json(unsupported)
-        )
+    try:
+        return apply_template_selection(result, templates)
+    except TemplateSelectionError as exc:
+        raise SpaceSchemaError(str(exc)) from exc
 
 
 def _apply_operators(result: dict[str, Any], operators: Mapping[str, Any]) -> None:

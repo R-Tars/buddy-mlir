@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+    SearchSpaceConfig,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
     TensorMetadataReference,
@@ -92,9 +95,9 @@ class ParameterMaterializerTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                params.metadata["tensors"][
-                    "layers.0.attention.wqkv_packed.weight"
-                ]["qk_rope_layout"],
+                params.metadata["tensors"]["layers.0.attention.wqkv_packed.weight"][
+                    "qk_rope_layout"
+                ],
                 "hf_to_meta_reverse_permute",
             )
             self.assertEqual(
@@ -104,6 +107,84 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(len(params.lm_head.splits), 8)
             self.assertEqual(params.lm_head.splits[0].weight.shape, [16, 16])
             self.assertEqual(params.metadata["tensor_count"], 21)
+
+    def test_packed_gate_up_materializes_and_tensorizes_one_weight(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            program_dir = root / "program"
+            config_json = root / "template_config.json"
+            _write_fake_model_config(model_dir)
+            _write_fake_model_weights(model_dir, _fake_weight_specs())
+            _write_template_config(config_json)
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(program_dir),
+                    ]
+                ),
+                0,
+            )
+            runtime = json.loads((program_dir / "config.json").read_text())
+            payload = SearchSpaceConfig.from_runtime_config(runtime).to_dict()
+            payload["templates"]["mlp.gate_up"] = "packed_gate_up"
+            packed_runtime = SearchSpaceConfig.from_dict(
+                payload
+            ).apply_to_runtime_config(runtime)
+            (program_dir / "config.json").write_text(
+                json.dumps(packed_runtime, indent=2) + "\n"
+            )
+
+            with _fake_torch_and_safetensors():
+                params = load_llama_parameters_from_manifests(
+                    model_path=model_dir,
+                    weights_manifest=program_dir / "weights_manifest.json",
+                    config=program_dir / "config.json",
+                    tensor_backend="torch",
+                    layers=[0],
+                )
+
+            packed = params.layers[0].mlp.gate_up_proj
+            self.assertEqual(packed.shape, [64, 16])
+            self.assertEqual(
+                packed.source_keys,
+                [
+                    "model.layers.0.mlp.gate_proj.weight",
+                    "model.layers.0.mlp.up_proj.weight",
+                ],
+            )
+            parameter_config = load_parameter_config_from_program(program_dir)
+            fake_ttnn = FakeTTNN()
+            result = to_ttnn_parameters(
+                params,
+                device="device0",
+                parameter_config=parameter_config,
+                roles=["mlp"],
+                layers=[0],
+                ttnn_module=fake_ttnn,
+            )
+            records = {record["path"]: record for record in result.report["tensors"]}
+            self.assertEqual(
+                set(records),
+                {
+                    "layers.0.mlp.gate_up_proj.weight",
+                    "layers.0.mlp.down_proj.weight",
+                },
+            )
+            self.assertEqual(
+                records["layers.0.mlp.gate_up_proj.weight"]["shape"],
+                [1, 1, 16, 64],
+            )
+            self.assertEqual(
+                result.parameters.layers[0].mlp.gate_up_proj.weight.shape,
+                [1, 1, 16, 64],
+            )
 
     def test_lm_head_splits_do_not_require_full_lm_head_load(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -154,18 +235,14 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "lm_head.weight[0:16]",
             )
             self.assertEqual(
-                params.metadata["tensors"]["lm_head.weight"][
-                    "materialization"
-                ],
+                params.metadata["tensors"]["lm_head.weight"]["materialization"],
                 "metadata_reference",
             )
             self.assertFalse(
                 params.metadata["tensors"]["lm_head.weight"]["materialized"]
             )
             self.assertEqual(
-                params.metadata["tensors"]["lm_head.splits.0.weight"][
-                    "shape"
-                ],
+                params.metadata["tensors"]["lm_head.splits.0.weight"]["shape"],
                 [16, 16],
             )
 
@@ -255,9 +332,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(report["materialized_layer_ids"], [0])
             self.assertEqual(report["lm_head"]["split_count"], 8)
             self.assertEqual(
-                report["tensors"]["layers.0.attention.wqkv_packed.weight"][
-                    "shape"
-                ],
+                report["tensors"]["layers.0.attention.wqkv_packed.weight"]["shape"],
                 [32, 16],
             )
             self.assertEqual(
@@ -290,11 +365,14 @@ class ParameterMaterializerTest(unittest.TestCase):
                 0,
             )
 
-            with _fake_torch_and_safetensors(), patch(
-                "models.llama_ttnn_direct.buddy_ttnn_direct.codegen."
-                "parameters.gc.collect",
-                return_value=0,
-            ) as collect_mock:
+            with (
+                _fake_torch_and_safetensors(),
+                patch(
+                    "models.llama_ttnn_direct.buddy_ttnn_direct.codegen."
+                    "parameters.gc.collect",
+                    return_value=0,
+                ) as collect_mock,
+            ):
                 report = materialize_parameters_from_program(
                     model_path=model_dir,
                     program_dir=program_dir,
@@ -453,9 +531,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "reshape_norm_weight_4d",
             )
             self.assertEqual(
-                records["layers.0.attention.wqkv_packed.weight"][
-                    "source_keys"
-                ],
+                records["layers.0.attention.wqkv_packed.weight"]["source_keys"],
                 [
                     "model.layers.0.self_attn.q_proj.weight",
                     "model.layers.0.self_attn.k_proj.weight",
@@ -463,9 +539,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 ],
             )
             self.assertEqual(
-                records["layers.0.attention.wqkv_packed.weight"][
-                    "transform"
-                ],
+                records["layers.0.attention.wqkv_packed.weight"]["transform"],
                 "transpose_2d_to_4d",
             )
             self.assertEqual(
@@ -557,9 +631,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 for record in result.report["tensors"]
                 if record["role_group"] == "mlp"
             ]
-            records = {
-                record["path"]: record for record in result.report["tensors"]
-            }
+            records = {record["path"]: record for record in result.report["tensors"]}
             self.assertEqual(
                 [record["transform"] for record in mlp_records],
                 [
@@ -701,9 +773,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 result.parameters.layers[0].attention.o_proj.weight.layout,
                 "ttnn.TILE_LAYOUT",
             )
-            records = {
-                record["path"]: record for record in result.report["tensors"]
-            }
+            records = {record["path"]: record for record in result.report["tensors"]}
             self.assertEqual(
                 records["embedding.weight"]["source_shape"],
                 [128, 16],
@@ -721,9 +791,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 [1, 1, 1, 16],
             )
             self.assertEqual(
-                records["layers.0.attention.wqkv_packed.weight"][
-                    "source_shape"
-                ],
+                records["layers.0.attention.wqkv_packed.weight"]["source_shape"],
                 [32, 16],
             )
             self.assertEqual(

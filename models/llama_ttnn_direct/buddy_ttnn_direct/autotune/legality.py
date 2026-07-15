@@ -17,6 +17,14 @@ from .space import (
     SDPAProgramConfig,
     SearchSpaceConfig,
 )
+from .templates import (
+    FUSED_PAGED_UPDATE,
+    FUSED_QK_ROPE,
+    KV_UPDATE_AXIS,
+    ROPE_AXIS,
+    template_choice_from_runtime_config,
+    validate_template_selection,
+)
 
 LEGALITY_SCHEMA_VERSION = 1
 TILE_HEIGHT = 32
@@ -401,6 +409,8 @@ class WorkloadSpec:
                     output_memory_path="lm_head.output_memory_config",
                 )
             )
+        kv_update_template = template_choice_from_runtime_config(config, KV_UPDATE_AXIS)
+        rope_template = template_choice_from_runtime_config(config, ROPE_AXIS)
         return cls(
             matmuls=tuple(matmuls),
             sdpa=SDPAWorkload(
@@ -409,6 +419,16 @@ class WorkloadSpec:
                 num_kv_heads=num_kv_heads,
                 head_dim=head_dim,
                 cache_len=cache_len,
+            ),
+            paged_fused_update=(
+                _infer_paged_fused_update_workload(config)
+                if kv_update_template == FUSED_PAGED_UPDATE
+                else None
+            ),
+            fused_qk_rope=(
+                _infer_fused_qk_rope_workload(config)
+                if rope_template == FUSED_QK_ROPE
+                else None
             ),
         )
 
@@ -425,6 +445,187 @@ class WorkloadSpec:
                 self.fused_qk_rope.to_dict() if self.fused_qk_rope is not None else None
             ),
         }
+
+
+def _infer_paged_fused_update_workload(
+    config: Mapping[str, Any],
+) -> PagedFusedUpdateWorkload:
+    batch = int(config["batch_size"])
+    num_kv_heads = int(config["num_key_value_heads"])
+    head_dim = int(config["head_dim"])
+    cache_len = int(config["max_cache_len"])
+    kv_config = config.get("kv_cache") or {}
+    page_block_size = int(kv_config.get("page_block_size", 32))
+    pages_per_user = math.ceil(cache_len / page_block_size)
+    padded_heads = _round_up(num_kv_heads, TILE_HEIGHT)
+    attention = config.get("attention") or {}
+    key_descriptor = _required_memory_descriptor(
+        attention,
+        "fused_cache_key_memory_config",
+    )
+    value_descriptor = _required_memory_descriptor(
+        attention,
+        "fused_cache_value_memory_config",
+    )
+    key_memory = MemoryConfig.from_runtime_descriptor(key_descriptor)
+    value_memory = MemoryConfig.from_runtime_descriptor(value_descriptor)
+    key_input = TensorSpec(
+        name="key_input",
+        logical_shape=(1, batch, num_kv_heads, head_dim),
+        padded_shape=(1, batch, padded_heads, head_dim),
+        dtype="bf16",
+        layout="tile",
+        memory=key_memory,
+        cores=_descriptor_cores(key_descriptor),
+    )
+    value_input = replace(
+        key_input,
+        name="value_input",
+        memory=value_memory,
+        cores=_descriptor_cores(value_descriptor),
+    )
+    cache_memory = MemoryConfig.named("DRAM_MEMORY_CONFIG")
+    cache_dtype = _dtype_name(kv_config.get("dtype"), "bfloat8_b")
+    cache_shape = (
+        batch * pages_per_user,
+        num_kv_heads,
+        page_block_size,
+        head_dim,
+    )
+    key_cache = TensorSpec(
+        name="key_cache",
+        logical_shape=cache_shape,
+        padded_shape=cache_shape,
+        dtype=cache_dtype,
+        layout="tile",
+        memory=cache_memory,
+    )
+    return PagedFusedUpdateWorkload(
+        key_input=key_input,
+        value_input=value_input,
+        key_cache=key_cache,
+        value_cache=replace(key_cache, name="value_cache"),
+        page_table=TensorSpec(
+            name="page_table",
+            logical_shape=(batch, pages_per_user),
+            padded_shape=(batch, pages_per_user),
+            dtype="int32",
+            layout="row_major",
+            memory=cache_memory,
+        ),
+        update_indices=TensorSpec(
+            name="update_indices",
+            logical_shape=(batch,),
+            padded_shape=(batch,),
+            dtype="int32",
+            layout="row_major",
+            memory=cache_memory,
+        ),
+    )
+
+
+def _infer_fused_qk_rope_workload(
+    config: Mapping[str, Any],
+) -> FusedQKRoPEWorkload:
+    batch = int(config["batch_size"])
+    num_heads = int(config["num_attention_heads"])
+    num_kv_heads = int(config["num_key_value_heads"])
+    head_dim = int(config["head_dim"])
+    attention = config.get("attention") or {}
+    q_descriptor = _required_memory_descriptor(attention, "fused_q_memory_config")
+    k_descriptor = _required_memory_descriptor(attention, "fused_k_memory_config")
+    cos_descriptor = _required_memory_descriptor(
+        attention, "fused_rope_cos_sin_memory_config"
+    )
+    transform_descriptor = _required_memory_descriptor(
+        attention, "fused_rope_transform_memory_config"
+    )
+    q_memory = MemoryConfig.from_runtime_descriptor(q_descriptor)
+    k_memory = MemoryConfig.from_runtime_descriptor(k_descriptor)
+    cos_memory = MemoryConfig.from_runtime_descriptor(cos_descriptor)
+    transform_memory = MemoryConfig.from_runtime_descriptor(transform_descriptor)
+    q = TensorSpec(
+        name="q",
+        logical_shape=(1, batch, num_heads, head_dim),
+        padded_shape=(1, batch, _round_up(num_heads, TILE_HEIGHT), head_dim),
+        dtype="bf16",
+        layout="tile",
+        memory=q_memory,
+        cores=_descriptor_cores(q_descriptor),
+    )
+    k = TensorSpec(
+        name="k",
+        logical_shape=(1, batch, num_kv_heads, head_dim),
+        padded_shape=(
+            1,
+            batch,
+            _round_up(num_kv_heads, TILE_HEIGHT),
+            head_dim,
+        ),
+        dtype="bf16",
+        layout="tile",
+        memory=k_memory,
+        cores=_descriptor_cores(k_descriptor),
+    )
+    cos = TensorSpec(
+        name="cos",
+        logical_shape=(1, 2 * batch, 1, head_dim),
+        padded_shape=(1, 2 * batch, TILE_HEIGHT, head_dim),
+        dtype="bf16",
+        layout="tile",
+        memory=cos_memory,
+        cores=_descriptor_cores(cos_descriptor),
+    )
+    transformation = TensorSpec(
+        name="transformation",
+        logical_shape=(1, 1, 2 * batch * TILE_HEIGHT, TILE_WIDTH),
+        padded_shape=(1, 1, 2 * batch * TILE_HEIGHT, TILE_WIDTH),
+        dtype="bf16",
+        layout="tile",
+        memory=transform_memory,
+        cores=_descriptor_cores(transform_descriptor),
+    )
+    return FusedQKRoPEWorkload(
+        q=q,
+        k=k,
+        cos=cos,
+        sin=replace(cos, name="sin"),
+        transformation=transformation,
+        q_output_memory=q_memory,
+        k_output_memory=k_memory,
+    )
+
+
+def _required_memory_descriptor(
+    owner: Mapping[str, Any], name: str
+) -> Mapping[str, Any]:
+    value = owner.get(name)
+    if not isinstance(value, Mapping):
+        raise ValueError(f"fused template requires runtime descriptor {name}")
+    return value
+
+
+def _descriptor_cores(
+    descriptor: Mapping[str, Any],
+) -> tuple[tuple[int, int], ...]:
+    ranges = descriptor.get("core_ranges")
+    if not isinstance(ranges, list):
+        return ()
+    selected: list[tuple[int, int]] = []
+    for rectangle in ranges:
+        coordinates = _rectangle_coordinates(rectangle)
+        if coordinates is None:
+            raise ValueError(f"invalid core range: {rectangle!r}")
+        selected.extend(sorted(coordinates, key=lambda item: (item[1], item[0])))
+    return tuple(selected)
+
+
+def _dtype_name(value: Any, fallback: str) -> str:
+    if isinstance(value, Mapping):
+        return str(value.get("name", fallback))
+    if value is None:
+        return fallback
+    return str(value)
 
 
 @dataclass(frozen=True)
@@ -622,7 +823,15 @@ def validate_candidate(
             estimates.append(estimate)
 
     templates = space.templates
-    if templates.get("attention.kv_update") == "paged_fused_update_cache":
+    for constraint in validate_template_selection(templates):
+        _issue(
+            issues,
+            constraint.code,
+            constraint.error_class,
+            constraint.path,
+            constraint.message,
+        )
+    if templates.get(KV_UPDATE_AXIS) == FUSED_PAGED_UPDATE:
         if workload.paged_fused_update is None:
             _issue(
                 issues,
@@ -637,7 +846,7 @@ def validate_candidate(
                 device,
                 issues,
             )
-    if templates.get("attention.rope") == "fused_qk_rope":
+    if templates.get(ROPE_AXIS) == FUSED_QK_ROPE:
         if workload.fused_qk_rope is None:
             _issue(
                 issues,

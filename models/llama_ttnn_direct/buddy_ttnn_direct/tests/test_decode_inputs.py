@@ -49,13 +49,9 @@ class _TTNN:
 
     def __init__(self) -> None:
         self.from_torch_calls: list[SimpleNamespace] = []
-        self.plus_one_calls: list[tuple[SimpleNamespace, dict[str, object]]] = (
-            []
-        )
+        self.plus_one_calls: list[tuple[SimpleNamespace, dict[str, object]]] = []
 
-    def from_torch(
-        self, tensor: _HostTensor, **kwargs: object
-    ) -> SimpleNamespace:
+    def from_torch(self, tensor: _HostTensor, **kwargs: object) -> SimpleNamespace:
         result = SimpleNamespace(
             source=tensor.name,
             shape=list(tensor.shape),
@@ -101,8 +97,8 @@ class _TTNN:
         )
 
 
-def _decode_plan() -> dict[str, object]:
-    return {
+def _decode_plan(*, fused_qk: bool = False) -> dict[str, object]:
+    plan = {
         "layers": 2,
         "kv_cache": {"page_block_size": 32},
         "layer_parameter_shapes": {
@@ -110,6 +106,9 @@ def _decode_plan() -> dict[str, object]:
         },
         "rotary": {"theta": 500000.0, "scaling": None},
     }
+    if fused_qk:
+        plan["templates"] = {"attention.rope": "fused_qk_rope"}
+    return plan
 
 
 def _parameters() -> SimpleNamespace:
@@ -159,12 +158,8 @@ def test_persistent_decode_inputs_allocate_once_and_reuse_page_table() -> None:
     ]
     assert len(ttnn.plus_one_calls) == 2
     assert ttnn.plus_one_calls[0][1] == {"skip_negative_entries": True}
-    assert (
-        parameters.layers[0].attention.rotary.cos_matrix is buffers.rotary_cos
-    )
-    assert (
-        parameters.layers[1].attention.rotary.sin_matrix is buffers.rotary_sin
-    )
+    assert parameters.layers[0].attention.rotary.cos_matrix is buffers.rotary_cos
+    assert parameters.layers[1].attention.rotary.sin_matrix is buffers.rotary_sin
 
     report = buffers.to_report()
     assert report["runtime_input_mode"] == "persistent"
@@ -203,6 +198,47 @@ def test_trace_uses_dedicated_token_input_buffer() -> None:
     assert buffers.token_input.cloned_from is token
     assert buffers.device_tensor_creation_count == 7
     assert buffers.trace_token_input_creation_count == 1
+
+
+def test_fused_qk_persistent_rotary_uses_doubled_batch() -> None:
+    ttnn = _TTNN()
+    parameters = _parameters()
+    buffers = DecodeInputBuffers(
+        ttnn=ttnn,
+        torch=_Torch(),
+        device=object(),
+        dtype_seed="bf16",
+        parameters=parameters,
+        decode_plan=_decode_plan(fused_qk=True),
+        batch_size=4,
+        cache_len=64,
+        prefill_effective_token_count=[8, 9, 10, 11],
+        token_input=SimpleNamespace(shape=[4, 1]),
+    )
+
+    initial = buffers.initial_runtime_state()
+    rotary_index = next(
+        call
+        for call in ttnn.from_torch_calls
+        if call.source == "persistent_decode_rotary_index"
+    )
+    assert rotary_index.shape == [1, 8]
+    assert rotary_index.values == [[8, 9, 10, 11, 8, 9, 10, 11]]
+    assert initial.decode_runtime_state["rotary_index_shape"] == [1, 8]
+    assert initial.rotary_runtime_state["template"] == "fused_qk_rope"
+    assert initial.rotary_runtime_state["cos_sin_shape"] == [1, 8, 1, 128]
+    assert initial.rotary_runtime_state["transformation_shape"] == [
+        1,
+        1,
+        256,
+        32,
+    ]
+    assert parameters.layers[0].attention.rotary.cos_matrix.shape == [
+        1,
+        8,
+        1,
+        128,
+    ]
 
 
 def test_trace_capacity_allows_last_slot_then_rejects_next_step() -> None:

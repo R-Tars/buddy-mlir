@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 _SOURCE = """\
     def mlp_decode(self, layer_id, hidden, stage="decode"):
         # Template: official_gated_mlp_decode
@@ -37,40 +36,89 @@ _SOURCE = """\
         intermediate_dtype = _optional_attr(
             mlp_config, "intermediate_dtype"
         )
-
-        gate = self.ops.linear(
-            hidden,
-            layer_params.gate_proj.weight,
-            memory_config=_optional_attr(
-                mlp_config, "gate_output_memory_config"
-            ),
-            program_config=_optional_attr(
-                mlp_config, "gate_program_config"
-            ),
-            compute_kernel_config=gate_up_compute_kernel_config,
-            dtype=intermediate_dtype,
-            op_name="mlp_gate",
+        gate_up_template = _template_choice(
+            self.config,
+            "mlp.gate_up",
+            "separate_gate_up",
         )
-        up = self.ops.linear(
-            hidden,
-            layer_params.up_proj.weight,
-            memory_config=_optional_attr(
-                mlp_config, "up_output_memory_config"
-            ),
-            program_config=_optional_attr(
-                mlp_config, "up_program_config"
-            ),
-            compute_kernel_config=gate_up_compute_kernel_config,
-            dtype=intermediate_dtype,
-            op_name="mlp_up",
+        activation_template = _template_choice(
+            self.config,
+            "mlp.activation_placement",
+            "mul_fused_silu",
         )
-        mid = self.ops.mul_silu(
-            gate,
-            up,
-            memory_config=_tensor_memory_config(gate),
-            dtype=intermediate_dtype,
-            op_name="mul_silu",
+        gate_program_config = _optional_attr(
+            mlp_config, "gate_program_config"
         )
+        if gate_up_template in ("packed_gate_up", "packed_projection"):
+            packed = self.ops.linear(
+                hidden,
+                layer_params.gate_up_proj.weight,
+                memory_config=_optional_attr(
+                    mlp_config,
+                    "packed_gate_up_output_memory_config",
+                ),
+                program_config=_optional_attr(
+                    mlp_config,
+                    "packed_gate_up_program_config",
+                ),
+                compute_kernel_config=gate_up_compute_kernel_config,
+                dtype=intermediate_dtype,
+                op_name="mlp_gate_up_packed",
+            )
+            gate, up = self.ops.split_last_dim(
+                packed,
+                split_size=int(self.config.intermediate_size),
+                op_name="split_gate_up",
+            )
+        else:
+            gate = self.ops.linear(
+                hidden,
+                layer_params.gate_proj.weight,
+                memory_config=_optional_attr(
+                    mlp_config, "gate_output_memory_config"
+                ),
+                program_config=gate_program_config,
+                compute_kernel_config=gate_up_compute_kernel_config,
+                dtype=intermediate_dtype,
+                activation=(
+                    "silu"
+                    if (
+                        activation_template == "gate_linear_fused_silu"
+                        and gate_program_config is None
+                    )
+                    else None
+                ),
+                op_name="mlp_gate",
+            )
+            up = self.ops.linear(
+                hidden,
+                layer_params.up_proj.weight,
+                memory_config=_optional_attr(
+                    mlp_config, "up_output_memory_config"
+                ),
+                program_config=_optional_attr(
+                    mlp_config, "up_program_config"
+                ),
+                compute_kernel_config=gate_up_compute_kernel_config,
+                dtype=intermediate_dtype,
+                op_name="mlp_up",
+            )
+        if activation_template == "gate_linear_fused_silu":
+            mid = self.ops.multiply(
+                gate,
+                up,
+                memory_config=_tensor_memory_config(gate),
+                dtype=intermediate_dtype,
+                op_name="mul_gate_up",
+            )
+        else:
+            mid = self.ops.mul_silu(
+                gate,
+                up,
+                memory_config=_tensor_memory_config(gate),
+                dtype=intermediate_dtype,
+                op_name="mul_silu",
+            )
         return self.ops.linear(
             mid,
             layer_params.down_proj.weight,

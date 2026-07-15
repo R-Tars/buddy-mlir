@@ -18,6 +18,7 @@ from .codegen.ttnn_tensorizer import (
     to_ttnn_parameters,
 )
 from .runtime_environment import collect_ttnn_environment
+from .runtime.config_runtime import realize_ttnn_config
 from .runtime_inputs import (
     PromptTokenizationError,
     build_decode_rotary_runtime_state,
@@ -67,7 +68,6 @@ from .smoke_decode_shell import (
 )
 from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from .ttnn_compat import UnsupportedTTNNOp
-
 
 DECODE_LAYER_OPS = [
     "rms_norm.attn",
@@ -201,9 +201,7 @@ def run_smoke_decode_step(
 
     try:
         ttnn = (
-            ttnn_module
-            if ttnn_module is not None
-            else importlib.import_module("ttnn")
+            ttnn_module if ttnn_module is not None else importlib.import_module("ttnn")
         )
     except ImportError as err:
         report = _no_device_report(
@@ -290,18 +288,10 @@ def run_smoke_decode_step(
                 parameter_source = state.parameter_source
                 parameter_setup = getattr(state, "parameter_setup", None)
                 input_source = getattr(state, "input_source", "synthetic")
-                prompt_tokenization = getattr(
-                    state, "prompt_tokenization", None
-                )
-                decode_runtime_state = getattr(
-                    state, "decode_runtime_state", None
-                )
-                rotary_runtime_state = getattr(
-                    state, "rotary_runtime_state", None
-                )
-                kv_cache_runtime_state = getattr(
-                    state, "kv_cache_runtime_state", None
-                )
+                prompt_tokenization = getattr(state, "prompt_tokenization", None)
+                decode_runtime_state = getattr(state, "decode_runtime_state", None)
+                rotary_runtime_state = getattr(state, "rotary_runtime_state", None)
+                kv_cache_runtime_state = getattr(state, "kv_cache_runtime_state", None)
             else:
                 tensor_conversion_count = 0
                 parameter_source = "injected"
@@ -313,7 +303,8 @@ def run_smoke_decode_step(
                 kv_cache_runtime_state = None
 
             if any(
-                item is None for item in (token_ids, page_table, cache_position, kv_cache)
+                item is None
+                for item in (token_ids, page_table, cache_position, kv_cache)
             ):
                 raise ValueError(
                     "token_ids, page_table, cache_position, and kv_cache are "
@@ -337,6 +328,7 @@ def run_smoke_decode_step(
                 trace=trace,
                 trace_iterations=trace_iterations,
                 plan=plan,
+                realize_config=ttnn_module is None,
             )
             report["parameter_source"] = parameter_source
             if parameter_setup is not None:
@@ -512,8 +504,7 @@ def profile_decode_step(
                 "latency_ms": 0.0,
                 "section_latency_ms": _empty_section_latency(),
                 "layer_profiles": [
-                    _planned_layer_profile(layer_id)
-                    for layer_id in range(layer_count)
+                    _planned_layer_profile(layer_id) for layer_id in range(layer_count)
                 ],
                 "lm_head_profile": _planned_lm_head_profile(config),
                 "bottleneck_summary": _bottleneck_summary(
@@ -548,9 +539,7 @@ def profile_decode_step(
 
     try:
         ttnn = (
-            ttnn_module
-            if ttnn_module is not None
-            else importlib.import_module("ttnn")
+            ttnn_module if ttnn_module is not None else importlib.import_module("ttnn")
         )
     except ImportError as err:
         report = _profile_unavailable_report(
@@ -642,15 +631,9 @@ def profile_decode_step(
                 parameter_source = synthetic.parameter_source
                 parameter_setup = getattr(synthetic, "parameter_setup", None)
                 input_source = getattr(synthetic, "input_source", "synthetic")
-                prompt_tokenization = getattr(
-                    synthetic, "prompt_tokenization", None
-                )
-                decode_runtime_state = getattr(
-                    synthetic, "decode_runtime_state", None
-                )
-                rotary_runtime_state = getattr(
-                    synthetic, "rotary_runtime_state", None
-                )
+                prompt_tokenization = getattr(synthetic, "prompt_tokenization", None)
+                decode_runtime_state = getattr(synthetic, "decode_runtime_state", None)
+                rotary_runtime_state = getattr(synthetic, "rotary_runtime_state", None)
                 kv_cache_runtime_state = getattr(
                     synthetic, "kv_cache_runtime_state", None
                 )
@@ -665,7 +648,8 @@ def profile_decode_step(
                 kv_cache_runtime_state = None
 
             if any(
-                item is None for item in (token_ids, page_table, cache_position, kv_cache)
+                item is None
+                for item in (token_ids, page_table, cache_position, kv_cache)
             ):
                 raise ValueError(
                     "token_ids, page_table, cache_position, and kv_cache are "
@@ -688,6 +672,7 @@ def profile_decode_step(
                 trace=trace,
                 trace_iterations=trace_iterations,
                 plan=plan,
+                realize_config=ttnn_module is None,
             )
             report = _base_profile_report(
                 program_dir=program_root,
@@ -828,12 +813,15 @@ def _run_generated_decode_step(
     trace: bool,
     trace_iterations: int,
     plan: dict[str, Any],
+    realize_config: bool = False,
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
     decode_config["num_layers"] = layer_count
     decode_config["batch_size"] = batch_size
     decode_config["max_cache_len"] = cache_len
+    if realize_config:
+        decode_config = realize_ttnn_config(decode_config, ttnn)
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
@@ -845,17 +833,15 @@ def _run_generated_decode_step(
     if trace:
         if _trace_apis_available(ttnn):
             try:
-                token, kv_cache, latency_ms, trace_report = (
-                    _run_decode_step_with_trace(
-                        ttnn=ttnn,
-                        model=model,
-                        device=device,
-                        token_ids=token_ids,
-                        page_table=page_table,
-                        cache_position=cache_position,
-                        kv_cache=kv_cache,
-                        iterations=trace_iterations,
-                    )
+                token, kv_cache, latency_ms, trace_report = _run_decode_step_with_trace(
+                    ttnn=ttnn,
+                    model=model,
+                    device=device,
+                    token_ids=token_ids,
+                    page_table=page_table,
+                    cache_position=cache_position,
+                    kv_cache=kv_cache,
+                    iterations=trace_iterations,
                 )
             except Exception as err:
                 trace_report = _trace_report(
@@ -1040,10 +1026,7 @@ def _op_sequence_coverage_check(
 
     planned_index = 0
     for observed in observed_ops:
-        if (
-            planned_index < len(planned_ops)
-            and observed == planned_ops[planned_index]
-        ):
+        if planned_index < len(planned_ops) and observed == planned_ops[planned_index]:
             planned_index += 1
     missing = planned_ops[planned_index:]
     return {
@@ -1073,12 +1056,15 @@ def _run_generated_decode_profile(
     trace: bool,
     trace_iterations: int,
     plan: dict[str, Any],
+    realize_config: bool = False,
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
     decode_config = dict(config)
     decode_config["num_layers"] = layer_count
     decode_config["batch_size"] = batch_size
     decode_config["max_cache_len"] = cache_len
+    if realize_config:
+        decode_config = realize_ttnn_config(decode_config, ttnn)
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
@@ -1335,6 +1321,7 @@ def _profile_lm_head_and_argmax(
     generation_mode = _optional_attr(generation_config, "mode", "greedy")
     retain_logits = bool(_optional_attr(lm_head_config, "retain_logits", False))
     if generation_mode == "greedy" and not retain_logits:
+
         def argmax_and_normalize() -> Any:
             token = model.ops.argmax(
                 logits,
@@ -1349,9 +1336,7 @@ def _profile_lm_head_and_argmax(
             if callable(normalize_decode_token):
                 token = normalize_decode_token(
                     token,
-                    batch_size=int(
-                        _optional_attr(model.config, "batch_size", 1) or 1
-                    ),
+                    batch_size=int(_optional_attr(model.config, "batch_size", 1) or 1),
                 )
             return token
 
@@ -1493,9 +1478,7 @@ def _build_synthetic_decode_state(
         )
 
     parameters = SimpleNamespace(
-        embedding=SimpleNamespace(
-            weight=tensor(params["embedding"], name="embedding")
-        ),
+        embedding=SimpleNamespace(weight=tensor(params["embedding"], name="embedding")),
         layers=[],
         final_norm=SimpleNamespace(
             weight=tensor(params["final_norm"], name="final_norm")
@@ -1503,6 +1486,42 @@ def _build_synthetic_decode_state(
         lm_head=SimpleNamespace(splits=lm_head_splits),
     )
     for layer_id in range(int(plan["layers"])):
+        if "mlp_gate_up" in layer_params:
+            mlp_parameters = SimpleNamespace(
+                gate_up_proj=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["mlp_gate_up"],
+                        name=f"layers.{layer_id}.mlp_gate_up",
+                    )
+                ),
+                down_proj=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["mlp_down"],
+                        name=f"layers.{layer_id}.mlp_down",
+                    )
+                ),
+            )
+        else:
+            mlp_parameters = SimpleNamespace(
+                gate_proj=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["mlp_gate"],
+                        name=f"layers.{layer_id}.mlp_gate",
+                    )
+                ),
+                up_proj=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["mlp_up"],
+                        name=f"layers.{layer_id}.mlp_up",
+                    )
+                ),
+                down_proj=SimpleNamespace(
+                    weight=tensor(
+                        layer_params["mlp_down"],
+                        name=f"layers.{layer_id}.mlp_down",
+                    )
+                ),
+            )
         parameters.layers.append(
             SimpleNamespace(
                 attention=SimpleNamespace(
@@ -1545,26 +1564,7 @@ def _build_synthetic_decode_state(
                         name=f"layers.{layer_id}.post_attention_norm",
                     )
                 ),
-                mlp=SimpleNamespace(
-                    gate_proj=SimpleNamespace(
-                        weight=tensor(
-                            layer_params["mlp_gate"],
-                            name=f"layers.{layer_id}.mlp_gate",
-                        )
-                    ),
-                    up_proj=SimpleNamespace(
-                        weight=tensor(
-                            layer_params["mlp_up"],
-                            name=f"layers.{layer_id}.mlp_up",
-                        )
-                    ),
-                    down_proj=SimpleNamespace(
-                        weight=tensor(
-                            layer_params["mlp_down"],
-                            name=f"layers.{layer_id}.mlp_down",
-                        )
-                    ),
-                ),
+                mlp=mlp_parameters,
             )
         )
     token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
@@ -1657,15 +1657,11 @@ def _build_model_decode_state(
             dtype_seed=dtype_seed,
             plan=plan,
             cache_position_value=int(
-                synthetic_inputs.decode_runtime_state[
-                    "cache_position_value"
-                ]
+                synthetic_inputs.decode_runtime_state["cache_position_value"]
             ),
         )
         synthetic_rotary_count = 0
-        rotary_runtime_input_tensor_count = (
-            rotary_runtime.tensor_conversion_count
-        )
+        rotary_runtime_input_tensor_count = rotary_runtime.tensor_conversion_count
         rotary_runtime_state = rotary_runtime.rotary_runtime_state
         tensor_conversion_count += rotary_runtime_input_tensor_count
     else:
@@ -1697,9 +1693,7 @@ def _build_model_decode_state(
             "materialization": materialization_summary,
             "tensorization": _tensorization_summary(result.report),
             "synthetic_rotary_tensor_count": synthetic_rotary_count,
-            "rotary_runtime_input_tensor_count": (
-                rotary_runtime_input_tensor_count
-            ),
+            "rotary_runtime_input_tensor_count": (rotary_runtime_input_tensor_count),
             "rotary_runtime_state": rotary_runtime_state,
             "synthetic_runtime_input_tensor_count": (
                 synthetic_inputs.synthetic_runtime_input_tensor_count
@@ -1740,9 +1734,7 @@ def _materialization_summary(params: Any) -> dict[str, Any]:
         "backend": metadata.get("backend"),
         "model_name": metadata.get("model_name"),
         "num_layers": metadata.get("num_layers"),
-        "materialized_layer_ids": list(
-            metadata.get("materialized_layer_ids", [])
-        ),
+        "materialized_layer_ids": list(metadata.get("materialized_layer_ids", [])),
         "tensor_count": metadata.get("tensor_count"),
         "key_paths": key_paths,
     }
@@ -1861,18 +1853,32 @@ def _build_synthetic_decode_inputs(
     prompt_runtime_input_tensor_count = 0
     decode_runtime_state_input_tensor_count = 0
     kv_cache_runtime_input_tensor_count = 0
+    synthetic_int_input_tensor_count = 0
     prompt_tokenization = None
     decode_runtime_state = None
     kv_cache_runtime_state = None
     input_source = "synthetic"
     if prompt is None:
-        token_ids = tensor(inputs["token_ids"], name="token_ids", zeros=True)
-        page_table = tensor(inputs["page_table"], name="page_table", zeros=True)
-        cache_position = tensor(
-            inputs["cache_position"],
-            name="cache_position",
-            zeros=True,
+        batch_size = int(inputs["token_ids"][0])
+        token_ids = _build_synthetic_token_ids(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            batch_size=batch_size,
         )
+        runtime_state = _build_prompt_decode_runtime_state_tensors(
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            batch_size=batch_size,
+            cache_len=int((plan["kv_cache"]["logical_shape"])[1]),
+            page_block_size=int(plan["kv_cache"]["page_block_size"]),
+            prompt_token_count=1,
+        )
+        page_table = runtime_state.page_table
+        cache_position = runtime_state.cache_position
+        decode_runtime_state_input_tensor_count = runtime_state.tensor_conversion_count
+        synthetic_int_input_tensor_count = 1
         kv_cache = []
         for layer_id in range(int(plan["layers"])):
             kv_cache.append(
@@ -1901,9 +1907,7 @@ def _build_synthetic_decode_inputs(
             vocab_size=plan.get("vocab_size"),
         )
         token_ids = prompt_runtime.token_ids
-        prompt_runtime_input_tensor_count = (
-            prompt_runtime.tensor_conversion_count
-        )
+        prompt_runtime_input_tensor_count = prompt_runtime.tensor_conversion_count
         prompt_tokenization = prompt_runtime.prompt_tokenization
         runtime_state = _build_prompt_decode_runtime_state_tensors(
             ttnn=ttnn,
@@ -1916,9 +1920,7 @@ def _build_synthetic_decode_inputs(
         )
         page_table = runtime_state.page_table
         cache_position = runtime_state.cache_position
-        decode_runtime_state_input_tensor_count = (
-            runtime_state.tensor_conversion_count
-        )
+        decode_runtime_state_input_tensor_count = runtime_state.tensor_conversion_count
         decode_runtime_state = runtime_state.decode_runtime_state
         kv_runtime = _build_prompt_decode_kv_cache_tensors(
             ttnn=ttnn,
@@ -1933,29 +1935,32 @@ def _build_synthetic_decode_inputs(
             head_dim=int((plan["kv_cache"]["logical_shape"])[3]),
         )
         kv_cache = kv_runtime.kv_cache
-        kv_cache_runtime_input_tensor_count = (
-            kv_runtime.tensor_conversion_count
-        )
+        kv_cache_runtime_input_tensor_count = kv_runtime.tensor_conversion_count
         kv_cache_runtime_state = kv_runtime.kv_cache_runtime_state
         input_source = "prompt_runtime"
+    synthetic_runtime_input_tensor_count = (
+        tensor_count()
+        + synthetic_int_input_tensor_count
+        + (decode_runtime_state_input_tensor_count if prompt is None else 0)
+    )
     return SimpleNamespace(
         token_ids=token_ids,
         page_table=page_table,
         cache_position=cache_position,
         kv_cache=kv_cache,
         tensor_conversion_count=(
-            tensor_count() + prompt_runtime_input_tensor_count
+            tensor_count()
+            + synthetic_int_input_tensor_count
+            + prompt_runtime_input_tensor_count
             + decode_runtime_state_input_tensor_count
             + kv_cache_runtime_input_tensor_count
         ),
-        synthetic_runtime_input_tensor_count=tensor_count(),
+        synthetic_runtime_input_tensor_count=(synthetic_runtime_input_tensor_count),
         prompt_runtime_input_tensor_count=prompt_runtime_input_tensor_count,
         decode_runtime_state_input_tensor_count=(
             decode_runtime_state_input_tensor_count
         ),
-        kv_cache_runtime_input_tensor_count=(
-            kv_cache_runtime_input_tensor_count
-        ),
+        kv_cache_runtime_input_tensor_count=(kv_cache_runtime_input_tensor_count),
         input_source=input_source,
         prompt_tokenization=prompt_tokenization,
         decode_runtime_state=decode_runtime_state,
@@ -2021,6 +2026,35 @@ def _build_prompt_decode_runtime_state_tensors(
 
 
 _build_prompt_decode_runtime_state_tensors = _runtime_decode_state_tensors
+
+
+def _build_synthetic_token_ids(
+    *,
+    ttnn: Any,
+    torch: Any,
+    device: Any,
+    batch_size: int,
+) -> Any:
+    host_tensor = _token_ids_tensor(
+        torch,
+        [[0] for _ in range(batch_size)],
+        name="synthetic_token_ids",
+    )
+    kwargs = {"device": device}
+    memory_config = _runtime_dram_memory_config(ttnn)
+    if memory_config is not None:
+        kwargs["memory_config"] = memory_config
+    dtype = getattr(
+        ttnn,
+        "uint32",
+        getattr(ttnn, "int32", getattr(ttnn, "bfloat16", None)),
+    )
+    if dtype is not None:
+        kwargs["dtype"] = dtype
+    layout = getattr(ttnn, "ROW_MAJOR_LAYOUT", None)
+    if layout is not None:
+        kwargs["layout"] = layout
+    return ttnn.from_torch(host_tensor, **kwargs)
 
 
 def _build_prompt_decode_token_ids(
@@ -2095,6 +2129,20 @@ def _attach_synthetic_rotary_parameters(
         dtype_seed=dtype_seed,
     )
     layer_params = plan["layer_parameter_shapes"]
+    cos_sin_shape = list(layer_params["rotary_cos_matrix"])
+    batch_size = int(cos_sin_shape[1])
+    head_dim = int(cos_sin_shape[-1])
+    cos_sin_memory_config = _rotary_cos_sin_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+        head_dim=head_dim,
+    )
+    transform_memory_config = _rotary_transform_height_sharded_memory_config(
+        ttnn,
+        device,
+        batch_size=batch_size,
+    )
     for layer_id in range(int(plan["layers"])):
         layer = parameters.layers[layer_id]
         attention = getattr(layer, "attention", None)
@@ -2105,14 +2153,17 @@ def _attach_synthetic_rotary_parameters(
             cos_matrix=tensor(
                 layer_params["rotary_cos_matrix"],
                 name=f"layers.{layer_id}.rotary_cos",
+                memory_config=cos_sin_memory_config,
             ),
             sin_matrix=tensor(
                 layer_params["rotary_sin_matrix"],
                 name=f"layers.{layer_id}.rotary_sin",
+                memory_config=cos_sin_memory_config,
             ),
             transformation_matrix=tensor(
                 layer_params["rotary_transformation_matrix"],
                 name=f"layers.{layer_id}.rotary_transform",
+                memory_config=transform_memory_config,
             ),
         )
     return tensor_count()
@@ -2269,20 +2320,30 @@ def _synthetic_tensor_factory(
     layout = getattr(ttnn, "TILE_LAYOUT", None)
     tensor_conversion_count = 0
 
-    def tensor(shape: list[int], *, name: str, zeros: bool = False) -> Any:
+    def tensor(
+        shape: list[int],
+        *,
+        name: str,
+        zeros: bool = False,
+        memory_config: Any | None = None,
+    ) -> Any:
         nonlocal tensor_conversion_count
-        host_tensor = _zeros(torch, shape) if zeros else _randn(torch, shape, dtype_seed)
+        host_tensor = (
+            _zeros(torch, shape) if zeros else _randn(torch, shape, dtype_seed)
+        )
         try:
             host_tensor.name = name
         except AttributeError:
             pass
         tensor_conversion_count += 1
-        return ttnn.from_torch(
-            host_tensor,
-            dtype=dtype,
-            layout=layout,
-            device=device,
-        )
+        kwargs = {
+            "dtype": dtype,
+            "layout": layout,
+            "device": device,
+        }
+        if memory_config is not None:
+            kwargs["memory_config"] = memory_config
+        return ttnn.from_torch(host_tensor, **kwargs)
 
     return tensor, lambda: tensor_conversion_count
 
@@ -2316,9 +2377,7 @@ def _decode_step_plan(
     lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
     output_kind = _decode_output_kind(config)
     expected_decode_output = (
-        [batch_size, 1, vocab_size]
-        if output_kind == "logits"
-        else [batch_size, 1]
+        [batch_size, 1, vocab_size] if output_kind == "logits" else [batch_size, 1]
     )
     input_shapes = {
         "token_ids": [batch_size, 1],
@@ -2836,9 +2895,7 @@ def _throughput_summary(
             "status": "measured",
             "latency_ms": latency_ms,
             "tokens_per_second_per_user": tokens_per_second_per_user,
-            "aggregate_tokens_per_second": (
-                tokens_per_second_per_user * batch_size
-            ),
+            "aggregate_tokens_per_second": (tokens_per_second_per_user * batch_size),
         }
     )
 
@@ -2856,9 +2913,7 @@ def _throughput_summary(
             summary.update(
                 {
                     "trace_execute_mean_ms": trace_mean_ms,
-                    "trace_execute_tokens_per_second_per_user": (
-                        trace_tps_per_user
-                    ),
+                    "trace_execute_tokens_per_second_per_user": (trace_tps_per_user),
                     "trace_execute_aggregate_tokens_per_second": (
                         trace_tps_per_user * batch_size
                     ),
@@ -2923,10 +2978,7 @@ def _json_safe_report_value(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, dict):
-        return {
-            str(key): _json_safe_report_value(item)
-            for key, item in value.items()
-        }
+        return {str(key): _json_safe_report_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_safe_report_value(item) for item in value]
     return {

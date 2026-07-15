@@ -29,6 +29,13 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                 "core_grid": [8, 4],
                 "shard_shape": [32, 128],
             },
+            "explicit_memory": {
+                "kind": "ttnn_sharded_memory_config",
+                "strategy": "height",
+                "core_grid": [8, 8],
+                "core_ranges": [[0, 0, 7, 3], [0, 4, 7, 7]],
+                "shard_shape": [32, 128],
+            },
             "weight_memory": {
                 "kind": "ttnn_dram_sharded_memory_config",
                 "k": 4096,
@@ -41,6 +48,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                     "in0_block_w": 4,
                     "per_core_M": 1,
                     "per_core_N": 6,
+                    "fused_activation": "silu",
                 },
                 {
                     "kind": "ttnn_sdpa_program_config",
@@ -59,9 +67,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                     "inplace": False,
                 },
                 {
-                    "kind": (
-                        "ttnn_matmul_multicore_reuse_mcast_program_config"
-                    ),
+                    "kind": ("ttnn_matmul_multicore_reuse_mcast_program_config"),
                     "core_grid": [8, 10],
                     "in0_block_w": 1,
                     "out_subblock_h": 1,
@@ -94,6 +100,16 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             {"constructor": "core_grid", "x": 8, "y": 4},
         )
         self.assertEqual(
+            resolved["explicit_memory"]["core_grid"],
+            (
+                "core_range_set",
+                (
+                    ("core_range", (0, 0), (7, 3)),
+                    ("core_range", (0, 4), (7, 7)),
+                ),
+            ),
+        )
+        self.assertEqual(
             resolved["weight_memory"],
             {
                 "constructor": "memory_config",
@@ -111,6 +127,10 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             },
         )
         self.assertEqual(resolved["programs"][0]["constructor"], "matmul")
+        self.assertEqual(
+            resolved["programs"][0]["fused_activation"],
+            "unary:silu",
+        )
         self.assertEqual(resolved["programs"][1]["constructor"], "sdpa")
         self.assertEqual(resolved["programs"][2]["constructor"], "norm")
         self.assertEqual(
@@ -154,9 +174,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             calls.append((tensor, starts, ends, steps))
             return "selected"
 
-        ops = TTNNCompatOps(
-            types.SimpleNamespace(slice=slice_op), record_ops=True
-        )
+        ops = TTNNCompatOps(types.SimpleNamespace(slice=slice_op), record_ops=True)
         tensor = types.SimpleNamespace(shape=(2, 8, 16))
 
         result = ops.select_sequence_position(tensor, 2)
@@ -203,9 +221,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             calls.append((tensor, logical_shape, padded_shape))
             return types.SimpleNamespace(shape=logical_shape)
 
-        ops = TTNNCompatOps(
-            types.SimpleNamespace(reshape=reshape), record_ops=True
-        )
+        ops = TTNNCompatOps(types.SimpleNamespace(reshape=reshape), record_ops=True)
         hidden = types.SimpleNamespace(shape=(1, 32, 256, 4096))
         residual = types.SimpleNamespace(shape=(32, 1, 256, 4096))
 
@@ -335,8 +351,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         calls = []
         module = types.SimpleNamespace(
             to_memory_config=(
-                lambda *args, **kwargs: calls.append((args, kwargs))
-                or "converted"
+                lambda *args, **kwargs: calls.append((args, kwargs)) or "converted"
             )
         )
         ops = TTNNCompatOps(module)
@@ -358,9 +373,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             calls.append(("argmax", tensor, dict(kwargs)))
             return "tokens"
 
-        ops = TTNNCompatOps(
-            types.SimpleNamespace(untilize=untilize, argmax=argmax)
-        )
+        ops = TTNNCompatOps(types.SimpleNamespace(untilize=untilize, argmax=argmax))
 
         result = ops.force_argmax("tiled-logits")
 
@@ -501,6 +514,60 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                     },
                 )
             ],
+        )
+
+    def test_fused_rope_and_cache_wrappers_call_experimental_apis(self) -> None:
+        fake = _fake_ttnn()
+
+        q, k = ttnn_ops.rotary_embedding_fused_qk(
+            fake,
+            "q_pre",
+            "k_pre",
+            cos_matrix="cos",
+            sin_matrix="sin",
+            transformation_matrix="trans",
+            compute_kernel_config="compute",
+        )
+        key_cache, value_cache = ttnn_ops.paged_fused_update_cache(
+            fake,
+            "key_cache",
+            q,
+            "value_cache",
+            "value",
+            update_idxs_tensor="pos",
+            page_table="page_table",
+        )
+
+        self.assertEqual((q, k), ("fused_rotary:q_pre", "fused_rotary:k_pre"))
+        self.assertEqual(
+            (key_cache, value_cache),
+            ("updated:key_cache", "updated:value_cache"),
+        )
+        self.assertIn(
+            (
+                "rotary_embedding_llama_fused_qk",
+                "q_pre",
+                "k_pre",
+                "cos",
+                "sin",
+                "trans",
+                {"compute_kernel_config": "compute"},
+            ),
+            fake.calls,
+        )
+        self.assertIn(
+            (
+                "paged_fused_update_cache",
+                "key_cache",
+                "fused_rotary:q_pre",
+                "value_cache",
+                "value",
+                {
+                    "update_idxs_tensor": "pos",
+                    "page_table": "page_table",
+                },
+            ),
+            fake.calls,
         )
 
     def test_paged_sdpa_wrapper_calls_transformer_api(self) -> None:
@@ -717,11 +784,51 @@ def _fake_ttnn():
         )
         return f"rotary:{tensor}"
 
+    def rotary_embedding_llama_fused_qk(
+        query,
+        key,
+        cos_matrix,
+        sin_matrix,
+        transformation_matrix,
+        **kwargs,
+    ):
+        module.calls.append(
+            (
+                "rotary_embedding_llama_fused_qk",
+                query,
+                key,
+                cos_matrix,
+                sin_matrix,
+                transformation_matrix,
+                dict(kwargs),
+            )
+        )
+        return f"fused_rotary:{query}", f"fused_rotary:{key}"
+
     def paged_update_cache(cache_tensor, update_tensor, **kwargs):
         module.calls.append(
             ("paged_update_cache", cache_tensor, update_tensor, dict(kwargs))
         )
         return f"updated:{cache_tensor}"
+
+    def paged_fused_update_cache(
+        key_cache,
+        key,
+        value_cache,
+        value,
+        **kwargs,
+    ):
+        module.calls.append(
+            (
+                "paged_fused_update_cache",
+                key_cache,
+                key,
+                value_cache,
+                value,
+                dict(kwargs),
+            )
+        )
+        return f"updated:{key_cache}", f"updated:{value_cache}"
 
     def paged_scaled_dot_product_attention_decode(
         query,
@@ -793,7 +900,9 @@ def _fake_ttnn():
     module.experimental = types.SimpleNamespace(
         nlp_create_qkv_heads_decode=nlp_create_qkv_heads_decode,
         rotary_embedding_llama=rotary_embedding_llama,
+        rotary_embedding_llama_fused_qk=rotary_embedding_llama_fused_qk,
         paged_update_cache=paged_update_cache,
+        paged_fused_update_cache=paged_fused_update_cache,
         paged_fill_cache=paged_fill_cache,
         nlp_concat_heads_decode=nlp_concat_heads_decode,
     )
@@ -821,11 +930,10 @@ def _fake_config_ttnn():
         bfloat8_b="dtype:bfloat8_b",
         ShardStrategy=types.SimpleNamespace(WIDTH="width", HEIGHT="height"),
         ShardOrientation=types.SimpleNamespace(ROW_MAJOR="row_major"),
-        TensorMemoryLayout=types.SimpleNamespace(
-            WIDTH_SHARDED="width_sharded"
-        ),
+        TensorMemoryLayout=types.SimpleNamespace(WIDTH_SHARDED="width_sharded"),
         BufferType=types.SimpleNamespace(DRAM="dram"),
         MathFidelity=types.SimpleNamespace(HiFi2="HiFi2"),
+        UnaryOpType=types.SimpleNamespace(SILU="unary:silu"),
         CoreCoord=lambda x, y: (x, y),
         CoreRange=lambda start, end: ("core_range", start, end),
         CoreRangeSet=lambda ranges: (
@@ -846,12 +954,8 @@ def _fake_config_ttnn():
         },
         CoreGrid=constructor("core_grid"),
         create_sharded_memory_config=constructor("sharded"),
-        MatmulMultiCoreReuseMultiCastDRAMShardedProgramConfig=constructor(
-            "matmul"
-        ),
-        MatmulMultiCoreReuseMultiCastProgramConfig=constructor(
-            "matmul_mcast"
-        ),
+        MatmulMultiCoreReuseMultiCastDRAMShardedProgramConfig=constructor("matmul"),
+        MatmulMultiCoreReuseMultiCastProgramConfig=constructor("matmul_mcast"),
         SDPAProgramConfig=constructor("sdpa"),
         LayerNormShardedMultiCoreProgramConfig=constructor("norm"),
         WormholeComputeKernelConfig=constructor("compute"),

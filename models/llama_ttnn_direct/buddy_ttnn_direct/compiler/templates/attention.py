@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 _SOURCE = """\
     def attention_prefill(
         self,
@@ -280,6 +279,61 @@ _SOURCE = """\
                 layer_attention, "rotary", None
             )
         rotary_config = _optional_attr(self.config, "rotary", None)
+        attention_config = self.config.attention
+        rope_template = _template_choice(
+            self.config,
+            "attention.rope",
+            "separate_qk_rope",
+        )
+        if rope_template == "fused_qk_rope":
+            q = self.ops.to_memory_config(
+                q,
+                memory_config=_optional_attr(
+                    attention_config, "fused_q_memory_config"
+                ),
+                op_name="to_memory_config.fused_rope_q",
+            )
+            k = self.ops.to_memory_config(
+                k,
+                memory_config=_optional_attr(
+                    attention_config, "fused_k_memory_config"
+                ),
+                op_name="to_memory_config.fused_rope_k",
+            )
+            cos_matrix = self.ops.to_memory_config(
+                rotary_params.cos_matrix,
+                memory_config=_optional_attr(
+                    attention_config,
+                    "fused_rope_cos_sin_memory_config",
+                ),
+                op_name="to_memory_config.fused_rope_cos",
+            )
+            sin_matrix = self.ops.to_memory_config(
+                rotary_params.sin_matrix,
+                memory_config=_optional_attr(
+                    attention_config,
+                    "fused_rope_cos_sin_memory_config",
+                ),
+                op_name="to_memory_config.fused_rope_sin",
+            )
+            transformation_matrix = self.ops.to_memory_config(
+                rotary_params.transformation_matrix,
+                memory_config=_optional_attr(
+                    attention_config,
+                    "fused_rope_transform_memory_config",
+                ),
+                op_name="to_memory_config.fused_rope_transform",
+            )
+            return self.ops.rotary_embedding_fused_qk(
+                q,
+                k,
+                cos_matrix=cos_matrix,
+                sin_matrix=sin_matrix,
+                transformation_matrix=transformation_matrix,
+                compute_kernel_config=_optional_attr(
+                    attention_config, "qkv_compute_kernel_config"
+                ),
+            )
         return self.ops.rotary_embedding_decode(
             q,
             k,
@@ -406,6 +460,46 @@ _SOURCE = """\
         kv_cache,
     ):
         layer_cache = kv_cache[layer_id]
+        kv_update_template = _template_choice(
+            self.config,
+            "attention.kv_update",
+            "separate_paged_update",
+        )
+        if kv_update_template in (
+            "fused_paged_update",
+            "paged_fused_update_cache",
+        ):
+            attention_config = self.config.attention
+            k = self.ops.to_memory_config(
+                k,
+                memory_config=_optional_attr(
+                    attention_config,
+                    "fused_cache_key_memory_config",
+                ),
+                op_name="to_memory_config.fused_cache_k",
+            )
+            v = self.ops.to_memory_config(
+                v,
+                memory_config=_optional_attr(
+                    attention_config,
+                    "fused_cache_value_memory_config",
+                ),
+                op_name="to_memory_config.fused_cache_v",
+            )
+            updated_k, updated_v = self.ops.paged_fused_update_cache(
+                layer_cache.k,
+                k,
+                layer_cache.v,
+                v,
+                update_idxs_tensor=cache_position,
+                page_table=page_table,
+                op_name="paged_fused_update_cache.kv",
+            )
+            if updated_k is not None:
+                layer_cache.k = updated_k
+            if updated_v is not None:
+                layer_cache.v = updated_v
+            return kv_cache
         self.ops.paged_update_cache(
             layer_cache.k,
             k,

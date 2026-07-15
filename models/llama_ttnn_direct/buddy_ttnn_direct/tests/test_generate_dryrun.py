@@ -80,6 +80,25 @@ class GenerateTest(unittest.TestCase):
             decode.cos[0, 1, 0, 0].item(),
         )
 
+        fused_decode = build_decode_rotary_host_tensors(
+            torch=torch,
+            positions=[3, 7],
+            head_dim=4,
+            theta=10000.0,
+            scaling=None,
+            dtype_seed="float32",
+            fused_qk=True,
+        )
+        self.assertEqual(list(fused_decode.cos.shape), [1, 4, 1, 4])
+        self.assertEqual(
+            list(fused_decode.transformation.shape),
+            [1, 1, 128, 32],
+        )
+        torch.testing.assert_close(
+            fused_decode.cos[:, :2],
+            fused_decode.cos[:, 2:],
+        )
+
         llama3 = build_prefill_rotary_host_tensors(
             torch=torch,
             seq_len=2,
@@ -166,9 +185,7 @@ class GenerateTest(unittest.TestCase):
             )
             self.assertIsNone(report["new_device_tensors_per_decode_step"])
             self.assertIsNone(report["host_to_device_updates_per_decode_step"])
-            self.assertTrue(
-                report["prefill_first_token_counts_as_generated_token"]
-            )
+            self.assertTrue(report["prefill_first_token_counts_as_generated_token"])
             self.assertTrue(report["decode_steps_excludes_prefill_token"])
             self.assertEqual(
                 report["generated_token_budget"],
@@ -189,7 +206,9 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["generated_token_ids"], [])
             self.assertEqual(report["generated_text"], "")
-            self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
+            self.assertEqual(
+                report["runtime_context"]["class"], "TTNNDirectRuntimeContext"
+            )
             self.assertEqual(report["runtime_context"]["status"], "planned")
             self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
             self.assertEqual(report["parameter_tensorization_count_per_decode_step"], 0)
@@ -199,13 +218,9 @@ class GenerateTest(unittest.TestCase):
                 "device_tensor_direct",
             )
             self.assertFalse(report["decode_token_host_roundtrip_per_step"])
-            self.assertTrue(
-                report["host_token_materialization_for_reporting_only"]
-            )
+            self.assertTrue(report["host_token_materialization_for_reporting_only"])
             self.assertEqual(report["host_copy_profile"]["status"], "not_run")
-            self.assertFalse(
-                report["host_copy_profile"]["host_roundtrip_present"]
-            )
+            self.assertFalse(report["host_copy_profile"]["host_roundtrip_present"])
             self.assertEqual(
                 report["prefill_cache_population"],
                 report["prefill"]["cache_population"],
@@ -223,9 +238,7 @@ class GenerateTest(unittest.TestCase):
                 ["fill_cache_per_user"],
             )
             self.assertEqual(
-                report["prefill_cache_population_summary"][
-                    "planned_user_count_total"
-                ],
+                report["prefill_cache_population_summary"]["planned_user_count_total"],
                 2,
             )
             self.assertEqual(report["section_profile"]["status"], "not_run")
@@ -523,15 +536,15 @@ class GenerateTest(unittest.TestCase):
                 2,
             )
             self.assertEqual(report["prefill"]["status"], "passed")
-            self.assertEqual(report["prefill"]["cache_population"][0]["status"], "filled")
+            self.assertEqual(
+                report["prefill"]["cache_population"][0]["status"], "filled"
+            )
             self.assertEqual(
                 report["prefill"]["cache_population"][0]["write_policy"],
                 "paged_fill_cache_per_user",
             )
             self.assertEqual(
-                report["prefill"]["cache_population"][0][
-                    "update_shape_layout"
-                ],
+                report["prefill"]["cache_population"][0]["update_shape_layout"],
                 "batch_heads_seq_head_dim",
             )
             self.assertEqual(
@@ -555,12 +568,12 @@ class GenerateTest(unittest.TestCase):
                 ["paged_fill_cache_per_user"],
             )
             self.assertEqual(
-                report["prefill_cache_population_summary"][
-                    "filled_user_count_total"
-                ],
+                report["prefill_cache_population_summary"]["filled_user_count_total"],
                 2,
             )
-            self.assertEqual(report["runtime_context"]["class"], "TTNNDirectRuntimeContext")
+            self.assertEqual(
+                report["runtime_context"]["class"], "TTNNDirectRuntimeContext"
+            )
             self.assertEqual(report["runtime_context"]["status"], "built")
             self.assertTrue(report["runtime_context"]["generated_model_initialized"])
             self.assertEqual(
@@ -572,7 +585,9 @@ class GenerateTest(unittest.TestCase):
                 1,
             )
             self.assertEqual(
-                report["runtime_context"]["parameter_tensorization_count_per_decode_step"],
+                report["runtime_context"][
+                    "parameter_tensorization_count_per_decode_step"
+                ],
                 0,
             )
             self.assertEqual(report["parameter_tensorization_count_per_generate"], 1)
@@ -586,9 +601,7 @@ class GenerateTest(unittest.TestCase):
                 "device_tensor_direct",
             )
             self.assertFalse(
-                report["runtime_context"][
-                    "decode_token_host_roundtrip_per_step"
-                ]
+                report["runtime_context"]["decode_token_host_roundtrip_per_step"]
             )
             self.assertEqual(
                 report["parameter_setup"]["parameter_tensorization_count_per_generate"],
@@ -608,9 +621,7 @@ class GenerateTest(unittest.TestCase):
                 "device_tensor_direct",
             )
             self.assertFalse(
-                report["parameter_setup"][
-                    "decode_token_host_roundtrip_per_step"
-                ]
+                report["parameter_setup"]["decode_token_host_roundtrip_per_step"]
             )
             self.assertEqual(
                 report["prefill"]["first_token"]["token_ids_by_user"],
@@ -620,18 +631,12 @@ class GenerateTest(unittest.TestCase):
                 report["prefill"]["first_token"]["runtime_handoff"],
                 "device_tensor_direct",
             )
-            self.assertFalse(
-                report["prefill"]["first_token"]["runtime_host_roundtrip"]
-            )
+            self.assertFalse(report["prefill"]["first_token"]["runtime_host_roundtrip"])
             self.assertTrue(
-                report["prefill"]["first_token"][
-                    "host_materialization_for_reporting"
-                ]
+                report["prefill"]["first_token"]["host_materialization_for_reporting"]
             )
             self.assertEqual(report["host_copy_profile"]["status"], "measured")
-            self.assertFalse(
-                report["host_copy_profile"]["host_roundtrip_present"]
-            )
+            self.assertFalse(report["host_copy_profile"]["host_roundtrip_present"])
             self.assertFalse(
                 report["host_copy_profile"]["runtime_host_roundtrip_present"]
             )
@@ -639,9 +644,7 @@ class GenerateTest(unittest.TestCase):
                 report["host_copy_profile"]["runtime_handoff"],
                 "device_tensor_direct",
             )
-            self.assertIsNotNone(
-                report["host_copy_profile"]["prefill_first_token_ms"]
-            )
+            self.assertIsNotNone(report["host_copy_profile"]["prefill_first_token_ms"])
             self.assertGreaterEqual(
                 report["host_copy_profile"]["total_ms"],
                 0.0,
@@ -675,7 +678,9 @@ class GenerateTest(unittest.TestCase):
                 len(report["section_profile"]["decode_layer_profiles"]),
                 1,
             )
-            self.assertEqual(report["generated_token_ids"], [[23, 23, 23], [23, 23, 23]])
+            self.assertEqual(
+                report["generated_token_ids"], [[23, 23, 23], [23, 23, 23]]
+            )
             self.assertEqual(report["generated_text_status"], "fallback")
             self.assertEqual(report["generated_text"], "<tok:23> <tok:23> <tok:23>")
             self.assertEqual(
@@ -697,14 +702,12 @@ class GenerateTest(unittest.TestCase):
                 str(diagnostics_path),
             )
             diagnostic_steps = [
-                json.loads(line)
-                for line in diagnostics_path.read_text().splitlines()
+                json.loads(line) for line in diagnostics_path.read_text().splitlines()
             ]
             self.assertEqual(len(diagnostic_steps), 2)
             reference_path = root / "generate_report.references.jsonl"
             diagnostic_references = [
-                json.loads(line)
-                for line in reference_path.read_text().splitlines()
+                json.loads(line) for line in reference_path.read_text().splitlines()
             ]
             self.assertEqual(len(diagnostic_references), 1)
             self.assertEqual(

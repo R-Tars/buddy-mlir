@@ -78,6 +78,8 @@ def attach_decode_rotary_parameters(
 ) -> SimpleNamespace:
     head_dim = _head_dim(plan)
     batch_size = int(plan["input_shapes"]["cache_position"][0])
+    fused_qk = _uses_fused_qk_rope(plan)
+    rotary_batch_size = 2 * batch_size if fused_qk else batch_size
     rotary_config = _rotary_config(plan)
     if cache_position_values is None:
         if cache_position_value is None:
@@ -99,6 +101,7 @@ def attach_decode_rotary_parameters(
         theta=float(rotary_config["theta"]),
         scaling=rotary_config.get("scaling"),
         dtype_seed=dtype_seed,
+        fused_qk=fused_qk,
     )
     kwargs = _tensor_kwargs(
         ttnn=ttnn,
@@ -109,7 +112,7 @@ def attach_decode_rotary_parameters(
     cos_sin_memory = _rotary_cos_sin_memory_config(
         ttnn,
         device,
-        batch_size=batch_size,
+        batch_size=rotary_batch_size,
         head_dim=head_dim,
     )
     if cos_sin_memory is not None:
@@ -118,7 +121,7 @@ def attach_decode_rotary_parameters(
     transform_memory = _rotary_transform_memory_config(
         ttnn,
         device,
-        batch_size=batch_size,
+        batch_size=rotary_batch_size,
     )
     if transform_memory is not None:
         transform_kwargs["memory_config"] = transform_memory
@@ -142,8 +145,15 @@ def attach_decode_rotary_parameters(
             "cache_position_value": uniform_position,
             "cache_position_values": positions,
             "positions": positions,
-            "cos_sin_shape": [1, batch_size, 1, head_dim],
-            "transformation_shape": [1, 1, batch_size * 32, 32],
+            "template": ("fused_qk_rope" if fused_qk else "separate_qk_rope"),
+            "rotary_batch_size": rotary_batch_size,
+            "cos_sin_shape": [1, rotary_batch_size, 1, head_dim],
+            "transformation_shape": [
+                1,
+                1,
+                rotary_batch_size * 32,
+                32,
+            ],
             "tensor_count": 3,
             "shared_across_layers": True,
             "memory_config": "height_sharded",
@@ -201,13 +211,17 @@ def build_decode_rotary_host_tensors(
     theta: float,
     scaling: dict[str, Any] | None,
     dtype_seed: str,
+    fused_qk: bool = False,
 ) -> SimpleNamespace:
     if not positions:
         raise RotaryConfigurationError("decode positions must be non-empty")
     if any(int(position) < 0 for position in positions):
         raise RotaryConfigurationError("decode positions must be non-negative")
+    rotary_positions = list(positions)
+    if fused_qk:
+        rotary_positions *= 2
     cos, sin = _cos_sin_values(
-        positions=positions,
+        positions=rotary_positions,
         head_dim=head_dim,
         theta=theta,
         scaling=scaling,
@@ -227,7 +241,7 @@ def build_decode_rotary_host_tensors(
         ),
         transformation=_named_tensor(
             torch,
-            [[_rotary_transformation_rows(len(positions))]],
+            [[_rotary_transformation_rows(len(rotary_positions))]],
             dtype_seed=dtype_seed,
             name="runtime.shared.decode_rotary_transform",
         ),
@@ -330,12 +344,8 @@ def _cos_sin_values(
     sin_rows: list[list[float]] = []
     for position in positions:
         angles = [float(position) * frequency for frequency in inv_freq]
-        cos_rows.append(
-            [value for angle in angles for value in (math.cos(angle),) * 2]
-        )
-        sin_rows.append(
-            [value for angle in angles for value in (math.sin(angle),) * 2]
-        )
+        cos_rows.append([value for angle in angles for value in (math.cos(angle),) * 2])
+        sin_rows.append([value for angle in angles for value in (math.sin(angle),) * 2])
     return cos_rows, sin_rows
 
 
@@ -350,8 +360,7 @@ def _inverse_frequencies(
     if theta <= 0:
         raise RotaryConfigurationError("rope theta must be positive")
     frequencies = [
-        1.0 / (theta ** (dimension / head_dim))
-        for dimension in range(0, head_dim, 2)
+        1.0 / (theta ** (dimension / head_dim)) for dimension in range(0, head_dim, 2)
     ]
     if scaling is None:
         return frequencies
@@ -359,9 +368,7 @@ def _inverse_frequencies(
     if rope_type in {"default", "none"}:
         return frequencies
     if rope_type != "llama3":
-        raise RotaryConfigurationError(
-            f"unsupported rope scaling type: {rope_type}"
-        )
+        raise RotaryConfigurationError(f"unsupported rope scaling type: {rope_type}")
     factor = float(scaling["factor"])
     low_factor = float(scaling["low_freq_factor"])
     high_factor = float(scaling["high_freq_factor"])
@@ -378,12 +385,10 @@ def _inverse_frequencies(
         elif wavelength > low_wavelength:
             scaled.append(frequency / factor)
         else:
-            smooth = (
-                original_length / wavelength - low_factor
-            ) / (high_factor - low_factor)
-            scaled.append(
-                (1.0 - smooth) * frequency / factor + smooth * frequency
+            smooth = (original_length / wavelength - low_factor) / (
+                high_factor - low_factor
             )
+            scaled.append((1.0 - smooth) * frequency / factor + smooth * frequency)
     return scaled
 
 
@@ -430,6 +435,13 @@ def _rotary_config(plan: dict[str, Any]) -> dict[str, Any]:
         "theta": float(value.get("theta", 10000.0)),
         "scaling": value.get("scaling"),
     }
+
+
+def _uses_fused_qk_rope(plan: dict[str, Any]) -> bool:
+    templates = plan.get("templates")
+    return isinstance(templates, dict) and templates.get("attention.rope") == (
+        "fused_qk_rope"
+    )
 
 
 def _tensor_kwargs(

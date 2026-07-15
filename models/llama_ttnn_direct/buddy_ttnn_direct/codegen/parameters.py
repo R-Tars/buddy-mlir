@@ -9,6 +9,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from ..autotune.templates import (
+    GATE_UP_AXIS,
+    PACKED_GATE_UP,
+    template_choice_from_runtime_config,
+)
 from .artifacts import write_json
 
 
@@ -78,6 +83,7 @@ def load_llama_parameters_from_manifests(
     owns_loader = tensor_loader is None
     loader = tensor_loader or TorchSafetensorsTensorLoader(model_path)
     num_layers = int(config_dict["num_layers"])
+    gate_up_template = template_choice_from_runtime_config(config_dict, GATE_UP_AXIS)
     selected_layers = _normalize_layers(layers, num_layers)
     tensor_records: dict[str, dict[str, Any]] = {}
 
@@ -160,6 +166,18 @@ def load_llama_parameters_from_manifests(
                 path=f"layers.{layer_id}.mlp.down_proj.weight",
             ),
         )
+        if gate_up_template == PACKED_GATE_UP:
+            gate_up_proj = _pack_gate_up(
+                loader,
+                mlp.gate_proj,
+                mlp.up_proj,
+                path=f"layers.{layer_id}.mlp.gate_up_proj.weight",
+                tensor_records=tensor_records,
+            )
+            mlp = SimpleNamespace(
+                gate_up_proj=gate_up_proj,
+                down_proj=mlp.down_proj,
+            )
         materialized_layers[layer_id] = SimpleNamespace(
             layer_id=layer_id,
             attention=attention,
@@ -297,9 +315,7 @@ class TorchSafetensorsTensorLoader:
             ) from exc
         self._load_file = None
         try:
-            self._load_file = importlib.import_module(
-                "safetensors.torch"
-            ).load_file
+            self._load_file = importlib.import_module("safetensors.torch").load_file
         except ModuleNotFoundError:
             self._load_file = None
         self._safe_open_handles: dict[Path, tuple[Any, Any]] = {}
@@ -456,9 +472,7 @@ def _materialize_lm_head(
             **_tensor_record(parameter),
             "vocab_start": vocab_start,
             "vocab_end": vocab_end,
-            "source_read": (
-                "sliced_tensor" if slice_lm_head else "full_tensor_slice"
-            ),
+            "source_read": ("sliced_tensor" if slice_lm_head else "full_tensor_slice"),
         }
         split_params.append(
             SimpleNamespace(
@@ -550,6 +564,37 @@ def _pack_qkv(
         "source_keys": list(parameter.source_keys),
         "packed_axis": parameter.packed_axis,
         "qk_rope_layout": "hf_to_meta_reverse_permute",
+    }
+    return parameter
+
+
+def _pack_gate_up(
+    loader: Any,
+    gate_proj: TensorParameter,
+    up_proj: TensorParameter,
+    *,
+    path: str,
+    tensor_records: dict[str, dict[str, Any]],
+) -> PackedTensorParameter:
+    if len(gate_proj.shape) != 2 or gate_proj.shape != up_proj.shape:
+        raise ParameterMaterializationError(
+            "gate/up packing requires matching rank-2 source weights; "
+            f"got {gate_proj.shape} and {up_proj.shape}"
+        )
+    packed = loader.cat([gate_proj.weight, up_proj.weight], dim=0)
+    parameter = PackedTensorParameter(
+        weight=packed,
+        source_keys=[gate_proj.source_key, up_proj.source_key],
+        role="mlp_gate_up",
+        shape=_shape_from_attr(packed) or [2 * gate_proj.shape[0], gate_proj.shape[1]],
+        dtype=gate_proj.dtype,
+    )
+    tensor_records[path] = {
+        "role": parameter.role,
+        "shape": list(parameter.shape),
+        "dtype": parameter.dtype,
+        "source_keys": list(parameter.source_keys),
+        "packed_axis": parameter.packed_axis,
     }
     return parameter
 
@@ -661,9 +706,7 @@ def _tensor_record(parameter: TensorParameter) -> dict[str, Any]:
     materialized = getattr(parameter.weight, "materialized", None)
     if materialized is not None:
         record["materialized"] = bool(materialized)
-        record["materialization"] = (
-            "tensor" if materialized else "metadata_reference"
-        )
+        record["materialization"] = "tensor" if materialized else "metadata_reference"
     return record
 
 

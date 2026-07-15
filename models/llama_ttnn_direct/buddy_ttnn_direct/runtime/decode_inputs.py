@@ -47,6 +47,14 @@ class DecodeInputBuffers:
         self.batch_size = int(batch_size)
         self.cache_len = int(cache_len)
         self.layer_count = int(decode_plan["layers"])
+        templates = decode_plan.get("templates")
+        self.fused_qk_rope = bool(
+            isinstance(templates, dict)
+            and templates.get("attention.rope") == "fused_qk_rope"
+        )
+        self.rotary_batch_size = (
+            2 * self.batch_size if self.fused_qk_rope else self.batch_size
+        )
         self.head_dim = int(
             decode_plan["layer_parameter_shapes"]["rotary_cos_matrix"][-1]
         )
@@ -82,10 +90,13 @@ class DecodeInputBuffers:
             ),
             dtype_name="int32",
         )
+        rotary_positions = list(runtime_state.cache_position)
+        if self.fused_qk_rope:
+            rotary_positions *= 2
         self.rotary_index = self._from_torch_int(
             runtime_int_tensor(
                 torch,
-                [runtime_state.cache_position],
+                [rotary_positions],
                 name="persistent_decode_rotary_index",
             ),
             dtype_name="uint32",
@@ -112,12 +123,13 @@ class DecodeInputBuffers:
             theta=theta,
             scaling=scaling,
             dtype_seed=dtype_seed,
+            fused_qk=self.fused_qk_rope,
         )
         transform_kwargs = self._float_tensor_kwargs()
         transform_memory = decode_rotary_transform_memory_config(
             ttnn,
             device,
-            batch_size=self.batch_size,
+            batch_size=self.rotary_batch_size,
         )
         if transform_memory is not None:
             transform_kwargs["memory_config"] = transform_memory
@@ -199,13 +211,9 @@ class DecodeInputBuffers:
             "cache_position_update_count": self.cache_position_update_count,
             "rotary_buffer_update_count": self.rotary_buffer_update_count,
             "token_device_copy_count": self.token_device_copy_count,
-            "trace_token_input_creation_count": (
-                self.trace_token_input_creation_count
-            ),
+            "trace_token_input_creation_count": (self.trace_token_input_creation_count),
             "persistent_input_count": self.device_tensor_creation_count,
-            "initial_device_tensor_creation_count": (
-                self.device_tensor_creation_count
-            ),
+            "initial_device_tensor_creation_count": (self.device_tensor_creation_count),
             "host_update_count": self.host_update_count,
             "decode_step_count": self.step_count,
             "page_table_reused": True,
@@ -214,9 +222,7 @@ class DecodeInputBuffers:
             "token_update": "device_tensor_direct_handoff",
         }
 
-    def _runtime_state(
-        self, *, tensor_conversion_count: int
-    ) -> SimpleNamespace:
+    def _runtime_state(self, *, tensor_conversion_count: int) -> SimpleNamespace:
         return SimpleNamespace(
             page_table=self.page_table,
             cache_position=self.cache_position,
@@ -226,9 +232,7 @@ class DecodeInputBuffers:
             decode_runtime_state_input_tensor_count=(
                 3 if tensor_conversion_count else 0
             ),
-            rotary_runtime_input_tensor_count=(
-                3 if tensor_conversion_count else 0
-            ),
+            rotary_runtime_input_tensor_count=(3 if tensor_conversion_count else 0),
         )
 
     def _decode_runtime_report(self) -> dict[str, Any]:
@@ -246,7 +250,7 @@ class DecodeInputBuffers:
             "cache_position_values": list(self.positions),
             "page_table_shape": [self.batch_size, self._page_count],
             "cache_position_shape": [self.batch_size],
-            "rotary_index_shape": [1, self.batch_size],
+            "rotary_index_shape": [1, self.rotary_batch_size],
             "memory_config": "dram",
         }
 
@@ -263,12 +267,19 @@ class DecodeInputBuffers:
             "cache_position_value": uniform,
             "cache_position_values": list(self.positions),
             "positions": list(self.positions),
-            "cos_sin_shape": [1, self.batch_size, 1, self.head_dim],
+            "template": ("fused_qk_rope" if self.fused_qk_rope else "separate_qk_rope"),
+            "rotary_batch_size": self.rotary_batch_size,
+            "cos_sin_shape": [
+                1,
+                self.rotary_batch_size,
+                1,
+                self.head_dim,
+            ],
             "cos_sin_cache_shape": [self.cache_len, self.head_dim],
             "transformation_shape": [
                 1,
                 1,
-                self.batch_size * 32,
+                self.rotary_batch_size * 32,
                 32,
             ],
             "tensor_count": 3,
@@ -280,7 +291,7 @@ class DecodeInputBuffers:
         memory_config = decode_rotary_cos_sin_memory_config(
             self.ttnn,
             self.device,
-            batch_size=self.batch_size,
+            batch_size=self.rotary_batch_size,
             head_dim=self.head_dim,
         )
         embedding_kwargs = {
@@ -288,9 +299,7 @@ class DecodeInputBuffers:
             "memory_config": getattr(self.ttnn, "DRAM_MEMORY_CONFIG", None),
         }
         embedding_kwargs = {
-            name: value
-            for name, value in embedding_kwargs.items()
-            if value is not None
+            name: value for name, value in embedding_kwargs.items() if value is not None
         }
         cos = self.ttnn.embedding(
             self.rotary_index,
@@ -328,11 +337,7 @@ class DecodeInputBuffers:
         }
         return self.ttnn.from_torch(
             tensor,
-            **{
-                name: value
-                for name, value in kwargs.items()
-                if value is not None
-            },
+            **{name: value for name, value in kwargs.items() if value is not None},
         )
 
     def _float_tensor_kwargs(self) -> dict[str, Any]:
@@ -343,9 +348,7 @@ class DecodeInputBuffers:
             "layout": getattr(self.ttnn, "TILE_LAYOUT", None),
             "memory_config": getattr(self.ttnn, "DRAM_MEMORY_CONFIG", None),
         }
-        return {
-            name: value for name, value in kwargs.items() if value is not None
-        }
+        return {name: value for name, value in kwargs.items() if value is not None}
 
 
 def resolve_runtime_input_mode(
@@ -363,8 +366,7 @@ def resolve_runtime_input_mode(
     )
     if mode not in RUNTIME_INPUT_MODES:
         raise ValueError(
-            "runtime_input_mode must be one of: "
-            + ", ".join(RUNTIME_INPUT_MODES)
+            "runtime_input_mode must be one of: " + ", ".join(RUNTIME_INPUT_MODES)
         )
     return mode
 
@@ -377,9 +379,7 @@ def _initial_decode_positions(
     else:
         positions = [int(position) for position in value]
     if len(positions) != batch_size:
-        raise ValueError(
-            "prefill effective token count length must match batch size"
-        )
+        raise ValueError("prefill effective token count length must match batch size")
     if any(position < 0 for position in positions):
         raise ValueError("decode positions must be non-negative")
     return positions

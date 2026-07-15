@@ -58,6 +58,12 @@ HF config and weights
   execution. It covers the current P150A matmul/SDPA configuration plus paged
   fused cache update and fused QK RoPE, and exposes isolated compile-only
   validation with stable error classes.
+- The existing-API template registry provides separate and fused KV update,
+  separate and fused QK RoPE, multiply-side and linear-side SILU, and separate
+  and packed MLP gate/up projections. All eight templates have availability,
+  legality, codegen, schema, and reference-semantics contracts. Each template
+  passes device-free dry-run and generated single-layer execution on P150A;
+  packed gate/up remains opt-in.
 - Step E retained split 8, the compressed performance recipe, official L1
   sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
   a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
@@ -103,7 +109,7 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Product dry-run workflow | Device-free |
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
-| Layered autotune | Frozen contracts, schema-v2 space, and legality engine complete; semantic search orchestration pending |
+| Semantic autotune | Frozen contracts, schema-v2 space, legality engine, and eight-template existing-API registry complete; microbenchmark/search orchestration pending |
 | Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
 | Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
 

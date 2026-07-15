@@ -212,6 +212,32 @@ classified as `shape_incompatible`, `l1_overflow`, `unsupported_layout`,
 candidate has an accepted or rejected result; rejected search candidates do
 not make report generation itself fail.
 
+`autotune/templates.py` is the existing-API semantic template registry. It
+defines four independent axes and eight canonical choices:
+
+```text
+attention.kv_update: separate_paged_update | fused_paged_update
+attention.rope: separate_qk_rope | fused_qk_rope
+mlp.activation_placement: mul_fused_silu | gate_linear_fused_silu
+mlp.gate_up: separate_gate_up | packed_gate_up
+```
+
+Each definition owns its TTNN API availability groups, static predicate,
+runtime-config hook, schema fields, operation sequence, cost metadata, and CPU
+reference evaluator. Template application occurs after program, memory, and
+grid descriptors are installed so hooks always modify the final candidate.
+`gate_linear_fused_silu` writes SILU into a sharded matmul program's
+`fused_activation`; it uses `ttnn.linear(..., activation="silu")` only when no
+program config is present. `packed_gate_up` is incompatible with that partial
+activation placement and is never a default.
+
+Fused QK RoPE follows TT-Transformers runtime preparation: decode rotary
+indices and transformation shards use twice the logical batch, while Q and K
+are moved to disjoint core ranges before the fused TTNN call. Packed gate/up
+weights are concatenated offline on the output-feature axis, tensorized once,
+projected once, and split through the public `ttnn.split` API. No C++ or Metal
+implementation is introduced by the registry.
+
 ## Runtime Ownership
 
 `TTNNDirectRuntimeContext` owns the generated model, tensorized parameters,

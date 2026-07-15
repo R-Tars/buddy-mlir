@@ -76,13 +76,14 @@ class TTNNCompatOps:
 
     def linear(
         self,
-        activation,
+        input_tensor,
         weight,
         *,
         memory_config=None,
         program_config=None,
         compute_kernel_config=None,
         dtype=None,
+        activation=None,
         op_name="linear",
     ):
         self._record(op_name)
@@ -95,7 +96,9 @@ class TTNNCompatOps:
             kwargs["compute_kernel_config"] = compute_kernel_config
         if dtype is not None:
             kwargs["dtype"] = dtype
-        return self.ttnn.linear(activation, weight, **kwargs)
+        if activation is not None:
+            kwargs["activation"] = activation
+        return self.ttnn.linear(input_tensor, weight, **kwargs)
 
     def mul_silu(
         self,
@@ -121,6 +124,66 @@ class TTNNCompatOps:
         if mul is None:
             raise AttributeError("ttnn must provide mul or multiply")
         return mul(gate, up, **kwargs)
+
+    def multiply(
+        self,
+        left,
+        right,
+        *,
+        memory_config=None,
+        dtype=None,
+        op_name="multiply",
+    ):
+        self._record(op_name)
+        kwargs = {}
+        if memory_config is not None:
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
+        if dtype is not None:
+            kwargs["dtype"] = dtype
+        op = getattr(self.ttnn, "mul", None)
+        if op is None:
+            op = getattr(self.ttnn, "multiply", None)
+        if op is None:
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "multiply",
+                (("mul",), ("multiply",)),
+            )
+        return op(left, right, **kwargs)
+
+    def split_last_dim(
+        self,
+        tensor,
+        *,
+        split_size,
+        op_name="split_last_dim",
+    ):
+        split_size = int(split_size)
+        split = getattr(self.ttnn, "split", None)
+        if callable(split):
+            self._record(op_name)
+            result = split(tensor, split_size, dim=-1)
+            if len(result) != 2:
+                raise ValueError("packed gate/up split must produce two tensors")
+            return result[0], result[1]
+        slice_op = getattr(self.ttnn, "slice", None)
+        shape = _tensor_shape(tensor)
+        if not callable(slice_op) or shape is None:
+            raise ttnn_ops.UnsupportedTTNNOp(
+                "split_last_dim",
+                (("split",), ("slice",)),
+            )
+        if shape[-1] != 2 * split_size:
+            raise ValueError("packed gate/up width must equal twice the split size")
+        starts = [0] * len(shape)
+        middle = list(shape)
+        middle[-1] = split_size
+        second = list(starts)
+        second[-1] = split_size
+        self._record(op_name)
+        return (
+            slice_op(tensor, starts, middle),
+            slice_op(tensor, second, shape),
+        )
 
     def _silu_activation(self):
         unary_with_param = getattr(self.ttnn, "UnaryWithParam", None)
@@ -562,6 +625,28 @@ class TTNNCompatOps:
             is_decode_mode=is_decode_mode,
         )
 
+    def rotary_embedding_fused_qk(
+        self,
+        q,
+        k,
+        *,
+        cos_matrix,
+        sin_matrix,
+        transformation_matrix,
+        compute_kernel_config=None,
+        op_name="rotary_embedding_llama_fused_qk",
+    ):
+        self._record(op_name)
+        return ttnn_ops.rotary_embedding_fused_qk(
+            self.ttnn,
+            q,
+            k,
+            cos_matrix=cos_matrix,
+            sin_matrix=sin_matrix,
+            transformation_matrix=transformation_matrix,
+            compute_kernel_config=compute_kernel_config,
+        )
+
     def rotary_embedding_prefill(
         self,
         q,
@@ -597,6 +682,30 @@ class TTNNCompatOps:
             self.ttnn,
             cache_tensor,
             update_tensor,
+            update_idxs_tensor=update_idxs_tensor,
+            update_idxs=update_idxs,
+            page_table=page_table,
+        )
+
+    def paged_fused_update_cache(
+        self,
+        key_cache,
+        key,
+        value_cache,
+        value,
+        *,
+        update_idxs_tensor=None,
+        update_idxs=None,
+        page_table=None,
+        op_name="paged_fused_update_cache",
+    ):
+        self._record(op_name)
+        return ttnn_ops.paged_fused_update_cache(
+            self.ttnn,
+            key_cache,
+            key,
+            value_cache,
+            value,
             update_idxs_tensor=update_idxs_tensor,
             update_idxs=update_idxs,
             page_table=page_table,
