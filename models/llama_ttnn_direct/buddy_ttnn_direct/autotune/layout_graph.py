@@ -250,6 +250,7 @@ class LayoutEdge:
     tensor_shape: tuple[int, ...]
     incumbent_conversion: bool
     allow_explicit_conversion: bool = True
+    multiplicity: int = 1
 
     def __post_init__(self) -> None:
         if not all(
@@ -270,6 +271,8 @@ class LayoutEdge:
             )
         if self.source_node == self.target_node:
             raise LayoutGraphError("layout edges cannot be self loops")
+        if self.multiplicity <= 0:
+            raise LayoutGraphError("layout edge multiplicity must be positive")
 
     @property
     def flattened_shape(self) -> tuple[int, int]:
@@ -284,6 +287,7 @@ class LayoutEdge:
             "flattened_shape": list(self.flattened_shape),
             "incumbent_conversion": self.incumbent_conversion,
             "allow_explicit_conversion": self.allow_explicit_conversion,
+            "multiplicity": self.multiplicity,
         }
 
 
@@ -670,12 +674,24 @@ def search_layout_graph(
     conversion_costs: ConversionCostTable,
     device: DeviceDescriptor,
     beam_width: int = 8,
+    require_measured_op_costs: bool = False,
 ) -> LayoutSearchResult:
     if not MIN_BEAM_WIDTH <= beam_width <= MAX_BEAM_WIDTH:
         raise LayoutGraphError(
             f"beam_width must be in [{MIN_BEAM_WIDTH}, {MAX_BEAM_WIDTH}]"
         )
     grouped = graph.candidates_by_node
+    if require_measured_op_costs:
+        unmeasured = sorted(
+            candidate.candidate_id
+            for candidate in graph.candidates
+            if candidate.eligible and not candidate.latency.measured
+        )
+        if unmeasured:
+            raise LayoutGraphError(
+                "layout search requires measured operator costs; missing: "
+                + ", ".join(unmeasured)
+            )
     incoming: dict[str, list[LayoutEdge]] = defaultdict(list)
     connected: dict[str, list[tuple[LayoutEdge, str]]] = defaultdict(list)
     for edge in graph.edges:
@@ -1036,6 +1052,8 @@ def build_llama_layout_graphs(
     num_kv_heads: int = 8,
     head_dim: int = 128,
     cache_len: int = 1024,
+    vocab_size: int = 128256,
+    lm_head_split_count: int = 8,
     op_measurements: Mapping[str, LayoutMeasurement | Mapping[str, Any]] | None = None,
 ) -> tuple[LayoutRegionGraph, ...]:
     dimensions = {
@@ -1046,6 +1064,8 @@ def build_llama_layout_graphs(
         "num_kv_heads": num_kv_heads,
         "head_dim": head_dim,
         "cache_len": cache_len,
+        "vocab_size": vocab_size,
+        "lm_head_split_count": lm_head_split_count,
     }
     if any(value <= 0 for value in dimensions.values()):
         raise LayoutGraphError("Llama layout graph dimensions must be positive")
@@ -1087,6 +1107,31 @@ def _build_attention_graph(
         "attention.qkv_heads_memory_config",
         "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
     )
+    q_memory = _space_memory(
+        space,
+        "attention.fused_q_memory_config",
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+    )
+    k_memory = _space_memory(
+        space,
+        "attention.fused_k_memory_config",
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+    )
+    v_memory = _space_memory(
+        space,
+        "attention.fused_cache_value_memory_config",
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+    )
+    cache_k_input = _space_memory(
+        space,
+        "attention.fused_cache_key_memory_config",
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+    )
+    cache_v_input = _space_memory(
+        space,
+        "attention.fused_cache_value_memory_config",
+        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
+    )
     cache_memory = MemoryConfig.named("DRAM_MEMORY_CONFIG")
     kernel_output = _space_memory(
         space,
@@ -1121,25 +1166,25 @@ def _build_attention_graph(
         _candidate(
             "attention.create_heads",
             inputs={"qkv": qkv},
-            outputs={"heads": heads_memory},
+            outputs={"qk": heads_memory, "v": v_memory},
             measurements=measurements,
         ),
         _candidate(
             "attention.rope",
-            inputs={"heads": heads_memory},
-            outputs={"q": heads_memory, "kv": heads_memory},
+            inputs={"qk": heads_memory},
+            outputs={"q": q_memory, "k": k_memory},
             measurements=measurements,
         ),
         _candidate(
             "attention.cache_update",
-            inputs={"kv": heads_memory},
+            inputs={"k": cache_k_input, "v": cache_v_input},
             outputs={"cache": cache_memory},
             measurements=measurements,
         ),
         _candidate(
             "attention.sdpa",
             candidate_id="attention.sdpa.incumbent",
-            inputs={"q": heads_memory, "cache": cache_memory},
+            inputs={"q": q_memory, "cache": cache_memory},
             outputs={"attention": kernel_output},
             measurements=measurements,
             source="incumbent",
@@ -1162,7 +1207,7 @@ def _build_attention_graph(
             _candidate(
                 "attention.sdpa",
                 candidate_id="attention.sdpa.direct_concat_layout",
-                inputs={"q": heads_memory, "cache": cache_memory},
+                inputs={"q": q_memory, "cache": cache_memory},
                 outputs={"attention": concat_input},
                 memory_updates={
                     "attention.sdpa_kernel_output_memory_config": concat_input,
@@ -1185,7 +1230,13 @@ def _build_attention_graph(
             )
         )
 
-    head_shape = (batch * heads, head_dim)
+    query_head_shape = (batch * heads, head_dim)
+    qk_head_shape = _physical_sharded_shape(
+        heads_memory,
+        fallback=query_head_shape,
+    )
+    # TTNN decode pads K/V to one 32-row shard per user even under GQA.
+    kv_head_shape = (batch * heads, head_dim)
     return LayoutRegionGraph(
         region=ATTENTION_REGION,
         candidates=tuple(candidates),
@@ -1211,20 +1262,35 @@ def _build_attention_graph(
             LayoutEdge(
                 "create_heads_to_rope",
                 "attention.create_heads",
-                "heads",
+                "qk",
                 "attention.rope",
-                "heads",
-                head_shape,
+                "qk",
+                qk_head_shape,
                 incumbent_conversion=False,
             ),
             LayoutEdge(
-                "rope_kv_to_cache_update",
+                "rope_k_to_cache_update",
                 "attention.rope",
-                "kv",
+                "k",
                 "attention.cache_update",
-                "kv",
-                head_shape,
-                incumbent_conversion=False,
+                "k",
+                kv_head_shape,
+                incumbent_conversion=(
+                    memory_fingerprint(k_memory)
+                    != memory_fingerprint(cache_k_input)
+                ),
+            ),
+            LayoutEdge(
+                "v_to_cache_update",
+                "attention.create_heads",
+                "v",
+                "attention.cache_update",
+                "v",
+                kv_head_shape,
+                incumbent_conversion=(
+                    memory_fingerprint(v_memory)
+                    != memory_fingerprint(cache_v_input)
+                ),
             ),
             LayoutEdge(
                 "rope_q_to_sdpa",
@@ -1232,7 +1298,7 @@ def _build_attention_graph(
                 "q",
                 "attention.sdpa",
                 "q",
-                head_shape,
+                query_head_shape,
                 incumbent_conversion=False,
             ),
             LayoutEdge(
@@ -1243,6 +1309,7 @@ def _build_attention_graph(
                 "cache",
                 (batch * kv_heads, cache_len, head_dim),
                 incumbent_conversion=False,
+                allow_explicit_conversion=False,
             ),
             LayoutEdge(
                 "sdpa_to_concat_heads",
@@ -1250,7 +1317,7 @@ def _build_attention_graph(
                 "attention",
                 "attention.concat_heads",
                 "attention",
-                head_shape,
+                query_head_shape,
                 incumbent_conversion=(
                     memory_fingerprint(kernel_output)
                     != memory_fingerprint(concat_input)
@@ -1389,6 +1456,11 @@ def _build_lm_head_graph(
 ) -> LayoutRegionGraph:
     batch = dimensions["batch_size"]
     hidden = dimensions["hidden_size"]
+    vocab = dimensions["vocab_size"]
+    split_count = dimensions["lm_head_split_count"]
+    if vocab % split_count:
+        raise LayoutGraphError("vocab_size must be divisible by lm_head_split_count")
+    shard_width = vocab // split_count
     final_norm = _space_memory(
         space,
         "rms_norm.final.output_memory_config",
@@ -1435,9 +1507,6 @@ def _build_lm_head_graph(
             measurements=measurements,
         ),
     )
-    # Vocab width is split-dependent. Named TTNN memory configs are shape-derived;
-    # use a tile-aligned symbolic width for compatibility validation.
-    symbolic_vocab_width = 32
     return LayoutRegionGraph(
         region=LM_HEAD_REGION,
         candidates=candidates,
@@ -1459,10 +1528,11 @@ def _build_lm_head_graph(
                 "logit_shards",
                 "lm_head.concat",
                 "logit_shards",
-                (batch, symbolic_vocab_width),
+                (batch, shard_width),
                 incumbent_conversion=(
                     memory_fingerprint(shard_output) != memory_fingerprint(concat)
                 ),
+                multiplicity=split_count,
             ),
             LayoutEdge(
                 "lm_head_concat_to_argmax",
@@ -1470,7 +1540,7 @@ def _build_lm_head_graph(
                 "logits",
                 "lm_head.argmax",
                 "logits",
-                (batch, symbolic_vocab_width),
+                (batch, vocab),
                 incumbent_conversion=False,
             ),
         ),
@@ -1527,8 +1597,27 @@ def _space_memory(
     return MemoryConfig.named(fallback_name)
 
 
+def _physical_sharded_shape(
+    memory: MemoryConfig,
+    *,
+    fallback: tuple[int, int],
+) -> tuple[int, int]:
+    if memory.grid is None or memory.shard_shape is None:
+        return fallback
+    core_count = memory.grid.x * memory.grid.y
+    shard_height, shard_width = memory.shard_shape
+    if memory.layout == "height_sharded":
+        return (shard_height * core_count, shard_width)
+    if memory.layout == "width_sharded":
+        return (shard_height, shard_width * core_count)
+    return fallback
+
+
 def memory_fingerprint(memory: MemoryConfig) -> str:
-    return sha256_json(memory.to_runtime_descriptor())
+    descriptor = memory.to_runtime_descriptor()
+    if descriptor.get("kind") == "ttnn_sharded_memory_config":
+        descriptor.setdefault("orientation", "row_major")
+    return sha256_json(descriptor)
 
 
 def _synchronize(ttnn: Any, device: Any) -> None:
@@ -1560,6 +1649,8 @@ def _transition_decision(
             "action": "removed" if edge.incumbent_conversion else "already_elided",
             "conversion": "none",
             "latency_ms": 0.0,
+            "multiplicity": edge.multiplicity,
+            "single_conversion_latency_ms": 0.0,
             "producer_memory": producer.to_dict(),
             "consumer_memory": consumer.to_dict(),
             "measurement": None,
@@ -1573,7 +1664,9 @@ def _transition_decision(
         "edge": edge.name,
         "action": "retained",
         "conversion": "explicit",
-        "latency_ms": measured.measurement.value_ms,
+        "latency_ms": measured.measurement.value_ms * edge.multiplicity,
+        "multiplicity": edge.multiplicity,
+        "single_conversion_latency_ms": measured.measurement.value_ms,
         "producer_memory": producer.to_dict(),
         "consumer_memory": consumer.to_dict(),
         "measurement": measured.measurement.to_dict(),
