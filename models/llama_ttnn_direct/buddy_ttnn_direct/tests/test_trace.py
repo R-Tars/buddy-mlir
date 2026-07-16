@@ -64,6 +64,9 @@ class _TTNN:
     def release_trace(self, device: object, trace_id: object) -> None:
         self.calls.append(("release", device, trace_id))
 
+    def ReadDeviceProfiler(self, device: object) -> None:
+        self.calls.append(("read_device_profiler", device))
+
 
 class _Graph:
     RunMode = SimpleNamespace(NORMAL="normal")
@@ -302,6 +305,27 @@ def test_decode_trace_captures_full_step_and_replays_nonblocking() -> None:
     assert report["program_compile_count_during_capture"] == 0
     assert ("execute", device, "trace-7", {"cq_id": 0, "blocking": False}) in ttnn.calls
     assert ttnn.calls[-1] == ("release", device, "trace-7")
+
+
+def test_decode_trace_flushes_compile_profile_only_for_audit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("BUDDY_TTNN_PROFILER_AUDIT", "1")
+    device = _Device()
+    ttnn = _TTNN(device)
+    session = DecodeTraceSession(
+        ttnn=ttnn,
+        device=device,
+        model=_Model(ttnn.calls),
+        persistent_inputs=_Inputs(),
+        kv_cache=[object(), object()],
+        key=_key(),
+    )
+
+    session.capture()
+    session.close()
+
+    assert ttnn.calls.count(("read_device_profiler", device)) == 1
 
 
 def test_decode_trace_exports_graph_only_when_requested(tmp_path: Path) -> None:

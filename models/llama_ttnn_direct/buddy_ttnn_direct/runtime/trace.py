@@ -112,6 +112,7 @@ class DecodeTraceSession:
         del token_scratch, cache_position_scratch, rotary_index_scratch
         self.compile_run_count += 1
         self.program_cache_entries_after_compile = _program_cache_entries(self.device)
+        _flush_device_profiler_for_audit(self.ttnn, self.device)
 
         graph_capture_state = _begin_graph_capture(
             self.ttnn,
@@ -231,6 +232,11 @@ class DecodeTraceSession:
                 if self.captured_model_ops is not None
                 else None
             ),
+            "captured_model_ops": (
+                list(self.captured_model_ops)
+                if self.captured_model_ops is not None
+                else None
+            ),
             "program_compile_count_after_capture": (compile_count_after_capture),
             "program_compile_count_during_capture": (compile_count_during_capture),
             "program_cache_entries_before_compile": (
@@ -327,6 +333,17 @@ def _release_trace(ttnn: Any, device: Any, trace_id: Any) -> None:
     release = getattr(ttnn, "release_trace", None)
     if callable(release):
         release(device, trace_id)
+
+
+def _flush_device_profiler_for_audit(ttnn: Any, device: Any) -> None:
+    if os.environ.get("BUDDY_TTNN_PROFILER_AUDIT") != "1":
+        return
+    read_profiler = getattr(ttnn, "ReadDeviceProfiler", None)
+    if not callable(read_profiler):
+        raise RuntimeError(
+            "profiler audit requires ttnn.ReadDeviceProfiler for segmented dumps"
+        )
+    read_profiler(device)
 
 
 def _begin_graph_capture(ttnn: Any, path: Path | None) -> dict[str, Any] | None:

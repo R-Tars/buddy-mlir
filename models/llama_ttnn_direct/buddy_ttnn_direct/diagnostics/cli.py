@@ -12,6 +12,7 @@ DIAGNOSE_STAGES = (
     "depth-sweep",
     "generate-depth-sweep",
     "autotune",
+    "autotune-profiler-audit",
     "benchmark-parity",
     "execution-graph-diff",
     "performance-correctness",
@@ -19,6 +20,28 @@ DIAGNOSE_STAGES = (
 
 
 def run_stage(args: argparse.Namespace) -> dict[str, object]:
+    if args.stage == "autotune-profiler-audit":
+        _require_args(
+            args,
+            "program_dir",
+            "model_path",
+            "input_prompts",
+        )
+        from .autotune_profiler_audit import run_autotune_profiler_audit
+
+        return run_autotune_profiler_audit(
+            out=args.out,
+            program_dir=args.program_dir,
+            model_path=args.model_path,
+            input_prompts=args.input_prompts,
+            tokenizer_path=args.tokenizer_path,
+            instruct=args.instruct,
+            device=args.device,
+            device_id=args.device_id,
+            timeout_seconds=args.benchmark_timeout,
+            profiler_csv=args.profiler_csv,
+            profile_report=args.profile_report,
+        )
     if args.stage == "performance-correctness":
         _require_args(
             args,

@@ -2090,6 +2090,7 @@ def build_parser() -> argparse.ArgumentParser:
             "depth-sweep",
             "generate-depth-sweep",
             "autotune",
+            "autotune-profiler-audit",
             "benchmark-parity",
             "execution-graph-diff",
             "performance-correctness",
@@ -2113,6 +2114,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     diagnose.add_argument("--model-path", type=Path, default=None)
     diagnose.add_argument("--config", type=Path, default=None)
+    diagnose.add_argument(
+        "--profiler-csv",
+        type=Path,
+        default=None,
+        help="Reuse an existing TT-Metal ops profiler CSV for the audit.",
+    )
+    diagnose.add_argument(
+        "--profile-report",
+        type=Path,
+        default=None,
+        help="Decode-steady profile JSON paired with --profiler-csv.",
+    )
     add_prompt_runtime_args(diagnose, batch_prompts=True)
     diagnose.add_argument("--out", type=Path, required=True)
     diagnose.add_argument("--device", default="p150a")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import statistics
 import time
 from pathlib import Path
@@ -260,6 +261,19 @@ def run_profile_decode_steady(
             )
             setup_ms = (time.perf_counter() - setup_start) * 1000.0
             context = session.context
+            if os.environ.get("BUDDY_TTNN_PROFILER_AUDIT") == "1":
+                enable_recording = getattr(
+                    getattr(context.generated_model, "ops", None),
+                    "enable_recording",
+                    None,
+                )
+                if callable(enable_recording):
+                    enable_recording()
+                _install_segmented_prefill_profiler(
+                    context.generated_model,
+                    ttnn,
+                    ttnn_device,
+                )
             prefill_result = run_prefill_prompt(
                 context=context,
                 ttnn=ttnn,
@@ -278,6 +292,7 @@ def run_profile_decode_steady(
                     dtype_seed=dtype_seed,
                 ),
             )
+            _flush_device_profiler_for_audit(ttnn, ttnn_device)
             decode_result = run_decode_steady_iterations(
                 context=context,
                 ttnn=ttnn,
@@ -483,6 +498,34 @@ def run_profile_decode_steady(
 
     _write_report(profile_path, report)
     return report
+
+
+def _flush_device_profiler_for_audit(ttnn: Any, device: Any) -> None:
+    if os.environ.get("BUDDY_TTNN_PROFILER_AUDIT") != "1":
+        return
+    read_profiler = getattr(ttnn, "ReadDeviceProfiler", None)
+    if not callable(read_profiler):
+        raise RuntimeError(
+            "profiler audit requires ttnn.ReadDeviceProfiler for segmented dumps"
+        )
+    read_profiler(device)
+
+
+def _install_segmented_prefill_profiler(
+    model: Any, ttnn: Any, device: Any
+) -> None:
+    original = getattr(model, "prefill_layer", None)
+    if not callable(original):
+        raise RuntimeError(
+            "profiler audit requires generated_model.prefill_layer"
+        )
+
+    def profiled_prefill_layer(*args: Any, **kwargs: Any) -> Any:
+        output = original(*args, **kwargs)
+        _flush_device_profiler_for_audit(ttnn, device)
+        return output
+
+    setattr(model, "prefill_layer", profiled_prefill_layer)
 
 
 def _decode_steady_report_base(
