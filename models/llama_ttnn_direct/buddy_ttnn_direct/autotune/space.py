@@ -76,6 +76,12 @@ _MATMUL_PATHS = {
         "output_memory": "up_output_memory_config",
         "weight_memory": "parameter_config.weight_memory_config.mlp_up",
     },
+    "mlp.gate_up_packed": {
+        "section": "mlp",
+        "program": "packed_gate_up_program_config",
+        "output_memory": "packed_gate_up_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.mlp_gate_up",
+    },
     "mlp.down": {
         "section": "mlp",
         "program": "down_program_config",
@@ -95,6 +101,7 @@ _TYPED_PROGRAM_PATHS = {
     "attention.sdpa_program_config",
     "mlp.gate_program_config",
     "mlp.up_program_config",
+    "mlp.packed_gate_up_program_config",
     "mlp.down_program_config",
 }
 _EDGE_PATHS = {

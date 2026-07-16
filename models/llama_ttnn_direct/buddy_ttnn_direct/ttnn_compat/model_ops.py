@@ -155,16 +155,27 @@ class TTNNCompatOps:
         tensor,
         *,
         split_size,
+        strategy="auto",
+        memory_config=None,
         op_name="split_last_dim",
     ):
         split_size = int(split_size)
+        if strategy not in {"auto", "split", "slice"}:
+            raise ValueError(
+                "split_last_dim strategy must be 'auto', 'split', or 'slice'"
+            )
+        kwargs = {}
+        if memory_config is not None:
+            kwargs["memory_config"] = self.resolve_memory_config(memory_config)
         split = getattr(self.ttnn, "split", None)
-        if callable(split):
+        if strategy != "slice" and callable(split):
             self._record(op_name)
-            result = split(tensor, split_size, dim=-1)
+            result = split(tensor, split_size, dim=-1, **kwargs)
             if len(result) != 2:
                 raise ValueError("packed gate/up split must produce two tensors")
             return result[0], result[1]
+        if strategy == "split":
+            raise ttnn_ops.UnsupportedTTNNOp("split_last_dim", (("split",),))
         slice_op = getattr(self.ttnn, "slice", None)
         shape = _tensor_shape(tensor)
         if not callable(slice_op) or shape is None:
@@ -181,8 +192,8 @@ class TTNNCompatOps:
         second[-1] = split_size
         self._record(op_name)
         return (
-            slice_op(tensor, starts, middle),
-            slice_op(tensor, second, shape),
+            slice_op(tensor, starts, middle, **kwargs),
+            slice_op(tensor, second, shape, **kwargs),
         )
 
     def _silu_activation(self):

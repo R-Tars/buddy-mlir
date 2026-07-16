@@ -214,6 +214,45 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             UnsupportedTTNNOp,
         )
 
+    def test_split_last_dim_honors_strategy_and_output_memory(self) -> None:
+        calls = []
+
+        def split(tensor, split_size, *, dim, memory_config):
+            calls.append(("split", split_size, dim, memory_config))
+            return ("gate", "up")
+
+        def slice_op(tensor, starts, ends, **kwargs):
+            calls.append(("slice", tuple(starts), tuple(ends), kwargs))
+            return tuple(ends)
+
+        fake = types.SimpleNamespace(
+            split=split,
+            slice=slice_op,
+            L1_MEMORY_CONFIG="l1-interleaved",
+        )
+        ops = TTNNCompatOps(fake, record_ops=True)
+        tensor = types.SimpleNamespace(shape=(1, 1, 32, 64))
+
+        self.assertEqual(
+            ops.split_last_dim(
+                tensor,
+                split_size=32,
+                strategy="split",
+                memory_config="L1_MEMORY_CONFIG",
+            ),
+            ("gate", "up"),
+        )
+        ops.split_last_dim(
+            tensor,
+            split_size=32,
+            strategy="slice",
+            memory_config="L1_MEMORY_CONFIG",
+        )
+
+        self.assertEqual(calls[0], ("split", 32, -1, "l1-interleaved"))
+        self.assertEqual(calls[1][-1]["memory_config"], "l1-interleaved")
+        self.assertEqual(calls[2][-1]["memory_config"], "l1-interleaved")
+
     def test_model_ops_selects_requested_sequence_position(self) -> None:
         calls = []
 

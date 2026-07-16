@@ -49,18 +49,55 @@ _SOURCE = """\
         gate_program_config = _optional_attr(
             mlp_config, "gate_program_config"
         )
+        packed_gate_up_program_config = _optional_attr(
+            layer_config,
+            "packed_gate_up_program_config",
+            _optional_attr(
+                mlp_config, "packed_gate_up_program_config"
+            ),
+        )
+        packed_gate_up_output_memory_config = _optional_attr(
+            layer_config,
+            "packed_gate_up_output_memory_config",
+            _optional_attr(
+                mlp_config, "packed_gate_up_output_memory_config"
+            ),
+        )
+        packed_gate_up_split_strategy = _optional_attr(
+            layer_config,
+            "packed_gate_up_split_strategy",
+            _optional_attr(
+                mlp_config, "packed_gate_up_split_strategy", "split"
+            ),
+        )
+        packed_gate_up_split_output_memory_config = _optional_attr(
+            layer_config,
+            "packed_gate_up_split_output_memory_config",
+            _optional_attr(
+                mlp_config,
+                "packed_gate_up_split_output_memory_config",
+            ),
+        )
+        packed_gate_up_mul_input_memory_config = _optional_attr(
+            layer_config,
+            "packed_gate_up_mul_input_memory_config",
+            _optional_attr(
+                mlp_config, "packed_gate_up_mul_input_memory_config"
+            ),
+        )
+        packed_gate_up_mul_conversion = _optional_attr(
+            layer_config,
+            "packed_gate_up_mul_conversion",
+            _optional_attr(
+                mlp_config, "packed_gate_up_mul_conversion", False
+            ),
+        )
         if gate_up_template in ("packed_gate_up", "packed_projection"):
             packed = self.ops.linear(
                 hidden,
                 layer_params.gate_up_proj.weight,
-                memory_config=_optional_attr(
-                    mlp_config,
-                    "packed_gate_up_output_memory_config",
-                ),
-                program_config=_optional_attr(
-                    mlp_config,
-                    "packed_gate_up_program_config",
-                ),
+                memory_config=packed_gate_up_output_memory_config,
+                program_config=packed_gate_up_program_config,
                 compute_kernel_config=gate_up_compute_kernel_config,
                 dtype=intermediate_dtype,
                 op_name="mlp_gate_up_packed",
@@ -68,8 +105,21 @@ _SOURCE = """\
             gate, up = self.ops.split_last_dim(
                 packed,
                 split_size=int(self.config.intermediate_size),
+                strategy=packed_gate_up_split_strategy,
+                memory_config=packed_gate_up_split_output_memory_config,
                 op_name="split_gate_up",
             )
+            if packed_gate_up_mul_conversion:
+                gate = self.ops.to_memory_config(
+                    gate,
+                    memory_config=packed_gate_up_mul_input_memory_config,
+                    op_name="to_memory_config.packed_gate_to_mul",
+                )
+                up = self.ops.to_memory_config(
+                    up,
+                    memory_config=packed_gate_up_mul_input_memory_config,
+                    op_name="to_memory_config.packed_up_to_mul",
+                )
         else:
             gate = self.ops.linear(
                 hidden,
@@ -115,7 +165,14 @@ _SOURCE = """\
             mid = self.ops.mul_silu(
                 gate,
                 up,
-                memory_config=_tensor_memory_config(gate),
+                memory_config=(
+                    packed_gate_up_mul_input_memory_config
+                    if gate_up_template in (
+                        "packed_gate_up",
+                        "packed_projection",
+                    )
+                    else _tensor_memory_config(gate)
+                ),
                 dtype=intermediate_dtype,
                 op_name="mul_silu",
             )

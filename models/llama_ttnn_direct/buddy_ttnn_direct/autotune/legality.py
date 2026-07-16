@@ -20,7 +20,9 @@ from .space import (
 from .templates import (
     FUSED_PAGED_UPDATE,
     FUSED_QK_ROPE,
+    GATE_UP_AXIS,
     KV_UPDATE_AXIS,
+    PACKED_GATE_UP,
     ROPE_AXIS,
     template_choice_from_runtime_config,
     validate_template_selection,
@@ -296,7 +298,14 @@ class WorkloadSpec:
     fused_qk_rope: FusedQKRoPEWorkload | None = None
 
     @classmethod
-    def from_runtime_config(cls, config: Mapping[str, Any]) -> "WorkloadSpec":
+    def from_runtime_config(
+        cls,
+        config: Mapping[str, Any],
+        *,
+        representative_layer: int = 0,
+    ) -> "WorkloadSpec":
+        if representative_layer < 0:
+            raise ValueError("representative_layer must be non-negative")
         batch = int(config["batch_size"])
         hidden = int(config["hidden_size"])
         intermediate = int(config["intermediate_size"])
@@ -339,6 +348,12 @@ class WorkloadSpec:
             )
 
         input_width = "L1_WIDTH_SHARDED_MEMORY_CONFIG"
+        mlp = config.get("mlp") or {}
+        layer_overrides = mlp.get("layer_overrides") or {}
+        layer_override = layer_overrides.get(str(representative_layer)) or {}
+        mlp_intermediate_dtype = str(
+            layer_override.get("parameter_intermediate_dtype", "bfloat4_b")
+        )
         matmuls = [
             MatmulWorkload(
                 "attention.qkv",
@@ -389,7 +404,7 @@ class WorkloadSpec:
                     hidden,
                     intermediate,
                 ),
-                weight_dtype="bfloat4_b",
+                weight_dtype=mlp_intermediate_dtype,
                 input_memory_path="rms_norm.mlp.output_memory_config",
                 output_memory_path="mlp.gate_output_memory_config",
                 weight_memory_path="parameter_config.weight_memory_config.mlp_gate",
@@ -406,7 +421,7 @@ class WorkloadSpec:
                     hidden,
                     intermediate,
                 ),
-                weight_dtype="bfloat4_b",
+                weight_dtype=mlp_intermediate_dtype,
                 input_memory_path="rms_norm.mlp.output_memory_config",
                 output_memory_path="mlp.up_output_memory_config",
                 weight_memory_path="parameter_config.weight_memory_config.mlp_up",
@@ -429,6 +444,35 @@ class WorkloadSpec:
                 weight_memory_path="parameter_config.weight_memory_config.mlp_down",
             ),
         ]
+        gate_up_template = template_choice_from_runtime_config(
+            config, GATE_UP_AXIS
+        )
+        if gate_up_template == PACKED_GATE_UP:
+            matmuls.append(
+                MatmulWorkload(
+                    "mlp.gate_up_packed",
+                    decode_m,
+                    hidden,
+                    2 * intermediate,
+                    memory("rms_norm.mlp.output_memory_config", input_width),
+                    memory(
+                        "mlp.packed_gate_up_output_memory_config", input_width
+                    ),
+                    weight(
+                        "parameter_config.weight_memory_config.mlp_gate_up",
+                        hidden,
+                        2 * intermediate,
+                    ),
+                    weight_dtype=mlp_intermediate_dtype,
+                    input_memory_path="rms_norm.mlp.output_memory_config",
+                    output_memory_path=(
+                        "mlp.packed_gate_up_output_memory_config"
+                    ),
+                    weight_memory_path=(
+                        "parameter_config.weight_memory_config.mlp_gate_up"
+                    ),
+                )
+            )
         lm_head = config.get("lm_head") or {}
         splits = lm_head.get("splits") or []
         split_count = int(lm_head.get("split_count", len(splits) or 1))

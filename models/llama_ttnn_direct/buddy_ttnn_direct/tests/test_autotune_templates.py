@@ -185,6 +185,16 @@ class ExistingAPITemplateRegistryTest(unittest.TestCase):
             mlp["packed_gate_up_output_memory_config"],
             mlp["gate_output_memory_config"],
         )
+        self.assertEqual(mlp["packed_gate_up_split_strategy"], "split")
+        self.assertEqual(
+            mlp["packed_gate_up_split_output_memory_config"]["name"],
+            "L1_MEMORY_CONFIG",
+        )
+        self.assertEqual(
+            mlp["packed_gate_up_mul_input_memory_config"]["name"],
+            "L1_MEMORY_CONFIG",
+        )
+        self.assertFalse(mlp["packed_gate_up_mul_conversion"])
 
     def test_gate_linear_silu_updates_final_sharded_program_configs(self) -> None:
         baseline = SearchSpaceConfig.from_runtime_config(self.runtime)

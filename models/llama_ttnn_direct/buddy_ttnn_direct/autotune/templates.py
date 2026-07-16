@@ -403,6 +403,20 @@ def _packed_gate_up_legal(
         )
     mlp = config.get("mlp")
     if isinstance(mlp, Mapping):
+        split_strategy = str(
+            mlp.get("packed_gate_up_split_strategy", "split")
+        )
+        if split_strategy not in {"split", "slice"}:
+            constraints.append(
+                TemplateConstraint(
+                    code="PACKED_GATE_UP_SPLIT_STRATEGY",
+                    path="mlp.packed_gate_up_split_strategy",
+                    message=(
+                        "packed gate/up split strategy must be 'split' or 'slice'"
+                    ),
+                    error_class="invalid_program_config",
+                )
+            )
         gate_program = mlp.get("gate_program_config")
         up_program = mlp.get("up_program_config")
         if (
@@ -560,6 +574,10 @@ def _apply_separate_gate_up(config: dict[str, Any]) -> None:
     for field in (
         "packed_gate_up_program_config",
         "packed_gate_up_output_memory_config",
+        "packed_gate_up_split_strategy",
+        "packed_gate_up_split_output_memory_config",
+        "packed_gate_up_mul_input_memory_config",
+        "packed_gate_up_mul_conversion",
     ):
         mlp.pop(field, None)
 
@@ -567,17 +585,36 @@ def _apply_separate_gate_up(config: dict[str, Any]) -> None:
 def _apply_packed_gate_up(config: dict[str, Any]) -> None:
     mlp = config.setdefault("mlp", {})
     gate_program = mlp.get("gate_program_config")
-    if isinstance(gate_program, Mapping):
+    if mlp.get("packed_gate_up_program_config") is None and isinstance(
+        gate_program, Mapping
+    ):
         packed_program = copy.deepcopy(dict(gate_program))
         for key in ("per_core_N", "per_core_n", "out_block_w"):
             if key in packed_program:
                 packed_program[key] = 2 * int(packed_program[key])
         mlp["packed_gate_up_program_config"] = packed_program
-    else:
+    elif "packed_gate_up_program_config" not in mlp:
         mlp["packed_gate_up_program_config"] = gate_program
-    mlp["packed_gate_up_output_memory_config"] = copy.deepcopy(
-        mlp.get("gate_output_memory_config")
+    mlp.setdefault(
+        "packed_gate_up_output_memory_config",
+        copy.deepcopy(mlp.get("gate_output_memory_config")),
     )
+    mlp.setdefault("packed_gate_up_split_strategy", "split")
+    mlp.setdefault(
+        "packed_gate_up_split_output_memory_config",
+        {
+            "kind": "ttnn_memory_config",
+            "name": "L1_MEMORY_CONFIG",
+        },
+    )
+    mlp.setdefault(
+        "packed_gate_up_mul_input_memory_config",
+        {
+            "kind": "ttnn_memory_config",
+            "name": "L1_MEMORY_CONFIG",
+        },
+    )
+    mlp.setdefault("packed_gate_up_mul_conversion", False)
 
 
 def _height_sharded_config(
@@ -808,6 +845,10 @@ _REGISTRY = {
             config_fields=(
                 "mlp.packed_gate_up_program_config",
                 "mlp.packed_gate_up_output_memory_config",
+                "mlp.packed_gate_up_split_strategy",
+                "mlp.packed_gate_up_split_output_memory_config",
+                "mlp.packed_gate_up_mul_input_memory_config",
+                "mlp.packed_gate_up_mul_conversion",
             ),
             launch_count=2,
             intermediate_count=3,

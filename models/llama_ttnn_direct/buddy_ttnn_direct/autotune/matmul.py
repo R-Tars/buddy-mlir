@@ -27,6 +27,8 @@ MATMUL_OPERATORS = (
     "mlp.down",
     "lm_head.shards",
 )
+PACKED_GATE_UP_OPERATOR = "mlp.gate_up_packed"
+SUPPORTED_MATMUL_OPERATORS = (*MATMUL_OPERATORS, PACKED_GATE_UP_OPERATOR)
 MATMUL_PROGRAM_FAMILIES = (
     "dram_sharded",
     "batched_dram_sharded",
@@ -171,9 +173,9 @@ def enumerate_matmul_programs(
     safety_factor: float = DEFAULT_L1_SAFETY_FACTOR,
     max_proposals: int = 64,
 ) -> MatmulEnumerationResult:
-    if operator_name not in MATMUL_OPERATORS:
+    if operator_name not in SUPPORTED_MATMUL_OPERATORS:
         raise MatmulEnumerationError(
-            f"operator must be one of {list(MATMUL_OPERATORS)}"
+            f"operator must be one of {list(SUPPORTED_MATMUL_OPERATORS)}"
         )
     if max_proposals < 2:
         raise MatmulEnumerationError("max_proposals must be at least two")
