@@ -13,12 +13,15 @@ from ..codegen.ttnn_tensorizer import (
 from ..ttnn_compat import UnsupportedTTNNOp
 from .decode import (
     materialize_generate_token_events as _materialize_generate_token_events,
+)
+from .decode import (
     run_decode_loop,
 )
 from .decode_inputs import resolve_runtime_input_mode
 from .device import maybe_generate_device
 from .errors import NoTTNNDeviceError
-from .plans import decode_step_plan, prefill_plan as build_prefill_plan
+from .plans import decode_step_plan
+from .plans import prefill_plan as build_prefill_plan
 from .prefill import (
     run_prefill_prompt,
 )
@@ -31,24 +34,37 @@ from .profile import (
 )
 from .reports import (
     compact_generate_report as _compact_generate_report,
+)
+from .reports import (
     generate_dry_run_report as _generate_dry_run_report,
+)
+from .reports import (
     generate_failed_report as _generate_failed_report,
+)
+from .reports import (
     generate_no_device_report as _generate_no_device_report,
+)
+from .reports import (
     generate_success_report as _generate_success_report,
+)
+from .reports import (
     reset_json_lines as _reset_json_lines,
+)
+from .reports import (
     write_report as _write_report,
 )
+from .session import build_runtime_session
+from .state import build_generate_state as build_generate_state
 from .tokenizer import (
     PromptTokenizationError,
     detokenize_generated_token_ids,
     load_prompt_batch,
     tokenize_prompts_for_prefill,
 )
-from .session import build_runtime_session
-from .state import build_generate_state
 from .trace import (
-    P150_LLAMA31_8B_TRACE_REGION_SIZE,
+    build_decode_trace_bucket_keys,
     build_decode_trace_key,
+    decode_trace_region_size,
     resolve_execution_mode,
 )
 
@@ -103,7 +119,9 @@ def run_generate(
         resolved_execution_mode == "trace"
         and resolved_runtime_input_mode != "persistent"
     ):
-        raise ValueError("trace execution requires runtime_input_mode=persistent")
+        raise ValueError(
+            "trace execution requires runtime_input_mode=persistent"
+        )
     if teacher_forcing_token_ids_by_step and resolved_execution_mode == "trace":
         raise ValueError("teacher forcing requires execution_mode=eager")
     layer_count = int(layers)
@@ -251,7 +269,9 @@ def run_generate(
 
     try:
         ttnn = (
-            ttnn_module if ttnn_module is not None else importlib.import_module("ttnn")
+            ttnn_module
+            if ttnn_module is not None
+            else importlib.import_module("ttnn")
         )
     except ImportError as err:
         report = _generate_no_device_report(
@@ -354,7 +374,9 @@ def run_generate(
         int(prefill_tokenization.effective_token_count) + decode_step_count
     )
     cache_capacity = {
-        "effective_prompt_tokens": int(prefill_tokenization.effective_token_count),
+        "effective_prompt_tokens": int(
+            prefill_tokenization.effective_token_count
+        ),
         "decode_steps": decode_step_count,
         "required_cache_len": required_cache_len,
         "configured_cache_len": cache_len,
@@ -401,7 +423,7 @@ def run_generate(
             device_id,
             ttnn_module,
             trace_region_size=(
-                P150_LLAMA31_8B_TRACE_REGION_SIZE
+                decode_trace_region_size(config)
                 if resolved_execution_mode == "trace"
                 or resolved_prefill_execution_mode == "trace"
                 else None
@@ -499,7 +521,9 @@ def run_generate(
                 ),
                 report_level=resolved_report_level,
                 diagnostics_path=(
-                    str(diagnostics_path) if diagnostics_path is not None else None
+                    str(diagnostics_path)
+                    if diagnostics_path is not None
+                    else None
                 ),
                 diagnostics_reference_path=(
                     str(_diagnostics_reference_path(diagnostics_path))
@@ -517,7 +541,18 @@ def run_generate(
                     cache_len=cache_len,
                     dtype_seed=dtype_seed,
                 ),
-                teacher_forcing_token_ids_by_step=(teacher_forcing_token_ids_by_step),
+                trace_keys=build_decode_trace_bucket_keys(
+                    device_id=device_id,
+                    config=config,
+                    decode_plan=decode_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
+                teacher_forcing_token_ids_by_step=(
+                    teacher_forcing_token_ids_by_step
+                ),
             )
             generated_token_events = decode_loop.generated_token_events
             step_reports = decode_loop.step_reports
@@ -541,7 +576,9 @@ def run_generate(
             generated_token_ids_by_user = (
                 token_materialization.generated_token_ids_by_user
             )
-            per_step_token_metadata = token_materialization.per_step_token_metadata
+            per_step_token_metadata = (
+                token_materialization.per_step_token_metadata
+            )
             text_report = detokenize_generated_token_ids(
                 token_ids_by_user=generated_token_ids_by_user,
                 tokenizer_path=tokenizer_path or model_path,
@@ -576,8 +613,12 @@ def run_generate(
                 decode_runtime_state=decode_runtime_state,
                 rotary_runtime_state=rotary_runtime_state,
                 tensor_conversion_count=tensor_conversion_count,
-                decode_runtime_state_input_tensor_count=(decode_runtime_state_count),
-                decode_rotary_runtime_input_tensor_count=(decode_rotary_runtime_count),
+                decode_runtime_state_input_tensor_count=(
+                    decode_runtime_state_count
+                ),
+                decode_rotary_runtime_input_tensor_count=(
+                    decode_rotary_runtime_count
+                ),
                 latency_ms=latency_ms,
                 section_profiler=section_profiler,
                 ttnn_module=ttnn,
@@ -585,15 +626,15 @@ def run_generate(
             report["cache_capacity"] = cache_capacity
             report["prefill_execution_mode"] = resolved_prefill_execution_mode
             report["prefill_execution"] = prefill_result.execution_report
-            report["prefill"][
-                "batch_latency_ms"
-            ] = prefill_result.batch_prefill_latency_ms
-            report["prefill"][
-                "average_ttft_ms_per_user"
-            ] = prefill_result.average_ttft_ms_per_user
-            report["prefill"][
-                "official_metric_formula"
-            ] = "batch_prefill_latency_ms / batch_size"
+            report["prefill"]["batch_latency_ms"] = (
+                prefill_result.batch_prefill_latency_ms
+            )
+            report["prefill"]["average_ttft_ms_per_user"] = (
+                prefill_result.average_ttft_ms_per_user
+            )
+            report["prefill"]["official_metric_formula"] = (
+                "batch_prefill_latency_ms / batch_size"
+            )
             report["prefill"]["execution"] = prefill_result.execution_report
             report["teacher_forcing"] = {
                 "enabled": bool(teacher_forcing_token_ids_by_step),
@@ -781,7 +822,7 @@ def _diagnostics_path(
 def _diagnostics_reference_path(diagnostics_path: Path) -> Path:
     name = diagnostics_path.name
     if name.endswith(".steps.jsonl"):
-        name = f"{name[:-len('.steps.jsonl')]}.references.jsonl"
+        name = f"{name[: -len('.steps.jsonl')]}.references.jsonl"
     else:
         name = f"{diagnostics_path.stem}.references.jsonl"
     return diagnostics_path.with_name(name)
@@ -798,7 +839,9 @@ def _finalize_report(
         reference_path = _diagnostics_reference_path(diagnostics_path)
         report["diagnostics"] = {
             "decode_steps": str(diagnostics_path),
-            "references": (str(reference_path) if reference_path.is_file() else None),
+            "references": (
+                str(reference_path) if reference_path.is_file() else None
+            ),
             "format": "jsonl",
             "status": "written",
         }

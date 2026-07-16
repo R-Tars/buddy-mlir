@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any
 
 from .decode_inputs import (
     DecodeInputBuffers,
@@ -16,6 +17,7 @@ from .inputs import (
 )
 from .reports import append_json_line
 from .rotary import attach_decode_rotary_parameters
+from .sdpa_context import SDPAContextRuntime
 from .structural import (
     decode_step_reference,
     generated_observed_op_sequence,
@@ -24,10 +26,16 @@ from .structural import (
     loop_output_shapes,
 )
 from .tensor_meta import tensor_dtype, tensor_shape
-from .trace import DecodeTraceKey, DecodeTraceSession
+from .trace import (
+    BucketedDecodeTraceSession,
+    DecodeTraceKey,
+    DecodeTraceSession,
+)
 
 # Compatibility names remain patchable for existing diagnostic tests.
-_build_prompt_decode_runtime_state_tensors = build_prompt_decode_runtime_state_tensors
+_build_prompt_decode_runtime_state_tensors = (
+    build_prompt_decode_runtime_state_tensors
+)
 _decode_step_reference = decode_step_reference
 _generated_observed_op_sequence = generated_observed_op_sequence
 _loop_generated_token_ids = loop_generated_token_ids
@@ -101,7 +109,9 @@ def build_decode_runtime_for_position(
         page_block_size=int(decode_plan["kv_cache"]["page_block_size"]),
         prompt_token_count=prompt_token_counts,
     )
-    cache_position_value = runtime_state.decode_runtime_state["cache_position_value"]
+    cache_position_value = runtime_state.decode_runtime_state[
+        "cache_position_value"
+    ]
     cache_position_values = runtime_state.decode_runtime_state.get(
         "cache_position_values"
     )
@@ -126,7 +136,9 @@ def build_decode_runtime_for_position(
             int(runtime_state.tensor_conversion_count)
             + int(rotary_runtime.tensor_conversion_count)
         ),
-        decode_runtime_state_input_tensor_count=(runtime_state.tensor_conversion_count),
+        decode_runtime_state_input_tensor_count=(
+            runtime_state.tensor_conversion_count
+        ),
         rotary_runtime_input_tensor_count=rotary_runtime.tensor_conversion_count,
     )
 
@@ -265,6 +277,7 @@ def run_decode_loop(
     runtime_input_mode: str = "recreate",
     execution_mode: str = "eager",
     trace_key: DecodeTraceKey | None = None,
+    trace_keys: Sequence[DecodeTraceKey] | None = None,
     teacher_forcing_token_ids_by_step: Sequence[Sequence[int]] | None = None,
 ) -> SimpleNamespace:
     teacher_forcing = _normalize_teacher_forcing(
@@ -290,18 +303,20 @@ def run_decode_loop(
         "effective_token_count_by_user",
         context.prefill_tokenization["effective_token_count"],
     )
-    decode_runtime, persistent_inputs, fallback_reason = _initial_decode_runtime(
-        runtime_input_mode=runtime_input_mode,
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        parameters=context.parameters,
-        decode_plan=decode_plan,
-        batch_size=batch_size,
-        cache_len=cache_len,
-        prefill_effective_token_count=effective_token_counts,
-        token_input=context.token_ids,
+    decode_runtime, persistent_inputs, fallback_reason = (
+        _initial_decode_runtime(
+            runtime_input_mode=runtime_input_mode,
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            parameters=context.parameters,
+            decode_plan=decode_plan,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            prefill_effective_token_count=effective_token_counts,
+            token_input=context.token_ids,
+        )
     )
     _install_context_decode_runtime(
         context,
@@ -317,24 +332,32 @@ def run_decode_loop(
         + decode_runtime.tensor_conversion_count
         + teacher_forcing_conversion_count
     )
-    decode_runtime_state_count = decode_runtime.decode_runtime_state_input_tensor_count
-    decode_rotary_runtime_count = decode_runtime.rotary_runtime_input_tensor_count
+    decode_runtime_state_count = (
+        decode_runtime.decode_runtime_state_input_tensor_count
+    )
+    decode_rotary_runtime_count = (
+        decode_runtime.rotary_runtime_input_tensor_count
+    )
     step_reports = []
     diagnostic_reference_ids: set[str] = set()
     observed_op_cursor = _observed_op_cursor(context.generated_model, ttnn)
     trace_session = None
+    sdpa_context_runtime = SDPAContextRuntime(context.generated_model)
     if execution_mode == "trace" and decode_step_count > 0:
         if persistent_inputs is None:
-            raise ValueError("trace execution requires persistent decode inputs")
-        if trace_key is None:
+            raise ValueError(
+                "trace execution requires persistent decode inputs"
+            )
+        if trace_key is None and not trace_keys:
             raise ValueError("trace execution requires a DecodeTraceKey")
-        trace_session = DecodeTraceSession(
+        trace_session = _create_decode_trace_session(
             ttnn=ttnn,
             device=device,
             model=context.generated_model,
             persistent_inputs=persistent_inputs,
             kv_cache=context.kv_cache,
-            key=trace_key,
+            trace_key=trace_key,
+            trace_keys=trace_keys,
         )
         trace_session.capture()
         observed_op_cursor = _observed_op_cursor(
@@ -357,6 +380,10 @@ def run_decode_loop(
                 kv_cache = execution.kv_cache
                 latency_ms = execution.latency_ms
             else:
+                if sdpa_context_runtime.enabled:
+                    sdpa_context_runtime.activate_for_context(
+                        _runtime_active_context_len(step_decode_runtime_state)
+                    )
                 token, kv_cache, latency_ms = _time_decode_step(
                     ttnn=ttnn,
                     model=context.generated_model,
@@ -393,7 +420,9 @@ def run_decode_loop(
                 token_event["teacher_forced_input_token_ids"] = list(
                     teacher_forcing[step_index]
                 )
-            position_values = step_decode_runtime_state.get("cache_position_values")
+            position_values = step_decode_runtime_state.get(
+                "cache_position_values"
+            )
             if position_values is not None and len(set(position_values)) > 1:
                 token_event["cache_position_values"] = position_values
             if trace_session is not None:
@@ -438,7 +467,9 @@ def run_decode_loop(
             reference["observed_ops_source"] = observed_ops_source
             full_step_report = {
                 "step_index": step_index,
-                "status": ("passed" if reference["passed"] else "reference_mismatch"),
+                "status": (
+                    "passed" if reference["passed"] else "reference_mismatch"
+                ),
                 "passed": bool(reference["passed"]),
                 "latency_ms": latency_ms,
                 "cache_position_value": step_decode_runtime_state.get(
@@ -459,7 +490,9 @@ def run_decode_loop(
                         "source": "reporting_after_decode_loop",
                     },
                 ),
-                "token_materialization_ms": token_event.get("materialization_ms"),
+                "token_materialization_ms": token_event.get(
+                    "materialization_ms"
+                ),
                 "token_runtime_handoff": "device_tensor_direct",
                 "runtime_host_roundtrip": False,
                 "reference": reference,
@@ -542,7 +575,9 @@ def run_decode_loop(
                 decode_rotary_runtime_count += (
                     decode_runtime.rotary_runtime_input_tensor_count
                 )
-                tensor_conversion_count += decode_runtime.tensor_conversion_count
+                tensor_conversion_count += (
+                    decode_runtime.tensor_conversion_count
+                )
     finally:
         if trace_session is not None:
             trace_session.close()
@@ -561,7 +596,13 @@ def run_decode_loop(
     }
     if trace_session is not None:
         runtime_input_report.update(trace_session.to_report())
-        runtime_input_report["runtime_input_mode_requested"] = runtime_input_mode
+        runtime_input_report["runtime_input_mode_requested"] = (
+            runtime_input_mode
+        )
+    elif sdpa_context_runtime.enabled:
+        runtime_input_report["sdpa_context_buckets"] = (
+            sdpa_context_runtime.to_report()
+        )
     _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         generated_token_events=generated_token_events,
@@ -705,6 +746,7 @@ def run_decode_steady_iterations(
     runtime_input_mode: str = "recreate",
     execution_mode: str = "eager",
     trace_key: DecodeTraceKey | None = None,
+    trace_keys: Sequence[DecodeTraceKey] | None = None,
 ) -> SimpleNamespace:
     """Run post-prefill decode without per-op profiling or host token copies."""
 
@@ -713,7 +755,8 @@ def run_decode_steady_iterations(
         int(value)
         for value in context.prefill_tokenization.get(
             "effective_token_count_by_user",
-            [context.prefill_tokenization["effective_token_count"]] * batch_size,
+            [context.prefill_tokenization["effective_token_count"]]
+            * batch_size,
         )
     ]
     effective_token_count = max(effective_token_counts)
@@ -724,18 +767,20 @@ def run_decode_steady_iterations(
             f"warmup={warmup}, iterations={iterations}, cache_len={cache_len}"
         )
 
-    decode_runtime, persistent_inputs, fallback_reason = _initial_decode_runtime(
-        runtime_input_mode=runtime_input_mode,
-        ttnn=ttnn,
-        torch=torch,
-        device=device,
-        dtype_seed=dtype_seed,
-        parameters=context.parameters,
-        decode_plan=decode_plan,
-        batch_size=batch_size,
-        cache_len=cache_len,
-        prefill_effective_token_count=effective_token_counts,
-        token_input=context.token_ids,
+    decode_runtime, persistent_inputs, fallback_reason = (
+        _initial_decode_runtime(
+            runtime_input_mode=runtime_input_mode,
+            ttnn=ttnn,
+            torch=torch,
+            device=device,
+            dtype_seed=dtype_seed,
+            parameters=context.parameters,
+            decode_plan=decode_plan,
+            batch_size=batch_size,
+            cache_len=cache_len,
+            prefill_effective_token_count=effective_token_counts,
+            token_input=context.token_ids,
+        )
     )
     _install_context_decode_runtime(
         context,
@@ -751,21 +796,27 @@ def run_decode_steady_iterations(
     decode_runtime_state_count = int(
         decode_runtime.decode_runtime_state_input_tensor_count
     )
-    decode_rotary_runtime_count = int(decode_runtime.rotary_runtime_input_tensor_count)
+    decode_rotary_runtime_count = int(
+        decode_runtime.rotary_runtime_input_tensor_count
+    )
 
     trace_session = None
+    sdpa_context_runtime = SDPAContextRuntime(context.generated_model)
     if execution_mode == "trace":
         if persistent_inputs is None:
-            raise ValueError("trace execution requires persistent decode inputs")
-        if trace_key is None:
+            raise ValueError(
+                "trace execution requires persistent decode inputs"
+            )
+        if trace_key is None and not trace_keys:
             raise ValueError("trace execution requires a DecodeTraceKey")
-        trace_session = DecodeTraceSession(
+        trace_session = _create_decode_trace_session(
             ttnn=ttnn,
             device=device,
             model=context.generated_model,
             persistent_inputs=persistent_inputs,
             kv_cache=context.kv_cache,
-            key=trace_key,
+            trace_key=trace_key,
+            trace_keys=trace_keys,
         )
         trace_session.capture()
 
@@ -800,7 +851,9 @@ def run_decode_steady_iterations(
                             decode_plan=decode_plan,
                             batch_size=batch_size,
                             cache_len=cache_len,
-                            prefill_effective_token_count=(effective_token_counts),
+                            prefill_effective_token_count=(
+                                effective_token_counts
+                            ),
                             generated_token_index=step_index,
                         )
                     _install_context_decode_runtime(
@@ -818,6 +871,12 @@ def run_decode_steady_iterations(
                     )
                     decode_rotary_runtime_count += int(
                         decode_runtime.rotary_runtime_input_tensor_count
+                    )
+                if sdpa_context_runtime.enabled:
+                    sdpa_context_runtime.activate_for_context(
+                        _runtime_active_context_len(
+                            decode_runtime.decode_runtime_state
+                        )
                     )
                 token, kv_cache = context.generated_model.decode_step(
                     context.token_ids,
@@ -854,7 +913,13 @@ def run_decode_steady_iterations(
     )
     if trace_session is not None:
         runtime_input_report.update(trace_session.to_report())
-        runtime_input_report["runtime_input_mode_requested"] = runtime_input_mode
+        runtime_input_report["runtime_input_mode_requested"] = (
+            runtime_input_mode
+        )
+    elif sdpa_context_runtime.enabled:
+        runtime_input_report["sdpa_context_buckets"] = (
+            sdpa_context_runtime.to_report()
+        )
     _set_context_runtime_input_report(context, runtime_input_report)
     return SimpleNamespace(
         warmup_step_ms_samples=warmup_samples,
@@ -867,6 +932,47 @@ def run_decode_steady_iterations(
         final_kv_cache=context.kv_cache,
         runtime_input_report=runtime_input_report,
     )
+
+
+def _create_decode_trace_session(
+    *,
+    ttnn: Any,
+    device: Any,
+    model: Any,
+    persistent_inputs: Any,
+    kv_cache: Any,
+    trace_key: DecodeTraceKey | None,
+    trace_keys: Sequence[DecodeTraceKey] | None,
+) -> DecodeTraceSession | BucketedDecodeTraceSession:
+    if trace_keys:
+        return BucketedDecodeTraceSession(
+            ttnn=ttnn,
+            device=device,
+            model=model,
+            persistent_inputs=persistent_inputs,
+            kv_cache=kv_cache,
+            keys=trace_keys,
+        )
+    if trace_key is None:
+        raise ValueError("trace execution requires a DecodeTraceKey")
+    return DecodeTraceSession(
+        ttnn=ttnn,
+        device=device,
+        model=model,
+        persistent_inputs=persistent_inputs,
+        kv_cache=kv_cache,
+        key=trace_key,
+    )
+
+
+def _runtime_active_context_len(runtime_state: dict[str, Any]) -> int:
+    values = runtime_state.get("cache_position_values")
+    if values is None:
+        value = runtime_state.get("cache_position_value")
+        if value is None:
+            raise ValueError("decode runtime state has no cache position")
+        values = [value]
+    return max(int(value) for value in values) + 1
 
 
 def materialize_generate_token_events(
@@ -901,7 +1007,9 @@ def materialize_generate_token_events(
                 ttnn=ttnn,
                 batch_size=batch_size,
             )
-            materialization_ms = (time.perf_counter() - materialization_start) * 1000.0
+            materialization_ms = (
+                time.perf_counter() - materialization_start
+            ) * 1000.0
             token_ids = materialization["token_ids_by_user"]
             materialization_phase = "reporting_after_decode_loop"
         for user_index, row in enumerate(token_ids):

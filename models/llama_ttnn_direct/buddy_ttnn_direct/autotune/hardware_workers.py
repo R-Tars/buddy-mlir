@@ -3,10 +3,12 @@ from __future__ import annotations
 import importlib
 import math
 import time
+from collections.abc import Mapping
 from contextlib import contextmanager
-from typing import Any, Mapping
+from typing import Any
 
 from ..runtime.config_runtime import realize_ttnn_config
+from ..ttnn_compat.ops import paged_sdpa_decode
 from .microbench import MicrobenchmarkError, make_worker_response
 
 
@@ -18,7 +20,9 @@ def matmul_trace_worker(request: Mapping[str, Any]) -> dict[str, Any]:
     measurement = _mapping(
         candidate.get("measurement_contract"), "measurement_contract"
     )
-    execution = _mapping(candidate.get("execution_contract"), "execution_contract")
+    execution = _mapping(
+        candidate.get("execution_contract"), "execution_contract"
+    )
     _validate_execution_contract(execution)
 
     ttnn = importlib.import_module("ttnn")
@@ -33,7 +37,9 @@ def matmul_trace_worker(request: Mapping[str, Any]) -> dict[str, Any]:
 
     fill_value = float(payload.get("fill_value", 0.015625))
     if not math.isfinite(fill_value) or fill_value == 0:
-        raise MicrobenchmarkError("MatMul fill_value must be finite and nonzero")
+        raise MicrobenchmarkError(
+            "MatMul fill_value must be finite and nonzero"
+        )
     warmup = int(measurement["warmup"])
     iterations = int(measurement["iterations"])
 
@@ -51,12 +57,18 @@ def matmul_trace_worker(request: Mapping[str, Any]) -> dict[str, Any]:
             _mapping(payload.get("program_config"), "program_config"), ttnn
         )
         compute_kernel_config = realize_ttnn_config(
-            _mapping(payload.get("compute_kernel_config"), "compute_kernel_config"),
+            _mapping(
+                payload.get("compute_kernel_config"), "compute_kernel_config"
+            ),
             ttnn,
         )
         input_dtype = _dtype(ttnn, str(payload.get("input_dtype", "bfloat16")))
-        weight_dtype = _dtype(ttnn, str(payload.get("weight_dtype", "bfloat8_b")))
-        output_dtype = _dtype(ttnn, str(payload.get("output_dtype", "bfloat16")))
+        weight_dtype = _dtype(
+            ttnn, str(payload.get("weight_dtype", "bfloat8_b"))
+        )
+        output_dtype = _dtype(
+            ttnn, str(payload.get("output_dtype", "bfloat16"))
+        )
 
         input_tensor = ttnn.full(
             (1, 1, m, k),
@@ -151,7 +163,9 @@ def packed_gate_up_region_trace_worker(
     measurement = _mapping(
         candidate.get("measurement_contract"), "measurement_contract"
     )
-    execution = _mapping(candidate.get("execution_contract"), "execution_contract")
+    execution = _mapping(
+        candidate.get("execution_contract"), "execution_contract"
+    )
     _validate_execution_contract(execution)
 
     mode = str(payload.get("mode"))
@@ -199,12 +213,18 @@ def packed_gate_up_region_trace_worker(
             _mapping(payload.get("mul_memory"), "mul_memory"), ttnn
         )
         compute_kernel_config = realize_ttnn_config(
-            _mapping(payload.get("compute_kernel_config"), "compute_kernel_config"),
+            _mapping(
+                payload.get("compute_kernel_config"), "compute_kernel_config"
+            ),
             ttnn,
         )
         input_dtype = _dtype(ttnn, str(payload.get("input_dtype", "bfloat16")))
-        weight_dtype = _dtype(ttnn, str(payload.get("weight_dtype", "bfloat4_b")))
-        output_dtype = _dtype(ttnn, str(payload.get("output_dtype", "bfloat16")))
+        weight_dtype = _dtype(
+            ttnn, str(payload.get("weight_dtype", "bfloat4_b"))
+        )
+        output_dtype = _dtype(
+            ttnn, str(payload.get("output_dtype", "bfloat16"))
+        )
 
         input_tensor = ttnn.full(
             (1, 1, m, k),
@@ -236,7 +256,9 @@ def packed_gate_up_region_trace_worker(
 
         if mode == "incumbent":
             gate_program = realize_ttnn_config(
-                _mapping(payload.get("gate_program_config"), "gate_program_config"),
+                _mapping(
+                    payload.get("gate_program_config"), "gate_program_config"
+                ),
                 ttnn,
             )
             up_program = realize_ttnn_config(
@@ -249,7 +271,9 @@ def packed_gate_up_region_trace_worker(
             )
 
         activation = _silu_activation(ttnn)
-        requires_conversion = bool(payload.get("requires_mul_conversion", False))
+        requires_conversion = bool(
+            payload.get("requires_mul_conversion", False)
+        )
 
         def split_packed(packed: Any) -> tuple[Any, Any]:
             try:
@@ -270,7 +294,9 @@ def packed_gate_up_region_trace_worker(
                 second = [0, 0, 0, n]
                 end = [1, 1, m, 2 * n]
                 return (
-                    ttnn.slice(packed, starts, middle, memory_config=split_memory),
+                    ttnn.slice(
+                        packed, starts, middle, memory_config=split_memory
+                    ),
                     ttnn.slice(packed, second, end, memory_config=split_memory),
                 )
             except Exception as exc:
@@ -344,7 +370,8 @@ def packed_gate_up_region_trace_worker(
         )
         if not correctness["passed"]:
             raise MicrobenchmarkError(
-                "packed gate/up region correctness gate failed: " + str(correctness)
+                "packed gate/up region correctness gate failed: "
+                + str(correctness)
             )
 
         cache_before_capture = _program_cache_count(device)
@@ -372,7 +399,9 @@ def packed_gate_up_region_trace_worker(
         else:
             operations = ["linear.gate_up_packed", split_strategy]
             if requires_conversion:
-                operations.extend(["to_memory_config.gate", "to_memory_config.up"])
+                operations.extend(
+                    ["to_memory_config.gate", "to_memory_config.up"]
+                )
             operations.append("mul_silu")
         return make_worker_response(
             request,
@@ -392,6 +421,228 @@ def packed_gate_up_region_trace_worker(
                 "linear_count": 2 if mode == "incumbent" else 1,
                 "split_operation_count": 0 if mode == "incumbent" else 1,
                 "added_conversion_count": 2 if requires_conversion else 0,
+                "program_cache_before_capture": cache_before_capture,
+                "program_cache_after_capture": cache_after_capture,
+                "new_programs_after_capture": (
+                    cache_after_capture - cache_before_capture
+                ),
+                "trace_replay": True,
+                "persistent_inputs": True,
+                "correctness": correctness,
+            },
+        )
+
+
+def sdpa_context_region_trace_worker(
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Measure paged decode SDPA plus its post-kernel memory transition."""
+
+    payload = _mapping(request.get("payload"), "payload")
+    candidate = _mapping(request.get("candidate"), "candidate")
+    measurement = _mapping(
+        candidate.get("measurement_contract"), "measurement_contract"
+    )
+    execution = _mapping(
+        candidate.get("execution_contract"), "execution_contract"
+    )
+    _validate_execution_contract(execution)
+
+    ttnn = importlib.import_module("ttnn")
+    torch = importlib.import_module("torch")
+    device_id = int(payload.get("device_id", 0))
+    batch_size = int(payload.get("batch_size", 32))
+    num_heads = int(payload.get("num_heads", 32))
+    num_kv_heads = int(payload.get("num_kv_heads", 8))
+    head_dim = int(payload.get("head_dim", 128))
+    physical_cache_len = int(payload.get("physical_cache_len", 1024))
+    active_context_len = int(
+        payload.get("active_context_len", physical_cache_len)
+    )
+    page_block_size = int(payload.get("page_block_size", 32))
+    if min(batch_size, num_heads, num_kv_heads, head_dim) <= 0:
+        raise MicrobenchmarkError("SDPA dimensions must be positive")
+    if not 1 <= active_context_len <= physical_cache_len:
+        raise MicrobenchmarkError("active SDPA context exceeds physical cache")
+    if physical_cache_len % page_block_size:
+        raise MicrobenchmarkError("physical cache must be page-block aligned")
+    warmup = int(measurement["warmup"])
+    iterations = int(measurement["iterations"])
+
+    with _managed_device(ttnn, device_id) as device:
+        program_config = realize_ttnn_config(
+            _mapping(payload.get("program_config"), "program_config"), ttnn
+        )
+        kernel_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("kernel_output_memory"), "kernel_output_memory"
+            ),
+            ttnn,
+        )
+        post_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("post_sdpa_output_memory"), "post output memory"
+            ),
+            ttnn,
+        )
+        official_program = realize_ttnn_config(
+            _mapping(
+                payload.get("official_program_config"), "official program"
+            ),
+            ttnn,
+        )
+        official_kernel_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("official_kernel_output_memory"),
+                "official kernel memory",
+            ),
+            ttnn,
+        )
+        official_post_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("official_post_sdpa_output_memory"),
+                "official post memory",
+            ),
+            ttnn,
+        )
+        query_memory = realize_ttnn_config(
+            _mapping(payload.get("query_memory"), "query memory"), ttnn
+        )
+        dtype = _dtype(ttnn, str(payload.get("dtype", "bfloat16")))
+        page_count = physical_cache_len // page_block_size
+        cache_shape = (
+            batch_size * page_count,
+            num_kv_heads,
+            page_block_size,
+            head_dim,
+        )
+        generator = torch.Generator().manual_seed(int(payload.get("seed", 17)))
+        query_host = torch.randn(
+            (1, batch_size, num_heads, head_dim),
+            dtype=torch.bfloat16,
+            generator=generator,
+        )
+        key_host = torch.randn(
+            cache_shape,
+            dtype=torch.bfloat16,
+            generator=generator,
+        )
+        value_host = torch.randn(
+            cache_shape,
+            dtype=torch.bfloat16,
+            generator=generator,
+        )
+        page_table_host = torch.arange(
+            batch_size * page_count, dtype=torch.int32
+        ).reshape(batch_size, page_count)
+        cache_position_host = torch.full(
+            (batch_size,), active_context_len - 1, dtype=torch.int32
+        )
+        query = ttnn.from_torch(
+            query_host,
+            dtype=dtype,
+            layout=ttnn.TILE_LAYOUT,
+            device=device,
+            memory_config=query_memory,
+        )
+        key_cache = ttnn.from_torch(
+            key_host,
+            dtype=dtype,
+            layout=ttnn.TILE_LAYOUT,
+            device=device,
+        )
+        value_cache = ttnn.from_torch(
+            value_host,
+            dtype=dtype,
+            layout=ttnn.TILE_LAYOUT,
+            device=device,
+        )
+        page_table = ttnn.from_torch(
+            page_table_host,
+            dtype=ttnn.int32,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+            device=device,
+        )
+        cache_position = ttnn.from_torch(
+            cache_position_host,
+            dtype=ttnn.int32,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+            device=device,
+        )
+        scale = float(payload.get("scale", head_dim**-0.5))
+
+        def region(program: Any, kernel: Any, post: Any) -> Any:
+            output = paged_sdpa_decode(
+                ttnn,
+                query,
+                key_cache,
+                value_cache,
+                page_table,
+                cache_position,
+                scale=scale,
+                memory_config=kernel,
+                program_config=program,
+            )
+            memory_getter = getattr(output, "memory_config", None)
+            output_memory = memory_getter() if callable(memory_getter) else None
+            if output_memory != post:
+                output = ttnn.to_memory_config(output, memory_config=post)
+            return output
+
+        official_output = region(
+            official_program, official_kernel_memory, official_post_memory
+        )
+        candidate_output = region(program_config, kernel_memory, post_memory)
+        _synchronize(ttnn, device)
+        correctness = _tensor_pair_correctness(
+            torch=torch,
+            reference=ttnn.to_torch(official_output).to(torch.float32),
+            candidate=ttnn.to_torch(candidate_output).to(torch.float32),
+        )
+        if not correctness["passed"]:
+            raise MicrobenchmarkError(
+                "SDPA correctness gate failed: " + str(correctness)
+            )
+
+        cache_before_capture = _program_cache_count(device)
+        trace_id = None
+        try:
+            trace_id = ttnn.begin_trace_capture(device, cq_id=0)
+            region(program_config, kernel_memory, post_memory)
+            ttnn.end_trace_capture(device, trace_id, cq_id=0)
+            cache_after_capture = _program_cache_count(device)
+            for _ in range(warmup):
+                ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+            samples = []
+            for _ in range(iterations):
+                start = time.perf_counter_ns()
+                ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+                samples.append((time.perf_counter_ns() - start) / 1_000_000.0)
+        finally:
+            if trace_id is not None:
+                release = getattr(ttnn, "release_trace", None)
+                if callable(release):
+                    release(device, trace_id)
+
+        return make_worker_response(
+            request,
+            samples,
+            program_cache_count=cache_after_capture,
+            trace_capture_count=1,
+            new_tensor_allocations=0,
+            metadata={
+                "device_id": device_id,
+                "bucket_name": payload.get("bucket_name"),
+                "physical_cache_len": physical_cache_len,
+                "active_context_len": active_context_len,
+                "batch_size": batch_size,
+                "num_heads": num_heads,
+                "num_kv_heads": num_kv_heads,
+                "head_dim": head_dim,
+                "operation_sequence": [
+                    "paged_scaled_dot_product_attention_decode",
+                    "to_memory_config.post_sdpa",
+                ],
                 "program_cache_before_capture": cache_before_capture,
                 "program_cache_after_capture": cache_after_capture,
                 "new_programs_after_capture": (
@@ -433,6 +684,55 @@ def _constant_matmul_correctness(
     }
 
 
+def _tensor_pair_correctness(
+    *,
+    torch: Any,
+    reference: Any,
+    candidate: Any,
+) -> dict[str, Any]:
+    if tuple(reference.shape) != tuple(candidate.shape):
+        return {
+            "passed": False,
+            "shape_match": False,
+            "reference_shape": list(reference.shape),
+            "candidate_shape": list(candidate.shape),
+        }
+    reference = reference.flatten()
+    candidate = candidate.flatten()
+    finite = bool(
+        torch.isfinite(reference).all().item()
+        and torch.isfinite(candidate).all().item()
+    )
+    difference = (reference - candidate).abs()
+    max_abs_error = float(difference.max().item())
+    mean_abs_error = float(difference.mean().item())
+    reference_centered = reference - reference.mean()
+    candidate_centered = candidate - candidate.mean()
+    denominator = torch.sqrt(
+        (reference_centered.square().sum())
+        * (candidate_centered.square().sum())
+    )
+    denominator_value = float(denominator.item())
+    pcc = (
+        float(
+            (
+                (reference_centered * candidate_centered).sum() / denominator
+            ).item()
+        )
+        if denominator_value > 0
+        else (1.0 if max_abs_error == 0.0 else 0.0)
+    )
+    return {
+        "passed": finite and pcc >= 0.999 and max_abs_error <= 0.1,
+        "shape_match": True,
+        "finite": finite,
+        "pcc": pcc,
+        "pcc_threshold": 0.999,
+        "max_abs_error": max_abs_error,
+        "mean_abs_error": mean_abs_error,
+    }
+
+
 def _constant_tensor_correctness(
     *,
     torch: Any,
@@ -465,7 +765,11 @@ def _constant_tensor_correctness(
 def _silu_activation(ttnn: Any) -> Any | None:
     unary_with_param = getattr(ttnn, "UnaryWithParam", None)
     unary_op_type = getattr(ttnn, "UnaryOpType", None)
-    silu = getattr(unary_op_type, "SILU", None) if unary_op_type is not None else None
+    silu = (
+        getattr(unary_op_type, "SILU", None)
+        if unary_op_type is not None
+        else None
+    )
     return (
         unary_with_param(silu)
         if unary_with_param is not None and silu is not None

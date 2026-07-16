@@ -17,6 +17,8 @@ from .profile_baselines import (
 from .reports import (
     host_copy_not_run_profile,
     section_profile_not_run,
+)
+from .reports import (
     write_report as _write_report,
 )
 
@@ -57,7 +59,8 @@ def run_profile_decode_steady(
     from .decode_inputs import resolve_runtime_input_mode
     from .device import maybe_generate_device
     from .errors import NoTTNNDeviceError
-    from .plans import decode_step_plan, prefill_plan as build_prefill_plan
+    from .plans import decode_step_plan
+    from .plans import prefill_plan as build_prefill_plan
     from .prefill import run_prefill_prompt
     from .prefill_trace import (
         build_prefill_trace_key,
@@ -70,8 +73,9 @@ def run_profile_decode_steady(
         tokenize_prompts_for_prefill,
     )
     from .trace import (
-        P150_LLAMA31_8B_TRACE_REGION_SIZE,
+        build_decode_trace_bucket_keys,
         build_decode_trace_key,
+        decode_trace_region_size,
         resolve_execution_mode,
     )
 
@@ -90,7 +94,9 @@ def run_profile_decode_steady(
         resolved_execution_mode == "trace"
         and resolved_runtime_input_mode != "persistent"
     ):
-        raise ValueError("trace execution requires runtime_input_mode=persistent")
+        raise ValueError(
+            "trace execution requires runtime_input_mode=persistent"
+        )
     num_layers = int(config["num_layers"])
     layer_count = num_layers if layers is None else int(layers)
     batch_size = int(batch_size or config["batch_size"])
@@ -233,7 +239,7 @@ def run_profile_decode_steady(
             device_id,
             ttnn_module,
             trace_region_size=(
-                P150_LLAMA31_8B_TRACE_REGION_SIZE
+                decode_trace_region_size(config)
                 if resolved_execution_mode == "trace"
                 or resolved_prefill_execution_mode == "trace"
                 else None
@@ -315,6 +321,15 @@ def run_profile_decode_steady(
                     cache_len=cache_len,
                     dtype_seed=dtype_seed,
                 ),
+                trace_keys=build_decode_trace_bucket_keys(
+                    device_id=device_id,
+                    config=config,
+                    decode_plan=decode_plan,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    dtype_seed=dtype_seed,
+                ),
             )
 
             samples = list(decode_result.measured_step_ms_samples)
@@ -343,7 +358,8 @@ def run_profile_decode_steady(
                 },
                 {
                     "name": "decode_steady.device_token_handoff",
-                    "passed": context.decode_token_host_roundtrip_per_step is False,
+                    "passed": context.decode_token_host_roundtrip_per_step
+                    is False,
                 },
             ]
             failed_checks = [
@@ -436,9 +452,7 @@ def run_profile_decode_steady(
                 "trace_execute_count": runtime_inputs.get(
                     "trace_execute_count", 0
                 ),
-                "compile_run_count": runtime_inputs.get(
-                    "compile_run_count", 0
-                ),
+                "compile_run_count": runtime_inputs.get("compile_run_count", 0),
                 "persistent_input_count": runtime_inputs.get(
                     "persistent_input_count", 0
                 ),
@@ -525,7 +539,7 @@ def _install_segmented_prefill_profiler(
         _flush_device_profiler_for_audit(ttnn, device)
         return output
 
-    setattr(model, "prefill_layer", profiled_prefill_layer)
+    model.prefill_layer = profiled_prefill_layer
 
 
 def _decode_steady_report_base(
@@ -623,6 +637,8 @@ def _decode_steady_report_base(
         "ttnn_environment": collect_ttnn_environment(None),
         "error": None,
     }
+
+
 def _decode_steady_failed_report(
     base: dict[str, Any],
     *,

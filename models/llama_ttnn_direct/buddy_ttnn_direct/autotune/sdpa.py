@@ -4,9 +4,9 @@ import copy
 import itertools
 import json
 import math
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from collections.abc import Iterable
-from typing import Any, Mapping
+from typing import Any
 
 from .legality import (
     DEFAULT_L1_SAFETY_FACTOR,
@@ -20,7 +20,7 @@ from .measurement import MeasurementCandidate
 from .schema import PrecisionContract, canonical_json, sha256_json
 from .space import CoreGrid, MemoryConfig, SDPAProgramConfig, SearchSpaceConfig
 
-SDPA_ENUMERATOR_SCHEMA_VERSION = 1
+SDPA_ENUMERATOR_SCHEMA_VERSION = 2
 SDPA_OPERATOR = "attention.sdpa"
 _PROGRAM_GRID_PATH = "attention.sdpa_program_config.core_grid"
 _KERNEL_OUTPUT_MEMORY_PATH = "attention.sdpa_kernel_output_memory_config"
@@ -90,6 +90,7 @@ class SDPACandidate:
 @dataclass(frozen=True)
 class SDPAEnumerationResult:
     workload: SDPAWorkload
+    active_context_len: int
     candidates: tuple[SDPACandidate, ...]
     rejected: tuple[dict[str, Any], ...]
     precision_contract_hash: str
@@ -123,6 +124,7 @@ class SDPAEnumerationResult:
             "status": self.status,
             "operator": SDPA_OPERATOR,
             "workload": self.workload.to_dict(),
+            "active_context_len": self.active_context_len,
             "precision_contract_hash": self.precision_contract_hash,
             "official_config_sha256": self.official_config_sha256,
             "official_candidate_ids": [
@@ -142,13 +144,20 @@ class SDPAEnumerationResult:
                     )
                 ],
                 "sub_core_grids": _unique_values(
-                    candidate.program.sub_core_grids for candidate in self.candidates
+                    candidate.program.sub_core_grids
+                    for candidate in self.candidates
                 ),
                 "q_chunk_size": sorted(
-                    {candidate.program.q_chunk_size for candidate in self.candidates}
+                    {
+                        candidate.program.q_chunk_size
+                        for candidate in self.candidates
+                    }
                 ),
                 "k_chunk_size": sorted(
-                    {candidate.program.k_chunk_size for candidate in self.candidates}
+                    {
+                        candidate.program.k_chunk_size
+                        for candidate in self.candidates
+                    }
                 ),
                 "max_cores_per_head_batch": sorted(
                     {
@@ -160,11 +169,19 @@ class SDPAEnumerationResult:
                     candidate.kernel_output_memory.to_dict()
                     for candidate in self.candidates
                 ),
+                "post_sdpa_output_memory": _unique_values(
+                    candidate.post_sdpa_output_memory.to_dict()
+                    for candidate in self.candidates
+                ),
             },
             "frozen_dimensions": {
-                "exp_approx_mode": self.official_candidates[0].program.exp_approx_mode,
+                "exp_approx_mode": self.official_candidates[
+                    0
+                ].program.exp_approx_mode,
             },
-            "candidates": [candidate.to_dict() for candidate in self.candidates],
+            "candidates": [
+                candidate.to_dict() for candidate in self.candidates
+            ],
             "rejected": [copy.deepcopy(item) for item in self.rejected],
         }
 
@@ -177,13 +194,21 @@ def enumerate_sdpa_programs(
     precision_contract: PrecisionContract,
     safety_factor: float = DEFAULT_L1_SAFETY_FACTOR,
     max_proposals: int = 256,
+    active_context_len: int | None = None,
 ) -> SDPAEnumerationResult:
     if max_proposals < 2:
         raise SDPAEnumerationError("max_proposals must be at least two")
     operator = base_space.operators.get(SDPA_OPERATOR)
     if not isinstance(operator, Mapping) or operator.get("kind") != "sdpa":
-        raise SDPAEnumerationError("search space has no attention.sdpa operator")
+        raise SDPAEnumerationError(
+            "search space has no attention.sdpa operator"
+        )
     official_program = SDPAProgramConfig.from_dict(operator)
+    context_len = int(active_context_len or workload.sdpa.cache_len)
+    if context_len <= 0 or context_len > workload.sdpa.cache_len:
+        raise SDPAEnumerationError(
+            "active_context_len must be within the physical KV cache capacity"
+        )
     official_kernel_memory = _required_memory(
         operator,
         "kernel_output_memory",
@@ -200,6 +225,7 @@ def enumerate_sdpa_programs(
         official_kernel_memory=official_kernel_memory,
         official_post_memory=official_post_memory,
         workload=workload.sdpa,
+        active_context_len=context_len,
         device=device,
         max_proposals=max_proposals,
     )
@@ -211,11 +237,13 @@ def enumerate_sdpa_programs(
             base_space,
             program=program,
             kernel_output_memory=kernel_memory,
+            post_sdpa_output_memory=post_memory,
         )
         identity = _config_identity(program, kernel_memory, post_memory)
         candidate_id = _candidate_id(
             identity,
             workload=workload.sdpa,
+            active_context_len=context_len,
             device=device,
         )
         report = validate_candidate(
@@ -225,7 +253,9 @@ def enumerate_sdpa_programs(
             candidate_id=candidate_id,
             safety_factor=safety_factor,
         )
-        is_official = canonical_json(identity) == canonical_json(official_identity)
+        is_official = canonical_json(identity) == canonical_json(
+            official_identity
+        )
         if report.passed:
             legal.append(
                 SDPACandidate(
@@ -264,6 +294,7 @@ def enumerate_sdpa_programs(
 
     result = SDPAEnumerationResult(
         workload=workload.sdpa,
+        active_context_len=context_len,
         candidates=tuple(legal),
         rejected=tuple(rejected),
         precision_contract_hash=precision_contract.hash,
@@ -287,7 +318,7 @@ def rank_sdpa_measurement_candidates(
     total_work = (
         workload.batch_size
         * workload.num_heads
-        * workload.cache_len
+        * enumeration.active_context_len
         * workload.head_dim
     )
     for candidate in enumeration.candidates:
@@ -295,9 +326,13 @@ def rank_sdpa_measurement_candidates(
         head_batch_cores = max(1, candidate.program.max_cores_per_head_batch)
         effective_cores = max(1, min(grid_cores, head_batch_cores))
         q_chunk = candidate.program.q_chunk_size or 32
-        k_chunk = candidate.program.k_chunk_size or workload.cache_len
+        k_chunk = (
+            candidate.program.k_chunk_size or enumeration.active_context_len
+        )
         q_chunk_count = max(1, math.ceil(32 / q_chunk))
-        k_chunk_count = max(1, math.ceil(workload.cache_len / k_chunk))
+        k_chunk_count = max(
+            1, math.ceil(enumeration.active_context_len / k_chunk)
+        )
         chunk_overhead = 1.0 + 0.01 * (q_chunk_count + k_chunk_count - 2)
         grid_underuse = grid_cores / effective_cores
         memory_penalty = (
@@ -326,6 +361,7 @@ def rank_sdpa_measurement_candidates(
                 is_incumbent=candidate.is_official,
                 metadata={
                     "ranking_model": "shape_work_parallelism_chunk_memory_prior",
+                    "active_context_len": enumeration.active_context_len,
                     "total_work": total_work,
                     "grid_cores": grid_cores,
                     "effective_cores": effective_cores,
@@ -355,6 +391,7 @@ def _program_proposals(
     official_kernel_memory: MemoryConfig,
     official_post_memory: MemoryConfig,
     workload: SDPAWorkload,
+    active_context_len: int,
     device: DeviceDescriptor,
     max_proposals: int,
 ) -> list[
@@ -368,13 +405,17 @@ def _program_proposals(
 ]:
     grids = _grid_options(official_program.grid, device)
     q_chunks = _ordered_unique([official_program.q_chunk_size, 0, 32, 64])
-    k_chunks = _k_chunk_options(official_program.k_chunk_size, workload.cache_len)
+    k_chunks = _k_chunk_options(
+        official_program.k_chunk_size, active_context_len
+    )
     max_core_options = _ordered_unique(
         [official_program.max_cores_per_head_batch, 4, 8, 16, 32]
     )
     kernel_memories = _memory_options(
-        official_kernel_memory,
-        official_post_memory,
+        official_kernel_memory, official_post_memory
+    )
+    post_memories = _memory_options(
+        official_post_memory, official_kernel_memory
     )
     official_key = canonical_json(
         _config_identity(
@@ -389,17 +430,25 @@ def _program_proposals(
             tuple[Any, ...],
             SDPAProgramConfig,
             MemoryConfig,
+            MemoryConfig,
             int,
             dict[str, Any],
         ]
     ] = []
     for grid in grids:
         for sub_core_grids in _sub_core_options(grid, device):
-            for q_chunk, k_chunk, max_cores, kernel_memory in itertools.product(
+            for (
+                q_chunk,
+                k_chunk,
+                max_cores,
+                kernel_memory,
+                post_memory,
+            ) in itertools.product(
                 q_chunks,
                 k_chunks,
                 max_core_options,
                 kernel_memories,
+                post_memories,
             ):
                 active_cores = grid.x * grid.y
                 if max_cores > active_cores:
@@ -417,13 +466,15 @@ def _program_proposals(
                 identity = _config_identity(
                     program,
                     kernel_memory,
-                    official_post_memory,
+                    post_memory,
                 )
                 changed = _changed_dimensions(
                     program,
                     kernel_memory,
+                    post_memory,
                     official_program=official_program,
                     official_kernel_memory=official_kernel_memory,
+                    official_post_memory=official_post_memory,
                 )
                 rank = (
                     len(changed),
@@ -435,17 +486,20 @@ def _program_proposals(
                     k_chunk,
                     max_cores,
                     canonical_json(kernel_memory.to_dict()),
+                    canonical_json(post_memory.to_dict()),
                 )
                 ranked.append(
                     (
                         rank,
                         program,
                         kernel_memory,
+                        post_memory,
                         len(changed),
                         {
                             "rule": "bounded_pairwise_shape_device_search",
                             "changed_dimensions": changed,
-                            "cache_len": workload.cache_len,
+                            "physical_cache_len": workload.cache_len,
+                            "active_context_len": active_context_len,
                             "batch_size": workload.batch_size,
                             "num_heads": workload.num_heads,
                             "num_kv_heads": workload.num_kv_heads,
@@ -459,11 +513,18 @@ def _program_proposals(
     ranked.sort(key=lambda item: item[0])
     proposals = []
     seen: set[str] = set()
-    for _, program, kernel_memory, changed_count, derivation in ranked:
+    for (
+        _,
+        program,
+        kernel_memory,
+        post_memory,
+        changed_count,
+        derivation,
+    ) in ranked:
         identity = _config_identity(
             program,
             kernel_memory,
-            official_post_memory,
+            post_memory,
         )
         key = canonical_json(identity)
         if key in seen:
@@ -475,7 +536,9 @@ def _program_proposals(
             else (
                 "one_axis"
                 if changed_count == 1
-                else "pairwise" if changed_count == 2 else "multi_axis"
+                else "pairwise"
+                if changed_count == 2
+                else "multi_axis"
             )
         )
         proposals.append(
@@ -483,7 +546,7 @@ def _program_proposals(
                 source,
                 program,
                 kernel_memory,
-                official_post_memory,
+                post_memory,
                 {
                     **derivation,
                     "frozen_exp_approx_mode": official_program.exp_approx_mode,
@@ -501,7 +564,10 @@ def _grid_options(
 ) -> list[CoreGrid]:
     values = [
         official,
-        *(CoreGrid(x, y) for x, y in ((8, 4), (8, 8), (10, 8), (8, 10), (10, 10))),
+        *(
+            CoreGrid(x, y)
+            for x, y in ((8, 4), (8, 8), (10, 8), (8, 10), (10, 10))
+        ),
     ]
     result: list[CoreGrid] = []
     seen: set[tuple[int, int]] = set()
@@ -575,9 +641,11 @@ def _memory_options(
 def _changed_dimensions(
     program: SDPAProgramConfig,
     kernel_memory: MemoryConfig,
+    post_memory: MemoryConfig,
     *,
     official_program: SDPAProgramConfig,
     official_kernel_memory: MemoryConfig,
+    official_post_memory: MemoryConfig,
 ) -> list[str]:
     dimensions = (
         ("grid", program.grid.to_list(), official_program.grid.to_list()),
@@ -598,6 +666,11 @@ def _changed_dimensions(
             kernel_memory.to_dict(),
             official_kernel_memory.to_dict(),
         ),
+        (
+            "post_sdpa_output_memory",
+            post_memory.to_dict(),
+            official_post_memory.to_dict(),
+        ),
     )
     return [
         name
@@ -611,24 +684,30 @@ def _replace_sdpa(
     *,
     program: SDPAProgramConfig,
     kernel_output_memory: MemoryConfig,
+    post_sdpa_output_memory: MemoryConfig,
 ) -> SearchSpaceConfig:
     payload = base_space.to_dict()
     operator = payload["operators"].get(SDPA_OPERATOR)
     if not isinstance(operator, dict):
-        raise SDPAEnumerationError("attention.sdpa disappeared from search space")
-    post_memory = copy.deepcopy(operator.get("output_memory"))
+        raise SDPAEnumerationError(
+            "attention.sdpa disappeared from search space"
+        )
     operator.clear()
     operator.update(program.to_dict())
     operator["kernel_output_memory"] = kernel_output_memory.to_dict()
-    operator["output_memory"] = post_memory
+    operator["output_memory"] = post_sdpa_output_memory.to_dict()
     if _PROGRAM_GRID_PATH in payload["core_grids"]:
         payload["core_grids"][_PROGRAM_GRID_PATH] = program.grid.to_list()
     if _KERNEL_OUTPUT_MEMORY_PATH in payload["memory_configs"]:
-        payload["memory_configs"][
-            _KERNEL_OUTPUT_MEMORY_PATH
-        ] = kernel_output_memory.to_dict()
+        payload["memory_configs"][_KERNEL_OUTPUT_MEMORY_PATH] = (
+            kernel_output_memory.to_dict()
+        )
+    post_path = "attention.sdpa_output_memory_config"
+    if post_path in payload["memory_configs"]:
+        payload["memory_configs"][post_path] = post_sdpa_output_memory.to_dict()
     edge = payload["edges"].get("sdpa_to_concat_heads")
     if isinstance(edge, dict):
+        edge["consumer_input_memory"] = post_sdpa_output_memory.to_dict()
         consumer = edge.get("consumer_input_memory")
         producer = kernel_output_memory.to_dict()
         edge["producer_output_memory"] = producer
@@ -664,12 +743,14 @@ def _candidate_id(
     identity: Mapping[str, Any],
     *,
     workload: SDPAWorkload,
+    active_context_len: int,
     device: DeviceDescriptor,
 ) -> str:
     payload = {
         "operator": SDPA_OPERATOR,
         "config": copy.deepcopy(dict(identity)),
         "workload": workload.to_dict(),
+        "active_context_len": active_context_len,
         "device": device.to_dict(),
     }
     return f"attention-sdpa-{sha256_json(payload)[:12]}"
