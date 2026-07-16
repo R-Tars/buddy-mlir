@@ -5,6 +5,15 @@ from .artifact import (
     build_paper_artifact,
     verify_paper_artifact,
 )
+from .baseline import (
+    BASELINE_MAXIMUM_CV,
+    BASELINE_MINIMUM_TOKENS_PER_SECOND_PER_USER,
+    BASELINE_REPETITIONS,
+    BASELINE_SCHEMA_VERSION,
+    BaselineArtifactError,
+    build_baseline_artifact,
+    verify_baseline_artifact,
+)
 from .legality import (
     CompileValidationRequest,
     CompileValidationResult,
@@ -184,6 +193,11 @@ __all__ = (
     "ConfirmationPolicy",
     "ACTIVATION_AXIS",
     "BenchmarkTarget",
+    "BASELINE_MAXIMUM_CV",
+    "BASELINE_MINIMUM_TOKENS_PER_SECOND_PER_USER",
+    "BASELINE_REPETITIONS",
+    "BASELINE_SCHEMA_VERSION",
+    "BaselineArtifactError",
     "CompileValidationRequest",
     "CompileValidationResult",
     "ContractViolation",
@@ -279,6 +293,7 @@ __all__ = (
     "apply_layout_result",
     "apply_template_selection",
     "build_candidate_config",
+    "build_baseline_artifact",
     "build_llama_layout_graphs",
     "build_llama31_8b_transfer_plan",
     "build_microbench_report",
@@ -317,6 +332,7 @@ __all__ = (
     "validate_layout_memory",
     "validate_template_selection",
     "verify_paper_artifact",
+    "verify_baseline_artifact",
     "write_legality_report",
     "write_confirmation_report",
     "write_layout_search_report",
