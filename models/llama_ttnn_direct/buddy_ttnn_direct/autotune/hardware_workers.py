@@ -8,7 +8,15 @@ from contextlib import contextmanager
 from typing import Any
 
 from ..runtime.config_runtime import realize_ttnn_config
-from ..ttnn_compat.ops import paged_sdpa_decode
+from ..runtime.rotary import build_decode_rotary_host_tensors
+from ..ttnn_compat.ops import (
+    nlp_create_qkv_heads_decode,
+    paged_fused_update_cache,
+    paged_sdpa_decode,
+    paged_update_cache,
+    rotary_embedding_decode,
+    rotary_embedding_fused_qk,
+)
 from .microbench import MicrobenchmarkError, make_worker_response
 
 
@@ -421,6 +429,448 @@ def packed_gate_up_region_trace_worker(
                 "linear_count": 2 if mode == "incumbent" else 1,
                 "split_operation_count": 0 if mode == "incumbent" else 1,
                 "added_conversion_count": 2 if requires_conversion else 0,
+                "program_cache_before_capture": cache_before_capture,
+                "program_cache_after_capture": cache_after_capture,
+                "new_programs_after_capture": (
+                    cache_after_capture - cache_before_capture
+                ),
+                "trace_replay": True,
+                "persistent_inputs": True,
+                "correctness": correctness,
+            },
+        )
+
+
+def fused_attention_region_trace_worker(
+    request: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Measure QKV production through K/V update as one trace region."""
+
+    payload = _mapping(request.get("payload"), "payload")
+    candidate = _mapping(request.get("candidate"), "candidate")
+    measurement = _mapping(
+        candidate.get("measurement_contract"), "measurement_contract"
+    )
+    execution = _mapping(
+        candidate.get("execution_contract"), "execution_contract"
+    )
+    _validate_execution_contract(execution)
+
+    mode = str(payload.get("mode"))
+    if mode not in {"incumbent", "challenger"}:
+        raise MicrobenchmarkError(
+            "fused attention region mode must be incumbent or challenger"
+        )
+    ttnn = importlib.import_module("ttnn")
+    torch = importlib.import_module("torch")
+    device_id = int(payload.get("device_id", 0))
+    batch_size = int(payload.get("batch_size", 32))
+    hidden_size = int(payload.get("hidden_size", 4096))
+    num_heads = int(payload.get("num_heads", 32))
+    num_kv_heads = int(payload.get("num_kv_heads", 8))
+    head_dim = int(payload.get("head_dim", 128))
+    physical_cache_len = int(payload.get("physical_cache_len", 1024))
+    page_block_size = int(payload.get("page_block_size", 32))
+    active_position = int(payload.get("active_position", 127))
+    if (batch_size, num_heads, num_kv_heads, head_dim) != (32, 32, 8, 128):
+        raise MicrobenchmarkError(
+            "fused attention worker requires Llama 3.1 8B batch32 dimensions"
+        )
+    if physical_cache_len <= 0 or physical_cache_len % page_block_size:
+        raise MicrobenchmarkError(
+            "fused attention cache length must be page-block aligned"
+        )
+    if not 0 <= active_position < physical_cache_len:
+        raise MicrobenchmarkError("active position exceeds physical cache")
+    warmup = int(measurement["warmup"])
+    iterations = int(measurement["iterations"])
+
+    with _managed_device(ttnn, device_id) as device:
+        hidden_input_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("hidden_input_memory"),
+                "hidden input memory",
+            ),
+            ttnn,
+        )
+        weight_memory = realize_ttnn_config(
+            _mapping(payload.get("weight_memory"), "QKV weight memory"),
+            ttnn,
+        )
+        qkv_output_memory = realize_ttnn_config(
+            _mapping(payload.get("qkv_output_memory"), "QKV output memory"),
+            ttnn,
+        )
+        incumbent_qkv_program = realize_ttnn_config(
+            _mapping(
+                payload.get("incumbent_qkv_program_config"),
+                "incumbent QKV program",
+            ),
+            ttnn,
+        )
+        challenger_qkv_program = realize_ttnn_config(
+            _mapping(
+                payload.get("challenger_qkv_program_config"),
+                "challenger QKV program",
+            ),
+            ttnn,
+        )
+        incumbent_heads_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("incumbent_heads_memory"),
+                "incumbent heads memory",
+            ),
+            ttnn,
+        )
+        incumbent_cos_sin_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("incumbent_rope_cos_sin_memory"),
+                "incumbent RoPE cos/sin memory",
+            ),
+            ttnn,
+        )
+        incumbent_transform_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("incumbent_rope_transform_memory"),
+                "incumbent RoPE transform memory",
+            ),
+            ttnn,
+        )
+        fused_heads_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("fused_heads_memory"), "fused heads memory"
+            ),
+            ttnn,
+        )
+        fused_cos_sin_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("fused_rope_cos_sin_memory"),
+                "fused RoPE cos/sin memory",
+            ),
+            ttnn,
+        )
+        fused_transform_memory = realize_ttnn_config(
+            _mapping(
+                payload.get("fused_rope_transform_memory"),
+                "fused RoPE transform memory",
+            ),
+            ttnn,
+        )
+        compute_kernel_config = realize_ttnn_config(
+            _mapping(
+                payload.get("compute_kernel_config"),
+                "attention compute kernel config",
+            ),
+            ttnn,
+        )
+        input_dtype = _dtype(
+            ttnn, str(payload.get("input_dtype", "bfloat16"))
+        )
+        weight_dtype = _dtype(
+            ttnn, str(payload.get("weight_dtype", "bfloat8_b"))
+        )
+        output_dtype = _dtype(
+            ttnn, str(payload.get("output_dtype", "bfloat16"))
+        )
+        cache_dtype = _dtype(
+            ttnn, str(payload.get("cache_dtype", "bfloat8_b"))
+        )
+        qkv_width = (num_heads + 2 * num_kv_heads) * head_dim
+        fill_value = float(payload.get("fill_value", 0.015625))
+        hidden = ttnn.full(
+            (1, 1, batch_size, hidden_size),
+            fill_value,
+            dtype=input_dtype,
+            layout=ttnn.TILE_LAYOUT,
+            device=device,
+            memory_config=hidden_input_memory,
+        )
+        weight = ttnn.full(
+            (1, 1, hidden_size, qkv_width),
+            fill_value,
+            dtype=weight_dtype,
+            layout=ttnn.TILE_LAYOUT,
+            device=device,
+            memory_config=weight_memory,
+        )
+
+        rope = _mapping(payload.get("rope") or {}, "rope")
+        rope_kwargs = {
+            "head_dim": head_dim,
+            "theta": float(rope.get("theta", 500000.0)),
+            "scaling": rope.get("scaling"),
+            "dtype_seed": "bf16",
+        }
+        incumbent_rope_host = build_decode_rotary_host_tensors(
+            torch=torch,
+            positions=[active_position] * batch_size,
+            fused_qk=False,
+            **rope_kwargs,
+        )
+        fused_rope_host = build_decode_rotary_host_tensors(
+            torch=torch,
+            positions=[active_position] * batch_size,
+            fused_qk=True,
+            **rope_kwargs,
+        )
+
+        def rotary_tensor(host: Any, memory_config: Any) -> Any:
+            return ttnn.from_torch(
+                host,
+                dtype=input_dtype,
+                layout=ttnn.TILE_LAYOUT,
+                device=device,
+                memory_config=memory_config,
+            )
+
+        incumbent_cos = rotary_tensor(
+            incumbent_rope_host.cos, incumbent_cos_sin_memory
+        )
+        incumbent_sin = rotary_tensor(
+            incumbent_rope_host.sin, incumbent_cos_sin_memory
+        )
+        incumbent_transform = rotary_tensor(
+            incumbent_rope_host.transformation,
+            incumbent_transform_memory,
+        )
+        fused_cos = rotary_tensor(
+            fused_rope_host.cos, fused_cos_sin_memory
+        )
+        fused_sin = rotary_tensor(
+            fused_rope_host.sin, fused_cos_sin_memory
+        )
+        fused_transform = rotary_tensor(
+            fused_rope_host.transformation, fused_transform_memory
+        )
+
+        pages_per_user = physical_cache_len // page_block_size
+        cache_shape = (
+            batch_size * pages_per_user,
+            num_kv_heads,
+            page_block_size,
+            head_dim,
+        )
+        cache_host = torch.zeros(cache_shape, dtype=torch.bfloat16)
+
+        def cache_tensor() -> Any:
+            return ttnn.from_torch(
+                cache_host,
+                dtype=cache_dtype,
+                layout=ttnn.TILE_LAYOUT,
+                device=device,
+            )
+
+        incumbent_key_cache = cache_tensor()
+        incumbent_value_cache = cache_tensor()
+        fused_key_cache = cache_tensor()
+        fused_value_cache = cache_tensor()
+        page_table_host = torch.arange(
+            batch_size * pages_per_user, dtype=torch.int32
+        ).reshape(batch_size, pages_per_user)
+        page_table = ttnn.from_torch(
+            page_table_host,
+            dtype=ttnn.int32,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+            device=device,
+        )
+        cache_position = ttnn.from_torch(
+            torch.full(
+                (batch_size,), active_position, dtype=torch.int32
+            ),
+            dtype=ttnn.int32,
+            layout=ttnn.ROW_MAJOR_LAYOUT,
+            device=device,
+        )
+
+        def incumbent_region(key_cache: Any, value_cache: Any) -> tuple[Any, ...]:
+            qkv = ttnn.linear(
+                hidden,
+                weight,
+                memory_config=qkv_output_memory,
+                program_config=incumbent_qkv_program,
+                compute_kernel_config=compute_kernel_config,
+                dtype=output_dtype,
+            )
+            q, k, v = nlp_create_qkv_heads_decode(
+                ttnn,
+                qkv,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                overlap_qk_coregrid=True,
+                memory_config=incumbent_heads_memory,
+            )
+            q, k = rotary_embedding_decode(
+                ttnn,
+                q,
+                k,
+                cos_matrix=incumbent_cos,
+                sin_matrix=incumbent_sin,
+                transformation_matrix=incumbent_transform,
+            )
+            key_cache = paged_update_cache(
+                ttnn,
+                key_cache,
+                k,
+                update_idxs_tensor=cache_position,
+                page_table=page_table,
+            )
+            value_cache = paged_update_cache(
+                ttnn,
+                value_cache,
+                v,
+                update_idxs_tensor=cache_position,
+                page_table=page_table,
+            )
+            return q, k, v, key_cache, value_cache
+
+        def fused_region(key_cache: Any, value_cache: Any) -> tuple[Any, ...]:
+            qkv = ttnn.linear(
+                hidden,
+                weight,
+                memory_config=qkv_output_memory,
+                program_config=challenger_qkv_program,
+                compute_kernel_config=compute_kernel_config,
+                dtype=output_dtype,
+            )
+            q, k, v = nlp_create_qkv_heads_decode(
+                ttnn,
+                qkv,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                overlap_qk_coregrid=False,
+                memory_config=fused_heads_memory,
+            )
+            q, k = rotary_embedding_fused_qk(
+                ttnn,
+                q,
+                k,
+                cos_matrix=fused_cos,
+                sin_matrix=fused_sin,
+                transformation_matrix=fused_transform,
+                compute_kernel_config=compute_kernel_config,
+            )
+            key_cache, value_cache = paged_fused_update_cache(
+                ttnn,
+                key_cache,
+                k,
+                value_cache,
+                v,
+                update_idxs_tensor=cache_position,
+                page_table=page_table,
+            )
+            return q, k, v, key_cache, value_cache
+
+        incumbent_output = incumbent_region(
+            incumbent_key_cache, incumbent_value_cache
+        )
+        fused_output = fused_region(fused_key_cache, fused_value_cache)
+        _synchronize(ttnn, device)
+        correctness_parts = {}
+        for name, reference, observed in zip(
+            ("q", "k", "v", "key_cache", "value_cache"),
+            incumbent_output,
+            fused_output,
+        ):
+            correctness_parts[name] = _tensor_pair_correctness(
+                torch=torch,
+                reference=ttnn.to_torch(reference).to(torch.float32),
+                candidate=ttnn.to_torch(observed).to(torch.float32),
+            )
+        correctness = {
+            "passed": all(
+                item["passed"] for item in correctness_parts.values()
+            ),
+            "parts": correctness_parts,
+        }
+        if not correctness["passed"]:
+            raise MicrobenchmarkError(
+                "fused attention region correctness gate failed: "
+                + str(correctness)
+            )
+
+        region = incumbent_region if mode == "incumbent" else fused_region
+        key_cache = (
+            incumbent_key_cache if mode == "incumbent" else fused_key_cache
+        )
+        value_cache = (
+            incumbent_value_cache if mode == "incumbent" else fused_value_cache
+        )
+        cache_before_capture = _program_cache_count(device)
+        trace_id = None
+        captured_output = None
+        try:
+            trace_id = ttnn.begin_trace_capture(device, cq_id=0)
+            captured_output = region(key_cache, value_cache)
+            ttnn.end_trace_capture(device, trace_id, cq_id=0)
+            cache_after_capture = _program_cache_count(device)
+            for _ in range(warmup):
+                ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+            samples = []
+            for _ in range(iterations):
+                start = time.perf_counter_ns()
+                ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+                samples.append((time.perf_counter_ns() - start) / 1_000_000.0)
+        finally:
+            if trace_id is not None:
+                release = getattr(ttnn, "release_trace", None)
+                if callable(release):
+                    release(device, trace_id)
+        del captured_output
+
+        operation_sequence = [
+            str(value) for value in payload.get("operation_sequence", [])
+        ]
+        return make_worker_response(
+            request,
+            samples,
+            program_cache_count=cache_after_capture,
+            trace_capture_count=1,
+            new_tensor_allocations=0,
+            metadata={
+                "device_id": device_id,
+                "mode": mode,
+                "shape": {
+                    "batch_size": batch_size,
+                    "hidden_size": hidden_size,
+                    "qkv_width": qkv_width,
+                    "num_heads": num_heads,
+                    "num_kv_heads": num_kv_heads,
+                    "head_dim": head_dim,
+                },
+                "physical_cache_len": physical_cache_len,
+                "active_position": active_position,
+                "operation_sequence": operation_sequence,
+                "operation_count": len(operation_sequence),
+                "fused_operation_count": int(
+                    payload.get("fused_operation_count", 0)
+                ),
+                "operation_count_reduction": int(
+                    payload.get("operation_count_reduction", 0)
+                ),
+                "added_conversion_count": int(
+                    payload.get("added_conversion_count", 0)
+                ),
+                "removed_conversion_count": int(
+                    payload.get("removed_conversion_count", 0)
+                ),
+                "zero_hot_path_conversions": (
+                    int(payload.get("added_conversion_count", 0)) == 0
+                ),
+                "conversion_bound": False,
+                "qkv_program": {
+                    "incumbent_per_core_n": int(
+                        _mapping(
+                            payload.get("incumbent_qkv_program_config"),
+                            "incumbent QKV program",
+                        )["per_core_N"]
+                    ),
+                    "challenger_per_core_n": int(
+                        _mapping(
+                            payload.get("challenger_qkv_program_config"),
+                            "challenger QKV program",
+                        )["per_core_N"]
+                    ),
+                },
                 "program_cache_before_capture": cache_before_capture,
                 "program_cache_after_capture": cache_after_capture,
                 "new_programs_after_capture": (

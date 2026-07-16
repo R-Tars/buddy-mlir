@@ -166,6 +166,10 @@ _SOURCE = """\
             qkv,
             num_heads=self.config.num_attention_heads,
             num_kv_heads=self.config.num_key_value_heads,
+            overlap_qk_coregrid=_optional_attr(
+                attention_config,
+                "qkv_heads_overlap_qk_coregrid",
+            ),
             memory_config=attention_heads_memory_config,
             op_name="nlp_create_qkv_heads_decode",
         )

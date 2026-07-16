@@ -481,7 +481,7 @@ class TTNNCompatOps:
                 try:
                     return slice_op(tensor, starts, ends)
                 except TypeError:
-                    raise err
+                    raise err from None
 
     def select_sequence_position(
         self,
@@ -521,7 +521,7 @@ class TTNNCompatOps:
                 try:
                     return slice_op(tensor, starts, ends)
                 except TypeError:
-                    raise err
+                    raise err from None
 
     def select_sequence_positions(
         self,
@@ -584,6 +584,7 @@ class TTNNCompatOps:
         *,
         num_heads,
         num_kv_heads,
+        overlap_qk_coregrid=None,
         memory_config=None,
         op_name="nlp_create_qkv_heads_decode",
     ):
@@ -593,6 +594,7 @@ class TTNNCompatOps:
             qkv,
             num_heads=num_heads,
             num_kv_heads=num_kv_heads,
+            overlap_qk_coregrid=overlap_qk_coregrid,
             memory_config=self.resolve_memory_config(memory_config),
         )
 

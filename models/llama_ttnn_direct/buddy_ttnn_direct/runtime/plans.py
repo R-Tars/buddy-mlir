@@ -122,6 +122,7 @@ def decode_step_plan(
         },
         "layer_parameter_shapes": layer_parameter_shapes,
         "rotary": dict(config.get("rotary") or {}),
+        "rotary_memory_configs": _decode_rotary_memory_configs(config),
         "templates": templates,
         "expected_intermediate_shapes": {
             "embedding": decode_hidden_shape(batch_size, hidden_size),
@@ -343,6 +344,21 @@ def _template_selection(config: dict[str, Any]) -> dict[str, str]:
         ):
             result["mlp.gate_up"] = "packed_gate_up"
     return result
+
+
+def _decode_rotary_memory_configs(config: dict[str, Any]) -> dict[str, Any]:
+    attention = config.get("attention")
+    if not isinstance(attention, dict):
+        return {}
+    names = {
+        "cos_sin": "fused_rope_cos_sin_memory_config",
+        "transformation": "fused_rope_transform_memory_config",
+    }
+    return {
+        target: dict(attention[source])
+        for target, source in names.items()
+        if isinstance(attention.get(source), dict)
+    }
 
 
 def decode_output_kind(config: dict[str, Any]) -> str:

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any
+
+from .config_runtime import realize_ttnn_config
 
 
 class RotaryConfigurationError(ValueError):
@@ -114,6 +117,7 @@ def attach_decode_rotary_parameters(
         device,
         batch_size=rotary_batch_size,
         head_dim=head_dim,
+        descriptor=_rotary_memory_descriptor(plan, "cos_sin"),
     )
     if cos_sin_memory is not None:
         cos_sin_kwargs["memory_config"] = cos_sin_memory
@@ -122,6 +126,7 @@ def attach_decode_rotary_parameters(
         ttnn,
         device,
         batch_size=rotary_batch_size,
+        descriptor=_rotary_memory_descriptor(plan, "transformation"),
     )
     if transform_memory is not None:
         transform_kwargs["memory_config"] = transform_memory
@@ -306,12 +311,14 @@ def decode_rotary_cos_sin_memory_config(
     *,
     batch_size: int,
     head_dim: int,
+    descriptor: Mapping[str, Any] | None = None,
 ) -> Any | None:
     return _rotary_cos_sin_memory_config(
         ttnn,
         device,
         batch_size=batch_size,
         head_dim=head_dim,
+        descriptor=descriptor,
     )
 
 
@@ -320,11 +327,13 @@ def decode_rotary_transform_memory_config(
     device: Any,
     *,
     batch_size: int,
+    descriptor: Mapping[str, Any] | None = None,
 ) -> Any | None:
     return _rotary_transform_memory_config(
         ttnn,
         device,
         batch_size=batch_size,
+        descriptor=descriptor,
     )
 
 
@@ -444,6 +453,16 @@ def _uses_fused_qk_rope(plan: dict[str, Any]) -> bool:
     )
 
 
+def _rotary_memory_descriptor(
+    plan: Mapping[str, Any], name: str
+) -> Mapping[str, Any] | None:
+    configs = plan.get("rotary_memory_configs")
+    if not isinstance(configs, Mapping):
+        return None
+    value = configs.get(name)
+    return value if isinstance(value, Mapping) else None
+
+
 def _tensor_kwargs(
     *,
     ttnn: Any,
@@ -481,7 +500,10 @@ def _rotary_cos_sin_memory_config(
     *,
     batch_size: int,
     head_dim: int,
+    descriptor: Mapping[str, Any] | None = None,
 ) -> Any | None:
+    if descriptor is not None:
+        return realize_ttnn_config(dict(descriptor), ttnn)
     tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
     return _sharded_memory_config(
         ttnn,
@@ -496,7 +518,10 @@ def _rotary_transform_memory_config(
     device: Any,
     *,
     batch_size: int,
+    descriptor: Mapping[str, Any] | None = None,
 ) -> Any | None:
+    if descriptor is not None:
+        return realize_ttnn_config(dict(descriptor), ttnn)
     tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
     return _sharded_memory_config(
         ttnn,

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any
 
 from .inputs import build_decode_runtime_state
 from .rotary import (
@@ -54,6 +55,12 @@ class DecodeInputBuffers:
         )
         self.rotary_batch_size = (
             2 * self.batch_size if self.fused_qk_rope else self.batch_size
+        )
+        rotary_memory_configs = decode_plan.get("rotary_memory_configs")
+        self.rotary_memory_configs = (
+            dict(rotary_memory_configs)
+            if isinstance(rotary_memory_configs, dict)
+            else {}
         )
         self.head_dim = int(
             decode_plan["layer_parameter_shapes"]["rotary_cos_matrix"][-1]
@@ -130,6 +137,7 @@ class DecodeInputBuffers:
             ttnn,
             device,
             batch_size=self.rotary_batch_size,
+            descriptor=self.rotary_memory_configs.get("transformation"),
         )
         if transform_memory is not None:
             transform_kwargs["memory_config"] = transform_memory
@@ -293,6 +301,7 @@ class DecodeInputBuffers:
             self.device,
             batch_size=self.rotary_batch_size,
             head_dim=self.head_dim,
+            descriptor=self.rotary_memory_configs.get("cos_sin"),
         )
         embedding_kwargs = {
             "layout": getattr(self.ttnn, "TILE_LAYOUT", None),

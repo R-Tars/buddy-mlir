@@ -13,6 +13,8 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import (
     TTNNCompatOps,
     UnsupportedTTNNOp,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import (
     ops as ttnn_ops,
 )
 
@@ -521,6 +523,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
             "fused_qkv",
             num_heads=32,
             num_kv_heads=8,
+            overlap_qk_coregrid=False,
             memory_config="heads_mem",
         )
 
@@ -534,6 +537,7 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                     {
                         "num_heads": 32,
                         "num_kv_heads": 8,
+                        "overlap_qk_coregrid": False,
                         "memory_config": "heads_mem",
                     },
                 )

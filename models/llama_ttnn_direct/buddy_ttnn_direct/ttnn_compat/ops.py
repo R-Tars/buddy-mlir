@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .errors import UnsupportedTTNNOp
 
@@ -11,6 +12,7 @@ def nlp_create_qkv_heads_decode(
     *,
     num_heads: int,
     num_kv_heads: int,
+    overlap_qk_coregrid: bool | None = None,
     memory_config: Any | None = None,
 ) -> tuple[Any, Any, Any]:
     # Signature: ttnn.experimental.nlp_create_qkv_heads_decode(
@@ -28,6 +30,7 @@ def nlp_create_qkv_heads_decode(
     kwargs = _without_none(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
+        overlap_qk_coregrid=overlap_qk_coregrid,
         memory_config=memory_config,
     )
     return op(fused_qkv, **kwargs)
@@ -305,7 +308,7 @@ def fill_cache(
         try:
             return op(cache_tensor, update_tensor, user_id)
         except TypeError:
-            raise err
+            raise err from None
 
 
 def paged_fill_cache(
