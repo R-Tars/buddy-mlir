@@ -543,6 +543,19 @@ def _run_isolated_repetition(
             "stdout_tail": stdout[-4096:],
             "stderr_tail": stderr[-4096:],
         }
+        response: dict[str, Any] | None = None
+        response_error: str | None = None
+        if response_path.is_file():
+            try:
+                raw_response = json.loads(response_path.read_text())
+                if isinstance(raw_response, dict):
+                    response = raw_response
+                else:
+                    response_error = "isolated worker response is not an object"
+            except (OSError, json.JSONDecodeError) as exc:
+                response_error = f"unable to read isolated worker response: {exc}"
+        process_report["worker_response"] = copy.deepcopy(response)
+        process_report["worker_response_error"] = response_error
         if timed_out:
             return _failed_repetition(
                 repetition,
@@ -550,24 +563,25 @@ def _run_isolated_repetition(
                 f"isolated worker timed out after {timeout_seconds:.3f}s",
             )
         if process.returncode != 0:
+            worker_error = response.get("error") if response is not None else None
+            detail = f": {worker_error}" if worker_error else ""
             return _failed_repetition(
                 repetition,
                 process_report,
-                f"isolated worker exited with status {process.returncode}",
+                f"isolated worker exited with status {process.returncode}{detail}",
             )
-        if not response_path.is_file():
+        if response is None:
             return _failed_repetition(
                 repetition,
                 process_report,
-                "isolated worker did not write a response",
+                response_error or "isolated worker did not write a response",
             )
         try:
-            response = json.loads(response_path.read_text())
             samples, instrumentation, metadata = _validate_worker_response(
                 response,
                 request=request,
             )
-        except (OSError, json.JSONDecodeError, MicrobenchmarkError) as exc:
+        except MicrobenchmarkError as exc:
             return _failed_repetition(
                 repetition,
                 process_report,

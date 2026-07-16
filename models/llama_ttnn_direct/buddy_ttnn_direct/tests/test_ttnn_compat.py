@@ -77,6 +77,36 @@ class TTNNOpsWrapperTest(unittest.TestCase):
                     "per_core_N": 24,
                     "fuse_batch": True,
                 },
+                {
+                    "kind": "ttnn_matmul_multicore_reuse_program_config",
+                    "core_grid": [8, 8],
+                    "in0_block_w": 4,
+                    "out_subblock_h": 1,
+                    "out_subblock_w": 4,
+                    "per_core_M": 1,
+                    "per_core_N": 128,
+                },
+                {
+                    "kind": "ttnn_matmul_multicore_reuse_mcast_1d_program_config",
+                    "core_grid": [11, 10],
+                    "in0_block_w": 4,
+                    "out_subblock_h": 1,
+                    "out_subblock_w": 4,
+                    "out_block_h": 1,
+                    "out_block_w": 4,
+                    "per_core_M": 1,
+                    "per_core_N": 4,
+                    "fuse_batch": True,
+                    "mcast_in0": True,
+                    "gather_in0": False,
+                    "untilize_out": False,
+                },
+                {
+                    "kind": "ttnn_matmul_multi_core_reuse_multi_cast_dram_sharded_program_config",
+                    "in0_block_w": 4,
+                    "per_core_M": 1,
+                    "per_core_N": 4,
+                },
             ],
             "compute": {
                 "kind": "ttnn_wormhole_compute_kernel_config",
@@ -148,6 +178,15 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         self.assertEqual(
             resolved["programs"][3]["compute_with_storage_grid_size"],
             (8, 10),
+        )
+        self.assertEqual(resolved["programs"][3]["out_block_h"], 1)
+        self.assertEqual(resolved["programs"][3]["out_block_w"], 24)
+        self.assertEqual(resolved["programs"][4]["constructor"], "matmul_reuse")
+        self.assertEqual(resolved["programs"][5]["constructor"], "matmul_mcast_1d")
+        self.assertTrue(resolved["programs"][5]["mcast_in0"])
+        self.assertEqual(
+            resolved["programs"][6]["constructor"],
+            "matmul_batched_dram",
         )
         self.assertEqual(resolved["compute"]["constructor"], "compute")
         self.assertEqual(resolved["compute"]["math_fidelity"], "HiFi2")
@@ -963,7 +1002,12 @@ def _fake_config_ttnn():
         CoreGrid=constructor("core_grid"),
         create_sharded_memory_config=constructor("sharded"),
         MatmulMultiCoreReuseMultiCastDRAMShardedProgramConfig=constructor("matmul"),
+        MatmulMultiCoreReuseMultiCastBatchedDRAMShardedProgramConfig=constructor(
+            "matmul_batched_dram"
+        ),
+        MatmulMultiCoreReuseProgramConfig=constructor("matmul_reuse"),
         MatmulMultiCoreReuseMultiCastProgramConfig=constructor("matmul_mcast"),
+        MatmulMultiCoreReuseMultiCast1DProgramConfig=constructor("matmul_mcast_1d"),
         SDPAProgramConfig=constructor("sdpa"),
         LayerNormShardedMultiCoreProgramConfig=constructor("norm"),
         WormholeComputeKernelConfig=constructor("compute"),

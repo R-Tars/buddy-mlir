@@ -59,6 +59,10 @@ def invalid_worker(_: Mapping[str, Any]) -> dict[str, Any]:
     return {"status": "passed", "samples": [1.0]}
 
 
+def failing_worker(_: Mapping[str, Any]) -> dict[str, Any]:
+    raise RuntimeError("intentional isolated failure")
+
+
 class RepresentativeTransferTest(unittest.TestCase):
     def test_llama_transfer_groups_are_explicit_and_complete(self) -> None:
         plan = build_llama31_8b_transfer_plan()
@@ -256,6 +260,32 @@ class RepresentativeMicrobenchmarkTest(unittest.TestCase):
             )
             self.assertEqual(result["status"], "failed")
             self.assertFalse(Path(result["cache"]["path"]).exists())
+
+    def test_nonzero_worker_exit_preserves_reported_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = run_microbenchmark(
+                candidate=self._candidate(runtime_commit="runtime-failing"),
+                target=BenchmarkTarget.op(
+                    "qkv_linear",
+                    layer_group=DEFAULT_LAYER_GROUP,
+                    representative_layer=0,
+                ),
+                transfer_plan=build_llama31_8b_transfer_plan(),
+                cache_dir=Path(tmpdir) / "measurement_cache",
+                worker=(
+                    "models.llama_ttnn_direct.buddy_ttnn_direct.tests."
+                    "test_autotune_microbench:failing_worker"
+                ),
+                timeout_seconds=10.0,
+            )
+
+            repetition = result["repetitions"][0]
+            self.assertEqual(result["status"], "failed")
+            self.assertIn("intentional isolated failure", repetition["error"])
+            self.assertEqual(
+                repetition["process"]["worker_response"]["error"],
+                "RuntimeError: intentional isolated failure",
+            )
 
     def test_active_runner_applies_each_round_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

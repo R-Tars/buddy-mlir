@@ -81,6 +81,10 @@ class StructuredAutotuneSpaceTest(unittest.TestCase):
     def test_schema_v2_directly_generates_the_current_runtime_config(self) -> None:
         runtime = _official_runtime_config()
         space = SearchSpaceConfig.from_runtime_config(runtime)
+        self.assertEqual(
+            space.operators["lm_head.shards"]["output_memory"]["runtime_name"],
+            "L1_WIDTH_SHARDED_MEMORY_CONFIG",
+        )
         generated = apply_runtime_tuning(runtime, space.to_dict())
         self.assertEqual(_without_autotune(generated), runtime)
         self.assertNotIn("memory_layout", generated["autotune"])

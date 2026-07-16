@@ -173,6 +173,7 @@ class MatmulWorkload:
     batch_count: int = 1
     input_memory_path: str | None = None
     output_memory_path: str | None = None
+    weight_memory_path: str | None = None
 
     def __post_init__(self) -> None:
         if min(self.m, self.k, self.n, self.batch_count) <= 0:
@@ -199,6 +200,7 @@ class MatmulWorkload:
             "intermediate_dtype": self.intermediate_dtype,
             "input_memory_path": self.input_memory_path,
             "output_memory_path": self.output_memory_path,
+            "weight_memory_path": self.weight_memory_path,
         }
 
 
@@ -311,13 +313,28 @@ class WorkloadSpec:
                 return MemoryConfig.from_runtime_descriptor(value)
             return MemoryConfig.named(fallback)
 
-        def weight(k: int, n: int) -> MemoryConfig:
+        def weight(path: str, k: int, n: int) -> MemoryConfig:
+            descriptor = _get_path(config, path)
+            if isinstance(descriptor, Mapping):
+                return MemoryConfig.from_runtime_descriptor(descriptor)
             return MemoryConfig.from_runtime_descriptor(
                 {
                     "kind": "ttnn_dram_sharded_memory_config",
                     "k": k,
                     "n": n,
                     "dram_grid_width": 8,
+                }
+            )
+
+        def width_sharded_input(
+            *, core_grid: tuple[int, int], shard_width: int
+        ) -> MemoryConfig:
+            return MemoryConfig.from_runtime_descriptor(
+                {
+                    "kind": "ttnn_sharded_memory_config",
+                    "core_grid": list(core_grid),
+                    "shard_shape": [decode_m, shard_width],
+                    "strategy": "width",
                 }
             )
 
@@ -330,21 +347,35 @@ class WorkloadSpec:
                 qkv_width,
                 memory("rms_norm.attention.output_memory_config", input_width),
                 memory("attention.qkv_output_memory_config", input_width),
-                weight(hidden, qkv_width),
+                weight(
+                    "parameter_config.weight_memory_config.attention_qkv",
+                    hidden,
+                    qkv_width,
+                ),
                 weight_dtype="bfloat8_b",
                 input_memory_path="rms_norm.attention.output_memory_config",
                 output_memory_path="attention.qkv_output_memory_config",
+                weight_memory_path=(
+                    "parameter_config.weight_memory_config.attention_qkv"
+                ),
             ),
             MatmulWorkload(
                 "attention.o_proj",
                 decode_m,
                 hidden,
                 hidden,
-                MemoryConfig.named(input_width),
+                width_sharded_input(core_grid=(8, 4), shard_width=128),
                 memory("attention.o_proj_output_memory_config", input_width),
-                weight(hidden, hidden),
+                weight(
+                    "parameter_config.weight_memory_config.attention_o_proj",
+                    hidden,
+                    hidden,
+                ),
                 weight_dtype="bfloat8_b",
                 output_memory_path="attention.o_proj_output_memory_config",
+                weight_memory_path=(
+                    "parameter_config.weight_memory_config.attention_o_proj"
+                ),
             ),
             MatmulWorkload(
                 "mlp.gate",
@@ -353,10 +384,15 @@ class WorkloadSpec:
                 intermediate,
                 memory("rms_norm.mlp.output_memory_config", input_width),
                 memory("mlp.gate_output_memory_config", input_width),
-                weight(hidden, intermediate),
+                weight(
+                    "parameter_config.weight_memory_config.mlp_gate",
+                    hidden,
+                    intermediate,
+                ),
                 weight_dtype="bfloat4_b",
                 input_memory_path="rms_norm.mlp.output_memory_config",
                 output_memory_path="mlp.gate_output_memory_config",
+                weight_memory_path="parameter_config.weight_memory_config.mlp_gate",
             ),
             MatmulWorkload(
                 "mlp.up",
@@ -365,22 +401,32 @@ class WorkloadSpec:
                 intermediate,
                 memory("rms_norm.mlp.output_memory_config", input_width),
                 memory("mlp.up_output_memory_config", input_width),
-                weight(hidden, intermediate),
+                weight(
+                    "parameter_config.weight_memory_config.mlp_up",
+                    hidden,
+                    intermediate,
+                ),
                 weight_dtype="bfloat4_b",
                 input_memory_path="rms_norm.mlp.output_memory_config",
                 output_memory_path="mlp.up_output_memory_config",
+                weight_memory_path="parameter_config.weight_memory_config.mlp_up",
             ),
             MatmulWorkload(
                 "mlp.down",
                 decode_m,
                 intermediate,
                 hidden,
-                memory("mlp.gate_output_memory_config", input_width),
+                width_sharded_input(core_grid=(8, 8), shard_width=224),
                 memory("mlp.down_output_memory_config", input_width),
-                weight(intermediate, hidden),
+                weight(
+                    "parameter_config.weight_memory_config.mlp_down",
+                    intermediate,
+                    hidden,
+                ),
                 weight_dtype="bfloat8_b",
                 input_memory_path="mlp.gate_output_memory_config",
                 output_memory_path="mlp.down_output_memory_config",
+                weight_memory_path="parameter_config.weight_memory_config.mlp_down",
             ),
         ]
         lm_head = config.get("lm_head") or {}
@@ -402,11 +448,16 @@ class WorkloadSpec:
                     shard_width,
                     memory("lm_head.input_memory_config", input_width),
                     memory("lm_head.output_memory_config", input_width),
-                    weight(hidden, shard_width),
+                    weight(
+                        "parameter_config.weight_memory_config.lm_head",
+                        hidden,
+                        shard_width,
+                    ),
                     weight_dtype="bfloat8_b",
                     output_dtype="bfloat8_b",
                     input_memory_path="lm_head.input_memory_config",
                     output_memory_path="lm_head.output_memory_config",
+                    weight_memory_path="parameter_config.weight_memory_config.lm_head",
                 )
             )
         kv_update_template = template_choice_from_runtime_config(config, KV_UPDATE_AXIS)
@@ -1236,12 +1287,21 @@ def _resolve_matmul_memory(
     for field_name, path in (
         ("input_memory", workload.input_memory_path),
         ("output_memory", workload.output_memory_path),
+        ("weight_memory", workload.weight_memory_path),
     ):
         if path is None:
             continue
         value = space.memory_configs.get(path)
         if value is not None:
-            replacements[field_name] = MemoryConfig.from_dict(value)
+            resolved = MemoryConfig.from_dict(value)
+            inferred = getattr(workload, field_name)
+            if (
+                resolved.layout == inferred.layout
+                and resolved.shard_shape is None
+                and inferred.shard_shape is not None
+            ):
+                resolved = inferred
+            replacements[field_name] = resolved
     return replace(workload, **replacements) if replacements else workload
 
 
@@ -1309,6 +1369,37 @@ def _validate_matmul(
             k_tiles=k_tiles,
             in0_block_w=in0_block_w,
         )
+    if (
+        shape.input_memory.layout == "width_sharded"
+        and shape.input_memory.shard_shape is not None
+    ):
+        input_shard_k_tiles = math.ceil(
+            shape.input_memory.shard_shape[1] / TILE_WIDTH
+        )
+        if input_shard_k_tiles % in0_block_w:
+            _issue(
+                issues,
+                "MATMUL_INPUT_SHARD_K_BLOCK_DIVISIBILITY",
+                "shape_incompatible",
+                path,
+                "width-sharded input K tiles must be divisible by in0_block_w",
+                input_shard_k_tiles=input_shard_k_tiles,
+                in0_block_w=in0_block_w,
+            )
+        if (
+            program.program_family == "dram_sharded"
+            and input_shard_k_tiles % 2
+            and in0_block_w != input_shard_k_tiles
+        ):
+            _issue(
+                issues,
+                "MATMUL_DRAM_ODD_INPUT_SHARD_FULL_K_BLOCK",
+                "invalid_program_config",
+                path,
+                "DRAM-sharded matmul must consume an odd-width input shard as one K block",
+                input_shard_k_tiles=input_shard_k_tiles,
+                in0_block_w=in0_block_w,
+            )
     if m_tiles % per_core_m:
         _issue(
             issues,
@@ -1346,6 +1437,7 @@ def _validate_matmul(
         _validate_reuse_matmul(
             path,
             program,
+            shape,
             values,
             m_tiles,
             n_tiles,
@@ -1477,6 +1569,7 @@ def _validate_dram_sharded_matmul(
 def _validate_reuse_matmul(
     path: str,
     program: MatmulProgramConfig,
+    shape: MatmulWorkload,
     values: Mapping[str, int | None],
     m_tiles: int,
     n_tiles: int,
@@ -1531,6 +1624,157 @@ def _validate_reuse_matmul(
             path,
             "out_block_w must divide per_core_N and be divisible by out_subblock_w",
         )
+    family = program.program_family
+    params = program.parameters
+    if family == "reuse":
+        for label, memory in (
+            ("input A", shape.input_memory),
+            ("input B", shape.weight_memory),
+            ("output", shape.output_memory),
+        ):
+            if memory.layout == "width_sharded":
+                _issue(
+                    issues,
+                    "MATMUL_REUSE_WIDTH_SHARDED_UNSUPPORTED",
+                    "unsupported_layout",
+                    path,
+                    f"reuse family does not support width-sharded {label}",
+                    tensor=label,
+                    layout=memory.layout,
+                )
+        if per_core_n != n_tiles:
+            _issue(
+                issues,
+                "MATMUL_REUSE_REQUIRES_FULL_N",
+                "invalid_program_config",
+                path,
+                "reuse family requires per_core_N to cover the complete N dimension",
+                per_core_n=per_core_n,
+                n_tiles=n_tiles,
+            )
+    elif family == "reuse_multicast":
+        if shape.input_memory.layout not in {
+            "interleaved",
+            "height_sharded",
+            "block_sharded",
+        }:
+            _issue(
+                issues,
+                "MATMUL_REUSE_MCAST_INPUT_LAYOUT",
+                "unsupported_layout",
+                path,
+                "2D multicast requires interleaved, height-sharded, or block-sharded input A",
+                observed=shape.input_memory.layout,
+            )
+        if shape.output_memory.layout not in {"interleaved", "block_sharded"}:
+            _issue(
+                issues,
+                "MATMUL_REUSE_MCAST_OUTPUT_LAYOUT",
+                "unsupported_layout",
+                path,
+                "2D multicast requires interleaved or block-sharded output",
+                observed=shape.output_memory.layout,
+            )
+    elif family == "reuse_multicast_1d":
+        mcast_in0 = bool(params.get("mcast_in0", False))
+        gather_in0 = bool(params.get("gather_in0", False))
+        fuse_batch = bool(params.get("fuse_batch", False))
+        untilize_out = bool(params.get("untilize_out", False))
+        if mcast_in0 and gather_in0:
+            _issue(
+                issues,
+                "MATMUL_1D_MCAST_GATHER_CONFLICT",
+                "invalid_program_config",
+                path,
+                "1D multicast cannot enable mcast_in0 and gather_in0 together",
+            )
+        if shape.input_memory.layout == "width_sharded":
+            if not (mcast_in0 or gather_in0):
+                _issue(
+                    issues,
+                    "MATMUL_1D_WIDTH_INPUT_MODE",
+                    "unsupported_layout",
+                    path,
+                    "width-sharded input A requires mcast_in0 or gather_in0",
+                )
+            if not fuse_batch:
+                _issue(
+                    issues,
+                    "MATMUL_1D_WIDTH_INPUT_FUSE_BATCH",
+                    "invalid_program_config",
+                    path,
+                    "width-sharded input A requires fuse_batch",
+                )
+            if per_core_m != m_tiles:
+                _issue(
+                    issues,
+                    "MATMUL_1D_WIDTH_INPUT_M",
+                    "shape_incompatible",
+                    path,
+                    "mcast-in0 requires per_core_M to equal the complete M tile count",
+                    per_core_m=per_core_m,
+                    m_tiles=m_tiles,
+                )
+            if (
+                mcast_in0
+                and shape.input_memory.grid is not None
+                and program.compute_grid is not None
+                and (
+                    program.compute_grid.x < shape.input_memory.grid.x
+                    or program.compute_grid.y < shape.input_memory.grid.y
+                )
+            ):
+                _issue(
+                    issues,
+                    "MATMUL_1D_MCAST_INPUT_GRID_COVERAGE",
+                    "invalid_core_grid",
+                    path,
+                    "mcast-in0 compute grid must cover the width-sharded input grid",
+                    input_grid=shape.input_memory.grid.to_list(),
+                    compute_grid=program.compute_grid.to_list(),
+                )
+        elif shape.input_memory.layout not in {"height_sharded", "interleaved"}:
+            _issue(
+                issues,
+                "MATMUL_1D_INPUT_LAYOUT",
+                "unsupported_layout",
+                path,
+                "1D multicast supports width/height-sharded or interleaved input A",
+                observed=shape.input_memory.layout,
+            )
+        if shape.output_memory.layout == "width_sharded" and not (
+            mcast_in0 or gather_in0
+        ):
+            _issue(
+                issues,
+                "MATMUL_1D_WIDTH_OUTPUT_MODE",
+                "unsupported_layout",
+                path,
+                "width-sharded output requires mcast_in0 or gather_in0",
+            )
+        if shape.output_memory.layout not in {
+            "interleaved",
+            "width_sharded",
+            "height_sharded",
+            "block_sharded",
+        }:
+            _issue(
+                issues,
+                "MATMUL_1D_OUTPUT_LAYOUT",
+                "unsupported_layout",
+                path,
+                "unsupported 1D multicast output memory layout",
+                observed=shape.output_memory.layout,
+            )
+        if untilize_out and shape.output_dtype not in {"bf16", "bfloat16", "fp32", "float32"}:
+            _issue(
+                issues,
+                "MATMUL_1D_UNTILIZE_DTYPE",
+                "invalid_program_config",
+                path,
+                "untilize_out only supports BF16 or FP32 output",
+                output_dtype=shape.output_dtype,
+            )
     required_cores = math.ceil(m_tiles / per_core_m) * math.ceil(n_tiles / per_core_n)
     available_cores = (
         program.compute_grid.x * program.compute_grid.y
@@ -1546,6 +1790,17 @@ def _validate_reuse_matmul(
             "program grid cannot cover all output blocks",
             required_cores=required_cores,
             available_cores=available_cores,
+        )
+    allowed_workers = program.allowed_worker_cores
+    if isinstance(allowed_workers, list) and len(allowed_workers) < required_cores:
+        _issue(
+            issues,
+            "MATMUL_ALLOWED_WORKER_CAPACITY",
+            "invalid_core_grid",
+            path,
+            "allowed worker set cannot cover all output blocks",
+            required_cores=required_cores,
+            allowed_worker_cores=len(allowed_workers),
         )
 
 

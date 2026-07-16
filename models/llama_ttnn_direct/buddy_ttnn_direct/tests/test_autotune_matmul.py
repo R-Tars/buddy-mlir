@@ -9,6 +9,7 @@ from pathlib import Path
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     DEFAULT_LAYER_GROUP,
     MATMUL_OPERATORS,
+    MATMUL_PROGRAM_FAMILIES,
     BenchmarkTarget,
     CandidateConfig,
     DeviceDescriptor,
@@ -26,14 +27,23 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     rank_matmul_measurement_candidates,
     select_matmul_microbenchmark_winner,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
+    realize_ttnn_config,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     prompt_corpus_sha256,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.hardware_workers import (
+    _constant_matmul_correctness,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_autotune_microbench import (
     WORKER_PATH,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_autotune_space import (
     _official_runtime_config,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_ttnn_compat import (
+    _fake_config_ttnn,
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +90,30 @@ class MatmulProgramEnumeratorTest(unittest.TestCase):
                 self.assertEqual(operator["status"], "passed")
                 self.assertEqual(len(operator["official_candidate_ids"]), 1)
                 self.assertGreaterEqual(operator["legal_candidate_count"], 2)
+                self.assertGreaterEqual(len(operator["program_families"]), 2)
+                self.assertEqual(
+                    set(operator["family_availability"]),
+                    set(MATMUL_PROGRAM_FAMILIES),
+                )
+
+                self.assertEqual(
+                    operator["family_availability"]["dram_sharded"]["status"],
+                    "legal",
+                )
+                self.assertEqual(
+                    operator["family_availability"]["reuse_multicast_1d"][
+                        "status"
+                    ],
+                    "legal",
+                )
+                for family, availability in operator[
+                    "family_availability"
+                ].items():
+                    if availability["status"] != "legal":
+                        self.assertTrue(
+                            availability["reason"],
+                            msg=f"{operator_name}:{family}",
+                        )
                 self.assertTrue(
                     all(
                         candidate["legality"]["passed"]
@@ -92,6 +126,20 @@ class MatmulProgramEnumeratorTest(unittest.TestCase):
                         for candidate in operator["candidates"]
                     )
                 )
+
+    def test_constant_correctness_rejects_reduction_overflow(self) -> None:
+        import torch
+
+        overflowing = torch.full((1024,), torch.finfo(torch.float32).max)
+        report = _constant_matmul_correctness(
+            torch=torch,
+            output=overflowing,
+            expected=1.0,
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertFalse(report["finite"])
+        self.assertEqual(report["observed_mean"], float("inf"))
 
     def test_candidates_obey_shape_worker_l1_and_precision_contracts(self) -> None:
         baseline_precision = _collect_precision_fields(
@@ -110,6 +158,16 @@ class MatmulProgramEnumeratorTest(unittest.TestCase):
                         max(candidate.worker_core_counts),
                         self.device.worker_core_count,
                     )
+                    for program in candidate.programs:
+                        if program.compute_grid is not None:
+                            self.assertLessEqual(
+                                program.compute_grid.x * program.compute_grid.y,
+                                self.device.worker_core_count,
+                            )
+                            self.assertLessEqual(
+                                len(program.allowed_worker_cores),
+                                program.compute_grid.x * program.compute_grid.y,
+                            )
                     for shape, program in zip(
                         enumeration.workloads, candidate.programs
                     ):
@@ -139,6 +197,29 @@ class MatmulProgramEnumeratorTest(unittest.TestCase):
                         ),
                         baseline_precision,
                     )
+
+    def test_every_legal_program_materializes_through_runtime_api(self) -> None:
+        fake_ttnn = _fake_config_ttnn()
+        observed_families = set()
+        for operator_name in MATMUL_OPERATORS:
+            enumeration = self._enumerate(operator_name)
+            for candidate in enumeration.candidates:
+                observed_families.add(candidate.program_family)
+                for program in candidate.programs:
+                    with self.subTest(
+                        operator=operator_name,
+                        candidate=candidate.candidate_id,
+                        family=program.program_family,
+                    ):
+                        resolved = realize_ttnn_config(
+                            program.to_runtime_descriptor(),
+                            fake_ttnn,
+                        )
+                        self.assertIn("constructor", resolved)
+        self.assertEqual(
+            observed_families,
+            {"dram_sharded", "reuse_multicast_1d"},
+        )
 
     def test_official_program_vector_is_exactly_preserved(self) -> None:
         for operator_name in MATMUL_OPERATORS:

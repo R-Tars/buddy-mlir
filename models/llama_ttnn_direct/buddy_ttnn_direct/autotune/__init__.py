@@ -85,6 +85,7 @@ from .measurement import (
 )
 from .matmul import (
     MATMUL_OPERATORS,
+    MATMUL_PROGRAM_FAMILIES,
     MatmulCandidate,
     MatmulEnumerationError,
     MatmulEnumerationResult,
@@ -249,6 +250,7 @@ __all__ = (
     "MatmulEnumerationError",
     "MatmulEnumerationResult",
     "MATMUL_OPERATORS",
+    "MATMUL_PROGRAM_FAMILIES",
     "MAX_BEAM_WIDTH",
     "MIN_BEAM_WIDTH",
     "MatmulWorkload",

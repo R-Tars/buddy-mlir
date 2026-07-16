@@ -56,31 +56,37 @@ _MATMUL_PATHS = {
         "section": "attention",
         "program": "qkv_program_config",
         "output_memory": "qkv_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.attention_qkv",
     },
     "attention.o_proj": {
         "section": "attention",
         "program": "o_proj_program_config",
         "output_memory": "o_proj_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.attention_o_proj",
     },
     "mlp.gate": {
         "section": "mlp",
         "program": "gate_program_config",
         "output_memory": "gate_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.mlp_gate",
     },
     "mlp.up": {
         "section": "mlp",
         "program": "up_program_config",
         "output_memory": "up_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.mlp_up",
     },
     "mlp.down": {
         "section": "mlp",
         "program": "down_program_config",
         "output_memory": "down_output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.mlp_down",
     },
     "lm_head.shards": {
         "section": "lm_head",
         "programs": "program_configs",
-        "output_memory": "shard_output_memory_config",
+        "output_memory": "output_memory_config",
+        "weight_memory": "parameter_config.weight_memory_config.lm_head",
     },
 }
 _TYPED_PROGRAM_PATHS = {
@@ -807,6 +813,7 @@ def _extract_operators(config: Mapping[str, Any]) -> dict[str, Any]:
                 for descriptor in descriptors
             ]
         output = section.get(metadata["output_memory"])
+        weight = _get_path(config, metadata["weight_memory"])
         operator = {
             "kind": "matmul",
             "programs": [program.to_dict() for program in programs],
@@ -814,6 +821,11 @@ def _extract_operators(config: Mapping[str, Any]) -> dict[str, Any]:
             "output_memory": (
                 MemoryConfig.from_runtime_descriptor(output).to_dict()
                 if isinstance(output, Mapping)
+                else None
+            ),
+            "weight_memory": (
+                MemoryConfig.from_runtime_descriptor(weight).to_dict()
+                if isinstance(weight, Mapping)
                 else None
             ),
         }
@@ -857,6 +869,10 @@ def _normalize_operator(name: str, value: Any) -> dict[str, Any]:
         if operator.get("output_memory") is not None:
             operator["output_memory"] = MemoryConfig.from_dict(
                 operator["output_memory"]
+            ).to_dict()
+        if operator.get("weight_memory") is not None:
+            operator["weight_memory"] = MemoryConfig.from_dict(
+                operator["weight_memory"]
             ).to_dict()
         return operator
     if kind == "sdpa":
@@ -977,6 +993,14 @@ def _apply_operators(result: dict[str, Any], operators: Mapping[str, Any]) -> No
                 section[metadata["output_memory"]] = MemoryConfig.from_dict(
                     operator["output_memory"]
                 ).to_runtime_descriptor()
+            if operator.get("weight_memory") is not None:
+                _set_path(
+                    result,
+                    metadata["weight_memory"],
+                    MemoryConfig.from_dict(
+                        operator["weight_memory"]
+                    ).to_runtime_descriptor(),
+                )
             continue
         if name == "attention.sdpa":
             attention = result.setdefault("attention", {})
@@ -1015,6 +1039,15 @@ def _set_path(target: dict[str, Any], path: str, value: Any) -> None:
         current[int(parts[-1])] = copy.deepcopy(value)
     else:
         current[parts[-1]] = copy.deepcopy(value)
+
+
+def _get_path(target: Mapping[str, Any], path: str) -> Any:
+    current: Any = target
+    for part in path.split("."):
+        if not isinstance(current, Mapping) or part not in current:
+            return None
+        current = current[part]
+    return current
 
 
 def _decode_json(value: str, label: str) -> Any:

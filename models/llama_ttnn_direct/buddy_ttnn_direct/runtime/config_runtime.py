@@ -119,6 +119,37 @@ def _matmul_dram_sharded_program_config(
     )
 
 
+def _matmul_batched_dram_sharded_program_config(
+    spec: dict[str, Any],
+    ttnn: Any,
+) -> Any:
+    constructor = _required_attr(
+        ttnn,
+        "MatmulMultiCoreReuseMultiCastBatchedDRAMShardedProgramConfig",
+    )
+    return constructor(
+        in0_block_w=int(spec["in0_block_w"]),
+        per_core_M=int(spec["per_core_M"]),
+        per_core_N=int(spec["per_core_N"]),
+        fused_activation=_fused_activation(spec, ttnn),
+    )
+
+
+def _matmul_multicore_reuse_program_config(
+    spec: dict[str, Any],
+    ttnn: Any,
+) -> Any:
+    constructor = _required_attr(ttnn, "MatmulMultiCoreReuseProgramConfig")
+    return constructor(
+        compute_with_storage_grid_size=_core_coord_value(spec["core_grid"], ttnn),
+        in0_block_w=int(spec["in0_block_w"]),
+        out_subblock_h=int(spec["out_subblock_h"]),
+        out_subblock_w=int(spec["out_subblock_w"]),
+        per_core_M=int(spec["per_core_M"]),
+        per_core_N=int(spec["per_core_N"]),
+    )
+
+
 def _matmul_multicore_reuse_mcast_program_config(
     spec: dict[str, Any],
     ttnn: Any,
@@ -128,16 +159,52 @@ def _matmul_multicore_reuse_mcast_program_config(
         "MatmulMultiCoreReuseMultiCastProgramConfig",
     )
     return constructor(
-        compute_with_storage_grid_size=tuple(int(value) for value in spec["core_grid"]),
+        compute_with_storage_grid_size=_core_coord_value(spec["core_grid"], ttnn),
         in0_block_w=int(spec["in0_block_w"]),
         out_subblock_h=int(spec["out_subblock_h"]),
         out_subblock_w=int(spec["out_subblock_w"]),
+        out_block_h=int(spec.get("out_block_h", spec["per_core_M"])),
+        out_block_w=int(spec.get("out_block_w", spec["per_core_N"])),
         per_core_M=int(spec["per_core_M"]),
         per_core_N=int(spec["per_core_N"]),
         transpose_mcast=bool(spec.get("transpose_mcast", False)),
         fused_activation=_fused_activation(spec, ttnn),
         fuse_batch=bool(spec.get("fuse_batch", False)),
     )
+
+
+def _matmul_multicore_reuse_mcast_1d_program_config(
+    spec: dict[str, Any],
+    ttnn: Any,
+) -> Any:
+    constructor = _required_attr(
+        ttnn,
+        "MatmulMultiCoreReuseMultiCast1DProgramConfig",
+    )
+    kwargs = {
+        "compute_with_storage_grid_size": _core_coord_value(
+            spec["core_grid"], ttnn
+        ),
+        "in0_block_w": int(spec["in0_block_w"]),
+        "out_subblock_h": int(spec["out_subblock_h"]),
+        "out_subblock_w": int(spec["out_subblock_w"]),
+        "out_block_h": int(spec.get("out_block_h", spec["per_core_M"])),
+        "out_block_w": int(spec.get("out_block_w", spec["per_core_N"])),
+        "per_core_M": int(spec["per_core_M"]),
+        "per_core_N": int(spec["per_core_N"]),
+        "fuse_batch": bool(spec.get("fuse_batch", True)),
+        "fused_activation": _fused_activation(spec, ttnn),
+        "mcast_in0": bool(spec.get("mcast_in0", False)),
+        "gather_in0": bool(spec.get("gather_in0", False)),
+        "num_global_cb_receivers": int(
+            spec.get("num_global_cb_receivers", 1)
+        ),
+        "untilize_out": bool(spec.get("untilize_out", False)),
+    }
+    hop_cores = spec.get("hop_cores")
+    if hop_cores:
+        kwargs["hop_cores"] = _core_range_set(hop_cores, ttnn)
+    return constructor(**kwargs)
 
 
 def _sdpa_program_config(spec: dict[str, Any], ttnn: Any) -> Any:
@@ -201,6 +268,15 @@ def _core_grid_value(value: Any, ttnn: Any) -> Any:
         return constructor(y, x)
 
 
+def _core_coord_value(value: Any, ttnn: Any) -> Any:
+    x, y = (int(item) for item in value)
+    constructor = _required_attr(ttnn, "CoreCoord")
+    try:
+        return constructor(x, y)
+    except TypeError:
+        return constructor(x=x, y=y)
+
+
 def _core_range_set(value: Any, ttnn: Any) -> Any:
     if not isinstance(value, list) or not value:
         raise TTNNConfigResolutionError("core_ranges must be a non-empty list")
@@ -243,8 +319,17 @@ _RESOLVERS = {
     "ttnn_dram_sharded_memory_config": _dram_sharded_memory_config,
     "ttnn_core_grid": _core_grid,
     "ttnn_matmul_dram_sharded_program_config": (_matmul_dram_sharded_program_config),
+    "ttnn_matmul_multi_core_reuse_multi_cast_dram_sharded_program_config": (
+        _matmul_batched_dram_sharded_program_config
+    ),
+    "ttnn_matmul_multicore_reuse_program_config": (
+        _matmul_multicore_reuse_program_config
+    ),
     "ttnn_matmul_multicore_reuse_mcast_program_config": (
         _matmul_multicore_reuse_mcast_program_config
+    ),
+    "ttnn_matmul_multicore_reuse_mcast_1d_program_config": (
+        _matmul_multicore_reuse_mcast_1d_program_config
     ),
     "ttnn_sdpa_program_config": _sdpa_program_config,
     "ttnn_layer_norm_program_config": _layer_norm_program_config,
