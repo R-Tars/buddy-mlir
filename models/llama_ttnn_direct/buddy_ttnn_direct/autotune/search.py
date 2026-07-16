@@ -820,6 +820,7 @@ def run_active_measurement_scheduler(
     out: str | Path,
     policy: SuccessiveHalvingPolicy | None = None,
     full_model_runner: FullModelMeasurementRunner | None = None,
+    ranking_model: Any | None = None,
     resume: bool = True,
 ) -> dict[str, Any]:
     """Actively measure legal candidates with three successive-halving rounds."""
@@ -838,6 +839,7 @@ def run_active_measurement_scheduler(
             statically_rejected=statically_rejected or {},
             measurement_runner=measurement_runner,
             full_model_runner=full_model_runner,
+            ranking_model=ranking_model,
             report_path=report_path,
             policy=selected_policy,
             resume=resume,
@@ -909,6 +911,7 @@ class _ActiveMeasurementScheduler:
         statically_rejected: Mapping[str, Sequence[Mapping[str, Any]]],
         measurement_runner: ActiveMeasurementRunner,
         full_model_runner: FullModelMeasurementRunner | None,
+        ranking_model: Any | None,
         report_path: Path,
         policy: SuccessiveHalvingPolicy,
         resume: bool,
@@ -916,6 +919,14 @@ class _ActiveMeasurementScheduler:
         self.policy = policy
         self.measurement_runner = measurement_runner
         self.full_model_runner = full_model_runner
+        self.ranking_model = ranking_model
+        if ranking_model is not None and not callable(
+            getattr(ranking_model, "rank_candidates", None)
+        ):
+            raise HierarchicalSearchError(
+                "ranking_model must provide rank_candidates(candidates)"
+            )
+        self.ranking_model_metadata = self._ranking_metadata(ranking_model)
         self.report_path = report_path
         self.records_dir = report_path.parent / "active_measurements"
         self.records_dir.mkdir(parents=True, exist_ok=True)
@@ -934,6 +945,7 @@ class _ActiveMeasurementScheduler:
                     for name, candidates in self.groups.items()
                 },
                 "statically_rejected": self.rejected,
+                "ranking_model": self.ranking_model_metadata,
             }
         )
         self.new_measurement_count = 0
@@ -943,13 +955,22 @@ class _ActiveMeasurementScheduler:
         self.report: dict[str, Any] = {
             "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
             "stage": "active_measurement_scheduler",
-            "algorithm": "analytical_active_successive_halving",
+            "algorithm": (
+                "hardware_ranked_active_successive_halving"
+                if self.ranking_model is not None
+                else "analytical_active_successive_halving"
+            ),
             "status": "running",
             "passed": False,
             "campaign_sha256": self.campaign_sha256,
             "policy": self.policy.to_dict(),
+            "ranking_model": self.ranking_model_metadata,
             "intermediate_selection": {
-                "strategy": "latency_l1_pareto_top_k",
+                "strategy": (
+                    "hardware_model_then_latency_l1_pareto"
+                    if self.ranking_model is not None
+                    else "latency_l1_pareto_top_k"
+                ),
                 "minimum_relative_improvement_gate_applied": False,
                 "minimum_relative_improvement": None,
                 "local_small_improvements_eligible": True,
@@ -1068,14 +1089,7 @@ class _ActiveMeasurementScheduler:
         rejected: Sequence[Mapping[str, Any]],
         required_count: int,
     ) -> dict[str, Any]:
-        analytical = sorted(
-            candidates,
-            key=lambda item: (
-                item.analytical_score,
-                item.l1_bytes,
-                item.candidate_id,
-            ),
-        )
+        analytical = self._rank_initial_candidates(candidates)
         short = self._run_short_round(
             operator_name=operator_name,
             candidates=analytical,
@@ -1215,6 +1229,11 @@ class _ActiveMeasurementScheduler:
             "status": "passed" if all(checks.values()) else "failed",
             "passed": all(checks.values()),
             "minimum_coverage": required_count,
+            "initial_ranking_strategy": (
+                "hardware_calibrated_model"
+                if self.ranking_model is not None
+                else "analytical_score"
+            ),
             "analytical_ranking": [candidate.to_dict() for candidate in analytical],
             "statically_rejected": [copy.deepcopy(dict(item)) for item in rejected],
             "analytically_pruned_candidate_ids": analytically_pruned,
@@ -1251,20 +1270,24 @@ class _ActiveMeasurementScheduler:
         passed_count = 0
         batch_index = 0
         while queue and passed_count < required_count:
-            calibration = self._analytical_calibration(
-                candidates,
-                measurements,
-                remaining=queue,
-            )
-            scale = calibration["scale"]
-            queue.sort(
-                key=lambda item: (
-                    item.analytical_score
-                    * (float(scale) if scale is not None else 1.0),
-                    item.l1_bytes,
-                    item.candidate_id,
+            if self.ranking_model is not None:
+                queue = self._rank_with_model(queue)
+                calibration = self._model_ranking_update(queue)
+            else:
+                calibration = self._analytical_calibration(
+                    candidates,
+                    measurements,
+                    remaining=queue,
                 )
-            )
+                scale = calibration["scale"]
+                queue.sort(
+                    key=lambda item: (
+                        item.analytical_score
+                        * (float(scale) if scale is not None else 1.0),
+                        item.l1_bytes,
+                        item.candidate_id,
+                    )
+                )
             if batch_index == 0 and incumbent is not None and incumbent in queue:
                 queue.remove(incumbent)
                 queue.insert(0, incumbent)
@@ -1282,10 +1305,14 @@ class _ActiveMeasurementScheduler:
                 measurements[candidate.candidate_id] = result
                 batch_results[candidate.candidate_id] = result
             passed_count = sum(result["passed"] for result in measurements.values())
-            calibration = self._analytical_calibration(
-                candidates,
-                measurements,
-                remaining=queue,
+            calibration = (
+                self._model_ranking_update(queue)
+                if self.ranking_model is not None
+                else self._analytical_calibration(
+                    candidates,
+                    measurements,
+                    remaining=queue,
+                )
             )
             batches.append(
                 {
@@ -1681,6 +1708,67 @@ class _ActiveMeasurementScheduler:
                     ),
                 )
             ],
+        }
+
+    def _rank_initial_candidates(
+        self, candidates: Sequence[MeasurementCandidate]
+    ) -> list[MeasurementCandidate]:
+        if self.ranking_model is not None:
+            return self._rank_with_model(candidates)
+        return sorted(
+            candidates,
+            key=lambda item: (
+                item.analytical_score,
+                item.l1_bytes,
+                item.candidate_id,
+            ),
+        )
+
+    def _rank_with_model(
+        self, candidates: Sequence[MeasurementCandidate]
+    ) -> list[MeasurementCandidate]:
+        ranked = list(self.ranking_model.rank_candidates(tuple(candidates)))
+        expected = {candidate.candidate_id for candidate in candidates}
+        observed = [candidate.candidate_id for candidate in ranked]
+        if len(observed) != len(expected) or set(observed) != expected:
+            raise HierarchicalSearchError(
+                "ranking model must return every candidate exactly once"
+            )
+        return ranked
+
+    def _model_ranking_update(
+        self, remaining: Sequence[MeasurementCandidate]
+    ) -> dict[str, Any]:
+        ranked = self._rank_with_model(remaining) if remaining else []
+        return {
+            "method": "hardware_calibrated_ranking_model",
+            "model": copy.deepcopy(self.ranking_model_metadata),
+            "measured_candidate_count": None,
+            "scale": None,
+            "ranking_updated": bool(ranked),
+            "next_candidate_order": [item.candidate_id for item in ranked],
+            "final_hardware_measurement_required": True,
+        }
+
+    @staticmethod
+    def _ranking_metadata(ranking_model: Any | None) -> dict[str, Any] | None:
+        if ranking_model is None:
+            return None
+        metadata = getattr(ranking_model, "scheduler_metadata", None)
+        if callable(metadata):
+            value = metadata()
+            if isinstance(value, Mapping):
+                return copy.deepcopy(dict(value))
+        to_dict = getattr(ranking_model, "to_dict", None)
+        value = (
+            to_dict()
+            if callable(to_dict)
+            else {"type": type(ranking_model).__name__}
+        )
+        return {
+            "type": type(ranking_model).__name__,
+            "fingerprint": sha256_json(value),
+            "final_hardware_measurement_required": True,
         }
 
     @staticmethod
