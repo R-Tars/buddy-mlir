@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import itertools
 import json
+import math
 from dataclasses import dataclass, field
 from collections.abc import Iterable
 from typing import Any, Mapping
@@ -15,6 +16,7 @@ from .legality import (
     WorkloadSpec,
     validate_candidate,
 )
+from .measurement import MeasurementCandidate
 from .schema import PrecisionContract, canonical_json, sha256_json
 from .space import CoreGrid, MemoryConfig, SDPAProgramConfig, SearchSpaceConfig
 
@@ -273,6 +275,78 @@ def enumerate_sdpa_programs(
             "the exact official SDPA configuration did not survive enumeration"
         )
     return result
+
+
+def rank_sdpa_measurement_candidates(
+    enumeration: SDPAEnumerationResult,
+) -> tuple[MeasurementCandidate, ...]:
+    """Rank legal SDPA candidates with a shape-aware analytical prior."""
+
+    workload = enumeration.workload
+    ranked: list[MeasurementCandidate] = []
+    total_work = (
+        workload.batch_size
+        * workload.num_heads
+        * workload.cache_len
+        * workload.head_dim
+    )
+    for candidate in enumeration.candidates:
+        grid_cores = candidate.program.grid.x * candidate.program.grid.y
+        head_batch_cores = max(1, candidate.program.max_cores_per_head_batch)
+        effective_cores = max(1, min(grid_cores, head_batch_cores))
+        q_chunk = candidate.program.q_chunk_size or 32
+        k_chunk = candidate.program.k_chunk_size or workload.cache_len
+        q_chunk_count = max(1, math.ceil(32 / q_chunk))
+        k_chunk_count = max(1, math.ceil(workload.cache_len / k_chunk))
+        chunk_overhead = 1.0 + 0.01 * (q_chunk_count + k_chunk_count - 2)
+        grid_underuse = grid_cores / effective_cores
+        memory_penalty = (
+            1.02 if candidate.kernel_output_memory.buffer == "dram" else 1.0
+        )
+        analytical_score = (
+            total_work
+            / effective_cores
+            * chunk_overhead
+            * (1.0 + 0.005 * (grid_underuse - 1.0))
+            * memory_penalty
+        )
+        l1_bytes = sum(
+            estimate.total_bytes
+            for estimate in candidate.legality.l1_estimates
+            if estimate.path == SDPA_OPERATOR
+        )
+        ranked.append(
+            MeasurementCandidate.create(
+                candidate_id=candidate.candidate_id,
+                operator_name=SDPA_OPERATOR,
+                candidate_kind="sdpa",
+                analytical_score=analytical_score,
+                l1_bytes=l1_bytes,
+                source=candidate.source,
+                is_incumbent=candidate.is_official,
+                metadata={
+                    "ranking_model": "shape_work_parallelism_chunk_memory_prior",
+                    "total_work": total_work,
+                    "grid_cores": grid_cores,
+                    "effective_cores": effective_cores,
+                    "q_chunk_count": q_chunk_count,
+                    "k_chunk_count": k_chunk_count,
+                    "chunk_overhead": chunk_overhead,
+                    "grid_underuse": grid_underuse,
+                    "memory_penalty": memory_penalty,
+                    "candidate": candidate.to_dict(),
+                },
+            )
+        )
+    ranked.sort(
+        key=lambda item: (
+            item.analytical_score,
+            item.l1_bytes,
+            not item.is_incumbent,
+            item.candidate_id,
+        )
+    )
+    return tuple(ranked)
 
 
 def _program_proposals(

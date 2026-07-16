@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+    ActiveMicrobenchmarkRunner,
     DEFAULT_LAYER_GROUP,
     OVERRIDE_LAYER_GROUP,
     BenchmarkTarget,
     CandidateConfig,
     ExecutionContract,
     MeasurementContract,
+    MeasurementCandidate,
     MicrobenchmarkError,
     PrecisionContract,
     build_llama31_8b_transfer_plan,
@@ -254,6 +256,58 @@ class RepresentativeMicrobenchmarkTest(unittest.TestCase):
             )
             self.assertEqual(result["status"], "failed")
             self.assertFalse(Path(result["cache"]["path"]).exists())
+
+    def test_active_runner_applies_each_round_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            counter = root / "worker_count.txt"
+            descriptor = MeasurementCandidate.create(
+                candidate_id="qkv-active",
+                operator_name="attention.qkv",
+                candidate_kind="matmul",
+                analytical_score=1.0,
+                l1_bytes=1024,
+                source="fixture",
+                is_incumbent=True,
+            )
+            runner = ActiveMicrobenchmarkRunner(
+                candidate_configs={
+                    descriptor.candidate_id: self._candidate(
+                        runtime_commit="runtime-active"
+                    )
+                },
+                targets={
+                    descriptor.operator_name: BenchmarkTarget.op(
+                        "attention.qkv",
+                        layer_group=DEFAULT_LAYER_GROUP,
+                        representative_layer=0,
+                    )
+                },
+                transfer_plan=build_llama31_8b_transfer_plan(),
+                cache_dir=root / "measurement_cache",
+                worker=WORKER_PATH,
+                payloads={
+                    descriptor.candidate_id: {
+                        "counter_path": str(counter),
+                        "base": 1.0,
+                    }
+                },
+                timeout_seconds=10.0,
+            )
+            contract = MeasurementContract(
+                warmup=3,
+                iterations=10,
+                repetitions=1,
+                kind="successive_halving_round_1",
+            )
+
+            report = runner(descriptor, contract, "round_1_short")
+
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["measurement_contract"], contract.to_dict())
+            self.assertEqual(report["statistics"]["sample_count"], 10)
+            self.assertEqual(counter.read_text(), "1")
+            self.assertEqual(report["active_scheduler"]["round"], "round_1_short")
 
     def test_target_must_use_the_group_representative(self) -> None:
         with self.assertRaisesRegex(MicrobenchmarkError, "uses 0"):

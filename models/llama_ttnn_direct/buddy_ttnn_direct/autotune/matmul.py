@@ -14,6 +14,7 @@ from .legality import (
     WorkloadSpec,
     validate_candidate,
 )
+from .measurement import MeasurementCandidate
 from .schema import PrecisionContract, canonical_json, sha256_json
 from .space import MatmulProgramConfig, SearchSpaceConfig
 
@@ -348,6 +349,77 @@ def select_matmul_microbenchmark_winner(
             if candidate.candidate_id not in measurements
         ],
     }
+
+
+def rank_matmul_measurement_candidates(
+    enumeration: MatmulEnumerationResult,
+) -> tuple[MeasurementCandidate, ...]:
+    """Rank legal MatMul candidates before spending device measurements."""
+
+    ranked: list[MeasurementCandidate] = []
+    for candidate in enumeration.candidates:
+        workload_scores: list[dict[str, Any]] = []
+        analytical_score = 0.0
+        for workload, program, worker_count in zip(
+            enumeration.workloads,
+            candidate.programs,
+            candidate.worker_core_counts,
+        ):
+            m_tiles = max(1, math.ceil(workload.m / 32))
+            k_tiles = max(1, math.ceil(workload.k / 32))
+            n_tiles = max(1, math.ceil(workload.n / 32))
+            active_cores = max(1, min(int(worker_count), n_tiles))
+            in0_block_w = max(1, int(program.parameters.get("in0_block_w", 1)))
+            compute_tiles_per_core = (
+                workload.batch_count * m_tiles * k_tiles * n_tiles / active_cores
+            )
+            k_block_count = math.ceil(k_tiles / in0_block_w)
+            score = compute_tiles_per_core + 0.05 * k_block_count
+            analytical_score += score
+            workload_scores.append(
+                {
+                    "name": workload.name,
+                    "m_tiles": m_tiles,
+                    "k_tiles": k_tiles,
+                    "n_tiles": n_tiles,
+                    "active_cores": active_cores,
+                    "in0_block_w": in0_block_w,
+                    "compute_tiles_per_core": compute_tiles_per_core,
+                    "k_block_count": k_block_count,
+                    "score": score,
+                }
+            )
+        l1_bytes = sum(
+            estimate.total_bytes
+            for estimate in candidate.legality.l1_estimates
+            if estimate.path.startswith(enumeration.operator_name)
+        )
+        ranked.append(
+            MeasurementCandidate.create(
+                candidate_id=candidate.candidate_id,
+                operator_name=enumeration.operator_name,
+                candidate_kind="matmul",
+                analytical_score=analytical_score,
+                l1_bytes=l1_bytes,
+                source=candidate.source,
+                is_incumbent=candidate.is_official,
+                metadata={
+                    "ranking_model": "tile_work_per_active_core_plus_k_block_overhead",
+                    "workloads": workload_scores,
+                    "program_family": candidate.program_family,
+                    "candidate": candidate.to_dict(),
+                },
+            )
+        )
+    ranked.sort(
+        key=lambda item: (
+            item.analytical_score,
+            item.l1_bytes,
+            not item.is_incumbent,
+            item.candidate_id,
+        )
+    )
+    return tuple(ranked)
 
 
 def _program_proposals(

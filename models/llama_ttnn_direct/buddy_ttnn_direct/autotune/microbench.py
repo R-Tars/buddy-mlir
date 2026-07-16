@@ -16,8 +16,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
-from .measurement import candidate_fingerprint
-from .schema import CandidateConfig, canonical_json, sha256_json
+from .measurement import (
+    MeasurementCandidate,
+    candidate_fingerprint,
+    with_measurement_contract,
+)
+from .schema import (
+    CandidateConfig,
+    MeasurementContract,
+    canonical_json,
+    sha256_json,
+)
 from .transfer import LayerTransferPlan
 
 MICROBENCH_SCHEMA_VERSION = 1
@@ -119,6 +128,76 @@ class BenchmarkTarget:
             "sample_metric": self.sample_metric,
             "sample_unit": self.sample_unit,
         }
+
+
+@dataclass(frozen=True)
+class ActiveMicrobenchmarkRunner:
+    """Bind scheduler candidates to the isolated microbenchmark runtime."""
+
+    candidate_configs: Mapping[str, CandidateConfig]
+    targets: Mapping[str, BenchmarkTarget]
+    transfer_plan: LayerTransferPlan
+    cache_dir: str | Path
+    worker: str
+    payloads: Mapping[str, Mapping[str, Any]] | None = None
+    python_executable: str | Path | None = None
+    cwd: str | Path | None = None
+    environment: Mapping[str, str] | None = None
+    timeout_seconds: float = 600.0
+
+    def __post_init__(self) -> None:
+        if not self.candidate_configs:
+            raise MicrobenchmarkError(
+                "active microbenchmark runner requires candidate configs"
+            )
+        if not self.targets:
+            raise MicrobenchmarkError(
+                "active microbenchmark runner requires benchmark targets"
+            )
+
+    def __call__(
+        self,
+        candidate: MeasurementCandidate,
+        contract: MeasurementContract,
+        round_name: str,
+    ) -> dict[str, Any]:
+        base = self.candidate_configs.get(candidate.candidate_id)
+        if base is None:
+            raise MicrobenchmarkError(
+                f"no CandidateConfig for {candidate.candidate_id!r}"
+            )
+        target = self.targets.get(candidate.candidate_id) or self.targets.get(
+            candidate.operator_name
+        )
+        if target is None:
+            raise MicrobenchmarkError(
+                f"no BenchmarkTarget for {candidate.operator_name!r}"
+            )
+        payloads = self.payloads or {}
+        payload = payloads.get(candidate.candidate_id) or payloads.get(
+            candidate.operator_name
+        )
+        measured = run_microbenchmark(
+            candidate=with_measurement_contract(base, contract),
+            target=target,
+            transfer_plan=self.transfer_plan,
+            cache_dir=self.cache_dir,
+            worker=self.worker,
+            payload=payload,
+            python_executable=self.python_executable,
+            cwd=self.cwd,
+            environment=self.environment,
+            timeout_seconds=self.timeout_seconds,
+        )
+        measured["active_scheduler"] = {
+            "round": round_name,
+            "operator": candidate.operator_name,
+            "candidate_id": candidate.candidate_id,
+            "analytical_score": candidate.analytical_score,
+            "l1_bytes": candidate.l1_bytes,
+            "measurement_contract": contract.to_dict(),
+        }
+        return measured
 
 
 class MeasurementCache:

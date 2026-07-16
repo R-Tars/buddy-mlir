@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import statistics
 import time
 import traceback
 import uuid
@@ -17,6 +18,7 @@ from .confirmation import (
     ConfirmationPolicy,
     confirm_matched_ab,
 )
+from .measurement import MeasurementCandidate
 from .schema import CandidateConfig, MeasurementContract, canonical_json, sha256_json
 from .space import SearchSpaceConfig
 
@@ -36,6 +38,16 @@ PIPELINE_STAGES = (
     "full_model_trace",
     "long_confirmation",
 )
+ACTIVE_MEASUREMENT_SCHEMA_VERSION = 1
+ACTIVE_MEASUREMENT_MINIMUM_COVERAGE = (
+    ("attention.qkv", 8),
+    ("attention.o_proj", 8),
+    ("mlp.gate", 8),
+    ("mlp.up", 8),
+    ("mlp.down", 8),
+    ("lm_head.shards", 8),
+    ("attention.sdpa", 16),
+)
 
 
 class HierarchicalSearchError(ValueError):
@@ -44,6 +56,109 @@ class HierarchicalSearchError(ValueError):
 
 class SearchBudgetExhausted(RuntimeError):
     """Raised internally when no further device evaluation is admissible."""
+
+
+ActiveMeasurementRunner = Callable[
+    [MeasurementCandidate, MeasurementContract, str], Mapping[str, Any]
+]
+FullModelMeasurementRunner = Callable[[MeasurementCandidate], Mapping[str, Any]]
+
+
+@dataclass(frozen=True)
+class SuccessiveHalvingPolicy:
+    short_contract: MeasurementContract = field(
+        default_factory=lambda: MeasurementContract(
+            warmup=3,
+            iterations=10,
+            repetitions=1,
+            kind="successive_halving_round_1",
+        )
+    )
+    refinement_contract: MeasurementContract = field(
+        default_factory=lambda: MeasurementContract(
+            warmup=5,
+            iterations=30,
+            repetitions=1,
+            kind="successive_halving_round_2",
+        )
+    )
+    confirmation_contract: MeasurementContract = field(
+        default_factory=lambda: MeasurementContract(
+            warmup=5,
+            iterations=50,
+            repetitions=2,
+            kind="successive_halving_round_3",
+        )
+    )
+    minimum_coverage: tuple[tuple[str, int], ...] = ACTIVE_MEASUREMENT_MINIMUM_COVERAGE
+    short_batch_size: int = 4
+    retain_fraction: float = 0.25
+    confirmation_min_candidates: int = 2
+    confirmation_max_candidates: int = 4
+    full_model_top_k: int = 2
+
+    def __post_init__(self) -> None:
+        if self.short_batch_size <= 0:
+            raise HierarchicalSearchError("short_batch_size must be positive")
+        if not 0.0 < self.retain_fraction <= 1.0:
+            raise HierarchicalSearchError("retain_fraction must be in (0, 1]")
+        if not 2 <= self.confirmation_min_candidates <= 4:
+            raise HierarchicalSearchError(
+                "confirmation_min_candidates must be in [2, 4]"
+            )
+        if (
+            not self.confirmation_min_candidates
+            <= self.confirmation_max_candidates
+            <= 4
+        ):
+            raise HierarchicalSearchError(
+                "confirmation_max_candidates must be between the minimum and 4"
+            )
+        if not 2 <= self.full_model_top_k <= 5:
+            raise HierarchicalSearchError("full_model_top_k must be in [2, 5]")
+        coverage = dict(self.minimum_coverage)
+        if len(coverage) != len(self.minimum_coverage):
+            raise HierarchicalSearchError("minimum coverage repeats an operator")
+        if not coverage or any(
+            not name or count <= 0 for name, count in coverage.items()
+        ):
+            raise HierarchicalSearchError(
+                "minimum coverage must contain positive operator counts"
+            )
+        expected_contracts = (
+            (self.short_contract, 3, 10, 1),
+            (self.refinement_contract, 5, 30, 1),
+            (self.confirmation_contract, 5, 50, 2),
+        )
+        for contract, warmup, iterations, repetitions in expected_contracts:
+            observed = (contract.warmup, contract.iterations, contract.repetitions)
+            if observed != (warmup, iterations, repetitions):
+                raise HierarchicalSearchError(
+                    "successive-halving measurement contracts must preserve the "
+                    "documented 3x10x1, 5x30x1, and 5x50x2 schedule"
+                )
+
+    def coverage_for(self, operator_name: str) -> int:
+        try:
+            return dict(self.minimum_coverage)[operator_name]
+        except KeyError as exc:
+            raise HierarchicalSearchError(
+                f"successive-halving policy has no coverage for {operator_name!r}"
+            ) from exc
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "short_contract": self.short_contract.to_dict(),
+            "refinement_contract": self.refinement_contract.to_dict(),
+            "confirmation_contract": self.confirmation_contract.to_dict(),
+            "minimum_coverage": dict(self.minimum_coverage),
+            "short_batch_size": self.short_batch_size,
+            "retain_fraction": self.retain_fraction,
+            "confirmation_min_candidates": self.confirmation_min_candidates,
+            "confirmation_max_candidates": self.confirmation_max_candidates,
+            "full_model_top_k": self.full_model_top_k,
+            "intermediate_minimum_relative_improvement": None,
+        }
 
 
 @dataclass(frozen=True)
@@ -695,6 +810,929 @@ def buildable_template_config(
             "final template config does not preserve the selected search space"
         )
     return result
+
+
+def run_active_measurement_scheduler(
+    *,
+    candidate_groups: Mapping[str, Sequence[MeasurementCandidate]],
+    statically_rejected: Mapping[str, Sequence[Mapping[str, Any]]] | None,
+    measurement_runner: ActiveMeasurementRunner,
+    out: str | Path,
+    policy: SuccessiveHalvingPolicy | None = None,
+    full_model_runner: FullModelMeasurementRunner | None = None,
+    resume: bool = True,
+) -> dict[str, Any]:
+    """Actively measure legal candidates with three successive-halving rounds."""
+
+    destination = Path(out)
+    report_path = (
+        destination
+        if destination.suffix.lower() == ".json"
+        else destination / "active_measurement_report.json"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    selected_policy = policy or SuccessiveHalvingPolicy()
+    try:
+        scheduler = _ActiveMeasurementScheduler(
+            candidate_groups=candidate_groups,
+            statically_rejected=statically_rejected or {},
+            measurement_runner=measurement_runner,
+            full_model_runner=full_model_runner,
+            report_path=report_path,
+            policy=selected_policy,
+            resume=resume,
+        )
+        return scheduler.run()
+    except Exception as exc:
+        existing = _read_json(report_path)
+        report = existing if isinstance(existing, dict) else {}
+        report.update(
+            {
+                "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
+                "stage": "active_measurement_scheduler",
+                "status": "failed",
+                "passed": False,
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
+                "failure_report_written": True,
+            }
+        )
+        atomic_write_json(report_path, report)
+        return report
+
+
+def build_active_measurement_inputs(
+    *,
+    matmul_results: Sequence["MatmulEnumerationResult"],
+    sdpa_result: "SDPAEnumerationResult",
+) -> tuple[
+    dict[str, tuple[MeasurementCandidate, ...]],
+    dict[str, list[dict[str, Any]]],
+]:
+    """Convert legal enumerator outputs into active scheduler inputs."""
+
+    from .matmul import rank_matmul_measurement_candidates
+    from .sdpa import SDPA_OPERATOR, rank_sdpa_measurement_candidates
+
+    groups: dict[str, tuple[MeasurementCandidate, ...]] = {}
+    rejected: dict[str, list[dict[str, Any]]] = {}
+    for result in matmul_results:
+        if result.operator_name in groups:
+            raise HierarchicalSearchError(
+                f"duplicate MatMul enumeration for {result.operator_name!r}"
+            )
+        groups[result.operator_name] = rank_matmul_measurement_candidates(result)
+        rejected[result.operator_name] = [
+            copy.deepcopy(dict(item)) for item in result.rejected
+        ]
+    groups[SDPA_OPERATOR] = rank_sdpa_measurement_candidates(sdpa_result)
+    rejected[SDPA_OPERATOR] = [
+        copy.deepcopy(dict(item)) for item in sdpa_result.rejected
+    ]
+    required = {name for name, _ in ACTIVE_MEASUREMENT_MINIMUM_COVERAGE}
+    missing = sorted(required - set(groups))
+    if missing:
+        raise HierarchicalSearchError(
+            "active measurement inputs are missing operators: " + ", ".join(missing)
+        )
+    return groups, rejected
+
+
+class _ActiveMeasurementScheduler:
+    def __init__(
+        self,
+        *,
+        candidate_groups: Mapping[str, Sequence[MeasurementCandidate]],
+        statically_rejected: Mapping[str, Sequence[Mapping[str, Any]]],
+        measurement_runner: ActiveMeasurementRunner,
+        full_model_runner: FullModelMeasurementRunner | None,
+        report_path: Path,
+        policy: SuccessiveHalvingPolicy,
+        resume: bool,
+    ) -> None:
+        self.policy = policy
+        self.measurement_runner = measurement_runner
+        self.full_model_runner = full_model_runner
+        self.report_path = report_path
+        self.records_dir = report_path.parent / "active_measurements"
+        self.records_dir.mkdir(parents=True, exist_ok=True)
+        self.resume = bool(resume)
+        self.groups = self._normalize_groups(candidate_groups)
+        self.rejected = {
+            name: [copy.deepcopy(dict(item)) for item in values]
+            for name, values in statically_rejected.items()
+        }
+        self.campaign_sha256 = sha256_json(
+            {
+                "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
+                "policy": policy.to_dict(),
+                "candidate_groups": {
+                    name: [candidate.to_dict() for candidate in candidates]
+                    for name, candidates in self.groups.items()
+                },
+                "statically_rejected": self.rejected,
+            }
+        )
+        self.new_measurement_count = 0
+        self.reused_measurement_count = 0
+        self.failed_measurement_count = 0
+        self.device_seconds = 0.0
+        self.report: dict[str, Any] = {
+            "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
+            "stage": "active_measurement_scheduler",
+            "algorithm": "analytical_active_successive_halving",
+            "status": "running",
+            "passed": False,
+            "campaign_sha256": self.campaign_sha256,
+            "policy": self.policy.to_dict(),
+            "intermediate_selection": {
+                "strategy": "latency_l1_pareto_top_k",
+                "minimum_relative_improvement_gate_applied": False,
+                "minimum_relative_improvement": None,
+                "local_small_improvements_eligible": True,
+            },
+            "operators": {},
+            "proposal_measurements": {},
+            "counts": {},
+            "active_measurement": None,
+            "resume": {"enabled": self.resume},
+            "failure_report_written": True,
+        }
+
+    @staticmethod
+    def _normalize_groups(
+        groups: Mapping[str, Sequence[MeasurementCandidate]],
+    ) -> dict[str, tuple[MeasurementCandidate, ...]]:
+        normalized: dict[str, tuple[MeasurementCandidate, ...]] = {}
+        seen: set[str] = set()
+        for operator_name, values in groups.items():
+            candidates = tuple(values)
+            for candidate in candidates:
+                if candidate.operator_name != operator_name:
+                    raise HierarchicalSearchError(
+                        f"candidate {candidate.candidate_id!r} belongs to "
+                        f"{candidate.operator_name!r}, not {operator_name!r}"
+                    )
+                if candidate.candidate_id in seen:
+                    raise HierarchicalSearchError(
+                        f"duplicate active candidate id {candidate.candidate_id!r}"
+                    )
+                seen.add(candidate.candidate_id)
+            incumbent_count = sum(candidate.is_incumbent for candidate in candidates)
+            if incumbent_count != 1:
+                raise HierarchicalSearchError(
+                    f"{operator_name} must have exactly one incumbent candidate"
+                )
+            normalized[str(operator_name)] = candidates
+        return normalized
+
+    def run(self) -> dict[str, Any]:
+        atomic_write_json(self.report_path, self.report)
+        operator_reports: dict[str, dict[str, Any]] = {}
+        for operator_name, required_count in self.policy.minimum_coverage:
+            candidates = self.groups.get(operator_name, ())
+            rejected = self.rejected.get(operator_name, [])
+            operator_report = self._run_operator(
+                operator_name=operator_name,
+                candidates=candidates,
+                rejected=rejected,
+                required_count=required_count,
+            )
+            operator_reports[operator_name] = operator_report
+            self.report["operators"][operator_name] = operator_report
+            self.report["proposal_measurements"][operator_name] = operator_report[
+                "proposal_measurements"
+            ]
+            self._flush()
+
+        global_counts = {
+            key: sum(report["counts"][key] for report in operator_reports.values())
+            for key in (
+                "enumerated",
+                "legal",
+                "statically_rejected",
+                "analytically_pruned",
+                "measured_short",
+                "measured_short_attempted",
+                "measured_confirmation",
+                "measured_confirmation_attempted",
+                "full_model_selected",
+                "full_model_measured",
+            )
+        }
+        failed_operators = [
+            name for name, report in operator_reports.items() if not report["passed"]
+        ]
+        invariants = {
+            "enumerated_not_used_as_measured": all(
+                report["counts"]["measured_short"]
+                <= report["counts"]["measured_short_attempted"]
+                <= report["counts"]["legal"]
+                for report in operator_reports.values()
+            ),
+            "minimum_coverage_met": not failed_operators,
+            "intermediate_one_percent_gate_disabled": True,
+            "measurement_classes_disjointly_reported": True,
+        }
+        passed = bool(operator_reports) and all(invariants.values())
+        self.report.update(
+            {
+                "status": "passed" if passed else "failed",
+                "passed": passed,
+                "active_measurement": None,
+                "counts": global_counts,
+                "measurement_usage": {
+                    "new_measurement_count": self.new_measurement_count,
+                    "reused_measurement_count": self.reused_measurement_count,
+                    "failed_measurement_count": self.failed_measurement_count,
+                    "device_seconds": self.device_seconds,
+                },
+                "acceptance": {
+                    "passed": passed,
+                    "failed_operators": failed_operators,
+                    "invariants": invariants,
+                },
+            }
+        )
+        self._flush()
+        return copy.deepcopy(self.report)
+
+    def _run_operator(
+        self,
+        *,
+        operator_name: str,
+        candidates: Sequence[MeasurementCandidate],
+        rejected: Sequence[Mapping[str, Any]],
+        required_count: int,
+    ) -> dict[str, Any]:
+        analytical = sorted(
+            candidates,
+            key=lambda item: (
+                item.analytical_score,
+                item.l1_bytes,
+                item.candidate_id,
+            ),
+        )
+        short = self._run_short_round(
+            operator_name=operator_name,
+            candidates=analytical,
+            required_count=required_count,
+        )
+        short_passed = self._passed_candidates(analytical, short["measurements"])
+        refinement_target = min(
+            self.policy.confirmation_max_candidates,
+            max(
+                self.policy.confirmation_min_candidates,
+                math.ceil(len(short_passed) * self.policy.retain_fraction),
+            ),
+        )
+        refinement = self._run_promotion_round(
+            operator_name=operator_name,
+            round_name="round_2_refinement",
+            candidates=short_passed,
+            previous_measurements=short["measurements"],
+            contract=self.policy.refinement_contract,
+            target_count=refinement_target,
+        )
+        refinement_passed = self._passed_candidates(
+            short_passed,
+            refinement["measurements"],
+        )
+        confirmation_target = min(
+            self.policy.confirmation_max_candidates,
+            max(
+                self.policy.confirmation_min_candidates,
+                len(refinement_passed),
+            ),
+        )
+        confirmation = self._run_promotion_round(
+            operator_name=operator_name,
+            round_name="round_3_confirmation",
+            candidates=refinement_passed,
+            previous_measurements=refinement["measurements"],
+            contract=self.policy.confirmation_contract,
+            target_count=confirmation_target,
+        )
+        confirmation_passed = self._passed_candidates(
+            refinement_passed,
+            confirmation["measurements"],
+        )
+        final_order = self._pareto_order(
+            confirmation_passed,
+            confirmation["measurements"],
+        )
+        full_selected = self._select_with_incumbent(
+            final_order,
+            min(self.policy.full_model_top_k, len(final_order)),
+        )
+        full_measurements: dict[str, dict[str, Any]] = {}
+        if self.full_model_runner is not None:
+            for candidate in full_selected:
+                full_measurements[candidate.candidate_id] = self._measure_full_model(
+                    candidate
+                )
+
+        short_attempted = set(short["measurements"])
+        refinement_attempted = set(refinement["measurements"])
+        confirmation_attempted = set(confirmation["measurements"])
+        full_measured = {
+            candidate_id
+            for candidate_id, result in full_measurements.items()
+            if result["passed"]
+        }
+        analytically_pruned = [
+            candidate.candidate_id
+            for candidate in analytical
+            if candidate.candidate_id not in short_attempted
+        ]
+        proposal_measurements = {
+            candidate.candidate_id: {
+                "status": "passed",
+                "passed": True,
+                "latency_ms": confirmation["measurements"][candidate.candidate_id][
+                    "latency_ms"
+                ],
+                "statistics": {
+                    "p50": confirmation["measurements"][candidate.candidate_id][
+                        "latency_ms"
+                    ]
+                },
+                "measurement_stage": "round_3_confirmation",
+                "measurement_contract": self.policy.confirmation_contract.to_dict(),
+                "measurement_record": confirmation["measurements"][
+                    candidate.candidate_id
+                ]["record_path"],
+                "l1_bytes": candidate.l1_bytes,
+            }
+            for candidate in confirmation_passed
+        }
+        lifecycle = self._candidate_lifecycle(
+            candidates=analytical,
+            rejected=rejected,
+            short=short["measurements"],
+            refinement=refinement["measurements"],
+            confirmation=confirmation["measurements"],
+            full_selected=full_selected,
+            full_measurements=full_measurements,
+        )
+        incumbent_id = next(
+            (
+                candidate.candidate_id
+                for candidate in analytical
+                if candidate.is_incumbent
+            ),
+            None,
+        )
+        confirmation_ids = {candidate.candidate_id for candidate in confirmation_passed}
+        checks = {
+            "minimum_short_coverage": len(short_passed) >= required_count,
+            "minimum_confirmation_candidates": len(confirmation_passed)
+            >= self.policy.confirmation_min_candidates,
+            "incumbent_measured_short": incumbent_id in short_attempted,
+            "incumbent_measured_confirmation": incumbent_id in confirmation_ids,
+            "full_model_measurements_passed": self.full_model_runner is None
+            or len(full_measured) == len(full_selected),
+        }
+        counts = {
+            "enumerated": len(candidates) + len(rejected),
+            "legal": len(candidates),
+            "statically_rejected": len(rejected),
+            "analytically_pruned": len(analytically_pruned),
+            "measured_short": len(short_passed),
+            "measured_short_attempted": len(short_attempted),
+            "measured_confirmation": len(confirmation_passed),
+            "measured_confirmation_attempted": len(
+                refinement_attempted | confirmation_attempted
+            ),
+            "full_model_selected": len(full_selected),
+            "full_model_measured": len(full_measured),
+        }
+        return {
+            "operator": operator_name,
+            "status": "passed" if all(checks.values()) else "failed",
+            "passed": all(checks.values()),
+            "minimum_coverage": required_count,
+            "analytical_ranking": [candidate.to_dict() for candidate in analytical],
+            "statically_rejected": [copy.deepcopy(dict(item)) for item in rejected],
+            "analytically_pruned_candidate_ids": analytically_pruned,
+            "rounds": [short, refinement, confirmation],
+            "full_model": {
+                "selected_candidate_ids": [
+                    candidate.candidate_id for candidate in full_selected
+                ],
+                "measurement_status": (
+                    "measured" if self.full_model_runner is not None else "not_run"
+                ),
+                "measurements": full_measurements,
+            },
+            "proposal_measurements": proposal_measurements,
+            "candidate_lifecycle": lifecycle,
+            "counts": counts,
+            "acceptance": {"passed": all(checks.values()), "checks": checks},
+        }
+
+    def _run_short_round(
+        self,
+        *,
+        operator_name: str,
+        candidates: Sequence[MeasurementCandidate],
+        required_count: int,
+    ) -> dict[str, Any]:
+        incumbent = next((item for item in candidates if item.is_incumbent), None)
+        queue = list(candidates)
+        if incumbent is not None:
+            queue.remove(incumbent)
+            queue.insert(0, incumbent)
+        measurements: dict[str, dict[str, Any]] = {}
+        batches: list[dict[str, Any]] = []
+        passed_count = 0
+        batch_index = 0
+        while queue and passed_count < required_count:
+            calibration = self._analytical_calibration(
+                candidates,
+                measurements,
+                remaining=queue,
+            )
+            scale = calibration["scale"]
+            queue.sort(
+                key=lambda item: (
+                    item.analytical_score
+                    * (float(scale) if scale is not None else 1.0),
+                    item.l1_bytes,
+                    item.candidate_id,
+                )
+            )
+            if batch_index == 0 and incumbent is not None and incumbent in queue:
+                queue.remove(incumbent)
+                queue.insert(0, incumbent)
+            remaining = required_count - passed_count
+            batch_size = min(self.policy.short_batch_size, remaining, len(queue))
+            batch = queue[:batch_size]
+            del queue[:batch_size]
+            batch_results = {}
+            for candidate in batch:
+                result = self._measure_candidate(
+                    candidate,
+                    self.policy.short_contract,
+                    "round_1_short",
+                )
+                measurements[candidate.candidate_id] = result
+                batch_results[candidate.candidate_id] = result
+            passed_count = sum(result["passed"] for result in measurements.values())
+            calibration = self._analytical_calibration(
+                candidates,
+                measurements,
+                remaining=queue,
+            )
+            batches.append(
+                {
+                    "batch_index": batch_index,
+                    "candidate_ids": [item.candidate_id for item in batch],
+                    "results": batch_results,
+                    "passed_count_after_batch": passed_count,
+                    "ranking_update": calibration,
+                }
+            )
+            batch_index += 1
+        return {
+            "name": "round_1_short",
+            "status": "passed" if passed_count >= required_count else "failed",
+            "measurement_contract": self.policy.short_contract.to_dict(),
+            "target_passed_candidate_count": required_count,
+            "attempted_candidate_count": len(measurements),
+            "passed_candidate_count": passed_count,
+            "active_batches": batches,
+            "measurements": measurements,
+            "promotion_gate_applied": False,
+        }
+
+    def _run_promotion_round(
+        self,
+        *,
+        operator_name: str,
+        round_name: str,
+        candidates: Sequence[MeasurementCandidate],
+        previous_measurements: Mapping[str, Mapping[str, Any]],
+        contract: MeasurementContract,
+        target_count: int,
+    ) -> dict[str, Any]:
+        ordered = self._pareto_order(candidates, previous_measurements)
+        selected = self._select_with_incumbent(
+            ordered,
+            min(target_count, len(ordered)),
+        )
+        selected_ids = {candidate.candidate_id for candidate in selected}
+        queue = [
+            *selected,
+            *(item for item in ordered if item.candidate_id not in selected_ids),
+        ]
+        measurements: dict[str, dict[str, Any]] = {}
+        passed_count = 0
+        for candidate in queue:
+            if passed_count >= target_count:
+                break
+            result = self._measure_candidate(candidate, contract, round_name)
+            measurements[candidate.candidate_id] = result
+            passed_count += int(result["passed"])
+        return {
+            "name": round_name,
+            "status": "passed" if passed_count >= target_count else "failed",
+            "measurement_contract": contract.to_dict(),
+            "input_candidate_count": len(candidates),
+            "retain_fraction": self.policy.retain_fraction,
+            "target_passed_candidate_count": target_count,
+            "pareto_priority_candidate_ids": [item.candidate_id for item in ordered],
+            "initial_selected_candidate_ids": [item.candidate_id for item in selected],
+            "attempted_candidate_count": len(measurements),
+            "passed_candidate_count": passed_count,
+            "measurements": measurements,
+            "promotion_gate_applied": False,
+            "selection_strategy": "iterated_latency_l1_pareto_frontiers",
+        }
+
+    def _measure_candidate(
+        self,
+        candidate: MeasurementCandidate,
+        contract: MeasurementContract,
+        round_name: str,
+    ) -> dict[str, Any]:
+        record_path = (
+            self.records_dir
+            / _slug(candidate.operator_name)
+            / _slug(candidate.candidate_id)
+            / f"{_slug(round_name)}.json"
+        )
+        request = {
+            "campaign_sha256": self.campaign_sha256,
+            "round": round_name,
+            "candidate": candidate.to_dict(),
+            "measurement_contract": contract.to_dict(),
+        }
+        request_sha256 = sha256_json(request)
+        cached = _read_json(record_path) if self.resume else None
+        if (
+            isinstance(cached, dict)
+            and cached.get("request_sha256") == request_sha256
+            and cached.get("complete") is True
+            and isinstance(cached.get("summary"), Mapping)
+        ):
+            self.reused_measurement_count += 1
+            summary = copy.deepcopy(dict(cached["summary"]))
+            summary["scheduler_reused"] = True
+            return summary
+
+        self.report["active_measurement"] = request
+        self._flush()
+        started = time.monotonic()
+        try:
+            raw = self.measurement_runner(candidate, contract, round_name)
+            if not isinstance(raw, Mapping):
+                raise HierarchicalSearchError(
+                    "active measurement runner must return a mapping"
+                )
+            result = copy.deepcopy(dict(raw))
+        except Exception as exc:
+            result = {
+                "status": "failed",
+                "passed": False,
+                "error": {
+                    "type": type(exc).__name__,
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
+            }
+        elapsed = time.monotonic() - started
+        summary = self._measurement_summary(
+            result,
+            contract=contract,
+            candidate=candidate,
+            round_name=round_name,
+            record_path=record_path,
+            elapsed_seconds=elapsed,
+        )
+        self.new_measurement_count += 1
+        self.device_seconds += summary["device_seconds"]
+        if not summary["passed"]:
+            self.failed_measurement_count += 1
+        atomic_write_json(
+            record_path,
+            {
+                "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
+                "request": request,
+                "request_sha256": request_sha256,
+                "complete": True,
+                "summary": summary,
+                "result": result,
+            },
+        )
+        self.report["active_measurement"] = None
+        self._flush()
+        return summary
+
+    def _measure_full_model(
+        self,
+        candidate: MeasurementCandidate,
+    ) -> dict[str, Any]:
+        if self.full_model_runner is None:
+            raise HierarchicalSearchError("full-model measurement runner is missing")
+        record_path = (
+            self.records_dir
+            / _slug(candidate.operator_name)
+            / _slug(candidate.candidate_id)
+            / "full-model.json"
+        )
+        request = {
+            "campaign_sha256": self.campaign_sha256,
+            "round": "full_model",
+            "candidate": candidate.to_dict(),
+        }
+        request_sha256 = sha256_json(request)
+        cached = _read_json(record_path) if self.resume else None
+        if (
+            isinstance(cached, dict)
+            and cached.get("request_sha256") == request_sha256
+            and cached.get("complete") is True
+            and isinstance(cached.get("summary"), Mapping)
+        ):
+            self.reused_measurement_count += 1
+            summary = copy.deepcopy(dict(cached["summary"]))
+            summary["scheduler_reused"] = True
+            return summary
+        started = time.monotonic()
+        try:
+            raw = self.full_model_runner(candidate)
+            if not isinstance(raw, Mapping):
+                raise HierarchicalSearchError(
+                    "full-model measurement runner must return a mapping"
+                )
+            result = copy.deepcopy(dict(raw))
+        except Exception as exc:
+            result = {
+                "status": "failed",
+                "passed": False,
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+        elapsed = time.monotonic() - started
+        objective = result.get("objective") or {}
+        value = objective.get("value") if isinstance(objective, Mapping) else None
+        if value is None:
+            value = result.get("tokens_per_second_per_user")
+        numeric = _positive_float(value)
+        isolated = result.get("isolated_subprocess") is True
+        passed = bool(result.get("status") == "passed" and result.get("passed", True))
+        passed = bool(passed and numeric is not None and isolated)
+        summary = {
+            "status": "passed" if passed else "failed",
+            "passed": passed,
+            "objective": (
+                copy.deepcopy(dict(objective))
+                if isinstance(objective, Mapping)
+                else None
+            ),
+            "tokens_per_second_per_user": numeric,
+            "isolated_subprocess": isolated,
+            "device_seconds": _float_or_default(result.get("device_seconds"), elapsed),
+            "record_path": str(record_path),
+            "scheduler_reused": False,
+        }
+        self.new_measurement_count += 1
+        self.device_seconds += summary["device_seconds"]
+        if not passed:
+            self.failed_measurement_count += 1
+        atomic_write_json(
+            record_path,
+            {
+                "schema_version": ACTIVE_MEASUREMENT_SCHEMA_VERSION,
+                "request": request,
+                "request_sha256": request_sha256,
+                "complete": True,
+                "summary": summary,
+                "result": result,
+            },
+        )
+        return summary
+
+    @staticmethod
+    def _measurement_summary(
+        result: Mapping[str, Any],
+        *,
+        contract: MeasurementContract,
+        candidate: MeasurementCandidate,
+        round_name: str,
+        record_path: Path,
+        elapsed_seconds: float,
+    ) -> dict[str, Any]:
+        statistics_payload = result.get("statistics")
+        statistics_report = (
+            statistics_payload if isinstance(statistics_payload, Mapping) else {}
+        )
+        latency_ms = _positive_float(statistics_report.get("p50"))
+        observed_contract = result.get("measurement_contract")
+        contract_matches = isinstance(observed_contract, Mapping) and canonical_json(
+            observed_contract
+        ) == canonical_json(contract.to_dict())
+        isolated = (result.get("worker") or {}).get("isolated_subprocess") is True
+        passed = bool(result.get("status") == "passed" and result.get("passed", True))
+        passed = bool(
+            passed and latency_ms is not None and contract_matches and isolated
+        )
+        return {
+            "candidate_id": candidate.candidate_id,
+            "operator": candidate.operator_name,
+            "round": round_name,
+            "status": "passed" if passed else "failed",
+            "passed": passed,
+            "latency_ms": latency_ms,
+            "statistics": {
+                key: statistics_report.get(key)
+                for key in (
+                    "mean",
+                    "p50",
+                    "p90",
+                    "coefficient_of_variation",
+                    "coefficient_of_variation_percent",
+                    "sample_count",
+                )
+            },
+            "measurement_contract": contract.to_dict(),
+            "contract_matches": contract_matches,
+            "isolated_subprocess": isolated,
+            "cache_hit": bool((result.get("cache") or {}).get("hit")),
+            "device_seconds": _float_or_default(
+                result.get("device_seconds"), elapsed_seconds
+            ),
+            "record_path": str(record_path),
+            "scheduler_reused": False,
+            "error": copy.deepcopy(result.get("error")),
+        }
+
+    @staticmethod
+    def _passed_candidates(
+        candidates: Sequence[MeasurementCandidate],
+        measurements: Mapping[str, Mapping[str, Any]],
+    ) -> list[MeasurementCandidate]:
+        return [
+            candidate
+            for candidate in candidates
+            if (measurements.get(candidate.candidate_id) or {}).get("passed") is True
+        ]
+
+    @staticmethod
+    def _pareto_order(
+        candidates: Sequence[MeasurementCandidate],
+        measurements: Mapping[str, Mapping[str, Any]],
+    ) -> list[MeasurementCandidate]:
+        remaining = [
+            candidate
+            for candidate in candidates
+            if _positive_float(
+                (measurements.get(candidate.candidate_id) or {}).get("latency_ms")
+            )
+            is not None
+        ]
+        result: list[MeasurementCandidate] = []
+        while remaining:
+            frontier = []
+            for candidate in remaining:
+                latency = float(measurements[candidate.candidate_id]["latency_ms"])
+                dominated = any(
+                    _dominates_measurement(
+                        other,
+                        candidate,
+                        measurements=measurements,
+                    )
+                    for other in remaining
+                    if other.candidate_id != candidate.candidate_id
+                )
+                if not dominated:
+                    frontier.append((latency, candidate))
+            frontier.sort(
+                key=lambda item: (
+                    item[0],
+                    item[1].l1_bytes,
+                    item[1].analytical_score,
+                    item[1].candidate_id,
+                )
+            )
+            layer = [candidate for _, candidate in frontier]
+            result.extend(layer)
+            selected_ids = {candidate.candidate_id for candidate in layer}
+            remaining = [
+                candidate
+                for candidate in remaining
+                if candidate.candidate_id not in selected_ids
+            ]
+        return result
+
+    @staticmethod
+    def _select_with_incumbent(
+        ordered: Sequence[MeasurementCandidate],
+        target_count: int,
+    ) -> list[MeasurementCandidate]:
+        if target_count <= 0:
+            return []
+        selected = list(ordered[:target_count])
+        incumbent = next((item for item in ordered if item.is_incumbent), None)
+        if incumbent is not None and incumbent not in selected:
+            if selected:
+                selected[-1] = incumbent
+            else:
+                selected.append(incumbent)
+        selected_ids = set()
+        unique = []
+        for candidate in selected:
+            if candidate.candidate_id not in selected_ids:
+                selected_ids.add(candidate.candidate_id)
+                unique.append(candidate)
+        return unique
+
+    @staticmethod
+    def _analytical_calibration(
+        candidates: Sequence[MeasurementCandidate],
+        measurements: Mapping[str, Mapping[str, Any]],
+        *,
+        remaining: Sequence[MeasurementCandidate],
+    ) -> dict[str, Any]:
+        ratios = []
+        for candidate in candidates:
+            latency = _positive_float(
+                (measurements.get(candidate.candidate_id) or {}).get("latency_ms")
+            )
+            if latency is not None and candidate.analytical_score > 0.0:
+                ratios.append(latency / candidate.analytical_score)
+        scale = statistics.median(ratios) if ratios else None
+        return {
+            "method": "median_measured_to_analytical_scale",
+            "measured_candidate_count": len(ratios),
+            "scale": scale,
+            "ranking_updated": bool(ratios),
+            "next_candidate_order": [
+                candidate.candidate_id
+                for candidate in sorted(
+                    remaining,
+                    key=lambda item: (
+                        item.analytical_score
+                        * (float(scale) if scale is not None else 1.0),
+                        item.l1_bytes,
+                        item.candidate_id,
+                    ),
+                )
+            ],
+        }
+
+    @staticmethod
+    def _candidate_lifecycle(
+        *,
+        candidates: Sequence[MeasurementCandidate],
+        rejected: Sequence[Mapping[str, Any]],
+        short: Mapping[str, Mapping[str, Any]],
+        refinement: Mapping[str, Mapping[str, Any]],
+        confirmation: Mapping[str, Mapping[str, Any]],
+        full_selected: Sequence[MeasurementCandidate],
+        full_measurements: Mapping[str, Mapping[str, Any]],
+    ) -> dict[str, Any]:
+        full_selected_ids = {candidate.candidate_id for candidate in full_selected}
+        lifecycle = {}
+        for candidate in candidates:
+            states = ["enumerated", "legal"]
+            if candidate.candidate_id not in short:
+                states.append("analytically_pruned")
+            else:
+                states.append("measured_short")
+            if candidate.candidate_id in refinement:
+                states.append("measured_refinement")
+            if candidate.candidate_id in confirmation:
+                states.append("measured_confirmation")
+            if candidate.candidate_id in full_selected_ids:
+                states.append("full_model_selected")
+            if candidate.candidate_id in full_measurements:
+                states.append("full_model_measured")
+            lifecycle[candidate.candidate_id] = {
+                "states": states,
+                "short_passed": (short.get(candidate.candidate_id) or {}).get("passed"),
+                "refinement_passed": (refinement.get(candidate.candidate_id) or {}).get(
+                    "passed"
+                ),
+                "confirmation_passed": (
+                    confirmation.get(candidate.candidate_id) or {}
+                ).get("passed"),
+                "full_model_passed": (
+                    full_measurements.get(candidate.candidate_id) or {}
+                ).get("passed"),
+            }
+        for index, item in enumerate(rejected):
+            candidate_id = str(item.get("candidate_id") or f"rejected-{index}")
+            lifecycle[candidate_id] = {
+                "states": ["enumerated", "statically_rejected"],
+                "reason": copy.deepcopy(dict(item)),
+            }
+        return lifecycle
+
+    def _flush(self) -> None:
+        atomic_write_json(self.report_path, self.report)
 
 
 def run_hierarchical_search(
@@ -1736,6 +2774,25 @@ def _evaluation_record(
     )
 
 
+def _dominates_measurement(
+    other: MeasurementCandidate,
+    candidate: MeasurementCandidate,
+    *,
+    measurements: Mapping[str, Mapping[str, Any]],
+) -> bool:
+    other_latency = float(measurements[other.candidate_id]["latency_ms"])
+    candidate_latency = float(measurements[candidate.candidate_id]["latency_ms"])
+    other_dimensions = (other_latency, other.l1_bytes)
+    candidate_dimensions = (candidate_latency, candidate.l1_bytes)
+    return all(
+        observed <= current
+        for observed, current in zip(other_dimensions, candidate_dimensions)
+    ) and any(
+        observed < current
+        for observed, current in zip(other_dimensions, candidate_dimensions)
+    )
+
+
 def _pareto_frontier(proposals: Sequence[SearchProposal]) -> list[SearchProposal]:
     frontier: list[SearchProposal] = []
     for candidate in proposals:
@@ -1924,6 +2981,13 @@ def _float_or_none(value: Any) -> float | None:
         return float(value) if value is not None else None
     except (TypeError, ValueError):
         return None
+
+
+def _positive_float(value: Any) -> float | None:
+    observed = _float_or_none(value)
+    if observed is None or not math.isfinite(observed) or observed <= 0.0:
+        return None
+    return observed
 
 
 def _float_or_default(value: Any, default: float) -> float:

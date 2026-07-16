@@ -12,6 +12,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     SearchSpaceConfig,
     WorkloadSpec,
     enumerate_sdpa_programs,
+    rank_sdpa_measurement_candidates,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
     realize_ttnn_config,
@@ -304,6 +305,18 @@ class SDPAEnumeratorTest(unittest.TestCase):
     def test_report_is_json_serializable(self) -> None:
         report = self._enumerate(self.runtime).to_dict()
         self.assertEqual(json.loads(json.dumps(report)), report)
+
+    def test_analytical_ranking_covers_each_legal_candidate(self) -> None:
+        enumeration = self._enumerate(self.runtime)
+        ranked = rank_sdpa_measurement_candidates(enumeration)
+
+        self.assertEqual(len(ranked), len(enumeration.candidates))
+        self.assertEqual(
+            {candidate.candidate_id for candidate in ranked},
+            {candidate.candidate_id for candidate in enumeration.candidates},
+        )
+        self.assertEqual(sum(candidate.is_incumbent for candidate in ranked), 1)
+        self.assertTrue(all(candidate.candidate_kind == "sdpa" for candidate in ranked))
 
     def _enumerate(self, runtime):
         return enumerate_sdpa_programs(

@@ -17,10 +17,13 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     PrecisionContract,
     SearchSpaceConfig,
     WorkloadSpec,
+    build_active_measurement_inputs,
     build_llama31_8b_transfer_plan,
     enumerate_all_matmul_programs,
     enumerate_matmul_programs,
+    enumerate_sdpa_programs,
     run_microbenchmark,
+    rank_matmul_measurement_candidates,
     select_matmul_microbenchmark_winner,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
@@ -146,6 +149,50 @@ class MatmulProgramEnumeratorTest(unittest.TestCase):
                 [program.to_dict() for program in official.programs],
                 baseline_programs,
             )
+
+    def test_analytical_ranking_covers_each_legal_candidate(self) -> None:
+        enumeration = self._enumerate("mlp.down")
+        ranked = rank_matmul_measurement_candidates(enumeration)
+
+        self.assertEqual(len(ranked), len(enumeration.candidates))
+        self.assertEqual(
+            {candidate.candidate_id for candidate in ranked},
+            {candidate.candidate_id for candidate in enumeration.candidates},
+        )
+        self.assertEqual(sum(candidate.is_incumbent for candidate in ranked), 1)
+        self.assertEqual(
+            list(ranked),
+            sorted(
+                ranked,
+                key=lambda item: (
+                    item.analytical_score,
+                    item.l1_bytes,
+                    not item.is_incumbent,
+                    item.candidate_id,
+                ),
+            ),
+        )
+
+    def test_enumerator_outputs_form_complete_active_measurement_inputs(self) -> None:
+        matmuls = tuple(self._enumerate(operator) for operator in MATMUL_OPERATORS)
+        sdpa = enumerate_sdpa_programs(
+            base_space=self.space,
+            workload=self.workload,
+            device=self.device,
+            precision_contract=self.precision,
+        )
+
+        groups, rejected = build_active_measurement_inputs(
+            matmul_results=matmuls,
+            sdpa_result=sdpa,
+        )
+
+        self.assertEqual(
+            set(groups),
+            {*MATMUL_OPERATORS, "attention.sdpa"},
+        )
+        self.assertEqual(set(rejected), set(groups))
+        self.assertTrue(all(groups[operator] for operator in groups))
 
     def test_phase4_microbench_reports_select_a_non_promoted_winner(self) -> None:
         enumeration = self._enumerate("attention.qkv")

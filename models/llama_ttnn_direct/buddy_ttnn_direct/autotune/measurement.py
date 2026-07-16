@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import os
 import subprocess
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -13,8 +16,83 @@ from .schema import (
     ExecutionContract,
     MeasurementContract,
     PrecisionContract,
+    canonical_json,
     sha256_json,
 )
+
+
+@dataclass(frozen=True)
+class MeasurementCandidate:
+    """A legal candidate plus the analytical evidence used to schedule it."""
+
+    candidate_id: str
+    operator_name: str
+    candidate_kind: str
+    analytical_score: float
+    l1_bytes: int
+    source: str
+    is_incumbent: bool = False
+    _metadata_json: str = field(default="{}", repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.candidate_id or not self.operator_name or not self.candidate_kind:
+            raise ContractViolation(
+                "measurement candidate id, operator, and kind must be non-empty"
+            )
+        if not self.source:
+            raise ContractViolation("measurement candidate source must be non-empty")
+        if not math.isfinite(float(self.analytical_score)):
+            raise ContractViolation("analytical score must be finite")
+        if float(self.analytical_score) < 0.0:
+            raise ContractViolation("analytical score must be non-negative")
+        if self.l1_bytes < 0:
+            raise ContractViolation("candidate l1_bytes must be non-negative")
+        metadata = json.loads(self._metadata_json)
+        if not isinstance(metadata, dict):
+            raise ContractViolation("measurement candidate metadata must be an object")
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        candidate_id: str,
+        operator_name: str,
+        candidate_kind: str,
+        analytical_score: float,
+        l1_bytes: int,
+        source: str,
+        is_incumbent: bool = False,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> "MeasurementCandidate":
+        return cls(
+            candidate_id=str(candidate_id),
+            operator_name=str(operator_name),
+            candidate_kind=str(candidate_kind),
+            analytical_score=float(analytical_score),
+            l1_bytes=int(l1_bytes),
+            source=str(source),
+            is_incumbent=bool(is_incumbent),
+            _metadata_json=canonical_json(metadata or {}),
+        )
+
+    @property
+    def metadata(self) -> dict[str, Any]:
+        value = json.loads(self._metadata_json)
+        if not isinstance(value, dict):
+            raise ContractViolation("measurement candidate metadata must be an object")
+        return value
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "operator": self.operator_name,
+            "candidate_kind": self.candidate_kind,
+            "analytical_score": self.analytical_score,
+            "l1_bytes": self.l1_bytes,
+            "source": self.source,
+            "is_incumbent": self.is_incumbent,
+            "metadata": self.metadata,
+        }
 
 
 def build_candidate_config(
@@ -48,6 +126,27 @@ def build_candidate_config(
         },
         target=target,
         tunable_state=tunable_state,
+    )
+
+
+def with_measurement_contract(
+    candidate: CandidateConfig,
+    measurement_contract: MeasurementContract,
+) -> CandidateConfig:
+    """Clone a candidate identity for one successive-halving round."""
+
+    return CandidateConfig.create(
+        precision_contract=candidate.precision_contract,
+        expected_precision_hash=candidate.expected_precision_hash,
+        execution_contract=candidate.execution_contract,
+        measurement_contract=measurement_contract,
+        semantic_graph_sha256=candidate.semantic_graph_sha256,
+        model_config_sha256=candidate.model_config_sha256,
+        weights_recipe_sha256=candidate.weights_recipe_sha256,
+        runtime_commit=candidate.runtime_commit,
+        device_descriptor=candidate.device_descriptor,
+        target=candidate.target,
+        tunable_state=candidate.tunable_state,
     )
 
 
