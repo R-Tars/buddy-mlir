@@ -137,6 +137,12 @@ class ParameterMaterializerTest(unittest.TestCase):
             packed_runtime = SearchSpaceConfig.from_dict(
                 payload
             ).apply_to_runtime_config(runtime)
+            packed_runtime.setdefault("parameter_config", {}).setdefault(
+                "weight_memory_config", {}
+            )["mlp_gate_up"] = {
+                "kind": "ttnn_memory_config",
+                "name": "DRAM_MEMORY_CONFIG",
+            }
             (program_dir / "config.json").write_text(
                 json.dumps(packed_runtime, indent=2) + "\n"
             )
@@ -160,6 +166,18 @@ class ParameterMaterializerTest(unittest.TestCase):
                 ],
             )
             parameter_config = load_parameter_config_from_program(program_dir)
+            packed_sources = [
+                entry
+                for entry in parameter_config["weights"].values()
+                if entry["role"] in {"mlp_gate", "mlp_up"}
+            ]
+            self.assertTrue(packed_sources)
+            self.assertTrue(
+                all(
+                    entry["memory_config"]["name"] == "DRAM_MEMORY_CONFIG"
+                    for entry in packed_sources
+                )
+            )
             fake_ttnn = FakeTTNN()
             result = to_ttnn_parameters(
                 params,
@@ -180,6 +198,10 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 records["layers.0.mlp.gate_up_proj.weight"]["shape"],
                 [1, 1, 16, 64],
+            )
+            self.assertEqual(
+                records["layers.0.mlp.gate_up_proj.weight"]["memory_config"]["name"],
+                "DRAM_MEMORY_CONFIG",
             )
             self.assertEqual(
                 result.parameters.layers[0].mlp.gate_up_proj.weight.shape,

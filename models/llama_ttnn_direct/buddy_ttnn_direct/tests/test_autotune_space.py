@@ -78,6 +78,52 @@ class StructuredAutotuneSpaceTest(unittest.TestCase):
             "attention.sdpa_kernel_output_memory_config",
         )
 
+    def test_targeted_operator_application_preserves_other_selections(self) -> None:
+        runtime = _official_runtime_config()
+        runtime["autotune"] = {
+            "fused_attention_layout": {"candidate_id": "fused-winner"}
+        }
+        runtime["template_config"]["autotune"] = {
+            "context_aware_sdpa": {"candidate_id": "sdpa-winner"}
+        }
+        original_attention = copy.deepcopy(runtime["attention"])
+        original_up = copy.deepcopy(runtime["mlp"]["up_program_config"])
+        original_down = copy.deepcopy(runtime["mlp"]["down_program_config"])
+
+        payload = SearchSpaceConfig.from_runtime_config(runtime).to_dict()
+        payload["operators"]["mlp.gate"]["output_memory"] = MemoryConfig.named(
+            "DRAM_MEMORY_CONFIG"
+        ).to_dict()
+        candidate = SearchSpaceConfig.from_dict(payload)
+        generated = candidate.apply_operator_to_runtime_config(
+            runtime,
+            "mlp.gate",
+        )
+
+        self.assertEqual(generated["attention"], original_attention)
+        self.assertEqual(generated["mlp"]["up_program_config"], original_up)
+        self.assertEqual(generated["mlp"]["down_program_config"], original_down)
+        self.assertEqual(
+            generated["mlp"]["gate_output_memory_config"]["name"],
+            "DRAM_MEMORY_CONFIG",
+        )
+        self.assertEqual(
+            generated["autotune"]["fused_attention_layout"]["candidate_id"],
+            "fused-winner",
+        )
+        self.assertEqual(
+            generated["template_config"]["autotune"]["context_aware_sdpa"][
+                "candidate_id"
+            ],
+            "sdpa-winner",
+        )
+
+        with self.assertRaisesRegex(SpaceSchemaError, "no missing.operator"):
+            candidate.apply_operator_to_runtime_config(
+                runtime,
+                "missing.operator",
+            )
+
     def test_schema_v2_directly_generates_the_current_runtime_config(self) -> None:
         runtime = _official_runtime_config()
         space = SearchSpaceConfig.from_runtime_config(runtime)

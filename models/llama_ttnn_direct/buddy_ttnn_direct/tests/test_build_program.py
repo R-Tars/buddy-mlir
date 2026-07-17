@@ -60,6 +60,49 @@ class BuildProgramTest(unittest.TestCase):
                 "all_bf16_correctness",
             )
 
+    def test_correctness_recipe_overrides_official_runtime_dtypes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            model_dir = root / "fake_model"
+            config_json = root / "template_config.json"
+            out_dir = root / "program"
+            _write_fake_model_config(model_dir)
+            _write_template_config(config_json)
+            template = json.loads(config_json.read_text())
+            template["dtype_recipe"] = "all_bf16_correctness"
+            template["official_config_profile"] = "p150a_llama31_8b_b32_performance"
+            config_json.write_text(json.dumps(template))
+
+            self.assertEqual(
+                main(
+                    [
+                        "build-program",
+                        "--model-path",
+                        str(model_dir),
+                        "--config",
+                        str(config_json),
+                        "--out-dir",
+                        str(out_dir),
+                    ]
+                ),
+                0,
+            )
+
+            generated = json.loads((out_dir / "config.json").read_text())
+            runtime_dtype_paths = (
+                ("attention", "qkv_output_dtype"),
+                ("attention", "o_proj_output_dtype"),
+                ("mlp", "intermediate_dtype"),
+                ("mlp", "output_dtype"),
+                ("lm_head", "output_dtype"),
+            )
+            for section, name in runtime_dtype_paths:
+                self.assertEqual(
+                    generated[section][name]["name"],
+                    "bfloat16",
+                )
+            self.assertEqual(generated["kv_cache"]["dtype"], "bfloat16")
+
     def test_cli_build_program_writes_decode_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

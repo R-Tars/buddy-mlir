@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from ..dtype_recipes import recipe_dtypes
+from ..dtype_recipes import CORRECTNESS_RECIPE, recipe_dtypes
 from ..templates.attention_decode import (
     official_paged_attention_decode_op_sequence,
 )
@@ -211,4 +211,16 @@ def build_codegen_config(plan: dict[str, Any]) -> dict[str, Any]:
         config,
         template_config.get("official_config_profile"),
     )
+    if template_config["dtype_recipe"] == CORRECTNESS_RECIPE:
+        _apply_all_bf16_runtime_dtypes(config)
     return apply_runtime_tuning(config, template_config.get("autotune"))
+
+
+def _apply_all_bf16_runtime_dtypes(config: dict[str, Any]) -> None:
+    dtype = {"kind": "ttnn_dtype", "name": "bfloat16"}
+    config["attention"]["qkv_output_dtype"] = copy.deepcopy(dtype)
+    config["attention"]["o_proj_output_dtype"] = copy.deepcopy(dtype)
+    config["mlp"]["intermediate_dtype"] = copy.deepcopy(dtype)
+    config["mlp"]["output_dtype"] = copy.deepcopy(dtype)
+    config["lm_head"]["output_dtype"] = copy.deepcopy(dtype)
+    config["kv_cache"]["dtype"] = "bfloat16"

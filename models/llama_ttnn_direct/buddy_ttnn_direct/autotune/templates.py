@@ -289,6 +289,47 @@ def apply_template_selection(
     return result
 
 
+def apply_template_axis_updates(
+    runtime_config: Mapping[str, Any],
+    updates: Mapping[str, Any],
+) -> dict[str, Any]:
+    unknown = set(updates).difference(DEFAULT_TEMPLATE_SELECTION)
+    if unknown:
+        raise TemplateSelectionError(
+            "unknown template axis: " + ", ".join(sorted(unknown))
+        )
+    selection = {
+        axis: template_choice_from_runtime_config(runtime_config, axis)
+        for axis in DEFAULT_TEMPLATE_SELECTION
+    }
+    selection.update(updates)
+    normalized = normalize_template_selection(selection)
+    constraints = validate_template_selection(normalized, runtime_config)
+    if constraints:
+        detail = "; ".join(
+            f"{constraint.code}: {constraint.message}" for constraint in constraints
+        )
+        raise TemplateSelectionError(detail)
+
+    result = copy.deepcopy(dict(runtime_config))
+    autotune = result.get("autotune")
+    if not isinstance(autotune, dict):
+        autotune = {}
+        result["autotune"] = autotune
+    autotune["templates"] = copy.deepcopy(normalized)
+    template_config = result.get("template_config")
+    if isinstance(template_config, dict):
+        template_autotune = template_config.get("autotune")
+        if not isinstance(template_autotune, dict):
+            template_autotune = {}
+            template_config["autotune"] = template_autotune
+        template_autotune["templates"] = copy.deepcopy(normalized)
+    for axis in DEFAULT_TEMPLATE_SELECTION:
+        if axis in updates:
+            _REGISTRY[normalized[axis]].codegen_hook(result)
+    return result
+
+
 def probe_template_availability(
     name: str,
     ttnn_module: Any | None,

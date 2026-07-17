@@ -700,6 +700,20 @@ class SearchSpaceConfig:
             template_config["autotune"] = self.to_dict()
         return result
 
+    def apply_operator_to_runtime_config(
+        self,
+        runtime_config: Mapping[str, Any],
+        operator_name: str,
+    ) -> dict[str, Any]:
+        operators = self.operators
+        if operator_name not in operators:
+            raise SpaceSchemaError(f"search space has no {operator_name} operator")
+        result = copy.deepcopy(dict(runtime_config))
+        _apply_operators(result, {operator_name: operators[operator_name]})
+        snapshot = SearchSpaceConfig.from_runtime_config(result).to_dict()
+        _merge_autotune_snapshot(result, snapshot)
+        return result
+
     def with_sdpa_grid(self, grid: CoreGrid) -> "SearchSpaceConfig":
         payload = self.to_dict()
         sdpa = payload["operators"].get("attention.sdpa")
@@ -1032,6 +1046,27 @@ def _apply_operators(result: dict[str, Any], operators: Mapping[str, Any]) -> No
                     ).to_runtime_descriptor()
             continue
         raise SpaceSchemaError(f"unsupported operator: {name}")
+
+
+def _merge_autotune_snapshot(
+    result: dict[str, Any], snapshot: Mapping[str, Any]
+) -> None:
+    existing = result.get("autotune")
+    merged = copy.deepcopy(dict(existing)) if isinstance(existing, Mapping) else {}
+    merged.update(copy.deepcopy(dict(snapshot)))
+    result["autotune"] = merged
+
+    template_config = result.get("template_config")
+    if not isinstance(template_config, dict):
+        return
+    template_existing = template_config.get("autotune")
+    template_merged = (
+        copy.deepcopy(dict(template_existing))
+        if isinstance(template_existing, Mapping)
+        else {}
+    )
+    template_merged.update(copy.deepcopy(dict(snapshot)))
+    template_config["autotune"] = template_merged
 
 
 def _set_path(target: dict[str, Any], path: str, value: Any) -> None:

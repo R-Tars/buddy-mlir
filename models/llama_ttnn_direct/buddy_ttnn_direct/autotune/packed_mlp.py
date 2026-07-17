@@ -21,7 +21,7 @@ from .templates import (
     GATE_UP_AXIS,
     MUL_FUSED_SILU,
     PACKED_GATE_UP,
-    apply_template_selection,
+    apply_template_axis_updates,
 )
 from .transfer import DEFAULT_LAYER_GROUP, OVERRIDE_LAYER_GROUP
 
@@ -246,7 +246,10 @@ def apply_packed_gate_up_candidate(
     candidate: PackedGateUpCandidate,
 ) -> dict[str, Any]:
     configured = _packed_runtime_config(runtime_config)
-    result = candidate.matmul_candidate.search_space.apply_to_runtime_config(configured)
+    result = candidate.matmul_candidate.search_space.apply_operator_to_runtime_config(
+        configured,
+        PACKED_GATE_UP_OPERATOR,
+    )
     mlp = result.setdefault("mlp", {})
     mlp["packed_gate_up_split_strategy"] = candidate.split_strategy
     mlp["packed_gate_up_split_output_memory_config"] = (
@@ -475,11 +478,13 @@ def build_packed_gate_up_phase_report(
 
 
 def _packed_runtime_config(runtime_config: Mapping[str, Any]) -> dict[str, Any]:
-    baseline_space = SearchSpaceConfig.from_runtime_config(runtime_config)
-    templates = baseline_space.templates
-    templates[GATE_UP_AXIS] = PACKED_GATE_UP
-    templates[ACTIVATION_AXIS] = MUL_FUSED_SILU
-    return apply_template_selection(runtime_config, templates)
+    return apply_template_axis_updates(
+        runtime_config,
+        {
+            GATE_UP_AXIS: PACKED_GATE_UP,
+            ACTIVATION_AXIS: MUL_FUSED_SILU,
+        },
+    )
 
 
 def _layer_group(representative_layer: int) -> str:

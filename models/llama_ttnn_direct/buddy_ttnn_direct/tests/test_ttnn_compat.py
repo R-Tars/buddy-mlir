@@ -255,6 +255,27 @@ class TTNNOpsWrapperTest(unittest.TestCase):
         self.assertEqual(calls[1][-1]["memory_config"], "l1-interleaved")
         self.assertEqual(calls[2][-1]["memory_config"], "l1-interleaved")
 
+    def test_linear_and_split_errors_include_operation_name(self) -> None:
+        class FailingTTNN:
+            @staticmethod
+            def linear(*args, **kwargs):
+                raise RuntimeError("linear failed")
+
+            @staticmethod
+            def split(*args, **kwargs):
+                raise RuntimeError("split failed")
+
+        ops = TTNNCompatOps(FailingTTNN())
+        with self.assertRaisesRegex(RuntimeError, "named_linear: linear failed"):
+            ops.linear("input", "weight", op_name="named_linear")
+        with self.assertRaisesRegex(RuntimeError, "named_split: split failed"):
+            ops.split_last_dim(
+                object(),
+                split_size=4,
+                strategy="split",
+                op_name="named_split",
+            )
+
     def test_model_ops_selects_requested_sequence_position(self) -> None:
         calls = []
 

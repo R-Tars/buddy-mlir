@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import unittest
 from pathlib import Path
@@ -114,9 +115,20 @@ class PackedGateUpTuningTest(unittest.TestCase):
             and item.split_strategy == "slice"
             and not item.requires_mul_conversion
         )
-        configured = apply_packed_gate_up_candidate(self.runtime, candidate)
+        runtime = copy.deepcopy(self.runtime)
+        runtime["attention"]["context_bucket_marker"] = "preserve-me"
+        runtime["autotune"] = {
+            "fused_attention_layout": {"candidate_id": "fused-winner"}
+        }
+        original_attention = copy.deepcopy(runtime["attention"])
+        configured = apply_packed_gate_up_candidate(runtime, candidate)
         mlp = configured["mlp"]
 
+        self.assertEqual(configured["attention"], original_attention)
+        self.assertEqual(
+            configured["autotune"]["fused_attention_layout"]["candidate_id"],
+            "fused-winner",
+        )
         self.assertEqual(
             configured["autotune"]["templates"][GATE_UP_AXIS], PACKED_GATE_UP
         )

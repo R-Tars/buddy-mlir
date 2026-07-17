@@ -80,6 +80,12 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
     lm_head = config.get("lm_head", {})
     if not isinstance(lm_head, Mapping):
         lm_head = {}
+    weight_memory_overrides = official_weight_memory_overrides(
+        template_config.get("official_config_profile"),
+        lm_head_split_count=int(lm_head.get("split_count", 1)),
+        vocab_size=graph.vocab_size,
+    )
+    weight_memory_overrides.update(_runtime_weight_memory_overrides(config))
     parameter_config = emit_parameter_config(
         graph,
         recipe=str(
@@ -98,16 +104,47 @@ def load_parameter_config_from_program(program_dir: str | Path) -> dict[str, Any
                 )
             ),
         ),
-        weight_memory_overrides=official_weight_memory_overrides(
-            template_config.get("official_config_profile"),
-            lm_head_split_count=int(lm_head.get("split_count", 1)),
-            vocab_size=graph.vocab_size,
-        ),
+        weight_memory_overrides=weight_memory_overrides,
     )
     parameter_config["templates"] = {
         GATE_UP_AXIS: template_choice_from_runtime_config(config, GATE_UP_AXIS)
     }
     return parameter_config
+
+
+def _runtime_weight_memory_overrides(
+    config: Mapping[str, Any],
+) -> dict[str, Any]:
+    parameter_config = config.get("parameter_config")
+    if not isinstance(parameter_config, Mapping):
+        return {}
+    raw = parameter_config.get("weight_memory_config")
+    if not isinstance(raw, Mapping):
+        return {}
+
+    role_sources = {
+        "q_proj": "attention_qkv",
+        "k_proj": "attention_qkv",
+        "v_proj": "attention_qkv",
+        "o_proj": "attention_o_proj",
+        "mlp_gate": "mlp_gate",
+        "mlp_up": "mlp_up",
+        "mlp_down": "mlp_down",
+        "lm_head": "lm_head",
+    }
+    result = {
+        role: copy.deepcopy(raw[source])
+        for role, source in role_sources.items()
+        if source in raw
+    }
+    if (
+        template_choice_from_runtime_config(config, GATE_UP_AXIS) == PACKED_GATE_UP
+        and "mlp_gate_up" in raw
+    ):
+        packed_memory = copy.deepcopy(raw["mlp_gate_up"])
+        result["mlp_gate"] = packed_memory
+        result["mlp_up"] = copy.deepcopy(packed_memory)
+    return result
 
 
 def build_tensorization_plan(

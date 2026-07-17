@@ -98,7 +98,10 @@ class TTNNCompatOps:
             kwargs["dtype"] = dtype
         if activation is not None:
             kwargs["activation"] = activation
-        return self.ttnn.linear(input_tensor, weight, **kwargs)
+        try:
+            return self.ttnn.linear(input_tensor, weight, **kwargs)
+        except Exception as err:
+            raise RuntimeError(f"{op_name}: {err}") from err
 
     def mul_silu(
         self,
@@ -170,7 +173,10 @@ class TTNNCompatOps:
         split = getattr(self.ttnn, "split", None)
         if strategy != "slice" and callable(split):
             self._record(op_name)
-            result = split(tensor, split_size, dim=-1, **kwargs)
+            try:
+                result = split(tensor, split_size, dim=-1, **kwargs)
+            except Exception as err:
+                raise RuntimeError(f"{op_name}: {err}") from err
             if len(result) != 2:
                 raise ValueError("packed gate/up split must produce two tensors")
             return result[0], result[1]
@@ -191,10 +197,13 @@ class TTNNCompatOps:
         second = list(starts)
         second[-1] = split_size
         self._record(op_name)
-        return (
-            slice_op(tensor, starts, middle, **kwargs),
-            slice_op(tensor, second, shape, **kwargs),
-        )
+        try:
+            return (
+                slice_op(tensor, starts, middle, **kwargs),
+                slice_op(tensor, second, shape, **kwargs),
+            )
+        except Exception as err:
+            raise RuntimeError(f"{op_name}: {err}") from err
 
     def _silu_activation(self):
         unary_with_param = getattr(self.ttnn, "UnaryWithParam", None)
