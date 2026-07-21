@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 import unittest
@@ -40,154 +39,35 @@ class ConfigDiffTest(unittest.TestCase):
             self.assertNotIn("/tmp", text, path)
             self.assertIn("$BUDDY_BUILD/models/llama31_ttnn_direct", text)
 
-    def test_p150a_layered_autotune_evidence_is_complete(self) -> None:
-        evidence_path = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "evidence"
-            / "p150a_layered_autotune_evidence_20260711.json"
+    def test_latest_evidence_summary_is_compact_and_current(self) -> None:
+        evidence_dir = (
+            Path(__file__).resolve().parents[2] / "docs" / "evidence"
         )
-        evidence = json.loads(evidence_path.read_text())
+        evidence_files = sorted(path.name for path in evidence_dir.glob("*.json"))
+        self.assertEqual(evidence_files, ["latest_summary.json"])
 
-        self.assertTrue(evidence["acceptance"]["passed"])
-        self.assertTrue(evidence["acceptance"]["four_levels_completed"])
-        self.assertFalse(evidence["acceptance"]["default_config_changed"])
+        summary_text = (evidence_dir / "latest_summary.json").read_text()
+        summary = json.loads(summary_text)
+        self.assertLessEqual(len(summary_text.splitlines()), 300)
+        self.assertTrue(summary["performance"]["passed"])
+        self.assertEqual(summary["performance"]["warmup"], 5)
+        self.assertEqual(summary["performance"]["iterations"], 100)
+        self.assertEqual(summary["performance"]["repetitions"], 3)
+        self.assertTrue(summary["correctness"]["full_depth_functional_passed"])
+        self.assertTrue(summary["correctness"]["all_bf16_passed"])
         self.assertTrue(
-            evidence["acceptance"]["provisional_winner_promotion_rejected"]
-        )
-        self.assertFalse(evidence["promotion_decision"]["promoted"])
-        self.assertEqual(evidence["default_config_audit"]["status"], "match")
-        self.assertEqual(evidence["default_config_audit"]["issue_count"], 0)
-        self.assertEqual(
-            [level["name"] for level in evidence["levels"]],
-            [
-                "lm_head_split_count",
-                "dtype_recipe",
-                "memory_config_layout",
-                "program_config_core_grid",
-            ],
-        )
-        self.assertEqual(evidence["selected_state"]["lm_head_split_count"], 8)
-        self.assertEqual(
-            evidence["selected_state"]["program_config"],
-            "official",
-        )
-        self.assertEqual(evidence["winner_confirmation"]["iterations"], 50)
-        self.assertTrue(evidence["winner_confirmation"]["passed"])
-        self.assertFalse(
-            evidence["acceptance"]["official_performance_parity_claimed"]
-        )
-        for key in (
-            "seed_config_sha256",
-            "autotune_report_sha256",
-        ):
-            self.assertEqual(len(evidence[key]), 64)
-        self.assertEqual(
-            len(evidence["winner_confirmation"]["report_sha256"]),
-            64,
-        )
-
-    def test_p150a_official_config_parity_evidence_is_complete(self) -> None:
-        evidence_path = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "evidence"
-            / "p150a_official_config_parity_evidence_20260711.json"
-        )
-        evidence = json.loads(evidence_path.read_text())
-
-        self.assertTrue(evidence["acceptance"]["passed"])
-        self.assertTrue(
-            evidence["acceptance"]["all_required_parity_sections_match"]
-        )
-        self.assertTrue(evidence["depth_one_generate"]["passed"])
-        self.assertTrue(evidence["full_depth_steady_profile"]["passed"])
-        self.assertEqual(evidence["config_diff"]["issue_count"], 0)
-        self.assertEqual(evidence["config_diff"]["matching_field_count"], 55)
-        self.assertEqual(
-            set(evidence["config_diff"]["sections"]),
-            set(PARITY_SECTIONS),
-        )
-        self.assertEqual(
-            evidence["full_depth_steady_profile"]["iterations"],
-            50,
-        )
-        self.assertFalse(
-            evidence["acceptance"]["official_performance_parity_claimed"]
-        )
-        for key in (
-            "program_config_sha256",
-            "generated_model_sha256",
-            "official_reference_sha256",
-        ):
-            self.assertEqual(len(evidence[key]), 64)
-
-    def test_p150a_numerical_correctness_evidence_is_complete(self) -> None:
-        evidence_path = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "evidence"
-            / "p150a_numerical_correctness_evidence_20260711.json"
-        )
-        evidence = json.loads(evidence_path.read_text())
-
-        self.assertEqual(evidence["parameter_recipe"], "all_bf16_correctness")
-        self.assertEqual(evidence["pcc_threshold"], 0.99)
-        self.assertTrue(evidence["acceptance"]["passed"])
-        self.assertTrue(evidence["acceptance"]["full_depth_passed"])
-        manifest_path = evidence_path.parent / evidence["hf_reference_manifest"]
-        self.assertEqual(
-            evidence["hf_reference_manifest_sha256"],
-            hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
+            summary["correctness"]["performance_recipe_quality_passed"]
         )
         self.assertGreaterEqual(
-            evidence["acceptance"]["minimum_observed_pcc"],
-            evidence["pcc_threshold"],
+            summary["correctness"]["all_bf16_minimum_pcc"],
+            summary["correctness"]["all_bf16_pcc_threshold"],
         )
-        self.assertEqual(
-            [record["layers"] for record in evidence["records"]],
-            [1, 2, 4, 32],
-        )
-        self.assertTrue(evidence["records"][0]["top_token_required"])
-        for record in evidence["records"]:
-            self.assertEqual(record["status"], "pass")
-            self.assertGreaterEqual(
-                record["minimum_pcc"],
-                evidence["pcc_threshold"],
-            )
-            self.assertEqual(len(record["validation_report_sha256"]), 64)
-
-    def test_hf_correctness_reference_manifest_is_complete(self) -> None:
-        manifest_path = (
-            Path(__file__).resolve().parents[2]
-            / "docs"
-            / "evidence"
-            / "hf_correctness_reference_manifest_20260710.json"
-        )
-        manifest = json.loads(manifest_path.read_text())
-
-        self.assertEqual(
-            manifest["kind"],
-            "hf_llama_correctness_reference_manifest",
-        )
-        self.assertFalse(manifest["tenstorrent_device_opened"])
-        self.assertFalse(manifest["ttnn_correctness_claimed"])
-        self.assertEqual(
-            manifest["key_cache_layout"],
-            "meta_interleaved_rope",
-        )
-        self.assertEqual(manifest["effective_token_count"], 6)
-        self.assertEqual(
-            [record["layers"] for record in manifest["records"]],
-            [1, 2, 4, 32],
-        )
-        for record in manifest["records"]:
-            self.assertEqual(
-                record["checkpoint_count"],
-                3 * record["layers"] + 2,
-            )
-            self.assertEqual(len(record["artifact_sha256"]), 64)
-            self.assertEqual(len(record["logits_sha256"]), 64)
+        for key, value in summary["source_identity"].items():
+            if key.endswith("_commit"):
+                self.assertGreaterEqual(len(value), 8, key)
+            else:
+                self.assertEqual(len(value), 64, key)
+        self.assertFalse(summary["raw_artifacts"]["tracked_raw_artifacts"])
 
     def test_normalized_parity_config_matches_itself(self) -> None:
         official = json.loads(default_official_config_path().read_text())

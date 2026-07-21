@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "source_identity": {
+    "behavior_baseline_buddy_commit": "dbf5330c296425e8c596ab960b692056db268715",
+    "tt_metal_commit": "61e690c25202111b52cbc1fbc9148b6524070c6f",
+    "ttnn_binary_sha256": "d7fe0124960cb6b206df6d97da3882bb536174a6a1b8b2e020c03ee284f82796",
+    "model_config_sha256": "29e4c210b0d6ac178b16b2a255a568bdb23b581e50ca1ef6a6d071dd85704e6e",
+    "production_seed_config_sha256": "a4a8f0ba0d94f4f8e4cfadf7d06887b98c554628aaa7c41221950c06ec3d3084",
+    "best_config_sha256": "1ed82e5b0f2f2ce8444fa881ce725f62a37d6f556fa2cee493cda6dc7e5fde5d",
+    "prompt_corpus_sha256": "07d8fc773d27f33c8c114bca30bca78cbbf3bf77a7b40550cd140f8533a1e2c2"
+  },
+  "production_baseline": {
+    "model": "Llama-3.1-8B-Instruct",
+    "device": "P150A",
+    "layers": 32,
+    "batch_size": 32,
+    "prefill_len": 256,
+    "cache_len": 1024,
+    "sampling": "force_argmax",
+    "execution_mode": "trace",
+    "runtime_input_mode": "persistent",
+    "after_prefill": true
+  },
+  "performance": {
+    "warmup": 5,
+    "iterations": 100,
+    "repetitions": 3,
+    "median_tokens_per_second_per_user": 35.579552465584335,
+    "median_p50_decode_latency_ms": 28.062527955848008,
+    "coefficient_of_variation": 0.0006902197070725225,
+    "passed": true
+  },
+  "correctness": {
+    "full_depth_functional_passed": true,
+    "all_bf16_passed": true,
+    "all_bf16_pcc_threshold": 0.99,
+    "all_bf16_minimum_pcc": 0.9925982836726808,
+    "performance_recipe_quality_passed": true,
+    "official_top1": 0.91,
+    "official_top5": 0.98,
+    "buddy_top1": 0.91,
+    "buddy_top5": 0.982,
+    "official_buddy_greedy_agreement": 0.964
+  },
+  "raw_artifacts": {
+    "convention": "${BUDDY_BUILD}/models/llama31_ttnn_direct/evidence_archive/",
+    "phase1_snapshot": "${BUDDY_BUILD}/models/llama31_ttnn_direct/ttnn_direct_refactor/phase1_before/",
+    "tracked_raw_artifacts": false
+  }
+}

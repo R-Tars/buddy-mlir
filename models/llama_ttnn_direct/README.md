@@ -18,98 +18,25 @@ HF config and weights
 
 ## Current Status
 
-- Full-depth prompt-conditioned prefill, decode, and text generation has
-  passed on P150A for Llama 3.1 8B, batch 32.
-- The generated decode path reuses a prefilled paged KV cache and keeps token
-  handoff on device; host token materialization is for reporting and text
-  decoding.
-- The frozen pre-refactor profile measured about `0.1898 tokens/s/user` versus
-  the recorded official target of `33.1 tokens/s/user`. This is functional
-  evidence, not performance parity.
-- The Step B mixed prefill plus one-decode profile reached `1.3583
-  tokens/s/user` and milestone M2 with official force-argmax, a 48% improvement
-  over the comparable tiled-argmax run.
-- Step C post-prefill steady decode passed on P150A with 5 warmup and 50 measured
-  iterations. Mean decode latency is `33.962 ms`, throughput is `29.445
-  tokens/s/user` (`942.23` aggregate), and the run reaches `88.96%` of the
-  recorded official `33.1 tokens/s/user` target.
-- Step D imports the P150/Llama 3.1 8B TT-Transformers performance profile at
-  tt-metal commit `61e690c2`. All 55 fields across dtype, fidelity, memory,
-  program, grid, LM-head, and paged-attention sections match the extracted
-  reference. DRAM-sharded weights and the layer-31 precision override execute
-  successfully at full depth.
-- The Step D full-depth profile measures `34.933 ms` mean decode latency and
-  `28.627 tokens/s/user` (`86.49%` of target). This is `2.78%` slower than the
-  Step C baseline, so config parity is complete but performance parity remains
-  a Step E optimization target.
-- Historical Step E used four progressive levels instead of a Cartesian
-  search. The precision-preserving semantic-autotune contract now freezes the
-  production dtype/fidelity recipe, so the compatibility runner varies only
-  LM-head splits, memory layout, and program/grid. Every candidate uses full
-  decode trace, persistent inputs, and post-prefill steady decode in an
-  isolated process. A `1%` promotion threshold keeps the incumbent when a
-  challenger is within run-to-run noise.
-- Autotune candidate state now uses a lossless schema-v2 representation for
-  template choices, matmul/SDPA programs, memory and sharding, core grids, and
-  layout edges. Historical preset strings are expanded by a compatibility
-  adapter before fingerprinting or code generation.
-- The schema-v2 legality engine rejects incompatible shapes, grids, sharding,
-  program configs, layouts, and conservative L1/CB footprints before device
-  execution. It covers the current P150A matmul/SDPA configuration plus paged
-  fused cache update and fused QK RoPE, and exposes isolated compile-only
-  validation with stable error classes.
-- The existing-API template registry provides separate and fused KV update,
-  separate and fused QK RoPE, multiply-side and linear-side SILU, and separate
-  and packed MLP gate/up projections. All eight templates have availability,
-  legality, codegen, schema, and reference-semantics contracts. Each template
-  passes device-free dry-run and generated single-layer execution on P150A;
-  packed gate/up remains opt-in.
-- The representative microbenchmark engine measures op and region targets in
-  one isolated process per repetition, retains raw samples and distribution
-  statistics including CV, and atomically caches only complete measurements.
-  Llama 3.1 8B transfer is explicit: layer 0 represents layers 0-30, while the
-  frozen layer-31 MLP precision override is measured separately.
-- The MatMul program enumerator covers QKV, O projection, MLP gate/up/down, and
-  every LM-head shard. It derives bounded DRAM-sharded candidates from tile
-  divisibility and P150A worker capacity, injects the exact official vector,
-  and retains only candidates accepted by the shared legality/L1 engine.
-- The SDPA enumerator searches logical grid, physical sub-core placement,
-  q/k chunks, per-head-batch core caps, and kernel output memory while keeping
-  exp approximation frozen. Cache lengths 128/512/1024 produce distinct
-  bounded spaces, and all retained descriptors materialize through the active
-  TTNN API. A non-official q-chunk candidate passes both the P150A single-op
-  and full-attention paths; the single-op PyTorch reference reaches `0.99965`
-  PCC at a `0.99` threshold.
-- Step E retained split 8, the compressed performance recipe, official L1
-  sharding, and the official SDPA 8x8 grid. LM-head DRAM concat advanced after
-  a `1.61%` short-run gain, but matched 5/50 confirmations reduced that gain to
-  `0.64%`, below the `1%` promotion threshold. The selected incumbent measured
-  `28.436 tokens/s/user` (`85.91%` of target); the default config is unchanged
-  and performance parity is still not claimed.
-- The dedicated all-BF16 correctness recipe passes the Hugging Face reference
-  gates at depths `1,2,4,32`; full-depth logits PCC is `0.99891` and the
-  minimum sampled hidden/KV PCC is `0.99260` at a `0.99` threshold.
-- The compressed performance recipe passes a separate fixed-corpus contract:
-  over 500 teacher-forced target tokens, official TT-Transformers reaches
-  `0.91/0.98` top-1/top-5 accuracy and all 32 Buddy users reach
-  `0.908/0.98`, with `0.97` greedy agreement against official.
-- The final P150A trace benchmark uses five warmups, 100 measured decode
-  iterations, and three repetitions. The corresponding
-  `v0.64.0-dev20251030` release reproduces `33.321 tokens/s/user`; Buddy
-  reaches `33.938 tokens/s/user`, or `101.85%`, with `0.0139%` repetition CV.
-  Goal 7 therefore reaches the M8 performance parity band.
-- Goal 8 audits the optional LM-head/argmax, residual/RMSNorm, and
-  SDPA/concat-heads custom-op candidates. None satisfies the conditional
-  bottleneck threshold, so no custom kernel is added.
-- The production greedy path follows TT-Transformers force-argmax: concatenate
-  LM-head logits, untilize with multicore, then run multicore argmax. A composed
-  shard-local/global reduction remains available for diagnostics but was slower
-  on P150A. The retained force-argmax path now reaches M8 with full decode
-  trace and persistent inputs. Same-commit and corresponding-release results
-  remain separately labeled because their official runtimes differ.
+- Full-depth prompt-conditioned prefill, paged-KV decode, and text generation
+  pass on P150A for Llama 3.1 8B at batch 32.
+- The production decode path uses persistent device inputs, one full decode
+  trace, context-aware SDPA, and device-to-device token handoff.
+- The phase-1 frozen benchmark uses 5 warmups, 100 measured post-prefill decode
+  iterations, and 3 repetitions. Median throughput is `35.580 tokens/s/user`,
+  median p50 latency is `28.063 ms`, and CV is `0.0690%`.
+- The all-BF16 full-depth gate passes 99 comparisons at PCC `>= 0.99`; its
+  minimum PCC is `0.99260`. Full-depth functional generation also passes.
+- The compressed performance recipe passes the fixed-corpus quality gate:
+  official and Buddy top-1 accuracy are both `0.91`, Buddy top-5 is
+  `0.982`, and greedy agreement with official is `0.964`.
+- The current best generated config SHA-256 is
+  `1ed82e5b0f2f2ce8444fa881ce725f62a37d6f556fa2cee493cda6dc7e5fde5d`.
+  Historical campaigns and raw samples live in the ignored build tree.
 
-See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
-[docs/evidence/README.md](docs/evidence/README.md) for the frozen measurements.
+See [docs/evidence/README.md](docs/evidence/README.md) for the evidence storage
+contract and [docs/evidence/latest_summary.json](docs/evidence/latest_summary.json)
+for the compact current baseline.
 
 ## Support Matrix
 
@@ -126,8 +53,8 @@ See [REFACTOR_BASELINE.md](REFACTOR_BASELINE.md) and
 | Full-model numerical correctness | Proven on P150A with all-BF16 recipe |
 | Official TT-Transformers config parity | 55/55 compared fields match; full-depth execution passed |
 | Semantic autotune | Hierarchical search, strict matched A/B, one-model/three-workload generalization, and a hash-verified paper artifact with all required ablations are complete |
-| Steady decode benchmark | Goal 7: 33.938 tokens/s/user median, 29.463 ms mean |
-| Official performance parity | M8 reached: 101.85% of corresponding release, CV 0.0139% |
+| Steady decode benchmark | Phase-1 baseline: 35.580 tokens/s/user median, 28.063 ms p50, CV 0.0690% |
+| Official performance parity | M8 remains established; matched raw comparison reports stay in the build tree |
 
 ## Quick Start
 
