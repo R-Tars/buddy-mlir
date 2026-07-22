@@ -10,13 +10,16 @@ import types
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen import (
     python_ttnn as legacy_python_ttnn,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler import (
     build_codegen_config,
     render_python_ttnn_model,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.codegen import (
+    dry_run_report,
+    write_python_ttnn_skeleton,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
@@ -27,6 +30,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.attention_decode impor
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
     build_execution_plan,
     dump_execution_plan,
+    load_execution_plan,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
@@ -92,17 +96,10 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan = _fake_plan(num_layers=2)
             dump_execution_plan(plan, plan_json)
 
-            exit_code = main(
-                [
-                    "codegen-python",
-                    "--plan-json",
-                    str(plan_json),
-                    "--out-dir",
-                    str(out_dir),
-                ]
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
-
-            self.assertEqual(exit_code, 0)
             self.assertTrue((out_dir / "model.py").is_file())
             self.assertTrue((out_dir / "config.json").is_file())
             self.assertTrue((out_dir / "plan.json").is_file())
@@ -187,17 +184,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -352,17 +341,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -448,17 +429,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -539,17 +512,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -585,17 +550,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=2), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             source = (out_dir / "model.py").read_text()
@@ -647,17 +604,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=2), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             source = (out_dir / "model.py").read_text()
@@ -693,17 +642,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -775,17 +716,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             plan_json = root / "plan.json"
             out_dir = root / "generated"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -854,17 +787,9 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             dump_execution_plan(
                 _fake_plan(num_layers=1, lm_head_split_count=2), plan_json
             )
-            self.assertEqual(
-                main(
-                    [
-                        "codegen-python",
-                        "--plan-json",
-                        str(plan_json),
-                        "--out-dir",
-                        str(out_dir),
-                    ]
-                ),
-                0,
+            write_python_ttnn_skeleton(
+                load_execution_plan(plan_json),
+                out_dir,
             )
 
             fake_ttnn = _make_fake_ttnn_module()
@@ -957,18 +882,11 @@ class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
             out_dir = root / "dry-run-output"
             dump_execution_plan(_fake_plan(num_layers=1), plan_json)
 
-            exit_code = main(
-                [
-                    "codegen-python",
-                    "--plan-json",
-                    str(plan_json),
-                    "--out-dir",
-                    str(out_dir),
-                    "--dry-run",
-                ]
+            report = dry_run_report(
+                load_execution_plan(plan_json),
+                out_dir,
             )
-
-            self.assertEqual(exit_code, 0)
+            self.assertTrue(report["dry_run"])
             self.assertFalse(out_dir.exists())
 
 

@@ -64,7 +64,9 @@ class SmokeMLPTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-mlp",
+                    "diagnose",
+                    "--stage",
+                    "mlp",
                     "--device",
                     "p150a",
                     "--batch-size",

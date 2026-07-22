@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
+    dump_graph_json,
     load_graph_json,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
@@ -136,7 +136,7 @@ class LlamaSemanticImporterTest(unittest.TestCase):
         self.assertEqual(layer0.attention.attention_mask, "causal")
         self.assertEqual(layer0.mlp.activation, "silu")
 
-    def test_cli_import_llama_dumps_json_from_fake_model_dir(self) -> None:
+    def test_import_llama_dumps_json_from_fake_model_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             model_dir = Path(tmpdir) / "tiny-llama"
             model_dir.mkdir()
@@ -152,26 +152,15 @@ class LlamaSemanticImporterTest(unittest.TestCase):
             )
             out = Path(tmpdir) / "llama_semantic.json"
 
-            exit_code = main(
-                [
-                    "import-llama",
-                    "--model-path",
-                    str(model_dir),
-                    "--mode",
-                    "decode",
-                    "--batch-size",
-                    "32",
-                    "--seq-len",
-                    "1",
-                    "--max-cache-len",
-                    "1024",
-                    "--dry-run",
-                    "--out",
-                    str(out),
-                ]
+            graph = import_hf_llama(
+                model_dir,
+                mode="decode",
+                batch_size=32,
+                seq_len=1,
+                max_cache_len=1024,
             )
+            dump_graph_json(graph, out)
 
-            self.assertEqual(exit_code, 0)
             dumped = json.loads(out.read_text())
             self.assertEqual(dumped["num_layers"], 2)
             self.assertEqual(dumped["hidden_size"], 16)

@@ -5,13 +5,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_emit import (
     CORRECTNESS_RECIPE,
+    dump_parameter_config,
     emit_parameter_config,
+    parameter_config_dry_run_report,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
     dump_graph_json,
+    load_graph_json,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
@@ -227,28 +229,20 @@ class ParameterConfigEmitTest(unittest.TestCase):
             ],
         )
 
-    def test_cli_emit_config_writes_metadata_json(self) -> None:
+    def test_emit_config_writes_metadata_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             semantic_json = root / "semantic.json"
             out = root / "param_config.json"
             dump_graph_json(_fake_graph(num_layers=1), semantic_json)
 
-            exit_code = main(
-                [
-                    "emit-config",
-                    "--semantic-json",
-                    str(semantic_json),
-                    "--lm-head-split-count",
-                    "2",
-                    "--kv-page-block-size",
-                    "16",
-                    "--out",
-                    str(out),
-                ]
+            config = emit_parameter_config(
+                load_graph_json(semantic_json),
+                lm_head_split_count=2,
+                kv_page_block_size=16,
             )
+            dump_parameter_config(config, out)
 
-            self.assertEqual(exit_code, 0)
             dumped = json.loads(out.read_text())
             self.assertEqual(dumped["lm_head"]["split_count"], 2)
             self.assertEqual(
@@ -264,25 +258,18 @@ class ParameterConfigEmitTest(unittest.TestCase):
                 dumped["weights"],
             )
 
-    def test_cli_emit_config_dry_run_does_not_write(self) -> None:
+    def test_emit_config_dry_run_does_not_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             semantic_json = root / "semantic.json"
             out = root / "param_config.json"
             dump_graph_json(_fake_graph(num_layers=1), semantic_json)
 
-            exit_code = main(
-                [
-                    "emit-config",
-                    "--semantic-json",
-                    str(semantic_json),
-                    "--out",
-                    str(out),
-                    "--dry-run",
-                ]
+            report = parameter_config_dry_run_report(
+                load_graph_json(semantic_json),
             )
 
-            self.assertEqual(exit_code, 0)
+            self.assertTrue(report["dry_run"])
             self.assertFalse(out.exists())
 
 

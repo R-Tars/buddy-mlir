@@ -131,7 +131,7 @@ class HierarchicalSearchTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_root),
                         "--config",

@@ -237,19 +237,31 @@ class ConfigDiffTest(unittest.TestCase):
             ["program_config", "memory_config"],
         )
 
-    def test_cli_diff_official_config_writes_report(self) -> None:
+    def test_inspect_includes_official_config_diff(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            ours = root / "config.json"
-            out = root / "config_diff.json"
-            ours.write_text(json.dumps(_fake_generated_config()))
+            program_dir = root / "program"
+            out = root / "inspect.json"
+            program_dir.mkdir()
+            (program_dir / "config.json").write_text(
+                json.dumps(_fake_generated_config())
+            )
+            (program_dir / "execution_plan.json").write_text("{}")
+            for artifact in (
+                "README.md",
+                "model.py",
+                "run_decode.py",
+                "semantic_graph.json",
+                "weights_manifest.json",
+            ):
+                (program_dir / artifact).write_text("{}")
 
             exit_code = main(
                 [
-                    "diff-official-config",
-                    "--ours",
-                    str(ours),
-                    "--official",
+                    "inspect",
+                    "--program-dir",
+                    str(program_dir),
+                    "--official-config",
                     str(default_official_config_path()),
                     "--out",
                     str(out),
@@ -257,8 +269,9 @@ class ConfigDiffTest(unittest.TestCase):
             )
 
             self.assertEqual(exit_code, 0)
-            report = json.loads(out.read_text())
-            self.assertEqual(report["schema_version"], 1)
+            inspect_report = json.loads(out.read_text())
+            self.assertTrue(inspect_report["passed"])
+            report = inspect_report["official_config_diff"]
             self.assertEqual(report["status"], "diff_found")
             self.assertGreater(report["summary"]["issue_count"], 0)
             self.assertEqual(report["gap_summary"]["status"], "diff_found")

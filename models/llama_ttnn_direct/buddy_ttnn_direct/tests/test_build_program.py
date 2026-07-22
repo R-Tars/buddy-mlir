@@ -10,14 +10,8 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.config_diff import (
-    build_config_parity_view,
-)
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
     PROGRAM_ARTIFACTS,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_environment import (
-    collect_tenstorrent_device_environment,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.ttnn_compat import TTNNCompatOps
 
@@ -38,7 +32,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -76,7 +70,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -114,7 +108,7 @@ class BuildProgramTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "build-program",
+                    "build",
                     "--model-path",
                     str(model_dir),
                     "--config",
@@ -238,7 +232,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertIn("[0, shape[1] - 1]", compat_source)
             self.assertIn("[batch_size, shape[1]]", compat_source)
 
-    def test_generated_run_decode_dry_run_prints_per_layer_ops(self) -> None:
+    def test_generated_run_decode_defaults_to_program_inspection(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -249,7 +243,7 @@ class BuildProgramTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -270,35 +264,12 @@ class BuildProgramTest(unittest.TestCase):
             payload = json.loads(result.stdout)
 
             self.assertEqual(payload["schema_version"], 1)
-            self.assertEqual(payload["num_layers"], 2)
-            self.assertEqual(len(payload["layers"]), 2)
-            self.assertEqual(payload["layers"][0]["layer_id"], 0)
-            self.assertEqual(
-                payload["layers"][0]["ops"],
-                [
-                    "rmsnorm.attn",
-                    "linear.qkv_packed",
-                    "nlp_create_qkv_heads_decode",
-                    "rotary_embedding_decode",
-                    "paged_update_cache",
-                    "paged_scaled_dot_product_attention_decode",
-                    "nlp_concat_heads_decode",
-                    "linear.o_proj",
-                    "residual_add",
-                    "rmsnorm.mlp",
-                    "linear.mlp_gate",
-                    "linear.mlp_up",
-                    "mul.silu",
-                    "linear.mlp_down",
-                    "residual_add",
-                ],
-            )
-            self.assertEqual(
-                payload["final_ops"],
-                ["rmsnorm.final", "split_lm_head", "argmax_or_sampling"],
-            )
+            self.assertEqual(payload["command"], "inspect")
+            self.assertTrue(payload["passed"])
+            self.assertEqual(payload["config"]["num_layers"], 2)
+            self.assertEqual(len(payload["execution_plan"]["layers"]), 2)
 
-    def test_generated_run_decode_wraps_smoke_profile_and_real_validation(
+    def test_generated_run_decode_forwards_product_and_legacy_modes(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -307,20 +278,13 @@ class BuildProgramTest(unittest.TestCase):
             config_json = root / "template_config.json"
             out_dir = root / "program"
             smoke_report = root / "decode_step_smoke_report.json"
-            profile_report = root / "decode_step_profile_report.json"
-            prefill_report = root / "prefill_smoke_report.json"
-            loop_report = root / "prompt_decode_loop_report.json"
-            generate_report = root / "generate_report.json"
-            profile_generate_report = root / "generate_profile_report.json"
-            preflight_dir = root / "real_decode_preflight"
-            validate_dir = root / "real_decode_validation"
-            official_json = root / "official_parity_config.json"
+            profile_report = root / "generate_profile_report.json"
             _write_fake_model_config(model_dir)
             _write_template_config(config_json)
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -331,35 +295,41 @@ class BuildProgramTest(unittest.TestCase):
                 ),
                 0,
             )
-            _write_official_parity_from_program(out_dir, official_json)
-            (model_dir / "model-00001-of-00001.safetensors").write_bytes(b"")
-            (out_dir / "ttnn.py").write_text(
-                "\n".join(
-                    [
-                        '__version__ = "fake-ttnn"',
-                        '__tt_metal_commit__ = "fake-tt-metal"',
-                        "",
-                    ]
-                )
-            )
-            program_readme = (out_dir / "README.md").read_text()
-            self.assertIn("--preflight-only", program_readme)
-            self.assertIn("--min-tokens-per-second-per-user 1.0", program_readme)
-            self.assertIn("--metric tokens_per_second_per_user", program_readme)
-            self.assertIn("--decode-shell-pcc-threshold 0.99", program_readme)
-            self.assertIn("--mode prefill-smoke", program_readme)
-            self.assertIn("--mode decode-loop", program_readme)
-            self.assertIn("--mode generate", program_readme)
-            self.assertIn("--mode profile-generate", program_readme)
-            self.assertIn("--max-new-tokens 2", program_readme)
-            self.assertIn("--max-new-tokens 8", program_readme)
-            self.assertIn("--require-model-end-to-end", program_readme)
-            self.assertIn('--prompt "Hello from TTNN Direct"', program_readme)
 
-            smoke = subprocess.run(
+            runner = out_dir / "run_decode.py"
+            source = runner.read_text()
+            self.assertLessEqual(len(source.splitlines()), 180)
+            for forbidden in (
+                "from .smoke_",
+                "import smoke_",
+                "decode_loop",
+                "profile_template",
+                "legacy_validation",
+            ):
+                self.assertNotIn(forbidden, source)
+            readme = (out_dir / "README.md").read_text()
+            self.assertIn("python run_decode.py inspect", readme)
+            self.assertIn("python run_decode.py generate", readme)
+            self.assertIn("python run_decode.py profile", readme)
+            self.assertIn("python run_decode.py validate", readme)
+            self.assertIn("python run_decode.py diagnose", readme)
+
+            inspect_result = subprocess.run(
+                [sys.executable, str(runner), "--dry-run"],
+                check=True,
+                capture_output=True,
+                cwd=out_dir,
+                text=True,
+            )
+            inspect_report = json.loads(inspect_result.stdout)
+            self.assertEqual(inspect_report["command"], "inspect")
+            self.assertTrue(inspect_report["passed"])
+            self.assertEqual(inspect_report["config"]["num_layers"], 2)
+
+            subprocess.run(
                 [
                     sys.executable,
-                    str(out_dir / "run_decode.py"),
+                    str(runner),
                     "--mode",
                     "smoke",
                     "--dry-run",
@@ -377,21 +347,22 @@ class BuildProgramTest(unittest.TestCase):
                 cwd=out_dir,
                 text=True,
             )
-            smoke_summary = json.loads(smoke.stdout)
-            self.assertEqual(smoke_summary["status"], "dry_run")
-            self.assertEqual(smoke_summary["report"], str(smoke_report))
-            self.assertEqual(
-                json.loads(smoke_report.read_text())["template"],
-                "generated_decode_step",
-            )
+            smoke_payload = json.loads(smoke_report.read_text())
+            self.assertEqual(smoke_payload["template"], "generated_decode_step")
+            self.assertEqual(smoke_payload["status"], "dry_run")
 
-            profile = subprocess.run(
+            subprocess.run(
                 [
                     sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
+                    str(runner),
                     "profile",
+                    "--mode",
+                    "generate",
                     "--dry-run",
+                    "--max-new-tokens",
+                    "3",
+                    "--prefill-len",
+                    "8",
                     "--layers",
                     "1",
                     "--batch-size",
@@ -406,444 +377,23 @@ class BuildProgramTest(unittest.TestCase):
                 cwd=out_dir,
                 text=True,
             )
-            profile_summary = json.loads(profile.stdout)
-            self.assertEqual(profile_summary["status"], "dry_run")
-            self.assertEqual(profile_summary["report"], str(profile_report))
-            self.assertEqual(
-                json.loads(profile_report.read_text())["template"],
-                "generated_decode_step_profile",
-            )
+            profile_payload = json.loads(profile_report.read_text())
+            self.assertEqual(profile_payload["status"], "dry_run")
+            self.assertEqual(profile_payload["mode"], "profile-generate")
 
-            prefill = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "prefill-smoke",
-                    "--dry-run",
-                    "--layers",
-                    "1",
-                    "--prefill-len",
-                    "8",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--out",
-                    str(prefill_report),
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            prefill_summary = json.loads(prefill.stdout)
-            self.assertEqual(prefill_summary["status"], "dry_run")
-            self.assertEqual(prefill_summary["report"], str(prefill_report))
-            prefill_payload = json.loads(prefill_report.read_text())
-            self.assertEqual(prefill_payload["template"], "prefill_smoke")
-            self.assertEqual(prefill_payload["prefill_status"], "dry_run")
-            self.assertEqual(prefill_payload["kv_cache_source"], "prefill")
-
-            loop = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "decode-loop",
-                    "--dry-run",
-                    "--max-new-tokens",
-                    "3",
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--out",
-                    str(loop_report),
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            loop_summary = json.loads(loop.stdout)
-            self.assertEqual(loop_summary["status"], "dry_run")
-            self.assertEqual(loop_summary["report"], str(loop_report))
-            self.assertEqual(
-                json.loads(loop_report.read_text())["template"],
-                "prompt_decode_loop",
-            )
-            loop_payload = json.loads(loop_report.read_text())
-            self.assertEqual(loop_payload["decode_steps"], 3)
-            self.assertEqual(loop_payload["max_new_tokens"], 3)
-            self.assertEqual(loop_payload["prefill_status"], "not_run")
-            self.assertEqual(
-                loop_payload["kv_cache_source"],
-                "empty_initialized",
-            )
-            self.assertEqual(loop_payload["generated_text_status"], "not_run")
-
-            generate = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "generate",
-                    "--dry-run",
-                    "--max-new-tokens",
-                    "3",
-                    "--prefill-len",
-                    "8",
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--out",
-                    str(generate_report),
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            generate_summary = json.loads(generate.stdout)
-            self.assertEqual(generate_summary["status"], "dry_run")
-            self.assertEqual(generate_summary["report"], str(generate_report))
-            generate_payload = json.loads(generate_report.read_text())
-            self.assertEqual(generate_payload["template"], "prefill_then_decode_generate")
-            self.assertEqual(generate_payload["mode"], "generate")
-            self.assertEqual(generate_payload["prefill_status"], "dry_run")
-            self.assertEqual(generate_payload["kv_cache_source"], "prefill")
-            self.assertEqual(generate_payload["max_new_tokens"], 3)
-            self.assertEqual(generate_payload["decode_steps"], 2)
-
-            generate_no_report = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "generate",
-                    "--dry-run",
-                    "--max-new-tokens",
-                    "3",
-                    "--prefill-len",
-                    "8",
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            no_report_summary = json.loads(generate_no_report.stdout)
-            self.assertEqual(no_report_summary["status"], "dry_run")
-            self.assertIsNone(no_report_summary["report"])
-            self.assertFalse((out_dir / "generate_report.json").exists())
-
-            profile_generate = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "profile-generate",
-                    "--dry-run",
-                    "--max-new-tokens",
-                    "3",
-                    "--prefill-len",
-                    "8",
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--out",
-                    str(profile_generate_report),
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            profile_generate_summary = json.loads(profile_generate.stdout)
-            self.assertEqual(profile_generate_summary["status"], "dry_run")
-            self.assertEqual(
-                profile_generate_summary["report"],
-                str(profile_generate_report),
-            )
-            profile_generate_payload = json.loads(
-                profile_generate_report.read_text()
-            )
-            self.assertEqual(
-                profile_generate_payload["template"],
-                "prefill_then_decode_generate_profile",
-            )
-            self.assertEqual(profile_generate_payload["mode"], "profile-generate")
-            self.assertFalse(
-                profile_generate_payload["official_performance_parity_claimed"]
-            )
-
-            device_environment = collect_tenstorrent_device_environment()
-            expected_preflight_status = (
-                "pass"
-                if device_environment["device_available"]
-                else "fail"
-            )
-            preflight = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "validate-real",
-                    "--model-path",
-                    str(model_dir),
-                    "--official-config",
-                    str(official_json),
-                    "--prompt",
-                    "hello tenstorrent",
-                    "--tokenizer-path",
-                    str(model_dir),
-                    "--require-model-end-to-end",
-                    "--require-official-performance-parity",
-                    "--metric",
-                    "tokens_per_second_per_user",
-                    "--min-tokens-per-second-per-user",
-                    "1.25",
-                    "--baseline-reference",
-                    "tt_metal_official_llama31_8b_b32",
-                    "--min-baseline-ratio",
-                    "0.1",
-                    "--decode-shell-pcc-threshold",
-                    "0.98",
-                    "--layers",
-                    "2",
-                    "--batch-size",
-                    "32",
-                    "--cache-len",
-                    "1024",
-                    "--preflight-only",
-                    "--out-dir",
-                    str(preflight_dir),
-                ],
+            unknown = subprocess.run(
+                [sys.executable, str(runner), "--mode", "removed-mode"],
                 check=False,
                 capture_output=True,
                 cwd=out_dir,
                 text=True,
             )
-            expected_returncode = (
-                0 if expected_preflight_status == "pass" else 1
-            )
-            self.assertEqual(preflight.returncode, expected_returncode)
-            preflight_summary = json.loads(preflight.stdout)
-            self.assertEqual(
-                preflight_summary["status"],
-                expected_preflight_status,
-            )
-            preflight_report = (
-                preflight_dir / "real_decode_preflight_report.json"
-            )
-            self.assertEqual(preflight_summary["report"], str(preflight_report))
-            preflight_payload = json.loads(preflight_report.read_text())
-            self.assertEqual(
-                preflight_payload["status"],
-                expected_preflight_status,
-            )
-            self.assertEqual(
-                preflight_payload["metric"],
-                "tokens_per_second_per_user",
-            )
-            self.assertTrue(preflight_payload["prompt_runtime_requested"])
-            self.assertEqual(
-                preflight_payload["effective_tokenizer_path"],
-                str(model_dir),
-            )
-            self.assertEqual(
-                preflight_payload["min_tokens_per_second_per_user"],
-                1.25,
-            )
-            self.assertEqual(
-                preflight_payload["decode_shell_pcc_threshold"],
-                0.98,
-            )
-            self.assertEqual(
-                preflight_payload["ttnn_environment"]["version"],
-                "fake-ttnn",
-            )
-            device_check = _check_by_name(
-                preflight_payload,
-                "tenstorrent.device_available",
-            )
-            self.assertEqual(
-                device_check["passed"],
-                device_environment["device_available"],
-            )
-            self.assertEqual(
-                preflight_payload["tenstorrent_device_environment"][
-                    "device_available"
-                ],
-                device_environment["device_available"],
-            )
+            self.assertEqual(unknown.returncode, 2)
             self.assertIn(
-                "--prompt",
-                preflight_payload["reproducibility"][
-                    "final_validation_cli_args"
-                ],
-            )
-            self.assertIn(
-                "hello tenstorrent",
-                preflight_payload["reproducibility"][
-                    "final_validation_cli_args"
-                ],
-            )
-            self.assertIn(
-                "--tokenizer-path",
-                preflight_payload["reproducibility"][
-                    "final_validation_cli_args"
-                ],
+                "build, generate, profile, validate, inspect, diagnose",
+                unknown.stderr,
             )
 
-            validation = subprocess.run(
-                [
-                    sys.executable,
-                    str(out_dir / "run_decode.py"),
-                    "--mode",
-                    "validate-real",
-                    "--dry-run",
-                    "--require-official-performance-parity",
-                    "--metric",
-                    "tokens_per_second_per_user",
-                    "--min-tokens-per-second-per-user",
-                    "1.0",
-                    "--baseline-reference",
-                    "tt_metal_official_llama31_8b_b32",
-                    "--min-baseline-ratio",
-                    "0.1",
-                    "--decode-shell-pcc-threshold",
-                    "0.5",
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--out-dir",
-                    str(validate_dir),
-                ],
-                check=True,
-                capture_output=True,
-                cwd=out_dir,
-                text=True,
-            )
-            validation_summary = json.loads(validation.stdout)
-            self.assertEqual(validation_summary["status"], "dry_run")
-            validation_report = validate_dir / "real_decode_validation_report.json"
-            self.assertEqual(validation_summary["report"], str(validation_report))
-            validation_payload = json.loads(validation_report.read_text())
-            self.assertEqual(validation_payload["command"], "validate-real-decode")
-            self.assertEqual(
-                validation_payload["metric"],
-                "tokens_per_second_per_user",
-            )
-            self.assertTrue(validation_payload["require_full_decode_step"])
-            self.assertTrue(
-                validation_payload["require_official_performance_parity"]
-            )
-            self.assertTrue(validation_payload["require_model_end_to_end"])
-            self.assertTrue(validation_payload["require_trace"])
-            self.assertTrue(
-                validation_payload["require_official_config_match"]
-            )
-            self.assertTrue(validation_payload["require_full_depth"])
-            self.assertTrue(
-                validation_payload["require_program_runtime_shape"]
-            )
-            self.assertTrue(
-                validation_payload["require_batch32_decode_step"]
-            )
-            self.assertEqual(
-                validation_payload["min_tokens_per_second_per_user"],
-                1.0,
-            )
-            self.assertEqual(
-                validation_payload["baseline_tokens_per_second_per_user"],
-                33.1,
-            )
-            self.assertEqual(
-                validation_payload["baseline_reference"],
-                "tt_metal_official_llama31_8b_b32",
-            )
-            self.assertEqual(
-                validation_payload["baseline_reference_entry"]["model"],
-                "Llama 3.1 8B",
-            )
-            self.assertEqual(validation_payload["min_baseline_ratio"], 0.1)
-            self.assertEqual(
-                validation_payload["decode_shell_pcc_threshold"],
-                0.5,
-            )
-            self.assertTrue(
-                validation_payload[
-                    "require_decode_shell_numeric_reference"
-                ]
-            )
-            self.assertEqual(validation_payload["acceptance"]["status"], "dry_run")
-            self.assertTrue(validation_payload["acceptance"]["require_trace"])
-            self.assertTrue(
-                validation_payload["acceptance"][
-                    "require_batch32_decode_step"
-                ]
-            )
-            self.assertTrue(
-                validation_payload["acceptance"]["require_full_decode_step"]
-            )
-            self.assertTrue(
-                validation_payload["acceptance"][
-                    "require_model_end_to_end"
-                ]
-            )
-            self.assertTrue(
-                validation_payload["acceptance"][
-                    "require_official_performance_parity"
-                ]
-            )
-            evidence = json.loads(
-                (validate_dir / "real_decode_evidence_manifest.json").read_text()
-            )
-            self.assertTrue(evidence["requirements"]["require_full_decode_step"])
-            self.assertTrue(evidence["requirements"]["require_model_end_to_end"])
-            self.assertTrue(
-                evidence["requirements"][
-                    "require_official_performance_parity"
-                ]
-            )
-            self.assertTrue(
-                evidence["requirements"]["require_official_config_match"]
-            )
-            self.assertTrue(evidence["requirements"]["require_full_depth"])
-            self.assertTrue(
-                evidence["requirements"]["require_program_runtime_shape"]
-            )
-            self.assertTrue(
-                evidence["requirements"]["require_batch32_decode_step"]
-            )
-            self.assertEqual(
-                evidence["requirements"]["baseline_tokens_per_second_per_user"],
-                33.1,
-            )
-            self.assertEqual(
-                evidence["requirements"]["baseline_reference"],
-                "tt_metal_official_llama31_8b_b32",
-            )
-            self.assertEqual(evidence["requirements"]["min_baseline_ratio"], 0.1)
 
 
 def _write_fake_model_config(model_dir: Path) -> None:
@@ -867,13 +417,6 @@ def _write_fake_model_config(model_dir: Path) -> None:
     )
 
 
-def _check_by_name(report: dict[str, object], name: str) -> dict[str, object]:
-    for check in report["checks"]:  # type: ignore[index]
-        if check["name"] == name:
-            return check
-    raise AssertionError(f"missing check {name!r}")
-
-
 def _write_template_config(path: Path) -> None:
     path.write_text(
         json.dumps(
@@ -891,20 +434,6 @@ def _write_template_config(path: Path) -> None:
                 "generation_template": "device_argmax_greedy",
                 "lm_head_split_count": 8,
                 "dtype_recipe": "official_like_performance_seed",
-            }
-        )
-    )
-
-
-def _write_official_parity_from_program(program_dir: Path, path: Path) -> None:
-    generated_config = json.loads((program_dir / "config.json").read_text())
-    parity_view = build_config_parity_view(generated_config)
-    path.write_text(
-        json.dumps(
-            {
-                "model_name": generated_config.get("model_name"),
-                "source": "unit_test_normalized_parity_reference",
-                "parity_config": parity_view["parity_config"],
             }
         )
     )

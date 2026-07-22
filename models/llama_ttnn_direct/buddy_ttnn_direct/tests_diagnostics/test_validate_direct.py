@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -1120,7 +1119,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1198,7 +1197,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1401,7 +1400,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1490,7 +1489,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1548,7 +1547,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1602,7 +1601,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1657,7 +1656,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1712,7 +1711,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1766,7 +1765,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1815,7 +1814,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1852,7 +1851,7 @@ class ValidateDirectTest(unittest.TestCase):
                 report["reproducibility"]["final_validation_cli_args"],
             )
 
-    def test_cli_validate_real_decode_preflight_records_final_thresholds(
+    def test_validate_real_decode_preflight_records_final_thresholds(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1868,7 +1867,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1890,46 +1889,26 @@ class ValidateDirectTest(unittest.TestCase):
                 "collect_tenstorrent_device_environment",
                 return_value=_fake_tenstorrent_device_environment(),
             ):
-                exit_code = main(
-                    [
-                        "validate-real-decode",
-                        "--program-dir",
-                        str(program_dir),
-                        "--model-path",
-                        str(model_dir),
-                        "--out-dir",
-                        str(out_dir),
-                        "--official-config",
-                        str(official_json),
-                        "--layers",
-                        "2",
-                        "--batch-size",
-                        "32",
-                        "--cache-len",
-                        "1024",
-                        "--prompt",
-                        "hello tenstorrent",
-                        "--tokenizer-path",
-                        str(model_dir),
-                        "--require-official-performance-parity",
-                        "--metric",
-                        "tokens_per_second_per_user",
-                        "--min-tokens-per-second-per-user",
-                        "1.25",
-                        "--baseline-reference",
-                        "tt_metal_official_llama31_8b_b32",
-                        "--min-baseline-ratio",
-                        "0.1",
-                        "--decode-shell-pcc-threshold",
-                        "0.98",
-                        "--preflight-only",
-                    ]
+                report = preflight_real_decode(
+                    program_dir=program_dir,
+                    model_path=model_dir,
+                    out=out_dir / "real_decode_preflight_report.json",
+                    official_config_path=official_json,
+                    layers=2,
+                    batch_size=32,
+                    cache_len=1024,
+                    prompt="hello tenstorrent",
+                    tokenizer_path=model_dir,
+                    require_official_performance_parity=True,
+                    metric="tokens_per_second_per_user",
+                    min_tokens_per_second_per_user=1.25,
+                    baseline_reference="tt_metal_official_llama31_8b_b32",
+                    min_baseline_ratio=0.1,
+                    decode_shell_pcc_threshold=0.98,
+                    ttnn_module=_make_fake_ttnn(),
+                    device_environment=_fake_tenstorrent_device_environment(),
                 )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(
-                (out_dir / "real_decode_preflight_report.json").read_text()
-            )
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["metric"], "tokens_per_second_per_user")
             self.assertEqual(report["min_tokens_per_second_per_user"], 1.25)
@@ -1956,7 +1935,7 @@ class ValidateDirectTest(unittest.TestCase):
                 "tt_metal_official_llama31_8b_b32",
             )
 
-    def test_cli_validate_direct_runs_all_device_free_checks(self) -> None:
+    def test_validate_direct_runs_all_device_free_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -1965,20 +1944,12 @@ class ValidateDirectTest(unittest.TestCase):
             _write_fake_model_config(model_dir)
             _write_template_config(config_json)
 
-            exit_code = main(
-                [
-                    "validate-direct",
-                    "--model-path",
-                    str(model_dir),
-                    "--config",
-                    str(config_json),
-                    "--out-dir",
-                    str(out_dir),
-                ]
+            report = validation_module.validate_direct(
+                model_path=model_dir,
+                config_path=config_json,
+                out_dir=out_dir,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads((out_dir / "validation_report.json").read_text())
             self.assertEqual(report["schema_version"], 1)
             self.assertEqual(report["command"], "validate-direct")
             self.assertEqual(report["status"], "pass")
@@ -2316,7 +2287,7 @@ class ValidateDirectTest(unittest.TestCase):
                 ["decode_step_autotune_dry_run.default_knob_variation"],
             )
 
-    def test_cli_validate_real_decode_dry_run_writes_schema(self) -> None:
+    def test_validate_real_decode_dry_run_writes_schema(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -2328,7 +2299,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -2340,34 +2311,20 @@ class ValidateDirectTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "validate-real-decode",
-                    "--program-dir",
-                    str(program_dir),
-                    "--model-path",
-                    str(model_dir),
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--skip-autotune",
-                    "--require-trace",
-                    "--min-tokens-per-second-per-user",
-                    "1.0",
-                    "--require-decode-shell-numeric-reference",
-                    "--dry-run",
-                    "--out-dir",
-                    str(out_dir),
-                ]
+            report = validate_real_decode(
+                program_dir=program_dir,
+                model_path=model_dir,
+                out_dir=out_dir,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                skip_autotune=True,
+                require_trace=True,
+                min_tokens_per_second_per_user=1.0,
+                require_decode_shell_numeric_reference=True,
+                dry_run=True,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(
-                (out_dir / "real_decode_validation_report.json").read_text()
-            )
             self.assertEqual(report["command"], "validate-real-decode")
             self.assertEqual(report["status"], "dry_run")
             self.assertEqual(report["program_batch_size"], 32)
@@ -2740,7 +2697,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5029,7 +4986,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5108,7 +5065,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5561,7 +5518,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5742,7 +5699,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5820,7 +5777,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -5895,7 +5852,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6064,7 +6021,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6128,7 +6085,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6203,7 +6160,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6270,7 +6227,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6361,7 +6318,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6458,7 +6415,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6561,7 +6518,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6667,7 +6624,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6755,7 +6712,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6864,7 +6821,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -6946,7 +6903,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7059,7 +7016,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7145,7 +7102,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7370,101 +7327,6 @@ class ValidateDirectTest(unittest.TestCase):
                 "timeout",
             )
 
-    def test_validate_real_decode_cli_isolates_signal_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            out_dir = root / "validate_real"
-            with patch(
-                "models.llama_ttnn_direct.buddy_ttnn_direct.cli."
-                "subprocess.run",
-                return_value=subprocess.CompletedProcess(
-                    ["python", "-m", "models...cli"],
-                    -7,
-                    stdout="",
-                    stderr="Bus error in libtt_metal",
-                ),
-            ):
-                self.assertEqual(
-                    main(
-                        [
-                            "validate-real-decode",
-                            "--program-dir",
-                            str(root / "program"),
-                            "--model-path",
-                            str(root / "model"),
-                            "--out-dir",
-                            str(out_dir),
-                            "--guard-device-health",
-                        ]
-                    ),
-                    1,
-                )
-
-            report = json.loads(
-                (out_dir / "real_decode_validation_report.json").read_text()
-            )
-            self.assertEqual(report["status"], "device_unhealthy")
-            self.assertEqual(
-                report["results"]["official_config_diff"],
-                "device_unhealthy",
-            )
-            self.assertTrue(
-                (out_dir / "real_decode_evidence_manifest.json").is_file()
-            )
-
-    def test_validate_real_decode_cli_isolates_timeout(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            out_dir = root / "validate_real"
-            with patch(
-                "models.llama_ttnn_direct.buddy_ttnn_direct.cli."
-                "subprocess.run",
-                side_effect=subprocess.TimeoutExpired(
-                    ["python", "-m", "models...cli"],
-                    timeout=9.0,
-                    output="partial stdout",
-                    stderr="partial stderr",
-                ),
-            ) as run_mock:
-                self.assertEqual(
-                    main(
-                        [
-                            "validate-real-decode",
-                            "--program-dir",
-                            str(root / "program"),
-                            "--model-path",
-                            str(root / "model"),
-                            "--out-dir",
-                            str(out_dir),
-                            "--guard-device-health",
-                            "--device-isolation-timeout-seconds",
-                            "9",
-                        ]
-                    ),
-                    1,
-                )
-
-            self.assertEqual(run_mock.call_args.kwargs["timeout"], 9.0)
-            report = json.loads(
-                (out_dir / "real_decode_validation_report.json").read_text()
-            )
-            self.assertEqual(report["status"], "device_unhealthy")
-            self.assertEqual(
-                report["tenstorrent_runtime_health"]["status"],
-                "timeout",
-            )
-            self.assertEqual(
-                report["results"]["official_config_diff"],
-                "device_unhealthy",
-            )
-            self.assertEqual(
-                report["steps"]["official_config_diff"]["error"]["type"],
-                "SubprocessTimeout",
-            )
-            self.assertTrue(
-                (out_dir / "real_decode_evidence_manifest.json").is_file()
-            )
-
     def test_validate_real_decode_diagnoses_firmware_init_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -7478,7 +7340,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7568,7 +7430,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7628,7 +7490,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7712,7 +7574,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -7801,7 +7663,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8261,7 +8123,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8357,7 +8219,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8448,7 +8310,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8538,7 +8400,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8627,7 +8489,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8717,7 +8579,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8806,7 +8668,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -8902,7 +8764,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9000,7 +8862,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9099,7 +8961,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9184,7 +9046,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9275,7 +9137,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9366,7 +9228,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9448,7 +9310,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9530,7 +9392,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9622,7 +9484,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9706,7 +9568,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9782,7 +9644,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9869,7 +9731,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -9960,7 +9822,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -10035,7 +9897,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -10096,7 +9958,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -10180,7 +10042,7 @@ class ValidateDirectTest(unittest.TestCase):
                 0.25,
             )
 
-    def test_cli_validate_direct_writes_failure_report(self) -> None:
+    def test_validate_direct_writes_failure_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -10189,20 +10051,12 @@ class ValidateDirectTest(unittest.TestCase):
             _write_fake_model_config(model_dir)
             config_json.write_text("{}")
 
-            exit_code = main(
-                [
-                    "validate-direct",
-                    "--model-path",
-                    str(model_dir),
-                    "--config",
-                    str(config_json),
-                    "--out-dir",
-                    str(out_dir),
-                ]
+            report = validation_module.validate_direct(
+                model_path=model_dir,
+                config_path=config_json,
+                out_dir=out_dir,
             )
 
-            self.assertEqual(exit_code, 1)
-            report = json.loads((out_dir / "validation_report.json").read_text())
             self.assertEqual(report["status"], "fail")
             self.assertEqual(report["results"]["import_llama"], "fail")
             self.assertEqual(report["results"]["plan"], "skipped")

@@ -5,15 +5,17 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.dump import (
     dump_graph_json,
+    load_graph_json,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.semantic.importer_hf_llama import (
     import_hf_llama,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
     build_execution_plan,
+    dump_execution_plan,
+    load_template_config,
 )
 
 
@@ -143,7 +145,7 @@ class TemplateRegistryTest(unittest.TestCase):
             "official_prefill_attention",
         )
 
-    def test_cli_plan_dumps_execution_plan(self) -> None:
+    def test_plan_dumps_execution_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             semantic_json = root / "semantic.json"
@@ -152,19 +154,12 @@ class TemplateRegistryTest(unittest.TestCase):
             dump_graph_json(_fake_graph(num_layers=2), semantic_json)
             config_json.write_text(json.dumps(_seed_config()))
 
-            exit_code = main(
-                [
-                    "plan",
-                    "--semantic-json",
-                    str(semantic_json),
-                    "--config",
-                    str(config_json),
-                    "--out",
-                    str(plan_json),
-                ]
+            plan = build_execution_plan(
+                load_graph_json(semantic_json),
+                load_template_config(config_json),
             )
+            dump_execution_plan(plan, plan_json)
 
-            self.assertEqual(exit_code, 0)
             dumped = json.loads(plan_json.read_text())
             self.assertEqual(len(dumped["layers"]), 2)
             self.assertEqual(

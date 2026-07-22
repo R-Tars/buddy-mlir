@@ -181,26 +181,36 @@ class PlanDiffTest(unittest.TestCase):
     def test_cli_diff_plan_writes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            plan_json = root / "plan.json"
+            program_dir = root / "program"
             reference_json = root / "official.json"
-            diff_json = root / "diff.json"
-            dump_execution_plan(_fake_plan(), plan_json)
+            inspect_json = root / "inspect.json"
+            program_dir.mkdir()
+            dump_execution_plan(_fake_plan(), program_dir / "execution_plan.json")
+            (program_dir / "config.json").write_text("{}")
+            for artifact in (
+                "README.md",
+                "model.py",
+                "run_decode.py",
+                "semantic_graph.json",
+                "weights_manifest.json",
+            ):
+                (program_dir / artifact).write_text("{}")
             reference_json.write_text(json.dumps(REFERENCE))
 
             exit_code = main(
                 [
-                    "diff-plan",
-                    "--ours",
-                    str(plan_json),
+                    "inspect",
+                    "--program-dir",
+                    str(program_dir),
                     "--official-template",
                     str(reference_json),
                     "--out",
-                    str(diff_json),
+                    str(inspect_json),
                 ]
             )
 
             self.assertEqual(exit_code, 0)
-            dumped = json.loads(diff_json.read_text())
+            dumped = json.loads(inspect_json.read_text())["plan_diff"]
             self.assertEqual(dumped["missing_ops"], [])
             self.assertEqual(dumped["extra_ops"], [])
             self.assertEqual(dumped["order_mismatch"], [])

@@ -102,7 +102,9 @@ class ProfileTemplateTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "profile-template",
+                    "diagnose",
+                    "--stage",
+                    "template-profile",
                     "--template",
                     "mlp_decode",
                     "--config",

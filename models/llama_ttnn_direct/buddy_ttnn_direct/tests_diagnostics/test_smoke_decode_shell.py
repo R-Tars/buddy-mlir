@@ -28,7 +28,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer
 
 
 class SmokeDecodeShellTest(unittest.TestCase):
-    def test_cli_smoke_decode_shell_dry_run(self) -> None:
+    def test_smoke_decode_shell_dry_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -40,7 +40,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -52,24 +52,16 @@ class SmokeDecodeShellTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "smoke-decode-shell",
-                    "--program-dir",
-                    str(program_dir),
-                    "--layers",
-                    "1",
-                    "--disable-attention",
-                    "--device",
-                    "p150a",
-                    "--dry-run",
-                    "--out",
-                    str(report_json),
-                ]
+            report = run_smoke_decode_shell(
+                program_dir=program_dir,
+                layers=1,
+                disable_attention=True,
+                device="p150a",
+                dry_run=True,
+                out=report_json,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "dry_run")
             self.assertTrue(report["dry_run"])
@@ -96,7 +88,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -195,7 +187,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -250,7 +242,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -304,7 +296,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -355,7 +347,7 @@ class SmokeDecodeShellTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

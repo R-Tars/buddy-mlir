@@ -6,7 +6,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.artifacts import (
     OFFLINE_ARTIFACT_MANIFESTS,
     prepare_offline_artifacts,
@@ -181,7 +180,7 @@ class PrepareArtifactsTest(unittest.TestCase):
             self.assertEqual(kv_cache["num_layers"], 2)
             self.assertEqual(len(kv_cache["layers"]), 2)
 
-    def test_cli_prepare_artifacts_writes_manifest_directory(self) -> None:
+    def test_prepare_artifacts_writes_manifest_directory(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "model"
@@ -205,21 +204,14 @@ class PrepareArtifactsTest(unittest.TestCase):
                 config_json,
             )
 
-            exit_code = main(
-                [
-                    "prepare-artifacts",
-                    "--model-path",
-                    str(model_dir),
-                    "--semantic-json",
-                    str(semantic_json),
-                    "--config",
-                    str(config_json),
-                    "--out-dir",
-                    str(out_dir),
-                ]
+            paths = prepare_offline_artifacts(
+                model_dir,
+                graph,
+                json.loads(config_json.read_text()),
+                out_dir,
             )
 
-            self.assertEqual(exit_code, 0)
+            self.assertEqual(set(paths), set(OFFLINE_ARTIFACT_MANIFESTS))
             for name in OFFLINE_ARTIFACT_MANIFESTS:
                 self.assertTrue((out_dir / name).is_file())
             qkv = _load(out_dir / "packed_qkv_manifest.json")

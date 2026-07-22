@@ -131,7 +131,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -274,7 +274,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -323,7 +323,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -379,7 +379,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -427,7 +427,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -483,7 +483,7 @@ class GenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

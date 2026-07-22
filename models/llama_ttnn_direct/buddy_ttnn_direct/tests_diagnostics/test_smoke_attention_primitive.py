@@ -22,7 +22,9 @@ class SmokeAttentionPrimitiveTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-attention-primitive",
+                    "diagnose",
+                    "--stage",
+                    "attention-primitive",
                     "--primitive",
                     "paged_scaled_dot_product_attention_decode",
                     "--device",

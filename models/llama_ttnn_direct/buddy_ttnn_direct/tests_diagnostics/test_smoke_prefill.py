@@ -29,7 +29,7 @@ class SmokePrefillTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -43,7 +43,9 @@ class SmokePrefillTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-prefill",
+                    "diagnose",
+                    "--stage",
+                    "prefill",
                     "--program-dir",
                     str(program_dir),
                     "--layers",
@@ -98,7 +100,7 @@ class SmokePrefillTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

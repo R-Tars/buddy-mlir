@@ -10,6 +10,12 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.decode_
     DECODE_STEP_AUTOTUNE_KNOBS,
     run_decode_step_autotune,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.report import (
+    dump_search_report,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.runner import (
+    run_lm_head_search,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.space import (
     candidate_id,
     enumerate_candidate_configs,
@@ -124,25 +130,17 @@ class SearchTest(unittest.TestCase):
                 )
             )
 
-            exit_code = main(
-                [
-                    "search",
-                    "--semantic-json",
-                    str(semantic_json),
-                    "--base-config",
-                    str(base_config),
-                    "--space",
-                    str(space_json),
-                    "--metric",
-                    "latency_ms",
-                    "--out",
-                    str(report_json),
-                    "--dry-run",
-                ]
+            report = run_lm_head_search(
+                graph=_fake_graph(),
+                base_config=json.loads(base_config.read_text()),
+                space=load_search_space(space_json),
+                metric="latency_ms",
+                out=report_json,
+                dry_run=True,
             )
+            dump_search_report(report, report_json)
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["metric"], "latency_ms")
             self.assertEqual(report["candidate_count"], 4)
@@ -257,7 +255,7 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -269,27 +267,18 @@ class SearchTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "autotune-decode-step",
-                    "--program-dir",
-                    str(program_dir),
-                    "--space",
-                    str(space_json),
-                    "--layers",
-                    "1",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--dry-run",
-                    "--out",
-                    str(report_json),
-                ]
+            report = run_decode_step_autotune(
+                program_dir=program_dir,
+                space=load_search_space(space_json),
+                out=report_json,
+                layers=1,
+                batch_size=2,
+                cache_len=16,
+                dry_run=True,
             )
+            dump_search_report(report, report_json)
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["search"], "decode_step_minimal")
             self.assertEqual(report["metric_direction"], "minimize")
@@ -390,7 +379,7 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -507,7 +496,7 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -604,7 +593,7 @@ class SearchTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

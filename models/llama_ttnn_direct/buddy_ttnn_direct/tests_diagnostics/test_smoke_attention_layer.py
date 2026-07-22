@@ -31,7 +31,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -45,11 +45,13 @@ class SmokeAttentionLayerTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-attention-layer",
+                    "diagnose",
+                    "--stage",
+                    "attention-layer",
                     "--program-dir",
                     str(program_dir),
-                    "--layer",
-                    "0",
+                    "--layers",
+                    "1",
                     "--device",
                     "p150a",
                     "--batch-size",
@@ -113,7 +115,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -226,7 +228,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -299,7 +301,7 @@ class SmokeAttentionLayerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

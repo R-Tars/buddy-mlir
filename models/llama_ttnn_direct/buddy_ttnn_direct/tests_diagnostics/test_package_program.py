@@ -10,6 +10,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.package import (
     PACKAGE_BACKEND,
     PACKAGE_PROGRAM_TYPE,
     package_dry_run_report,
+    package_ttnn_direct_program,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
     PROGRAM_ARTIFACTS,
@@ -17,7 +18,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
 
 
 class PackageProgramTest(unittest.TestCase):
-    def test_cli_package_program_writes_direct_package_manifest(self) -> None:
+    def test_package_program_writes_direct_package_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -30,7 +31,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -41,18 +42,7 @@ class PackageProgramTest(unittest.TestCase):
                 ),
                 0,
             )
-            self.assertEqual(
-                main(
-                    [
-                        "package-program",
-                        "--program-dir",
-                        str(program_dir),
-                        "--out-dir",
-                        str(package_dir),
-                    ]
-                ),
-                0,
-            )
+            package_ttnn_direct_program(program_dir, package_dir)
 
             expected_files = set(PROGRAM_ARTIFACTS)
             expected_files.update({"manifest.json", "PACKAGE_README.md"})
@@ -71,21 +61,23 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(
                 manifest["weights_manifest"], "weights_manifest.json"
             )
-            self.assertFalse(manifest["runtime"]["buddy_cli_supported"])
+            self.assertTrue(manifest["runtime"]["buddy_cli_supported"])
             self.assertTrue(manifest["runtime"]["python_runner_supported"])
             self.assertEqual(manifest["runtime"]["python_runner"], "run_decode.py")
             self.assertEqual(
                 manifest["runtime"]["runner_modes"],
                 [
-                    "inspect",
-                    "smoke",
-                    "prefill-smoke",
-                    "profile",
-                    "decode-loop",
+                    "build",
                     "generate",
-                    "profile-generate",
-                    "validate-real",
+                    "profile",
+                    "validate",
+                    "inspect",
+                    "diagnose",
                 ],
+            )
+            self.assertEqual(
+                manifest["runtime"]["legacy_mode_mappings"]["smoke"],
+                "diagnose --stage decode-step",
             )
             self.assertTrue(manifest["runtime"]["dry_run_supported"])
             self.assertTrue(
@@ -96,21 +88,11 @@ class PackageProgramTest(unittest.TestCase):
             package_readme = (package_dir / "PACKAGE_README.md").read_text()
             self.assertIn("TTNN_DIRECT_PACKAGE_DIR", package_readme)
             self.assertIn("TT_METAL_LOGS_PATH", package_readme)
-            self.assertIn("--mode smoke", package_readme)
-            self.assertIn("prefill-smoke", package_readme)
-            self.assertIn("decode-loop", package_readme)
-            self.assertIn("generate", package_readme)
-            self.assertIn("profile-generate", package_readme)
-            self.assertIn("validate-real", package_readme)
-            self.assertIn("--require-trace", package_readme)
-            self.assertIn("--require-model-end-to-end", package_readme)
-            self.assertIn("--prompt", package_readme)
-            self.assertIn("--min-tokens-per-second-per-user", package_readme)
-            self.assertIn("--decode-shell-pcc-threshold", package_readme)
-            self.assertIn(
-                "--require-decode-shell-numeric-reference",
-                package_readme,
-            )
+            self.assertIn('run_decode.py" inspect', package_readme)
+            self.assertIn("--stage decode-step", package_readme)
+            self.assertIn("--stage prefill", package_readme)
+            self.assertIn("profile --mode generate", package_readme)
+            self.assertIn("validate --suite dryrun", package_readme)
             self.assertNotIn("/tmp", package_readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
@@ -125,7 +107,7 @@ class PackageProgramTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -137,22 +119,8 @@ class PackageProgramTest(unittest.TestCase):
                 0,
             )
 
-            self.assertEqual(
-                main(
-                    [
-                        "package-program",
-                        "--program-dir",
-                        str(program_dir),
-                        "--out-dir",
-                        str(package_dir),
-                        "--dry-run",
-                    ]
-                ),
-                0,
-            )
-            self.assertFalse(package_dir.exists())
-
             report = package_dry_run_report(program_dir, package_dir)
+            self.assertFalse(package_dir.exists())
 
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["backend"], PACKAGE_BACKEND)

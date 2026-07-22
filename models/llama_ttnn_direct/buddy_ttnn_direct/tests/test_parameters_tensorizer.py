@@ -23,6 +23,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
+    tensorize_parameters_from_program_dry_run,
     to_ttnn_parameters,
 )
 
@@ -58,7 +59,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -120,7 +121,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -220,7 +221,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -280,7 +281,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -305,7 +306,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             shard = str(model_dir / "model-00001-of-00001.safetensors")
             self.assertEqual(open_counts, {shard: 1})
 
-    def test_cli_materialize_parameters_writes_shape_report(self) -> None:
+    def test_materialize_parameters_writes_shape_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -318,7 +319,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -331,24 +332,15 @@ class ParameterMaterializerTest(unittest.TestCase):
             )
 
             with _fake_torch_and_safetensors():
-                exit_code = main(
-                    [
-                        "materialize-parameters",
-                        "--model-path",
-                        str(model_dir),
-                        "--program-dir",
-                        str(program_dir),
-                        "--backend",
-                        "torch",
-                        "--layers",
-                        "0",
-                        "--out",
-                        str(report_json),
-                    ]
+                report = materialize_parameters_from_program(
+                    model_path=model_dir,
+                    program_dir=program_dir,
+                    backend="torch",
+                    layers=[0],
+                    out=report_json,
                 )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertEqual(report["status"], "pass")
             self.assertEqual(report["backend"], "torch")
             self.assertEqual(report["materialized_layer_ids"], [0])
@@ -375,7 +367,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -408,7 +400,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(report["tensor_count"], 21)
             self.assertEqual(json.loads(report_json.read_text()), report)
 
-    def test_cli_tensorize_parameters_dry_run_reports_dtype_layouts(self) -> None:
+    def test_tensorize_parameters_dry_run_reports_dtype_layouts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -421,7 +413,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -433,25 +425,15 @@ class ParameterMaterializerTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "tensorize-parameters",
-                    "--program-dir",
-                    str(program_dir),
-                    "--roles",
-                    "mlp,lm_head",
-                    "--layers",
-                    "0",
-                    "--device",
-                    "p150a",
-                    "--dry-run",
-                    "--out",
-                    str(report_json),
-                ]
+            report = tensorize_parameters_from_program_dry_run(
+                program_dir=program_dir,
+                roles=["mlp", "lm_head"],
+                layers=[0],
+                device="p150a",
+                out=report_json,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertEqual(report["status"], "dry_run")
             self.assertTrue(report["dry_run"])
             self.assertEqual(report["tensor_count"], 11)
@@ -485,7 +467,7 @@ class ParameterMaterializerTest(unittest.TestCase):
                 "dram",
             )
 
-    def test_cli_tensorize_parameters_dry_run_reports_full_decode_roles(self) -> None:
+    def test_tensorize_parameters_dry_run_reports_full_decode_roles(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -498,7 +480,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -510,25 +492,15 @@ class ParameterMaterializerTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "tensorize-parameters",
-                    "--program-dir",
-                    str(program_dir),
-                    "--roles",
-                    "embedding,norm,attention,mlp,lm_head",
-                    "--layers",
-                    "0",
-                    "--device",
-                    "p150a",
-                    "--dry-run",
-                    "--out",
-                    str(report_json),
-                ]
+            report = tensorize_parameters_from_program_dry_run(
+                program_dir=program_dir,
+                roles=["embedding", "norm", "attention", "mlp", "lm_head"],
+                layers=[0],
+                device="p150a",
+                out=report_json,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertEqual(
                 report["roles"],
                 ["embedding", "norm", "attention", "mlp", "lm_head"],
@@ -593,7 +565,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -724,7 +696,7 @@ class ParameterMaterializerTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

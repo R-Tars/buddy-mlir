@@ -57,7 +57,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -71,7 +71,9 @@ class DecodeDepthSweepTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "decode-depth-sweep",
+                    "diagnose",
+                    "--stage",
+                    "depth-sweep",
                     "--program-dir",
                     str(program_dir),
                     "--depths",
@@ -151,7 +153,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -232,7 +234,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -281,7 +283,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -355,7 +357,7 @@ class DecodeDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

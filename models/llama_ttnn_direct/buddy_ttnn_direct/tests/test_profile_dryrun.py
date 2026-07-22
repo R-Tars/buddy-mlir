@@ -44,7 +44,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -114,7 +114,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -149,7 +149,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -227,7 +227,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -241,9 +241,11 @@ class ProfileGenerateTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "profile-generate",
+                    "profile",
                     "--program-dir",
                     str(program_dir),
+                    "--mode",
+                    "generate",
                     "--max-new-tokens",
                     "3",
                     "--prefill-len",
@@ -313,7 +315,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -452,7 +454,7 @@ class ProfileGenerateTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

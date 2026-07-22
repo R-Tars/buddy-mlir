@@ -45,7 +45,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -59,6 +59,8 @@ class GenerateDepthSweepTest(unittest.TestCase):
 
             exit_code = main(
                 [
+                    "diagnose",
+                    "--stage",
                     "generate-depth-sweep",
                     "--program-dir",
                     str(program_dir),
@@ -131,7 +133,7 @@ class GenerateDepthSweepTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

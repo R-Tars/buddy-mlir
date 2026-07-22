@@ -47,7 +47,7 @@ class PromptDecodeLoopTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -61,7 +61,9 @@ class PromptDecodeLoopTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "prompt-decode-loop",
+                    "diagnose",
+                    "--stage",
+                    "decode-loop-legacy",
                     "--program-dir",
                     str(program_dir),
                     "--max-new-tokens",
@@ -116,7 +118,7 @@ class PromptDecodeLoopTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",

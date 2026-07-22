@@ -62,12 +62,19 @@ class ProductImportBoundaryTest(unittest.TestCase):
             set(PRODUCT_COMMANDS),
         )
 
-    def test_building_product_parser_does_not_load_diagnostics(self) -> None:
+    def test_building_product_parser_only_loads_diagnostics_registration(self) -> None:
         script = """
 import sys
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import build_parser
 build_parser()
-loaded = [name for name in sys.modules if '.smoke_' in name or name.endswith('.diagnostics.cli')]
+loaded = [
+    name for name in sys.modules
+    if '.smoke_' in name
+    or '.diagnostics.benchmark_' in name
+    or '.diagnostics.execution_graph_' in name
+    or '.diagnostics.performance_' in name
+    or '.diagnostics.autotune' in name
+]
 raise SystemExit(1 if loaded else 0)
 """
         result = subprocess.run(

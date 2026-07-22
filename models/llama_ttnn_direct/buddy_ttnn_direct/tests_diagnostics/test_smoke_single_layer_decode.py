@@ -56,7 +56,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -162,7 +162,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -176,7 +176,9 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-single-layer-decode",
+                    "diagnose",
+                    "--stage",
+                    "decode-step",
                     "--program-dir",
                     str(program_dir),
                     "--device",
@@ -226,7 +228,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -341,7 +343,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -404,7 +406,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -456,7 +458,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -601,7 +603,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -764,7 +766,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -778,7 +780,9 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
 
             exit_code = main(
                 [
-                    "smoke-decode-step",
+                    "diagnose",
+                    "--stage",
+                    "decode-step",
                     "--program-dir",
                     str(program_dir),
                     "--layers",
@@ -824,7 +828,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -889,7 +893,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -901,28 +905,19 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
                 0,
             )
 
-            exit_code = main(
-                [
-                    "profile-decode-step",
-                    "--program-dir",
-                    str(program_dir),
-                    "--layers",
-                    "2",
-                    "--batch-size",
-                    "2",
-                    "--cache-len",
-                    "16",
-                    "--trace",
-                    "--trace-iterations",
-                    "2",
-                    "--dry-run",
-                    "--out",
-                    str(report_json),
-                ]
+            report = profile_decode_step(
+                program_dir=program_dir,
+                layers=2,
+                device="p150a",
+                batch_size=2,
+                cache_len=16,
+                trace=True,
+                trace_iterations=2,
+                dry_run=True,
+                out=report_json,
             )
 
-            self.assertEqual(exit_code, 0)
-            report = json.loads(report_json.read_text())
+            self.assertEqual(report, json.loads(report_json.read_text()))
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "dry_run")
             self.assertEqual(report["template"], "generated_decode_step_profile")
@@ -956,7 +951,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1060,7 +1055,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
@@ -1125,7 +1120,7 @@ class SmokeSingleLayerDecodeTest(unittest.TestCase):
             self.assertEqual(
                 main(
                     [
-                        "build-program",
+                        "build",
                         "--model-path",
                         str(model_dir),
                         "--config",
