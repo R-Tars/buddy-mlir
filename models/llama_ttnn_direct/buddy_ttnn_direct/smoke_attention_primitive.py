@@ -22,7 +22,7 @@ from .smoke_decode_shell import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .runtime.config_runtime import realize_ttnn_config
-from .runtime_inputs import build_decode_runtime_state
+from .runtime.inputs import build_decode_runtime_state
 from .reports.contracts import ATTENTION_PRIMITIVES
 from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 

@@ -4,12 +4,6 @@ import types
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
-    GenerateSectionProfiler as GenerateCompatProfiler,
-    TTNNDirectRuntimeContext as GenerateCompatContext,
-    run_generate,
-    run_profile_generate,
-)
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.context import (
     TTNNDirectRuntimeContext,
 )
@@ -30,9 +24,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.device import (
     GenerateDeviceSession,
     maybe_generate_device,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.generate import (
-    build_generate_state as compat_build_generate_state,
-)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.generate import run_generate
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.inputs import (
     build_decode_kv_cache_runtime_state,
     build_decode_rotary_runtime_state,
@@ -43,6 +35,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.kv_cache import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.profile import (
     GenerateSectionProfiler,
+    run_profile_generate,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill import (
     attach_prefill_rotary_parameters,
@@ -59,14 +52,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.tokenizer import (
     tokenize_prompt_for_decode,
     tokenize_prompt_for_prefill,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_inputs import (
-    build_decode_runtime_state as compat_build_decode_runtime_state,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.runtime_inputs import (
-    tokenize_prompt_for_prefill as compat_tokenize_prompt_for_prefill,
-)
-
-
 class _FakeTensor:
     def __init__(self, shape: tuple[int, ...]) -> None:
         self.shape = shape
@@ -276,12 +261,9 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(token.values, [[11], [12]])
         self.assertEqual(token.shape, [2, 1])
 
-    def test_generate_module_reexports_runtime_classes(self) -> None:
-        self.assertIs(GenerateCompatContext, TTNNDirectRuntimeContext)
-        self.assertIs(GenerateCompatProfiler, GenerateSectionProfiler)
+    def test_canonical_generate_modules_expose_runtime_entries(self) -> None:
         self.assertTrue(callable(run_generate))
         self.assertTrue(callable(run_profile_generate))
-        self.assertIs(compat_build_generate_state, build_generate_state)
         self.assertTrue(callable(build_generate_state))
         self.assertEqual(GENERATE_RUNTIME_OWNER, "TTNNDirectRuntimeContext")
 
@@ -360,9 +342,7 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(report["decode_layer_profiles"][0]["layer_id"], 0)
         self.assertGreaterEqual(report["sections_ms"]["argmax_ms"], 0.0)
 
-    def test_runtime_tokenizer_module_preserves_reports_and_compat_imports(
-        self,
-    ) -> None:
+    def test_runtime_tokenizer_module_preserves_reports(self) -> None:
         tokenization = tokenize_prompt_for_prefill(
             prompt="hello ttnn direct",
             batch_size=2,
@@ -372,7 +352,6 @@ class RuntimeModuleTest(unittest.TestCase):
             tokenizer_module=_FakeTokenizerModule,
         )
 
-        self.assertIs(compat_tokenize_prompt_for_prefill, tokenize_prompt_for_prefill)
         self.assertEqual(tokenization.selected_token_id, 6)
         self.assertEqual(tokenization.token_ids, [[5, 4, 6, 0, 0], [5, 4, 6, 0, 0]])
         self.assertEqual(tokenization.to_report()["source"], "prompt_tokenizer_prefill")
@@ -394,14 +373,13 @@ class RuntimeModuleTest(unittest.TestCase):
         self.assertEqual(text["status"], "decoded")
         self.assertEqual(text["generated_text_by_user"], ["tok4 tok6", "tok5"])
 
-    def test_runtime_inputs_module_preserves_reports_and_compat_imports(self) -> None:
+    def test_runtime_inputs_module_preserves_reports(self) -> None:
         runtime_state = build_decode_runtime_state(
             batch_size=2,
             cache_len=10,
             page_block_size=4,
             prompt_token_count=6,
         )
-        self.assertIs(compat_build_decode_runtime_state, build_decode_runtime_state)
         self.assertEqual(runtime_state.page_count, 3)
         self.assertEqual(runtime_state.max_num_blocks, 6)
         self.assertEqual(runtime_state.cache_position, [5, 5])

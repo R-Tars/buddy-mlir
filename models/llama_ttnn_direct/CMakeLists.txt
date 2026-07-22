@@ -76,16 +76,15 @@ add_custom_command(
           --model-path "${_BUDDY_LLAMA31_TTNN_DIRECT_MODEL_INPUT}"
           --config "${BUDDY_LLAMA31_TTNN_DIRECT_CONFIG}"
           --out-dir "${_BUDDY_LLAMA31_TTNN_DIRECT_PROGRAM_DIR}"
-  COMMAND "${Python3_EXECUTABLE}" -m
-          models.llama_ttnn_direct.buddy_ttnn_direct.cli
-          package-program
-          --program-dir "${_BUDDY_LLAMA31_TTNN_DIRECT_PROGRAM_DIR}"
-          --out-dir "${_BUDDY_LLAMA31_TTNN_DIRECT_PACKAGE_DIR}"
+  COMMAND "${Python3_EXECUTABLE}" -c
+          "__import__('models.llama_ttnn_direct.buddy_ttnn_direct.codegen.package', fromlist=['package_ttnn_direct_program']).package_ttnn_direct_program(r'${_BUDDY_LLAMA31_TTNN_DIRECT_PROGRAM_DIR}', r'${_BUDDY_LLAMA31_TTNN_DIRECT_PACKAGE_DIR}')"
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/cli.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/codegen/package.py"
     "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/codegen/program.py"
-    "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/codegen/python_ttnn.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/compiler/codegen.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/compiler/config.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/buddy_ttnn_direct/compiler/source_templates.py"
     "${BUDDY_LLAMA31_TTNN_DIRECT_CONFIG}"
   WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
   COMMENT "Generating TTNN Direct Llama 3.1 Python program package"

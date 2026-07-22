@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.profile_template import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.template_profile import (
     MLP_PROFILE_OPS,
     profile_template,
 )

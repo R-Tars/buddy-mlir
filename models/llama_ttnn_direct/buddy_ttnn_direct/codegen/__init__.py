@@ -1,6 +1,4 @@
-"""Legacy code generation helpers for Buddy-TTNN Direct."""
-
-from typing import Any
+"""Artifact and parameter helpers for Buddy-TTNN Direct code generation."""
 
 from .config_emit import (
     dump_parameter_config,
@@ -9,31 +7,9 @@ from .config_emit import (
     parameter_config_dry_run_report,
 )
 
-
-_COMPILER_EXPORTS = {
-    "build_codegen_config",
-    "dry_run_report",
-    "render_python_ttnn_model",
-    "validate_execution_plan_for_codegen",
-    "write_python_ttnn_skeleton",
-}
-
-
-def __getattr__(name: str) -> Any:
-    if name not in _COMPILER_EXPORTS:
-        raise AttributeError(name)
-    from .. import compiler
-
-    return getattr(compiler, name)
-
 __all__ = [
-    "build_codegen_config",
     "dump_parameter_config",
-    "dry_run_report",
     "emit_parameter_config",
     "load_parameter_config",
     "parameter_config_dry_run_report",
-    "render_python_ttnn_model",
-    "validate_execution_plan_for_codegen",
-    "write_python_ttnn_skeleton",
 ]

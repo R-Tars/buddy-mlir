@@ -6,10 +6,12 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.generate import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.prefill_profile import (
+    run_profile_prefill_steady,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.profile import (
     run_profile_decode_steady,
     run_profile_generate,
-    run_profile_prefill_steady,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate_dryrun import (
     _make_generate_fake_ttnn,

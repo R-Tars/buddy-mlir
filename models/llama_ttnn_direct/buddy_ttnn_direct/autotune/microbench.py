@@ -681,6 +681,12 @@ def _sample_statistics(samples: Sequence[float]) -> dict[str, Any]:
     }
 
 
+def summarize_samples(samples: Sequence[float]) -> dict[str, Any]:
+    """Public statistics helper shared by small diagnostic adapters."""
+
+    return _sample_statistics(samples)
+
+
 def _percentile(samples: Sequence[float], quantile: float) -> float:
     ordered = sorted(float(sample) for sample in samples)
     if len(ordered) == 1:

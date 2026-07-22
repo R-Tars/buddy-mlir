@@ -19,10 +19,7 @@ from .codegen.ttnn_tensorizer import (
     load_parameter_config_from_program,
     to_ttnn_parameters,
 )
-from .runtime_inputs import (
-    PromptTokenizationError,
-    tokenize_prompt_for_decode,
-)
+from .runtime.tokenizer import PromptTokenizationError, tokenize_prompt_for_decode
 from .runtime.model_loader import (
     load_generated_model as _runtime_load_generated_model,
     to_namespace as _runtime_to_namespace,

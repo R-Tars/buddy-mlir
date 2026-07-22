@@ -6,10 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from models.llama_ttnn_direct.buddy_ttnn_direct import (
-    validation as legacy_validation_module,
-)
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import (
+    legacy_decode_loop as legacy_decode_loop_module,
     validation_workflow as validation_module,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
@@ -177,9 +175,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_sin
 
 
 class ValidateDirectTest(unittest.TestCase):
-    def test_legacy_validation_module_aliases_diagnostics_workflow(self) -> None:
-        self.assertIs(legacy_validation_module, validation_module)
-
     def test_runtime_diagnostics_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
             validation_module._real_decode_runtime_diagnostics,
@@ -1334,26 +1329,15 @@ class ValidateDirectTest(unittest.TestCase):
             )
             repro = report["reproducibility"]
             self.assertIn(
-                "--preflight-only",
-                repro["preflight_cli_args"],
-            )
-            self.assertNotIn(
-                "--preflight-only",
-                repro["final_validation_cli_args"],
+                " validate --suite dryrun ",
+                repro["preflight_cli_command"],
             )
             self.assertIn(
-                "validate-real-decode",
+                " validate --suite device ",
                 repro["final_validation_cli_command"],
             )
-            self.assertIn(
-                "--min-tokens-per-second-per-user",
-                repro["final_validation_cli_args"],
-            )
-            self.assertIn("--metric", repro["final_validation_cli_args"])
-            self.assertIn(
-                "tokens_per_second_per_user",
-                repro["final_validation_cli_args"],
-            )
+            self.assertIn("--require-full-depth", repro["preflight_cli_args"])
+            self.assertIn("--require-full-depth", repro["final_validation_cli_args"])
             self.assertIn("--max-new-tokens", repro["preflight_cli_args"])
             self.assertIn("3", repro["preflight_cli_args"])
             self.assertIn("--prefill-len", repro["preflight_cli_args"])
@@ -1372,12 +1356,13 @@ class ValidateDirectTest(unittest.TestCase):
                 repro["final_validation_cli_args"],
             )
             self.assertIn(str(model_dir), repro["final_validation_cli_args"])
-            self.assertIn("1.0", repro["final_validation_cli_args"])
-            self.assertIn(
+            for legacy_option in (
+                "--preflight-only",
+                "--metric",
+                "--min-tokens-per-second-per-user",
                 "--decode-shell-pcc-threshold",
-                repro["final_validation_cli_args"],
-            )
-            self.assertIn("0.99", repro["final_validation_cli_args"])
+            ):
+                self.assertNotIn(legacy_option, repro["final_validation_cli_args"])
             self.assertEqual(
                 report["ttnn_environment"]["tt_metal_git_commit"],
                 "fake-tt-metal",
@@ -1843,7 +1828,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(report["prompt_runtime_requested"])
             self.assertIn("prompt_runtime.prompt", report["failed_checks"])
             self.assertIn(
-                "--require-model-end-to-end",
+                "--require-full-depth",
                 report["reproducibility"]["final_validation_cli_args"],
             )
             self.assertNotIn(
@@ -1915,19 +1900,19 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["decode_shell_pcc_threshold"], 0.98)
             self.assertEqual(report["min_baseline_ratio"], 0.1)
             self.assertIn(
-                "--preflight-only",
-                report["reproducibility"]["preflight_cli_args"],
+                " validate --suite dryrun ",
+                report["reproducibility"]["preflight_cli_command"],
+            )
+            self.assertIn(
+                " validate --suite device ",
+                report["reproducibility"]["final_validation_cli_command"],
             )
             self.assertNotIn(
-                "--preflight-only",
+                "--min-tokens-per-second-per-user",
                 report["reproducibility"]["final_validation_cli_args"],
             )
-            self.assertIn(
-                "1.25",
-                report["reproducibility"]["final_validation_cli_args"],
-            )
-            self.assertIn(
-                "0.98",
+            self.assertNotIn(
+                "--decode-shell-pcc-threshold",
                 report["reproducibility"]["final_validation_cli_args"],
             )
             self.assertEqual(
@@ -2797,16 +2782,15 @@ class ValidateDirectTest(unittest.TestCase):
             )
             repro = report["reproducibility"]
             self.assertIn(
-                "validate-real-decode",
+                " validate --suite device ",
                 repro["validation_cli_command"],
             )
-            self.assertIn("--preflight-only", repro["preflight_cli_args"])
-            self.assertNotIn("--preflight-only", repro["validation_cli_args"])
-            self.assertIn("--trace", repro["validation_cli_args"])
             self.assertIn(
-                "--baseline-reference",
-                repro["validation_cli_args"],
+                " validate --suite dryrun ",
+                repro["preflight_cli_command"],
             )
+            self.assertNotIn("--trace", repro["validation_cli_args"])
+            self.assertNotIn("--baseline-reference", repro["validation_cli_args"])
             self.assertEqual(
                 repro["artifact_index"]["report"],
                 str(out_dir / "real_decode_validation_report.json"),
@@ -5135,15 +5119,28 @@ class ValidateDirectTest(unittest.TestCase):
             prompt_loop = report["steps"]["prompt_decode_loop"]
             self.assertEqual(prompt_loop["status"], "pass")
             self.assertTrue(prompt_loop["decode_loop_runtime_owned"])
-            self.assertEqual(prompt_loop["input_source"], "prompt_decode_loop")
-            self.assertEqual(prompt_loop["runtime_owner"], "prompt_decode_loop")
+            self.assertEqual(prompt_loop["input_source"], "prompt_prefill")
+            self.assertEqual(
+                prompt_loop["runtime_owner"],
+                "TTNNDirectRuntimeContext",
+            )
             self.assertEqual(prompt_loop["decode_steps"], 2)
-            self.assertEqual(prompt_loop["prompt_runtime_input_tensor_count"], 1)
+            self.assertEqual(
+                prompt_loop["prefill_prompt_runtime_input_tensor_count"],
+                1,
+            )
             self.assertEqual(
                 prompt_loop["decode_runtime_state_input_tensor_count"],
                 4,
             )
-            self.assertEqual(prompt_loop["rotary_runtime_input_tensor_count"], 6)
+            self.assertEqual(
+                prompt_loop["prefill_rotary_runtime_input_tensor_count"],
+                3,
+            )
+            self.assertEqual(
+                prompt_loop["decode_rotary_runtime_input_tensor_count"],
+                6,
+            )
             self.assertEqual(prompt_loop["kv_cache_runtime_input_tensor_count"], 2)
             self.assertEqual(
                 prompt_loop["synthetic_runtime_input_tensor_count"],
@@ -5382,7 +5379,7 @@ class ValidateDirectTest(unittest.TestCase):
                 scope["runtime_input_sources"],
                 {
                     **{step: "prompt_runtime" for step in prompt_runtime_steps},
-                    "prompt_decode_loop": "prompt_decode_loop",
+                    "prompt_decode_loop": "prompt_prefill",
                     "generate_prefill_decode": "prompt_prefill",
                     "profile_generate": "prompt_prefill",
                 },
@@ -5391,7 +5388,6 @@ class ValidateDirectTest(unittest.TestCase):
                 scope["prompt_runtime_input_tensor_counts"],
                 {
                     **{step: 1 for step in prompt_runtime_steps},
-                    "prompt_decode_loop": 1,
                     "generate_prefill_decode": 1,
                     "profile_generate": 1,
                 },
@@ -5413,7 +5409,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "single_layer_decode": 3,
                     "smoke_decode_step": 3,
                     "profile_decode_step": 3,
-                    "prompt_decode_loop": 6,
                     "generate_prefill_decode": 6,
                     "profile_generate": 6,
                 },
@@ -7833,6 +7828,10 @@ class ValidateDirectTest(unittest.TestCase):
 
             with patch.object(
                 validation_module,
+                "run_generate",
+                side_effect=fake_generate,
+            ), patch.object(
+                legacy_decode_loop_module,
                 "run_generate",
                 side_effect=fake_generate,
             ), patch.object(

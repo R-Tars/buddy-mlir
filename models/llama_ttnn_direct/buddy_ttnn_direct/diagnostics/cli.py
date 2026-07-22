@@ -10,7 +10,9 @@ DIAGNOSE_STAGES = (
     "attention-primitive",
     "attention-layer",
     "prefill",
+    "decode-shell",
     "decode-step",
+    "decode-step-profile",
     "decode-loop-legacy",
     "depth-sweep",
     "generate-depth-sweep",
@@ -67,6 +69,8 @@ def add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--head-dim", type=int, default=None)
     parser.add_argument("--max-cache-len", type=int, default=1024)
     parser.add_argument("--dtype-seed", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument("--disable-attention", action="store_true")
+    parser.add_argument("--pcc-threshold", type=float, default=0.99)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--trace", action="store_true")
     parser.add_argument("--trace-iterations", type=int, default=1)
@@ -88,7 +92,7 @@ def add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
 def run_stage(args: argparse.Namespace) -> dict[str, object]:
     if args.stage == "template-profile":
         _require_args(args, "template", "config")
-        from ..profile_template import profile_template
+        from .template_profile import profile_template
 
         return profile_template(
             template=args.template,
@@ -307,9 +311,48 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             tokenizer_path=args.tokenizer_path,
             dry_run=args.dry_run,
         )
+    if args.stage == "decode-shell":
+        _require_args(args, "program_dir")
+        from ..smoke_decode_shell import run_smoke_decode_shell
+
+        return run_smoke_decode_shell(
+            out=args.out,
+            program_dir=args.program_dir,
+            layers=args.layers,
+            disable_attention=args.disable_attention,
+            model_path=args.model_path,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            pcc_threshold=args.pcc_threshold,
+            dry_run=args.dry_run,
+        )
+    if args.stage == "decode-step-profile":
+        _require_args(args, "program_dir")
+        from ..smoke_single_layer_decode import profile_decode_step
+
+        return profile_decode_step(
+            out=args.out,
+            program_dir=args.program_dir,
+            layers=args.layers,
+            model_path=args.model_path,
+            device=args.device,
+            device_id=args.device_id,
+            batch_size=args.batch_size,
+            cache_len=args.cache_len,
+            dtype_seed=args.dtype_seed,
+            trace=args.trace,
+            trace_iterations=args.trace_iterations,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
+            dry_run=args.dry_run,
+        )
     if args.stage == "decode-loop-legacy":
         _require_args(args, "program_dir")
-        from ..decode_loop import run_prompt_decode_loop
+        from .legacy_decode_loop import run_prompt_decode_loop
 
         return run_prompt_decode_loop(
             out=args.out,

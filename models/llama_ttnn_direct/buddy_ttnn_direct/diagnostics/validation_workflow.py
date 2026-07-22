@@ -38,7 +38,7 @@ from ..runtime_environment import (
     collect_ttnn_runtime_health,
     collect_ttnn_environment,
 )
-from ..decode_loop import run_prompt_decode_loop
+from .legacy_decode_loop import run_prompt_decode_loop
 from .legacy_validation import (
     diagnostic_excerpt as _diagnostic_excerpt,
     real_decode_runtime_diagnostics as _real_decode_runtime_diagnostics,
@@ -50,7 +50,8 @@ from .legacy_validation import (
     tenstorrent_preflight_recommended_action as _tenstorrent_preflight_recommended_action,
     walk_strings as _walk_strings,
 )
-from ..generate import run_generate, run_profile_generate
+from ..runtime.generate import run_generate
+from ..runtime.profile import run_profile_generate
 from ..reports.attention import (
     attention_layer_primitive_reports_complete as _attention_layer_primitive_reports_complete,
     attention_layer_primitive_reports_observed as _attention_layer_primitive_reports_observed,
@@ -2541,7 +2542,9 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "smoke-decode-shell",
+                "diagnose",
+                "--stage",
+                "decode-shell",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",
@@ -2648,7 +2651,9 @@ def validate_real_decode(
                     sys.executable,
                     "-m",
                     "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                    "smoke-attention-primitive",
+                    "diagnose",
+                    "--stage",
+                    "attention-primitive",
                     "--primitive",
                     primitive,
                     "--device",
@@ -2736,11 +2741,13 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "smoke-attention-layer",
+                "diagnose",
+                "--stage",
+                "attention-layer",
                 "--program-dir",
                 str(program_dir),
-                "--layer",
-                "0",
+                "--layers",
+                "1",
                 "--device",
                 device,
                 "--device-id",
@@ -2821,11 +2828,15 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "smoke-single-layer-decode",
+                "diagnose",
+                "--stage",
+                "decode-step",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",
                 str(model_path),
+                "--layers",
+                "1",
                 "--device",
                 device,
                 "--device-id",
@@ -3018,7 +3029,9 @@ def validate_real_decode(
             sys.executable,
             "-m",
             "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-            "smoke-decode-step",
+            "diagnose",
+            "--stage",
+            "decode-step",
             "--program-dir",
             str(program_dir),
             "--layers",
@@ -3160,7 +3173,9 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "profile-decode-step",
+                "diagnose",
+                "--stage",
+                "decode-step-profile",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",
@@ -3305,12 +3320,14 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "prompt-decode-loop",
+                "diagnose",
+                "--stage",
+                "decode-loop-legacy",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",
                 str(model_path),
-                "--decode-steps",
+                "--max-new-tokens",
                 "2",
                 "--layers",
                 str(layer_count),
@@ -3384,18 +3401,31 @@ def validate_real_decode(
             "synthetic_rotary_tensor_count": (
                 loop_report.get("synthetic_rotary_tensor_count")
             ),
-            "prompt_runtime_input_tensor_count": (
-                loop_report.get("prompt_runtime_input_tensor_count")
+            "prefill_prompt_runtime_input_tensor_count": (
+                (loop_report.get("parameter_setup") or {}).get(
+                    "prefill_prompt_runtime_input_tensor_count"
+                )
             ),
             "decode_runtime_state_input_tensor_count": (
-                loop_report.get("decode_runtime_state_input_tensor_count")
+                (loop_report.get("parameter_setup") or {}).get(
+                    "decode_runtime_state_input_tensor_count"
+                )
             ),
-            "rotary_runtime_input_tensor_count": (
-                loop_report.get("rotary_runtime_input_tensor_count")
+            "prefill_rotary_runtime_input_tensor_count": (
+                (loop_report.get("parameter_setup") or {}).get(
+                    "prefill_rotary_runtime_input_tensor_count"
+                )
+            ),
+            "decode_rotary_runtime_input_tensor_count": (
+                (loop_report.get("parameter_setup") or {}).get(
+                    "decode_rotary_runtime_input_tensor_count"
+                )
             ),
             "rotary_runtime_state": loop_report.get("rotary_runtime_state"),
             "kv_cache_runtime_input_tensor_count": (
-                loop_report.get("kv_cache_runtime_input_tensor_count")
+                (loop_report.get("parameter_setup") or {}).get(
+                    "kv_cache_runtime_input_tensor_count"
+                )
             ),
             "kv_cache_runtime_state": loop_report.get(
                 "kv_cache_runtime_state"
@@ -3707,7 +3737,9 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "profile-generate",
+                "profile",
+                "--mode",
+                "generate",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",
@@ -3933,6 +3965,8 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
+                "diagnose",
+                "--stage",
                 "generate-depth-sweep",
                 "--program-dir",
                 str(program_dir),
@@ -4084,7 +4118,9 @@ def validate_real_decode(
                 sys.executable,
                 "-m",
                 "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-                "decode-depth-sweep",
+                "diagnose",
+                "--stage",
+                "depth-sweep",
                 "--program-dir",
                 str(program_dir),
                 "--model-path",

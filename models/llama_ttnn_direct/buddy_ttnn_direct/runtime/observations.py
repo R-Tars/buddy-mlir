@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any, Sequence
-
-from ..correctness.artifacts import (
-    kv_cache_snapshot,
-    last_token_vector,
-    tensor_snapshot,
-)
 
 
 class TTNNObservationCollector:
@@ -19,12 +14,18 @@ class TTNNObservationCollector:
         capture_hidden: bool = True,
         capture_logits: bool = True,
         capture_kv_cache: bool = True,
+        tensor_snapshot: Callable[..., dict[str, Any]],
+        last_token_vector: Callable[[Any], Any],
+        kv_cache_snapshot: Callable[..., dict[str, Any]],
     ) -> None:
         self.ttnn = ttnn
         self.torch = torch
         self.capture_hidden = bool(capture_hidden)
         self.capture_logits = bool(capture_logits)
         self.capture_kv_cache = bool(capture_kv_cache)
+        self.tensor_snapshot = tensor_snapshot
+        self.last_token_vector = last_token_vector
+        self.kv_cache_snapshot = kv_cache_snapshot
         self.checkpoints: dict[str, dict[str, Any]] = {}
         self.diagnostics: dict[str, dict[str, Any]] = {}
 
@@ -71,9 +72,9 @@ class TTNNObservationCollector:
             op_name=f"correctness.{name}.user",
         )
         host = _to_torch(self.ttnn, sampled)
-        self.checkpoints[name] = tensor_snapshot(
+        self.checkpoints[name] = self.tensor_snapshot(
             name,
-            last_token_vector(host),
+            self.last_token_vector(host),
             logical_shape=logical_shape,
             sample_policy={
                 "kind": "last_token_vector",
@@ -103,7 +104,7 @@ class TTNNObservationCollector:
                     effective_token_count=effective_token_count,
                 )
                 name = f"prefill.layer.{layer_id}.{kind}_cache"
-                self.checkpoints[name] = kv_cache_snapshot(name, host)
+                self.checkpoints[name] = self.kv_cache_snapshot(name, host)
 
     def to_report(self) -> dict[str, Any]:
         captured = bool(self.checkpoints)
@@ -156,7 +157,7 @@ class TTNNObservationCollector:
                 f"{_shape(host)}"
             )
         vector = host[0, :, -1, :].reshape(-1)
-        self.diagnostics[name] = tensor_snapshot(
+        self.diagnostics[name] = self.tensor_snapshot(
             name,
             vector,
             logical_shape=logical_shape,

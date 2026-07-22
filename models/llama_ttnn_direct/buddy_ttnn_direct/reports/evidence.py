@@ -93,33 +93,26 @@ def real_decode_cli_args(
     guard_device_busy: bool = False,
     guard_device_health: bool = False,
 ) -> list[str]:
+    suite = "dryrun" if dry_run or preflight_only else "device"
     args = [
         "python",
         "-m",
         "models.llama_ttnn_direct.buddy_ttnn_direct.cli",
-        "validate-real-decode",
+        "validate",
+        "--suite",
+        suite,
         "--program-dir",
         str(program_dir),
         "--model-path",
         str(model_path),
         "--out-dir",
         str(out_dir),
-        "--official-config",
-        str(official_config_path),
-        "--decode-step-search-space",
-        str(decode_step_search_space_path),
-        "--performance-baselines",
-        str(performance_baselines_path),
         "--layers",
         str(layers),
         "--device",
         str(device),
         "--device-id",
         str(device_id),
-        "--trace-iterations",
-        str(trace_iterations),
-        "--decode-shell-pcc-threshold",
-        str(decode_shell_pcc_threshold),
     ]
     _append_option(args, "--batch-size", batch_size)
     _append_option(args, "--cache-len", cache_len)
@@ -128,51 +121,8 @@ def real_decode_cli_args(
     _append_option(args, "--prompt", prompt)
     _append_option(args, "--tokenizer-path", tokenizer_path)
     _append_option(args, "--dtype-seed", dtype_seed)
-    _append_option(args, "--metric", metric)
-    _append_option(
-        args,
-        "--min-tokens-per-second-per-user",
-        min_tokens_per_second_per_user,
-    )
-    _append_option(
-        args,
-        "--baseline-tokens-per-second-per-user",
-        baseline_tokens_per_second_per_user,
-    )
-    _append_option(args, "--baseline-reference", baseline_reference)
-    _append_option(args, "--min-baseline-ratio", min_baseline_ratio)
-    if trace:
-        args.append("--trace")
-    if dry_run:
-        args.append("--dry-run")
-    if skip_autotune:
-        args.append("--skip-autotune")
-    if skip_profile_decode_step:
-        args.append("--skip-profile-decode-step")
-    if require_full_decode_step:
-        args.append("--require-full-decode-step")
-    if require_model_end_to_end:
-        args.append("--require-model-end-to-end")
-    if require_official_performance_parity:
-        args.append("--require-official-performance-parity")
-    if require_trace:
-        args.append("--require-trace")
-    if require_official_config_match:
-        args.append("--require-official-config-match")
-    if require_full_depth:
+    if require_full_depth or require_full_decode_step or require_model_end_to_end:
         args.append("--require-full-depth")
-    if require_program_runtime_shape:
-        args.append("--require-program-runtime-shape")
-    if require_batch32_decode_step:
-        args.append("--require-batch32-decode-step")
-    if require_decode_shell_numeric_reference:
-        args.append("--require-decode-shell-numeric-reference")
-    if guard_device_busy:
-        args.append("--guard-device-busy")
-    if guard_device_health:
-        args.append("--guard-device-health")
-    if preflight_only:
-        args.append("--preflight-only")
     return args
 
 

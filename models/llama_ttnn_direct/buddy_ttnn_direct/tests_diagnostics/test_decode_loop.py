@@ -6,9 +6,11 @@ import unittest
 from pathlib import Path
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
-from models.llama_ttnn_direct.buddy_ttnn_direct.decode_loop import (
-    _normalize_token_ids,
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.legacy_decode_loop import (
     run_prompt_decode_loop,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate_dryrun import (
+    _make_generate_fake_ttnn,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
@@ -24,18 +26,11 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_dec
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_single_layer_decode import (
     _fake_tokenizer_module,
-    _make_fake_ttnn,
 )
 
 
 class PromptDecodeLoopTest(unittest.TestCase):
-    def test_normalize_token_ids_accepts_physical_decode_shape(self) -> None:
-        self.assertEqual(
-            _normalize_token_ids([[[[13], [17]]]], batch_size=2),
-            [[13], [17]],
-        )
-
-    def test_cli_prompt_decode_loop_dry_run(self) -> None:
+    def test_cli_prompt_decode_loop_dry_run_uses_generate_contract(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -84,28 +79,28 @@ class PromptDecodeLoopTest(unittest.TestCase):
             report = json.loads(report_json.read_text())
             self.assertEqual(report["template"], "prompt_decode_loop")
             self.assertEqual(report["status"], "dry_run")
+            self.assertTrue(report["passed"])
             self.assertEqual(report["decode_steps"], 3)
-            self.assertEqual(report["max_new_tokens"], 3)
-            self.assertEqual(report["prefill_status"], "not_run")
-            self.assertEqual(report["kv_cache_source"], "empty_initialized")
+            self.assertEqual(report["legacy_requested_decode_steps"], 3)
+            self.assertEqual(report["max_new_tokens"], 4)
+            self.assertEqual(report["prefill_status"], "dry_run")
+            self.assertEqual(report["kv_cache_source"], "prefill")
             self.assertEqual(
                 report["model_semantics"],
-                "decode_only_empty_or_uninitialized_kv",
+                "prompt_conditioned_prefill_decode",
             )
             self.assertTrue(report["planned_decode_loop_runtime_owned"])
             self.assertFalse(report["decode_loop_runtime_owned"])
+            self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
             self.assertEqual(report["generated_token_ids"], [])
-            self.assertEqual(report["generated_text"], "")
-            self.assertEqual(report["generated_text_status"], "not_run")
-            self.assertEqual(report["per_step_token_metadata"], [])
+            self.assertEqual(report["step_reports"], [])
+            self.assertEqual(report["throughput_summary"], {})
             self.assertEqual(
-                report["decode_runtime_state_input_tensor_count"],
-                6,
+                report["legacy_adapter"]["runtime_api"],
+                "runtime.generate.run_generate",
             )
-            self.assertEqual(report["rotary_runtime_input_tensor_count"], 9)
-            self.assertEqual(report["kv_cache_runtime_input_tensor_count"], 2)
 
-    def test_prompt_decode_loop_executes_two_runtime_owned_steps(self) -> None:
+    def test_prompt_decode_loop_reuses_prompt_conditioned_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             model_dir = root / "fake_model"
@@ -130,7 +125,7 @@ class PromptDecodeLoopTest(unittest.TestCase):
                 0,
             )
 
-            fake_ttnn = _make_fake_ttnn()
+            fake_ttnn = _make_generate_fake_ttnn()
             with _fake_torch_and_safetensors():
                 report = run_prompt_decode_loop(
                     out=report_json,
@@ -151,101 +146,26 @@ class PromptDecodeLoopTest(unittest.TestCase):
             self.assertTrue(report["passed"])
             self.assertEqual(report["status"], "passed")
             self.assertTrue(report["decode_loop_runtime_owned"])
-            self.assertEqual(report["runtime_owner"], "prompt_decode_loop")
-            self.assertEqual(report["input_source"], "prompt_decode_loop")
-            self.assertEqual(report["parameter_source"], "hf_model")
+            self.assertEqual(report["runtime_owner"], "TTNNDirectRuntimeContext")
+            self.assertEqual(report["runtime_session_owner"], "runtime.generate.run_generate")
             self.assertEqual(report["decode_steps"], 2)
-            self.assertEqual(report["max_new_tokens"], 2)
-            self.assertEqual(report["prefill_status"], "not_run")
-            self.assertEqual(report["kv_cache_source"], "empty_initialized")
+            self.assertEqual(report["max_new_tokens"], 3)
+            self.assertEqual(report["prefill_status"], "passed")
+            self.assertEqual(report["kv_cache_source"], "prefill")
             self.assertEqual(
                 report["model_semantics"],
-                "decode_only_empty_or_uninitialized_kv",
+                "prompt_conditioned_prefill_decode",
             )
-            self.assertIn("does not run prefill", report["semantic_disclaimer"])
             self.assertEqual(len(report["step_reports"]), 2)
             self.assertEqual(
-                report["prompt_tokenization"]["selected_token_id"],
-                42,
+                report["generated_token_ids"],
+                [[23, 23, 23], [23, 23, 23]],
             )
-            self.assertEqual(
-                report["step_reports"][0]["cache_position_value"],
-                2,
-            )
-            self.assertEqual(
-                report["step_reports"][1]["cache_position_value"],
-                3,
-            )
-            self.assertEqual(report["output_shapes"]["token"], [2, 1])
-            self.assertEqual(report["generated_token_ids"], [[-1, -1], [-1, -1]])
-            self.assertEqual(
-                report["generated_token_id_source"],
-                "placeholder_unmaterialized",
-            )
-            self.assertEqual(report["token_materialization_status"], "unavailable")
-            self.assertEqual(report["generated_text_status"], "placeholder")
-            self.assertEqual(
-                report["generated_text_source"],
-                "unmaterialized_token_placeholder",
-            )
-            self.assertEqual(
-                report["generated_text"],
-                "<unmaterialized-token> <unmaterialized-token>",
-            )
-            self.assertEqual(
-                report["generated_text_by_user"],
-                [
-                    "<unmaterialized-token> <unmaterialized-token>",
-                    "<unmaterialized-token> <unmaterialized-token>",
-                ],
-            )
-            self.assertEqual(len(report["per_step_token_metadata"]), 2)
-            self.assertEqual(
-                report["per_step_token_metadata"][0]["cache_position_value"],
-                2,
-            )
-            self.assertEqual(
-                report["per_step_token_metadata"][1]["cache_position_value"],
-                3,
-            )
-            self.assertEqual(
-                report["per_step_token_metadata"][0]["token_ids_by_user"],
-                [[-1], [-1]],
-            )
-            self.assertEqual(
-                report["step_reports"][0]["generated_token_ids"],
-                [[-1], [-1]],
-            )
-            self.assertEqual(
-                report["step_reports"][0]["token_materialization"]["status"],
-                "unavailable",
-            )
-            self.assertEqual(report["prompt_runtime_input_tensor_count"], 1)
-            self.assertEqual(
-                report["decode_runtime_state_input_tensor_count"],
-                4,
-            )
-            self.assertEqual(report["rotary_runtime_input_tensor_count"], 6)
-            self.assertEqual(report["kv_cache_runtime_input_tensor_count"], 2)
-            self.assertEqual(
-                report["synthetic_runtime_input_tensor_count"],
-                0,
-            )
-            self.assertEqual(report["synthetic_rotary_tensor_count"], 0)
-            self.assertEqual(report["tensor_conversion_count"], 30)
             self.assertEqual(
                 report["throughput_summary"]["generated_tokens_per_user"],
-                2,
+                3,
             )
-            self.assertEqual(
-                report["reference"]["status"],
-                "passed",
-            )
-            ops = [call["op"] for call in fake_ttnn.calls]
-            self.assertEqual(ops.count("untilize"), 2)
-            self.assertEqual(ops.count("argmax"), 2)
-            self.assertEqual(ops.count("topk"), 0)
-            self.assertEqual(ops.count("gather"), 0)
+            self.assertEqual(report["reference"]["status"], "passed")
             self.assertEqual(json.loads(report_json.read_text()), report)
 
 

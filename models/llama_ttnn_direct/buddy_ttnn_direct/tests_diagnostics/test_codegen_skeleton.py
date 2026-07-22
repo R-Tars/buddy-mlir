@@ -10,9 +10,6 @@ import types
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.codegen import (
-    python_ttnn as legacy_python_ttnn,
-)
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler import (
     build_codegen_config,
     render_python_ttnn_model,
@@ -78,16 +75,6 @@ def _fake_plan(num_layers: int = 2, lm_head_split_count: int = 8) -> dict[str, o
 
 
 class PythonTTNNSkeletonCodegenTest(unittest.TestCase):
-    def test_codegen_compatibility_facade_reexports_compiler(self) -> None:
-        self.assertIs(
-            legacy_python_ttnn.build_codegen_config,
-            build_codegen_config,
-        )
-        self.assertIs(
-            legacy_python_ttnn.render_python_ttnn_model,
-            render_python_ttnn_model,
-        )
-
     def test_codegen_python_writes_skeleton_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

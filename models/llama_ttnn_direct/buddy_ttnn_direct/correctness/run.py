@@ -12,6 +12,7 @@ from .hf_reference import (
     load_hf_reference,
     write_hf_reference,
 )
+from .artifacts import kv_cache_snapshot, last_token_vector, tensor_snapshot
 from .metrics import compare_snapshots, compare_top_token
 
 
@@ -92,6 +93,9 @@ def run_correctness(
             or "top_token" in requested_checks
         ),
         capture_kv_cache="kv_cache_pcc" in requested_checks,
+        tensor_snapshot=tensor_snapshot,
+        last_token_vector=last_token_vector,
+        kv_cache_snapshot=kv_cache_snapshot,
     )
     generate = run_generate(
         out=generate_report_path,

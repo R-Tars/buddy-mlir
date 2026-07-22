@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from ..generate import run_generate
+from ..runtime.generate import run_generate
 from .decode_depth_sweep import resolve_decode_depths
 
 

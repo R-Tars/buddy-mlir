@@ -76,8 +76,8 @@ its provenance attached to generated config. `runtime/config_runtime.py`
 materializes JSON descriptors into TTNN dtype, memory, program, grid, and
 compute-kernel objects without making compiler modules import TTNN.
 `buddy_ttnn_direct/codegen/` retains artifact, parameter, tensorization, and
-package helpers; `codegen/python_ttnn.py` is a compatibility facade for the
-canonical compiler modules.
+package helpers. Compiler entry points are imported directly from
+`buddy_ttnn_direct/compiler/`.
 
 The generated bundle contains at least:
 
@@ -119,8 +119,8 @@ weights_manifest.json
 - `reports.py`: optional compact/full generate schemas, atomic JSON writing,
   and streamed JSONL diagnostics.
 
-`buddy_ttnn_direct/generate.py` remains a small compatibility facade that
-re-exports the public runtime entry points.
+Repository code imports these runtime entry points directly; there is no
+package-root generate compatibility facade.
 
 ### Reports and validation
 
@@ -160,10 +160,9 @@ The product CLI uses five compact suites:
   KV-cache comparisons against observations captured from P150A.
 
 Legacy phase gates remain available to diagnostics, but they are not registered
-as hidden top-level commands. Their orchestration lives in
-`diagnostics/validation_workflow.py`; the package-root `validation.py` is a
-compatibility module alias. Importing or parsing the product CLI does not load
-the legacy workflow.
+as hidden top-level commands. Their orchestration lives only in
+`diagnostics/validation_workflow.py`. Importing or parsing the product CLI does
+not load the legacy workflow.
 
 ### Diagnostics
 
@@ -494,6 +493,6 @@ is not part of product validation or default tests. It can be simplified
 without changing the visible command or report contracts described here.
 
 The product parser registers exactly `build`, `generate`, `profile`,
-`validate`, `inspect`, and `diagnose`. Product runtime modules must not import
-`smoke_*`, `decode_loop`, or `profile_template`; boundary tests enforce this
-rule along with the reports-to-diagnostics prohibition.
+`validate`, `inspect`, and `diagnose`. Product modules must not import
+diagnostics, autotune, smoke, historical search, or legacy diagnostic adapters;
+AST boundary tests enforce this rule and the reports-to-diagnostics prohibition.

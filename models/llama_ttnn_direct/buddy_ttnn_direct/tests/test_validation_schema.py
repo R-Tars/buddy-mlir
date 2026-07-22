@@ -14,6 +14,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.cli import (
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.artifacts import (
     kv_cache_snapshot,
+    last_token_vector,
     tensor_snapshot,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.correctness.hf_reference import (
@@ -200,7 +201,13 @@ class ProductCliTest(unittest.TestCase):
             ]
 
         ttnn = types.SimpleNamespace(to_torch=lambda tensor: tensor, slice=slice_op)
-        collector = TTNNObservationCollector(ttnn=ttnn, torch=torch)
+        collector = TTNNObservationCollector(
+            ttnn=ttnn,
+            torch=torch,
+            tensor_snapshot=tensor_snapshot,
+            last_token_vector=last_token_vector,
+            kv_cache_snapshot=kv_cache_snapshot,
+        )
         hidden = torch.arange(2 * 6 * 8, dtype=torch.float32).reshape(2, 6, 8)
         logits = torch.arange(2 * 1 * 16, dtype=torch.float32).reshape(2, 1, 16)
         collector.observe(

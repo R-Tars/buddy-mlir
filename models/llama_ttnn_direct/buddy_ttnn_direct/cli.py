@@ -7,12 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .codegen.program import write_decode_program_bundle
-from .generate import (
-    run_generate,
-    run_profile_decode_steady,
-    run_profile_generate,
-    run_profile_prefill_steady,
-)
+from .runtime.generate import run_generate
+from .runtime.prefill_profile import run_profile_prefill_steady
+from .runtime.profile import run_profile_decode_steady, run_profile_generate
 from .reports.validation import (
     validate_device,
     validate_dryrun,

@@ -19,12 +19,11 @@ from .codegen.ttnn_tensorizer import (
 )
 from .runtime_environment import collect_ttnn_environment
 from .runtime.config_runtime import realize_ttnn_config
-from .runtime_inputs import (
-    PromptTokenizationError,
+from .runtime.inputs import (
     build_decode_rotary_runtime_state,
     build_decode_runtime_state,
-    tokenize_prompt_for_decode,
 )
+from .runtime.tokenizer import PromptTokenizationError, tokenize_prompt_for_decode
 from .runtime.kv_cache import (
     build_prompt_decode_kv_cache_tensors as _build_prompt_decode_kv_cache_tensors,
 )

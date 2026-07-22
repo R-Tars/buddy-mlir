@@ -12,11 +12,12 @@ from .artifacts import (
     write_text,
 )
 from .config_emit import emit_parameter_config
-from .python_ttnn import build_codegen_config, render_python_ttnn_model
 from ..compiler.official_config import (
     official_layer_dtype_overrides,
     official_weight_memory_overrides,
 )
+from ..compiler.config import build_codegen_config
+from ..compiler.source_templates import render_python_ttnn_model
 from ..semantic.dump import graph_json_dict
 from ..semantic.graph import LlamaModelGraph
 
