@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+from ..reports.contracts import ATTENTION_PRIMITIVES
 
 DIAGNOSE_STAGES = (
     "mlp",
@@ -16,10 +19,88 @@ DIAGNOSE_STAGES = (
     "benchmark-parity",
     "execution-graph-diff",
     "performance-correctness",
+    "template-profile",
 )
 
 
+def add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--stage", choices=DIAGNOSE_STAGES, required=True)
+    parser.add_argument("--program-dir", type=Path, default=None)
+    parser.add_argument("--buddy-program", type=Path, default=None)
+    parser.add_argument("--official-tt-metal-root", type=Path, default=None)
+    parser.add_argument("--official-python", type=Path, default=None)
+    parser.add_argument("--official-release-root", type=Path, default=None)
+    parser.add_argument("--official-release-python", type=Path, default=None)
+    parser.add_argument("--official-release-runtime-root", type=Path, default=None)
+    parser.add_argument("--model-path", type=Path, default=None)
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument("--template", choices=("mlp_decode",), default=None)
+    parser.add_argument("--profiler-csv", type=Path, default=None)
+    parser.add_argument("--profile-report", type=Path, default=None)
+    prompt_group = parser.add_mutually_exclusive_group()
+    prompt_group.add_argument("--prompt", default=None)
+    prompt_group.add_argument(
+        "--input-prompts",
+        "--input_prompts",
+        type=Path,
+        default=None,
+    )
+    parser.add_argument("--instruct", action="store_true")
+    parser.add_argument("--tokenizer-path", type=Path, default=None)
+    parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--device", default="p150a")
+    parser.add_argument("--device-id", type=int, default=0)
+    parser.add_argument("--batch-size", type=int, default=None)
+    parser.add_argument("--cache-len", type=int, default=None)
+    parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument("--prefill-len", type=int, default=None)
+    parser.add_argument("--max-new-tokens", type=int, default=2)
+    parser.add_argument("--decode-steps", type=int, default=2)
+    parser.add_argument("--depths", default=None)
+    parser.add_argument("--profiles-dir", type=Path, default=None)
+    parser.add_argument("--reports-dir", type=Path, default=None)
+    parser.add_argument("--primitive", choices=ATTENTION_PRIMITIVES)
+    parser.add_argument("--hidden-size", type=int, default=None)
+    parser.add_argument("--intermediate-size", type=int, default=None)
+    parser.add_argument("--num-heads", type=int, default=None)
+    parser.add_argument("--num-kv-heads", type=int, default=None)
+    parser.add_argument("--head-dim", type=int, default=None)
+    parser.add_argument("--max-cache-len", type=int, default=1024)
+    parser.add_argument("--dtype-seed", choices=("bf16", "fp32"), default="bf16")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--trace", action="store_true")
+    parser.add_argument("--trace-iterations", type=int, default=1)
+    parser.add_argument("--require-full-depth", action="store_true")
+    parser.add_argument("--candidates-dir", type=Path, default=None)
+    parser.add_argument("--warmup", type=int, default=5)
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--accuracy-tokens", type=int, default=500)
+    parser.add_argument("--page-block-size", type=int, default=32)
+    parser.add_argument("--benchmark-timeout", type=float, default=3600.0)
+    parser.add_argument("--address-space-limit-gb", type=float, default=95.0)
+    parser.add_argument("--confirm-warmup", type=int, default=5)
+    parser.add_argument("--confirm-iterations", type=int, default=50)
+    parser.add_argument("--min-relative-improvement", type=float, default=0.01)
+    parser.add_argument("--no-resume", action="store_true")
+
+
 def run_stage(args: argparse.Namespace) -> dict[str, object]:
+    if args.stage == "template-profile":
+        _require_args(args, "template", "config")
+        from ..profile_template import profile_template
+
+        return profile_template(
+            template=args.template,
+            config_path=args.config,
+            out=args.out,
+            warmup=args.warmup,
+            iterations=args.iterations,
+            trace=args.trace,
+            dry_run=args.dry_run,
+            device_id=args.device_id,
+            dtype_seed=args.dtype_seed,
+        )
     if args.stage == "autotune-profiler-audit":
         _require_args(
             args,
@@ -258,6 +339,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             program_dir=args.program_dir,
             depths=args.depths,
             model_path=args.model_path,
+            profiles_dir=args.profiles_dir,
             device=args.device,
             device_id=args.device_id,
             batch_size=args.batch_size,
@@ -285,6 +367,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             prefill_len=args.prefill_len,
             batch_size=args.batch_size,
             cache_len=args.cache_len,
+            reports_dir=args.reports_dir,
             device=args.device,
             device_id=args.device_id,
             dtype_seed=args.dtype_seed,

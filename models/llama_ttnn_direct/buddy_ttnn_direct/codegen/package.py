@@ -46,26 +46,31 @@ def build_package_manifest(program_dir: str | Path) -> dict[str, Any]:
             weights_manifest.get("metadata_policy", {})
         ),
         "runtime": {
-            "buddy_cli_supported": False,
+            "buddy_cli_supported": True,
             "python_runner": "run_decode.py",
             "python_runner_supported": True,
             "runner_modes": [
-                "inspect",
-                "smoke",
-                "prefill-smoke",
-                "profile",
-                "decode-loop",
+                "build",
                 "generate",
-                "profile-generate",
-                "validate-real",
+                "profile",
+                "validate",
+                "inspect",
+                "diagnose",
             ],
+            "legacy_mode_mappings": {
+                "smoke": "diagnose --stage decode-step",
+                "prefill-smoke": "diagnose --stage prefill",
+                "profile": "diagnose --stage decode-step",
+                "decode-loop": "diagnose --stage decode-loop-legacy",
+                "generate": "generate",
+                "profile-generate": "profile --mode generate",
+                "validate-real": "validate --suite device",
+            },
             "dry_run_supported": True,
             "real_weight_validation_supported": True,
             "notes": (
-                "buddy-cli runtime dispatch is intentionally not wired; use "
-                "run_decode.py for inspect, smoke, prefill smoke, profile, "
-                "prompt decode loop, generate, generate profile, and "
-                "real-weight validation flows."
+                "run_decode.py forwards to the six-command product CLI and "
+                "automatically supplies its package directory as --program-dir."
             ),
         },
         "artifacts": {
@@ -127,8 +132,7 @@ Entrypoint: `{manifest["entrypoint"]}`
 Model: `{manifest.get("model_name")}`
 
 This package directory contains a generated Python TTNN Direct decode program
-and JSON metadata manifests. The package is not wired into `buddy-cli`, but the
-Python runner can inspect and exercise the generated decode path:
+and JSON metadata manifests. The Python runner is a thin product CLI facade:
 
 ```bash
 export TTNN_DIRECT_PACKAGE_DIR="$PWD"
@@ -139,29 +143,21 @@ export TT_METAL_LOGS_PATH="$TTNN_DIRECT_RUNTIME_ARTIFACTS"
 mkdir -p "$TTNN_DIRECT_REPORTS" "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
 cd "$TTNN_DIRECT_RUNTIME_ARTIFACTS"
 
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode smoke --dry-run \\
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" inspect
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" diagnose \\
+  --stage decode-step --dry-run \\
   --out "$TTNN_DIRECT_REPORTS/decode_step_smoke.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode prefill-smoke --dry-run \\
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" diagnose \\
+  --stage prefill --dry-run \\
   --prefill-len 128 --out "$TTNN_DIRECT_REPORTS/prefill_smoke.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode profile --dry-run \\
-  --out "$TTNN_DIRECT_REPORTS/decode_step_profile.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode decode-loop --dry-run \\
-  --out "$TTNN_DIRECT_REPORTS/prompt_decode_loop.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode generate --dry-run \\
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" generate --dry-run \\
   --prefill-len 128 --max-new-tokens 8 \\
   --out "$TTNN_DIRECT_REPORTS/generate.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode profile-generate --dry-run \\
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" profile --mode generate --dry-run \\
   --prefill-len 128 --max-new-tokens 8 \\
   --out "$TTNN_DIRECT_REPORTS/generate_profile.json"
-python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" --mode validate-real \\
-  --dry-run --require-trace \\
-  --prompt "Hello from TTNN Direct" \\
-  --require-model-end-to-end \\
-  --min-tokens-per-second-per-user 1.0 \\
-  --decode-shell-pcc-threshold 0.99 \\
-  --require-decode-shell-numeric-reference \\
-  --out-dir "$TTNN_DIRECT_REPORTS/validate_real"
+python "$TTNN_DIRECT_PACKAGE_DIR/run_decode.py" validate --suite dryrun \\
+  --out-dir "$TTNN_DIRECT_REPORTS/validation"
 ```
 """
 
