@@ -6,7 +6,7 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 NO_TTNN_DEVICE_MESSAGE = "No TTNN device detected. Use --dry-run or run on P150A."
@@ -145,20 +145,11 @@ class NoTTNNDeviceError(RuntimeError):
     pass
 
 
-def _run_ttnn_mlp_smoke(
-    *,
-    ttnn: Any,
-    torch: Any,
-    ttnn_device: Any,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    intermediate_size: int,
-    dtype_seed: str,
-    pcc_threshold: float,
-    seed: int,
-) -> dict[str, Any]:
+def prepare_mlp_smoke_on_device(
+    *, ttnn: Any, torch: Any, ttnn_device: Any,
+    batch_size: int, hidden_size: int, intermediate_size: int,
+    dtype_seed: str, seed: int,
+) -> tuple[Callable[[], Any], Callable[[Any], float]]:
     torch.manual_seed(seed)
     torch_dtype = torch.bfloat16 if dtype_seed == "bf16" else torch.float32
     hidden = torch.randn(
@@ -209,18 +200,36 @@ def _run_ttnn_mlp_smoke(
         device=ttnn_device,
     )
 
+    def execute() -> Any:
+        gate = ttnn.linear(hidden_tt, gate_weight_tt)
+        up = ttnn.linear(hidden_tt, up_weight_tt)
+        mid = _ttnn_mul_silu(ttnn, gate, up)
+        return ttnn.linear(mid, down_weight_tt)
+
+    def pcc(output: Any) -> float:
+        actual = ttnn.to_torch(output).to(torch.float32)
+        return _pearson_corr(torch, reference, actual)
+
+    return execute, pcc
+
+
+def _run_ttnn_mlp_smoke(
+    *, ttnn: Any, torch: Any, ttnn_device: Any, device: str, device_id: int,
+    batch_size: int, hidden_size: int, intermediate_size: int,
+    dtype_seed: str, pcc_threshold: float, seed: int,
+) -> dict[str, Any]:
+    execute, measure_pcc = prepare_mlp_smoke_on_device(
+        ttnn=ttnn, torch=torch, ttnn_device=ttnn_device, batch_size=batch_size,
+        hidden_size=hidden_size, intermediate_size=intermediate_size,
+        dtype_seed=dtype_seed, seed=seed,
+    )
     start = time.perf_counter()
-    gate = ttnn.linear(hidden_tt, gate_weight_tt)
-    up = ttnn.linear(hidden_tt, up_weight_tt)
-    mid = _ttnn_mul_silu(ttnn, gate, up)
-    out = ttnn.linear(mid, down_weight_tt)
+    out = execute()
     synchronize = getattr(ttnn, "synchronize_device", None)
     if callable(synchronize):
         synchronize(ttnn_device)
     latency_ms = (time.perf_counter() - start) * 1000.0
-
-    output = ttnn.to_torch(out).to(torch.float32)
-    pcc = _pearson_corr(torch, reference, output)
+    pcc = measure_pcc(out)
     passed = pcc >= pcc_threshold
     report = _base_report(
         device=device,
@@ -302,6 +311,9 @@ def _managed_ttnn_device(ttnn: Any, device_id: int):
         return
 
     raise NoTTNNDeviceError("ttnn does not expose a device opener")
+
+
+managed_mlp_device = _managed_ttnn_device
 
 
 def _ttnn_mul_silu(ttnn: Any, gate: Any, up: Any) -> Any:
