@@ -95,11 +95,37 @@ class ProfileTemplateTest(unittest.TestCase):
                 self.assertEqual((fake.calls["enter"], fake.calls["exit"]), (1, 1))
                 self.assertEqual(fake.calls["pcc"], 1)
 
+    def test_trace_failure_state_machine(self) -> None:
+        cases = (
+            ({"capture_body"}, "trace_failed_fell_back_to_eager", "capture_body", 5, 0, True),
+            ({"capture_body", "end_capture"}, "trace_cleanup_failed", "capture_body", 2, 0, False),
+            ({"end_capture"}, "trace_cleanup_failed", "end_capture", 2, 0, False),
+            ({"warmup_replay"}, "trace_failed_fell_back_to_eager", "warmup_replay", 5, 1, True),
+            ({"pcc"}, "runtime_error", "pcc", 2, 3, False),
+            ({"release"}, "trace_release_failed", "release", 2, 3, False),
+        )
+        for failures, status, stage, executions, trace_execs, fallback in cases:
+            with self.subTest(failures=failures):
+                fake = _FakeTTNN(failures=failures)
+                report = self.hardware_profile(fake, trace=True)
+                trace = report["trace"]
+                cleanup = trace["capture_cleanup"]
+                self.assertEqual((trace["status"], trace["failure_stage"], trace["fallback_executed"]), (status, stage, fallback))
+                self.assertEqual((cleanup["safe_for_eager_fallback"], cleanup["end_attempted"], cleanup["release_attempted"]), (fallback, True, True))
+                self.assertEqual((fake.calls["begin"], fake.calls["end"], fake.calls["release"]), (1, 1, 1))
+                self.assertEqual(fake.calls["execute"], executions)
+                self.assertEqual(fake.calls["execute_trace"], trace_execs)
+                self.assertEqual((fake.calls["enter"], fake.calls["exit"], report["passed"]), (1, 1, fallback))
+                if fallback:
+                    self.assertLess(fake.events.index("release"), fake.events.index("execute:3"))
+
 
 class _FakeTTNN:
-    def __init__(self, *, trace_api=True, capture_error=False):
+    def __init__(self, *, trace_api=True, capture_error=False, failures=()):
         self.calls, self.events = Counter(), []
-        self.capture_error = capture_error
+        self.failures = set(failures)
+        if capture_error:
+            self.failures.add("begin_capture")
         if not trace_api:
             for name in template_profile.TRACE_APIS:
                 setattr(self, name, None)
@@ -116,10 +142,15 @@ class _FakeTTNN:
         self.calls["prepare"] += 1
         def execute():
             self.calls["execute"] += 1
+            self.events.append(f"execute:{self.calls['execute']}")
+            if self.calls["execute"] == 2 and "capture_body" in self.failures:
+                raise RuntimeError("capture body failed")
             return object()
         def pcc(_output):
             self.calls["pcc"] += 1
             self.events.append("pcc")
+            if "pcc" in self.failures:
+                raise RuntimeError("pcc failed")
             return 1.0
         return execute, pcc
 
@@ -128,19 +159,26 @@ class _FakeTTNN:
 
     def begin_trace_capture(self, _device, **_kwargs):
         self.calls["begin"] += 1
-        if self.capture_error:
+        if "begin_capture" in self.failures:
             raise RuntimeError("capture failed")
         return 7
 
     def end_trace_capture(self, _device, _trace_id, **_kwargs):
         self.calls["end"] += 1
+        self.events.append("end")
+        if "end_capture" in self.failures:
+            raise RuntimeError("end capture failed")
 
     def execute_trace(self, _device, _trace_id, **_kwargs):
         self.calls["execute_trace"] += 1
+        if self.calls["execute_trace"] == 1 and "warmup_replay" in self.failures:
+            raise RuntimeError("warmup replay failed")
 
     def release_trace(self, _device, _trace_id):
         self.calls["release"] += 1
         self.events.append("release")
+        if "release" in self.failures:
+            raise RuntimeError("release failed")
 
 
 def _write_config(path: Path) -> None:

@@ -76,16 +76,25 @@ def _measure(ttnn: Any, torch: Any, device: Any, shape: dict[str, Any],
         dtype_seed=dtype_seed, seed=0,
     )
     samples = None
+    fallback_allowed = not trace
     trace_report = {"requested": trace, "status": "disabled"}
     if trace and all(callable(getattr(ttnn, name, None)) for name in TRACE_APIS):
         execute()
         _synchronize(ttnn, device)
-        samples, pcc, trace_report = _trace_measure(
+        samples, pcc, trace_report, fallback_allowed = _trace_measure(
             ttnn, device, execute, measure_pcc, contract
         )
     elif trace:
         trace_report = {"requested": True, "status": "trace_api_unavailable_fell_back_to_eager"}
+        fallback_allowed = True
     if samples is None:
+        if trace and not fallback_allowed:
+            return {
+                "status": trace_report["status"], "passed": False,
+                "latency_ms": _latency([0.0]), "trace": trace_report,
+            }
+        if trace_report.get("failure_stage"):
+            trace_report["fallback_executed"] = True
         samples, output = _eager_measure(ttnn, device, execute, contract)
         pcc = measure_pcc(output)
     passed = pcc >= PCC_THRESHOLD
@@ -98,38 +107,80 @@ def _measure(ttnn: Any, torch: Any, device: Any, shape: dict[str, Any],
 
 def _trace_measure(ttnn: Any, device: Any, execute: Callable[[], Any],
                    measure_pcc: Callable[[Any], float], contract: MeasurementContract
-                   ) -> tuple[list[float] | None, float, dict[str, Any]]:
+                   ) -> tuple[list[float] | None, float | None, dict[str, Any], bool]:
     trace_id = None
-    error = None
+    error: Exception | None = None
+    release_error: Exception | None = None
+    failure_stage: str | None = None
     samples: list[float] = []
+    cleanup: dict[str, Any] = {
+        "end_attempted": False, "end_succeeded": False,
+        "release_attempted": False, "release_succeeded": False, "errors": [],
+    }
     try:
+        failure_stage = "begin_capture"
         trace_id = ttnn.begin_trace_capture(device, cq_id=0)
+        failure_stage = "capture_body"
         output = execute()
+        failure_stage = "end_capture"
+        cleanup["end_attempted"] = True
         ttnn.end_trace_capture(device, trace_id, cq_id=0)
+        cleanup["end_succeeded"] = True
+        failure_stage = "warmup_replay"
         for _ in range(contract.warmup):
             ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
+        failure_stage = "measured_replay"
         for _ in range(contract.iterations):
             start = time.perf_counter_ns()
             ttnn.execute_trace(device, trace_id, cq_id=0, blocking=True)
             samples.append((time.perf_counter_ns() - start) / 1_000_000.0)
+        failure_stage = "pcc"
         pcc = measure_pcc(output)
+        failure_stage = None
     except Exception as caught:
         error = caught
+    if trace_id is not None and failure_stage == "capture_body":
+        cleanup["end_attempted"] = True
+        try:
+            ttnn.end_trace_capture(device, trace_id, cq_id=0)
+            cleanup["end_succeeded"] = True
+        except Exception as caught:
+            cleanup["errors"].append(f"end: {type(caught).__name__}: {caught}")
     if trace_id is not None:
+        cleanup["release_attempted"] = True
         try:
             ttnn.release_trace(device, trace_id)
+            cleanup["release_succeeded"] = True
         except Exception as caught:
-            error = error or caught
+            release_error = caught
+            cleanup["errors"].append(f"release: {type(caught).__name__}: {caught}")
+    if error is None and release_error is None:
+        return samples, pcc, {
+            "requested": True, "status": "captured", "capture_count": 1,
+            "warmup_execute_count": contract.warmup,
+            "measured_execute_count": contract.iterations,
+            "release_count": 1,
+        }, False
+    fallback_allowed = failure_stage == "begin_capture" or (
+        failure_stage in {"capture_body", "warmup_replay", "measured_replay"}
+        and cleanup["end_succeeded"] and cleanup["release_succeeded"]
+    )
+    cleanup["safe_for_eager_fallback"] = fallback_allowed
+    detail = []
     if error is not None:
-        return None, 0.0, {"requested": True,
-            "status": "trace_failed_fell_back_to_eager",
-            "detail": f"{type(error).__name__}: {error}"}
-    return samples, pcc, {
-        "requested": True, "status": "captured", "capture_count": 1,
-        "warmup_execute_count": contract.warmup,
-        "measured_execute_count": contract.iterations,
-        "release_count": 1,
-    }
+        detail.append(f"{type(error).__name__}: {error}")
+    detail.extend(cleanup["errors"])
+    status = "trace_release_failed" if release_error is not None else (
+        "trace_cleanup_failed" if failure_stage in {"capture_body", "end_capture"}
+        and not fallback_allowed
+        else "runtime_error" if failure_stage == "pcc"
+        else "trace_failed_fell_back_to_eager"
+    )
+    return None, None, {
+        "requested": True, "failure_stage": failure_stage or "release",
+        "detail": "; ".join(detail), "capture_cleanup": cleanup,
+        "fallback_executed": False, "status": status,
+    }, fallback_allowed
 
 def _eager_measure(ttnn: Any, device: Any, execute: Callable[[], Any],
                    contract: MeasurementContract):
