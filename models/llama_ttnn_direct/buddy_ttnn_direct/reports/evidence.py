@@ -57,7 +57,6 @@ def real_decode_cli_args(
     model_path: str | Path,
     out_dir: str | Path,
     official_config_path: str | Path,
-    decode_step_search_space_path: str | Path,
     performance_baselines_path: str | Path,
     layers: int,
     batch_size: int | None,
@@ -68,7 +67,6 @@ def real_decode_cli_args(
     device_id: int,
     trace: bool,
     trace_iterations: int,
-    skip_autotune: bool,
     skip_profile_decode_step: bool,
     require_full_decode_step: bool,
     require_model_end_to_end: bool,
@@ -216,18 +214,6 @@ def reference_summary(runtime_report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def candidate_reference_status_counts(
-    report: dict[str, Any],
-) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for candidate in report.get("candidates", []):
-        status = candidate.get("reference_status")
-        if status is None:
-            continue
-        counts[str(status)] = counts.get(str(status), 0) + 1
-    return counts
-
-
 def _prefill_cache_population_diagnostics(
     cache_population: Any,
 ) -> list[dict[str, Any]]:
@@ -281,7 +267,6 @@ def real_decode_evidence_manifest(
     profile_generate = steps.get("profile_generate", {})
     generate_depth_sweep = steps.get("generate_depth_sweep", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
-    autotune = steps.get("decode_step_autotune", {})
     acceptance = report.get("acceptance", {})
     decode_step_contract = report.get("decode_step_contract") or {}
     failed_checks = [
@@ -327,12 +312,6 @@ def real_decode_evidence_manifest(
             "baseline_reference_entry": _performance_baseline_entry_summary(
                 report.get("baseline_reference_entry")
             ),
-            "decode_step_search_space": report.get(
-                "decode_step_search_space"
-            ),
-            "decode_step_search_space_is_default": report.get(
-                "decode_step_search_space_is_default"
-            ),
             "program_num_layers": report.get("program_num_layers"),
             "program_batch_size": report.get("program_batch_size"),
             "program_cache_len": report.get("program_cache_len"),
@@ -364,7 +343,6 @@ def real_decode_evidence_manifest(
             "trace_enabled": report.get("trace_enabled"),
             "trace_iterations": report.get("trace_iterations"),
             "metric": report.get("metric"),
-            "skip_autotune": report.get("skip_autotune"),
             "baseline_tokens_per_second_per_user": report.get(
                 "baseline_tokens_per_second_per_user"
             ),
@@ -1166,58 +1144,6 @@ def real_decode_evidence_manifest(
                 "failed_depths": depth_sweep.get("failed_depths", []),
                 "acceptance": depth_sweep.get("acceptance"),
                 "records": depth_sweep.get("records", []),
-            },
-            "decode_step_autotune": {
-                "status": autotune.get("status"),
-                "candidate_count": autotune.get("candidate_count"),
-                "passed_candidate_count": autotune.get(
-                    "passed_candidate_count"
-                ),
-                "failed_candidate_count": autotune.get(
-                    "failed_candidate_count"
-                ),
-                "best": autotune.get("best"),
-                "metric": autotune.get("metric"),
-                "best_reference_status": autotune.get(
-                    "best_reference_status"
-                ),
-                "best_trace_status": autotune.get("best_trace_status"),
-                "best_parameter_source": autotune.get(
-                    "best_parameter_source"
-                ),
-                "best_metric": autotune.get("best_metric"),
-                "best_output_kind": autotune.get("best_output_kind"),
-                "status_counts": autotune.get("status_counts", {}),
-                "reference_status_counts": autotune.get(
-                    "reference_status_counts",
-                    {},
-                ),
-                "trace_status_counts": autotune.get(
-                    "trace_status_counts",
-                    {},
-                ),
-                "output_kind_counts": autotune.get(
-                    "output_kind_counts",
-                    {},
-                ),
-                "candidate_summaries": autotune.get(
-                    "candidate_summaries",
-                    [],
-                ),
-                "leaderboard": autotune.get("leaderboard", []),
-                "best_candidate_summary": autotune.get(
-                    "best_candidate_summary"
-                ),
-                "knob_coverage": autotune.get("knob_coverage"),
-                "default_search_space": autotune.get(
-                    "default_search_space"
-                ),
-                "all_knobs_varied": autotune.get("all_knobs_varied"),
-                "missing_varied_knobs": autotune.get(
-                    "missing_varied_knobs",
-                    [],
-                ),
-                "search_space": autotune.get("search_space"),
             },
         },
         "acceptance": {

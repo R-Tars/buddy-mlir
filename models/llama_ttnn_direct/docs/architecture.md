@@ -171,9 +171,8 @@ tools. The visible CLI exposes them only through `diagnose --stage ...`; their
 tests live under `tests_diagnostics/` and are excluded from the default product
 suite. `diagnostics/cli.py` is loaded only when `diagnose` executes. Current
 autotune runs one axis at a time with isolated post-prefill
-steady-decode subprocesses. Phase-era Cartesian search is quarantined under
-`future/historical_search/` and is loaded only by diagnostics compatibility
-paths.
+steady-decode subprocesses. Historical phase-era search was removed after the
+semantic autotuner became canonical.
 
 ### Semantic autotune contracts
 

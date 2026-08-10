@@ -13,7 +13,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports import (
     attention as attention_reports,
     artifacts as artifact_reports,
-    autotune as autotune_reports,
     config as config_reports,
     depth as depth_reports,
 )
@@ -41,7 +40,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.legacy_validation im
 from models.llama_ttnn_direct.buddy_ttnn_direct.reports.evidence import (
     artifact_evidence,
     artifact_index,
-    candidate_reference_status_counts,
     dump_validation_report as dump_evidence_validation_report,
     real_decode_cli_args,
     real_decode_evidence_manifest,
@@ -143,9 +141,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     step_synthetic_rotary_tensor_count,
     step_synthetic_runtime_input_count,
     validate_direct_acceptance,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.future.historical_search.decode_step_autotune import (
-    DECODE_STEP_AUTOTUNE_KNOBS,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
     ATTENTION_LAYER_OPS,
@@ -340,26 +335,10 @@ class ValidateDirectTest(unittest.TestCase):
         )
         self.assertIs(validation_module._reference_summary, reference_summary)
         self.assertIs(
-            validation_module._candidate_reference_status_counts,
-            candidate_reference_status_counts,
-        )
-        self.assertIs(
             validation_module.dump_validation_report,
             dump_evidence_validation_report,
         )
         self.assertIs(validation_module._write_json, write_json_report)
-        self.assertEqual(
-            validation_module._candidate_reference_status_counts(
-                {
-                    "candidates": [
-                        {"reference_status": "passed"},
-                        {"reference_status": "failed"},
-                        {"reference_status": "passed"},
-                    ]
-                }
-            ),
-            {"passed": 2, "failed": 1},
-        )
         self.assertEqual(
             validation_module._reference_summary(
                 {
@@ -599,37 +578,6 @@ class ValidateDirectTest(unittest.TestCase):
         )
         for compatibility_export, report_helper in pairs:
             self.assertIs(compatibility_export, report_helper)
-
-    def test_validation_autotune_helpers_reexport_compatibly(self) -> None:
-        self.assertIs(
-            validation_module.DECODE_STEP_AUTOTUNE_KNOBS,
-            autotune_reports.DECODE_STEP_AUTOTUNE_KNOBS,
-        )
-        names = (
-            "autotune_best_candidate_summary_complete",
-            "autotune_best_candidate_summary_observed",
-            "autotune_candidate_complete",
-            "autotune_candidate_ids",
-            "autotune_candidate_summaries",
-            "autotune_candidates_complete",
-            "autotune_candidates_observed",
-            "autotune_default_knobs_varied",
-            "autotune_expected_output_kinds",
-            "autotune_knob_coverage_complete",
-            "autotune_knob_coverage_observed",
-            "autotune_knob_variation_observed",
-            "autotune_leaderboard_complete",
-            "autotune_leaderboard_entry_complete",
-            "autotune_leaderboard_observed",
-            "autotune_missing_varied_knobs",
-            "autotune_output_kind_counts_complete",
-            "autotune_output_kind_counts_observed",
-        )
-        for name in names:
-            self.assertIs(
-                getattr(validation_module, f"_{name}"),
-                getattr(autotune_reports, name),
-            )
 
     def test_validation_attention_helpers_reexport_compatibly(self) -> None:
         self.assertIs(
@@ -894,16 +842,6 @@ class ValidateDirectTest(unittest.TestCase):
                     baseline_reference="tt_metal_official_llama31_8b_b32",
                     min_baseline_ratio=0.0,
                 )
-            with self.assertRaisesRegex(ValueError, "skip_autotune"):
-                validate_real_decode(
-                    program_dir=root / "missing_program",
-                    model_path=root / "missing_model",
-                    out_dir=root / "validate_real",
-                    require_official_performance_parity=True,
-                    baseline_reference="tt_metal_official_llama31_8b_b32",
-                    min_baseline_ratio=0.1,
-                    skip_autotune=True,
-                )
             with self.assertRaisesRegex(
                 ValueError,
                 "tokens_per_second_per_user",
@@ -1003,10 +941,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "name": (
                         "profile_decode_step.official_baseline_reference"
                     ),
-                    "passed": True,
-                },
-                {
-                    "name": "decode_step_autotune.metric",
                     "passed": True,
                 },
             ],
@@ -1300,18 +1234,6 @@ class ValidateDirectTest(unittest.TestCase):
                 plan["official_performance_parity_gate_names"],
             )
             self.assertIn(
-                "decode_step_autotune.status",
-                plan["official_performance_parity_gate_names"],
-            )
-            self.assertIn(
-                "decode_step_autotune.metric",
-                plan["official_performance_parity_gate_names"],
-            )
-            self.assertIn(
-                "decode_step_autotune.best_candidate_summary",
-                plan["official_performance_parity_gate_names"],
-            )
-            self.assertIn(
                 "--require-official-performance-parity",
                 plan["requested_acceptance_flags"],
             )
@@ -1567,61 +1489,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertFalse(report["ready_to_run"])
             self.assertIn(
                 "requirements.official_min_baseline_ratio_positive",
-                report["failed_checks"],
-            )
-
-    def test_preflight_rejects_skipped_official_performance_autotune(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            official_json = root / "official_parity_config.json"
-            report_json = root / "real_decode_preflight_report.json"
-            _write_fake_model_config(model_dir)
-            _write_fake_model_weights(model_dir, _fake_weight_specs())
-            _write_template_config(config_json)
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-            _write_official_parity_from_program(program_dir, official_json)
-
-            report = preflight_real_decode(
-                program_dir=program_dir,
-                model_path=model_dir,
-                out=report_json,
-                official_config_path=official_json,
-                layers=2,
-                batch_size=32,
-                cache_len=1024,
-                trace_iterations=10,
-                metric="tokens_per_second_per_user",
-                skip_autotune=True,
-                require_official_performance_parity=True,
-                baseline_reference="tt_metal_official_llama31_8b_b32",
-                min_baseline_ratio=0.1,
-                prompt="hello tenstorrent",
-                tokenizer_path=model_dir,
-                ttnn_module=_make_fake_ttnn(),
-            )
-
-            self.assertEqual(report["status"], "fail")
-            self.assertFalse(report["ready_to_run"])
-            self.assertIn(
-                "requirements.official_performance_autotune_enabled",
                 report["failed_checks"],
             )
 
@@ -1938,7 +1805,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["schema_version"], 1)
             self.assertEqual(report["command"], "validate-direct")
             self.assertEqual(report["status"], "pass")
-            self.assertTrue(report["decode_step_search_space_is_default"])
             self.assertEqual(
                 report["results"],
                 {step: "pass" for step in VALIDATION_STEPS},
@@ -1969,18 +1835,6 @@ class ValidateDirectTest(unittest.TestCase):
                 acceptance_check_names,
             )
             self.assertIn(
-                "decode_step_autotune_dry_run.knob_coverage",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune_dry_run.status_counts",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune_dry_run.default_knob_variation",
-                acceptance_check_names,
-            )
-            self.assertIn(
                 "validate_direct.artifacts",
                 acceptance_check_names,
             )
@@ -2006,8 +1860,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue((out_dir / "decode_step_smoke_report.json").is_file())
             self.assertTrue((out_dir / "decode_step_profile_report.json").is_file())
             self.assertTrue((out_dir / "package" / "manifest.json").is_file())
-            self.assertTrue((out_dir / "search_report.json").is_file())
-            self.assertTrue((out_dir / "decode_step_autotune_report.json").is_file())
 
             diff = json.loads((out_dir / "plan_diff.json").read_text())
             self.assertEqual(diff["missing_ops"], [])
@@ -2082,52 +1934,7 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(profile_report["status"], "dry_run")
             self.assertEqual(profile_report["layers"], 2)
 
-            search_report = json.loads((out_dir / "search_report.json").read_text())
-            self.assertTrue(search_report["dry_run"])
-            self.assertEqual(search_report["candidate_count"], 10)
 
-            decode_step_autotune = json.loads(
-                (out_dir / "decode_step_autotune_report.json").read_text()
-            )
-            self.assertTrue(decode_step_autotune["dry_run"])
-            self.assertEqual(decode_step_autotune["candidate_count"], 32)
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"]["knobs"],
-                list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"]["candidate_count"],
-                32,
-            )
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"]["values"][
-                    "attention_sdpa_output_memory_config"
-                ],
-                [None, "l1"],
-            )
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"]["values"][
-                    "attention_concat_heads_output_memory_config"
-                ],
-                [None, "l1"],
-            )
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"]["varied_knobs"],
-                list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-            self.assertEqual(
-                decode_step_autotune["knob_coverage"][
-                    "missing_varied_knobs"
-                ],
-                [],
-            )
-            self.assertTrue(
-                decode_step_autotune["knob_coverage"]["all_knobs_varied"]
-            )
-            self.assertEqual(
-                decode_step_autotune["status_counts"],
-                {"dry_run_planned": 32},
-            )
 
             self.assertEqual(
                 report["steps"]["py_compile"]["compiled"],
@@ -2141,50 +1948,6 @@ class ValidateDirectTest(unittest.TestCase):
                 str(out_dir / "package"),
             )
             self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"]["candidate_count"],
-                32,
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "knob_coverage"
-                ]["knobs"],
-                list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-            self.assertTrue(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "default_search_space"
-                ]
-            )
-            self.assertTrue(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "all_knobs_varied"
-                ]
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "missing_varied_knobs"
-                ],
-                [],
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "metric_direction"
-                ],
-                "minimize",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "status_counts"
-                ],
-                {"dry_run_planned": 32},
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune_dry_run"][
-                    "reference_status_counts"
-                ],
-                {},
-            )
-            self.assertEqual(
                 report["steps"]["decode_step_smoke_dry_run"][
                     "reference_status"
                 ],
@@ -2195,81 +1958,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "reference_status"
                 ],
                 "dry_run",
-            )
-
-    def test_validate_direct_fails_acceptance_on_default_autotune_variation(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            out_dir = root / "validate"
-            _write_fake_model_config(model_dir)
-            _write_template_config(config_json)
-
-            original_autotune = validation_module.run_decode_step_autotune
-
-            def autotune_without_default_variation(*args, **kwargs):
-                kwargs = dict(kwargs)
-                kwargs["space"] = {
-                    "lm_head_split_count": [2],
-                    "generation_template": [
-                        "device_argmax_greedy",
-                        "full_logits",
-                    ],
-                    "mlp_intermediate_dtype": [None],
-                    "attention_sdpa_output_memory_config": [None],
-                    "attention_concat_heads_output_memory_config": [None],
-                }
-                autotune = original_autotune(*args, **kwargs)
-                out = kwargs.get("out")
-                if out is not None:
-                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
-                return autotune
-
-            with patch.object(
-                validation_module,
-                "run_decode_step_autotune",
-                side_effect=autotune_without_default_variation,
-            ):
-                report = validation_module.validate_direct(
-                    model_path=model_dir,
-                    config_path=config_json,
-                    out_dir=out_dir,
-                )
-
-            self.assertTrue(report["decode_step_search_space_is_default"])
-            self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(
-                report["results"],
-                {step: "pass" for step in VALIDATION_STEPS},
-            )
-            self.assertEqual(report["acceptance"]["status"], "failed")
-            failed_checks = [
-                check for check in report["acceptance"]["checks"]
-                if not check["passed"]
-            ]
-            self.assertEqual(
-                [check["name"] for check in failed_checks],
-                ["decode_step_autotune_dry_run.default_knob_variation"],
-            )
-            self.assertEqual(
-                failed_checks[0]["observed"]["missing_varied_knobs"],
-                [
-                    "lm_head_split_count",
-                    "mlp_intermediate_dtype",
-                    "attention_sdpa_output_memory_config",
-                    "attention_concat_heads_output_memory_config",
-                ],
-            )
-            persisted = json.loads(
-                (out_dir / "validation_report.json").read_text()
-            )
-            self.assertEqual(persisted["status"], "acceptance_failed")
-            self.assertEqual(
-                persisted["acceptance"]["failed_checks"],
-                ["decode_step_autotune_dry_run.default_knob_variation"],
             )
 
     def test_validate_real_decode_dry_run_writes_schema(self) -> None:
@@ -2303,7 +1991,6 @@ class ValidateDirectTest(unittest.TestCase):
                 layers=1,
                 batch_size=2,
                 cache_len=16,
-                skip_autotune=True,
                 require_trace=True,
                 min_tokens_per_second_per_user=1.0,
                 require_decode_shell_numeric_reference=True,
@@ -2369,7 +2056,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["results"]["profile_generate"], "dry_run")
             self.assertEqual(report["results"]["generate_depth_sweep"], "dry_run")
             self.assertEqual(report["results"]["decode_depth_sweep"], "dry_run")
-            self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertIn("official_config", report)
             self.assertEqual(
                 report["steps"]["official_config_diff"]["diff_status"],
@@ -2644,7 +2330,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertTrue(
                 artifact_names["decode_depth_profiles_dir"]["exists"]
             )
-            self.assertFalse(artifact_names["autotune_report"]["exists"])
             self.assertEqual(
                 report["evidence"]["manifest"],
                 str(out_dir / "real_decode_evidence_manifest.json"),
@@ -2661,24 +2346,9 @@ class ValidateDirectTest(unittest.TestCase):
             config_json = root / "template_config.json"
             program_dir = root / "program"
             out_dir = root / "validate_real"
-            space_json = root / "decode_step_space.json"
             _write_fake_model_config(model_dir)
             _write_fake_model_weights(model_dir, _fake_weight_specs())
             _write_template_config(config_json)
-            space_json.write_text(
-                json.dumps(
-                    {
-                        "lm_head_split_count": [2],
-                        "generation_template": [
-                            "device_argmax_greedy",
-                            "full_logits",
-                        ],
-                        "mlp_intermediate_dtype": [None],
-                        "attention_sdpa_output_memory_config": [None],
-                        "attention_concat_heads_output_memory_config": [None],
-                    }
-                )
-            )
             self.assertEqual(
                 main(
                     [
@@ -2699,7 +2369,6 @@ class ValidateDirectTest(unittest.TestCase):
                     program_dir=program_dir,
                     model_path=model_dir,
                     out_dir=out_dir,
-                    decode_step_search_space_path=space_json,
                     layers=1,
                     batch_size=2,
                     cache_len=16,
@@ -2729,7 +2398,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(report["cache_len"], 16)
             self.assertEqual(report["program_generation"]["mode"], "greedy")
             self.assertEqual(report["program_kv_cache"]["policy"], "paged")
-            self.assertFalse(report["decode_step_search_space_is_default"])
             self.assertEqual(
                 report["program_kv_cache"]["template"],
                 "paged_kv_cache",
@@ -2766,10 +2434,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 report["final_acceptance_plan"]["target_scope"],
                 "bringup",
-            )
-            self.assertIn(
-                "decode_step_autotune",
-                report["final_acceptance_plan"]["required_runtime_steps"],
             )
             self.assertEqual(
                 report["final_acceptance_plan"]["optional_gate_names"],
@@ -3623,58 +3287,6 @@ class ValidateDirectTest(unittest.TestCase):
                 "decode_depth_sweep.records",
                 acceptance_check_names,
             )
-            self.assertIn(
-                "decode_step_autotune.status",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.candidate_count",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.knob_coverage",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.output_kind_counts",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.candidates",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.leaderboard",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best_candidate_summary",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.passed_candidate_count",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best_reference_status",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best_parameter_source",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best_metric",
-                acceptance_check_names,
-            )
-            self.assertIn(
-                "decode_step_autotune.best_trace_status",
-                acceptance_check_names,
-            )
             self.assertEqual(
                 report["steps"]["profile_decode_step"]["ttnn_environment"][
                     "version"
@@ -3686,140 +3298,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "tt_metal_git_commit"
                 ],
                 "fake-tt-metal",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["candidate_count"],
-                2,
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["metric_direction"],
-                "minimize",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["status_counts"],
-                {"profiled": 2},
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["knob_coverage"][
-                    "knobs"
-                ],
-                list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["knob_coverage"][
-                    "values"
-                ]["generation_template"],
-                ["device_argmax_greedy", "full_logits"],
-            )
-            self.assertFalse(
-                report["steps"]["decode_step_autotune"][
-                    "default_search_space"
-                ]
-            )
-            self.assertFalse(
-                report["steps"]["decode_step_autotune"][
-                    "all_knobs_varied"
-                ]
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "missing_varied_knobs"
-                ],
-                [
-                    "lm_head_split_count",
-                    "mlp_intermediate_dtype",
-                    "attention_sdpa_output_memory_config",
-                    "attention_concat_heads_output_memory_config",
-                ],
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["output_kind_counts"],
-                {"token": 1, "logits": 1},
-            )
-            self.assertEqual(
-                len(
-                    report["steps"]["decode_step_autotune"][
-                        "candidate_summaries"
-                    ]
-                ),
-                2,
-            )
-            self.assertTrue(
-                all(
-                    candidate["reference_status"] == "passed"
-                    for candidate in report["steps"]["decode_step_autotune"][
-                        "candidate_summaries"
-                    ]
-                )
-            )
-            self.assertEqual(
-                {
-                    candidate["output_kind"]
-                    for candidate in report["steps"]["decode_step_autotune"][
-                        "candidate_summaries"
-                    ]
-                },
-                {"token", "logits"},
-            )
-            self.assertEqual(
-                len(report["steps"]["decode_step_autotune"]["leaderboard"]),
-                2,
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["leaderboard"][0][
-                    "candidate_id"
-                ],
-                report["steps"]["decode_step_autotune"][
-                    "best_candidate_summary"
-                ]["candidate_id"],
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "best_candidate_summary"
-                ]["reference_status"],
-                "passed",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "best_candidate_summary"
-                ]["parameter_source"],
-                "hf_model",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "passed_candidate_count"
-                ],
-                2,
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "failed_candidate_count"
-                ],
-                0,
-            )
-            self.assertIsNotNone(report["steps"]["decode_step_autotune"]["best"])
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["best_reference_status"],
-                "passed",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["best_trace_status"],
-                "captured_and_executed",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["best_parameter_source"],
-                "hf_model",
-            )
-            self.assertIsNotNone(
-                report["steps"]["decode_step_autotune"]["best_metric"],
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["reference_status_counts"],
-                {"passed": 2},
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["trace_status_counts"],
-                {"captured_and_executed": 2},
             )
             self.assertEqual(
                 report["steps"]["official_config_diff"]["diff_status"],
@@ -4153,35 +3631,6 @@ class ValidateDirectTest(unittest.TestCase):
                 (out_dir / "decode_depth_profiles" / "profile_depth_1.json")
                 .is_file()
             )
-            autotune_report = json.loads(
-                (out_dir / "decode_step_autotune_report.json").read_text()
-            )
-            self.assertEqual(autotune_report["best"]["reference_status"], "passed")
-            self.assertEqual(autotune_report["status_counts"], {"profiled": 2})
-            self.assertEqual(
-                autotune_report["trace_status_counts"],
-                {"captured_and_executed": 2},
-            )
-            self.assertEqual(
-                autotune_report["output_kind_counts"],
-                {"token": 1, "logits": 1},
-            )
-            self.assertEqual(
-                autotune_report["candidates"][0]["reference_status"],
-                "passed",
-            )
-            self.assertEqual(
-                autotune_report["best"]["parameter_setup"]["tensorization"][
-                    "tensor_count"
-                ],
-                11,
-            )
-            self.assertEqual(
-                autotune_report["best"]["parameter_setup"]["tensorization"][
-                    "memory_config_counts"
-                ],
-                {"dram": 11},
-            )
             evidence = json.loads(
                 (out_dir / "real_decode_evidence_manifest.json").read_text()
             )
@@ -4199,12 +3648,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "profile_report"
                 ],
                 str(out_dir / "decode_step_profile_report.json"),
-            )
-            self.assertEqual(
-                evidence["reproducibility"]["artifact_index"][
-                    "autotune_report"
-                ],
-                str(out_dir / "decode_step_autotune_report.json"),
             )
             self.assertEqual(evidence["acceptance_scope"]["status"], "bringup")
             matrix = evidence["acceptance_gate_matrix"]
@@ -4259,9 +3702,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["program_kv_cache"]["policy"],
                 "paged",
-            )
-            self.assertFalse(
-                evidence["validation"]["decode_step_search_space_is_default"]
             )
             self.assertFalse(
                 evidence["requirements"]["require_batch32_decode_step"]
@@ -4866,94 +4306,6 @@ class ValidateDirectTest(unittest.TestCase):
                 ],
                 "fake-tt-metal",
             )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_reference_status"
-                ],
-                "passed",
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_trace_status"
-                ],
-                "captured_and_executed",
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_parameter_source"
-                ],
-                "hf_model",
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "knob_coverage"
-                ]["knobs"],
-                list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "knob_coverage"
-                ]["values"]["lm_head_split_count"],
-                [2],
-            )
-            self.assertFalse(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "default_search_space"
-                ]
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "missing_varied_knobs"
-                ],
-                [
-                    "lm_head_split_count",
-                    "mlp_intermediate_dtype",
-                    "attention_sdpa_output_memory_config",
-                    "attention_concat_heads_output_memory_config",
-                ],
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "output_kind_counts"
-                ],
-                {"token": 1, "logits": 1},
-            )
-            self.assertEqual(
-                len(
-                    evidence["runtime_evidence"]["decode_step_autotune"][
-                        "candidate_summaries"
-                    ]
-                ),
-                2,
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "candidate_summaries"
-                ][0]["reference_status"],
-                "passed",
-            )
-            self.assertEqual(
-                len(
-                    evidence["runtime_evidence"]["decode_step_autotune"][
-                        "leaderboard"
-                    ]
-                ),
-                2,
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "leaderboard"
-                ][0]["candidate_id"],
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_candidate_summary"
-                ]["candidate_id"],
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_candidate_summary"
-                ]["reference_status"],
-                "passed",
-            )
 
     def test_validate_real_decode_accepts_source_ttnn_without_version(
         self,
@@ -4994,7 +4346,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     min_tokens_per_second_per_user=0.0,
                     ttnn_module=fake_ttnn,
                     torch_module=_fake_torch(),
@@ -5070,7 +4421,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     min_tokens_per_second_per_user=0.0,
                     prompt="hello tenstorrent",
                     tokenizer_path=model_dir,
@@ -5093,10 +4443,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertIn("--prompt", repro["preflight_cli_args"])
             self.assertIn("hello tenstorrent", repro["preflight_cli_args"])
             self.assertIn("--tokenizer-path", repro["preflight_cli_args"])
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"]["status"],
-                "skipped",
-            )
             prompt_runtime_steps = [
                 "decode_shell",
                 "single_layer_decode",
@@ -5651,7 +4997,6 @@ class ValidateDirectTest(unittest.TestCase):
                         prompt="hello tenstorrent",
                         tokenizer_path=model_dir,
                         tokenizer_module=_fake_tokenizer_module([7, 11, 42]),
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(
                             with_to_torch=True,
@@ -5715,7 +5060,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     require_official_config_match=True,
                     min_tokens_per_second_per_user=0.0,
                     ttnn_module=_make_fake_ttnn(),
@@ -5794,7 +5138,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     ttnn_module=_make_fake_ttnn(),
                     torch_module=_fake_torch(),
                 )
@@ -5898,7 +5241,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=32,
                         cache_len=1024,
                         device="p150a",
-                        skip_autotune=True,
                         require_full_decode_step=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -5911,7 +5253,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=32,
                         cache_len=1024,
                         device="p150a",
-                        skip_autotune=True,
                         require_model_end_to_end=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -5966,7 +5307,6 @@ class ValidateDirectTest(unittest.TestCase):
                     "accepted model end-to-end readiness",
                     "--require-official-config-match",
                     "--baseline-reference plus --min-baseline-ratio",
-                    "--metric tokens_per_second_per_user",
                 ],
             )
             self.assertEqual(
@@ -6037,7 +5377,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     require_full_depth=True,
                     min_tokens_per_second_per_user=0.0,
                     ttnn_module=_make_fake_ttnn(),
@@ -6101,7 +5440,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     require_program_runtime_shape=True,
                     min_tokens_per_second_per_user=0.0,
                     ttnn_module=_make_fake_ttnn(),
@@ -6176,7 +5514,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     require_batch32_decode_step=True,
                     min_tokens_per_second_per_user=0.0,
                     ttnn_module=_make_fake_ttnn(),
@@ -6258,7 +5595,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -6349,7 +5685,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -6381,424 +5716,6 @@ class ValidateDirectTest(unittest.TestCase):
                 evidence["runtime_evidence"]["decode_depth_sweep"][
                     "records"
                 ][0],
-            )
-
-    def test_validate_real_decode_fails_on_autotune_best_reference(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            out_dir = root / "validate_real"
-            space_json = root / "decode_step_space.json"
-            _write_fake_model_config(model_dir)
-            _write_fake_model_weights(model_dir, _fake_weight_specs())
-            _write_template_config(config_json)
-            space_json.write_text(
-                json.dumps(
-                    {
-                        "lm_head_split_count": [2],
-                        "generation_template": ["device_argmax_greedy"],
-                        "mlp_intermediate_dtype": [None],
-                        "attention_sdpa_output_memory_config": [None],
-                        "attention_concat_heads_output_memory_config": [None],
-                    }
-                )
-            )
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-
-            original_autotune = validation_module.run_decode_step_autotune
-
-            def autotune_with_bad_best_reference(*args, **kwargs):
-                autotune = original_autotune(*args, **kwargs)
-                autotune["best"]["reference_status"] = "failed"
-                out = kwargs.get("out")
-                if out is not None:
-                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
-                return autotune
-
-            with patch.object(
-                validation_module,
-                "run_decode_step_autotune",
-                side_effect=autotune_with_bad_best_reference,
-            ):
-                with _fake_torch_and_safetensors():
-                    report = validate_real_decode(
-                        program_dir=program_dir,
-                        model_path=model_dir,
-                        out_dir=out_dir,
-                        decode_step_search_space_path=space_json,
-                        layers=1,
-                        batch_size=2,
-                        cache_len=16,
-                        device="p150a",
-                        min_tokens_per_second_per_user=0.0,
-                        ttnn_module=_make_fake_ttnn(),
-                        torch_module=_fake_torch(),
-                    )
-
-            self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(report["results"]["decode_step_autotune"], "pass")
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "best_reference_status"
-                ],
-                "failed",
-            )
-            failed_checks = [
-                check for check in report["acceptance"]["checks"]
-                if not check["passed"]
-            ]
-            self.assertEqual(
-                [check["name"] for check in failed_checks],
-                ["decode_step_autotune.best_reference_status"],
-            )
-            evidence = json.loads(
-                (out_dir / "real_decode_evidence_manifest.json").read_text()
-            )
-            self.assertEqual(evidence["status"], "incomplete")
-            self.assertEqual(
-                evidence["acceptance"]["failed_checks"],
-                ["decode_step_autotune.best_reference_status"],
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "best_reference_status"
-                ],
-                "failed",
-            )
-
-    def test_validate_real_decode_fails_on_autotune_candidate_evidence(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            out_dir = root / "validate_real"
-            space_json = root / "decode_step_space.json"
-            _write_fake_model_config(model_dir)
-            _write_fake_model_weights(model_dir, _fake_weight_specs())
-            _write_template_config(config_json)
-            space_json.write_text(
-                json.dumps(
-                    {
-                        "lm_head_split_count": [2],
-                        "generation_template": [
-                            "device_argmax_greedy",
-                            "full_logits",
-                        ],
-                        "mlp_intermediate_dtype": [None],
-                        "attention_sdpa_output_memory_config": [None],
-                        "attention_concat_heads_output_memory_config": [None],
-                    }
-                )
-            )
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-
-            original_autotune = validation_module.run_decode_step_autotune
-
-            def autotune_with_bad_candidate_reference(*args, **kwargs):
-                autotune = original_autotune(*args, **kwargs)
-                autotune["candidates"][0]["reference_status"] = "failed"
-                out = kwargs.get("out")
-                if out is not None:
-                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
-                return autotune
-
-            with patch.object(
-                validation_module,
-                "run_decode_step_autotune",
-                side_effect=autotune_with_bad_candidate_reference,
-            ):
-                with _fake_torch_and_safetensors():
-                    report = validate_real_decode(
-                        program_dir=program_dir,
-                        model_path=model_dir,
-                        out_dir=out_dir,
-                        decode_step_search_space_path=space_json,
-                        layers=1,
-                        batch_size=2,
-                        cache_len=16,
-                        device="p150a",
-                        min_tokens_per_second_per_user=0.0,
-                        ttnn_module=_make_fake_ttnn(),
-                        torch_module=_fake_torch(),
-                    )
-
-            self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(report["results"]["decode_step_autotune"], "pass")
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "candidate_summaries"
-                ][0]["reference_status"],
-                "failed",
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "best_reference_status"
-                ],
-                "passed",
-            )
-            failed_checks = [
-                check for check in report["acceptance"]["checks"]
-                if not check["passed"]
-            ]
-            self.assertEqual(
-                [check["name"] for check in failed_checks],
-                ["decode_step_autotune.candidates"],
-            )
-            evidence = json.loads(
-                (out_dir / "real_decode_evidence_manifest.json").read_text()
-            )
-            self.assertEqual(evidence["status"], "incomplete")
-            self.assertEqual(
-                evidence["acceptance"]["failed_checks"],
-                ["decode_step_autotune.candidates"],
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "candidate_summaries"
-                ][0]["reference_status"],
-                "failed",
-            )
-
-    def test_validate_real_decode_fails_on_autotune_knob_coverage(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            out_dir = root / "validate_real"
-            space_json = root / "decode_step_space.json"
-            _write_fake_model_config(model_dir)
-            _write_fake_model_weights(model_dir, _fake_weight_specs())
-            _write_template_config(config_json)
-            space_json.write_text(
-                json.dumps(
-                    {
-                        "lm_head_split_count": [2],
-                        "generation_template": ["device_argmax_greedy"],
-                        "mlp_intermediate_dtype": [None],
-                        "attention_sdpa_output_memory_config": [None],
-                        "attention_concat_heads_output_memory_config": [None],
-                    }
-                )
-            )
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-
-            original_autotune = validation_module.run_decode_step_autotune
-
-            def autotune_with_incomplete_knob_coverage(*args, **kwargs):
-                autotune = original_autotune(*args, **kwargs)
-                autotune["knob_coverage"] = {
-                    "knobs": ["lm_head_split_count"],
-                    "candidate_count": autotune["candidate_count"],
-                    "values": {"lm_head_split_count": [2]},
-                    "value_counts": {"lm_head_split_count": {"2": 1}},
-                    "varied_knobs": [],
-                }
-                out = kwargs.get("out")
-                if out is not None:
-                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
-                return autotune
-
-            with patch.object(
-                validation_module,
-                "run_decode_step_autotune",
-                side_effect=autotune_with_incomplete_knob_coverage,
-            ):
-                with _fake_torch_and_safetensors():
-                    report = validate_real_decode(
-                        program_dir=program_dir,
-                        model_path=model_dir,
-                        out_dir=out_dir,
-                        decode_step_search_space_path=space_json,
-                        layers=1,
-                        batch_size=2,
-                        cache_len=16,
-                        device="p150a",
-                        min_tokens_per_second_per_user=0.0,
-                        ttnn_module=_make_fake_ttnn(),
-                        torch_module=_fake_torch(),
-                    )
-
-            self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(report["results"]["decode_step_autotune"], "pass")
-            failed_checks = [
-                check for check in report["acceptance"]["checks"]
-                if not check["passed"]
-            ]
-            self.assertEqual(
-                [check["name"] for check in failed_checks],
-                ["decode_step_autotune.knob_coverage"],
-            )
-            evidence = json.loads(
-                (out_dir / "real_decode_evidence_manifest.json").read_text()
-            )
-            self.assertEqual(evidence["status"], "incomplete")
-            self.assertEqual(
-                evidence["acceptance"]["failed_checks"],
-                ["decode_step_autotune.knob_coverage"],
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "knob_coverage"
-                ]["knobs"],
-                ["lm_head_split_count"],
-            )
-
-    def test_validate_real_decode_requires_default_autotune_variation(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            out_dir = root / "validate_real"
-            _write_fake_model_config(model_dir)
-            _write_fake_model_weights(model_dir, _fake_weight_specs())
-            _write_template_config(config_json)
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-
-            original_autotune = validation_module.run_decode_step_autotune
-
-            def autotune_without_default_variation(*args, **kwargs):
-                kwargs = dict(kwargs)
-                kwargs["space"] = {
-                    "lm_head_split_count": [2],
-                    "generation_template": [
-                        "device_argmax_greedy",
-                        "full_logits",
-                    ],
-                    "mlp_intermediate_dtype": [None],
-                    "attention_sdpa_output_memory_config": [None],
-                    "attention_concat_heads_output_memory_config": [None],
-                }
-                autotune = original_autotune(*args, **kwargs)
-                out = kwargs.get("out")
-                if out is not None:
-                    Path(out).write_text(json.dumps(autotune, indent=2) + "\n")
-                return autotune
-
-            with patch.object(
-                validation_module,
-                "run_decode_step_autotune",
-                side_effect=autotune_without_default_variation,
-            ):
-                with _fake_torch_and_safetensors():
-                    report = validate_real_decode(
-                        program_dir=program_dir,
-                        model_path=model_dir,
-                        out_dir=out_dir,
-                        layers=1,
-                        batch_size=2,
-                        cache_len=16,
-                        device="p150a",
-                        min_tokens_per_second_per_user=0.0,
-                        ttnn_module=_make_fake_ttnn(),
-                        torch_module=_fake_torch(),
-                    )
-
-            self.assertTrue(report["decode_step_search_space_is_default"])
-            self.assertEqual(report["status"], "acceptance_failed")
-            failed_checks = [
-                check for check in report["acceptance"]["checks"]
-                if not check["passed"]
-            ]
-            self.assertEqual(
-                [check["name"] for check in failed_checks],
-                ["decode_step_autotune.default_knob_variation"],
-            )
-            self.assertEqual(
-                report["steps"]["decode_step_autotune"][
-                    "missing_varied_knobs"
-                ],
-                [
-                    "lm_head_split_count",
-                    "mlp_intermediate_dtype",
-                    "attention_sdpa_output_memory_config",
-                    "attention_concat_heads_output_memory_config",
-                ],
-            )
-            evidence = json.loads(
-                (out_dir / "real_decode_evidence_manifest.json").read_text()
-            )
-            self.assertEqual(
-                evidence["acceptance"]["failed_checks"],
-                ["decode_step_autotune.default_knob_variation"],
-            )
-            self.assertTrue(
-                evidence["validation"]["decode_step_search_space_is_default"]
-            )
-            self.assertEqual(
-                evidence["runtime_evidence"]["decode_step_autotune"][
-                    "missing_varied_knobs"
-                ],
-                [
-                    "lm_head_split_count",
-                    "mlp_intermediate_dtype",
-                    "attention_sdpa_output_memory_config",
-                    "attention_concat_heads_output_memory_config",
-                ],
             )
 
     def test_validate_real_decode_fails_on_attention_layer_primitive_reports(
@@ -6852,7 +5769,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -6945,7 +5861,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                     )
 
             self.assertEqual(report["status"], "no_device")
@@ -6970,22 +5885,6 @@ class ValidateDirectTest(unittest.TestCase):
             self.assertEqual(
                 evidence["validation"]["failed_steps"],
                 ["decode_shell"],
-            )
-            self.assertEqual(
-                evidence["validation"]["skipped_steps"],
-                [
-                    "attention_primitives",
-                    "attention_layer",
-                    "single_layer_decode",
-                    "smoke_decode_step",
-                    "profile_decode_step",
-                    "prompt_decode_loop",
-                    "generate_prefill_decode",
-                    "profile_generate",
-                    "generate_depth_sweep",
-                    "decode_depth_sweep",
-                    "decode_step_autotune",
-                ],
             )
             self.assertEqual(
                 evidence["runtime_evidence"]["decode_shell"]["runtime_status"],
@@ -7031,7 +5930,6 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=2,
                 cache_len=16,
                 device="p150a",
-                skip_autotune=True,
                 guard_device_busy=True,
                 device_process_environment={
                     "status": "busy",
@@ -7117,7 +6015,6 @@ class ValidateDirectTest(unittest.TestCase):
                 batch_size=2,
                 cache_len=16,
                 device="p150a",
-                skip_autotune=True,
                 guard_device_health=True,
                 device_process_environment={
                     "status": "idle",
@@ -7386,7 +6283,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                     )
 
             diagnostics = report["runtime_diagnostics"]
@@ -7446,14 +6342,12 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     min_tokens_per_second_per_user=1.0e12,
                     ttnn_module=_make_fake_ttnn(),
                     torch_module=_fake_torch(),
                 )
 
             self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertEqual(report["acceptance"]["status"], "failed")
             failed_checks = [
                 check for check in report["acceptance"]["checks"]
@@ -7506,7 +6400,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     baseline_tokens_per_second_per_user=1.0e12,
                     min_baseline_ratio=1.0,
                     ttnn_module=_make_fake_ttnn(),
@@ -7514,7 +6407,6 @@ class ValidateDirectTest(unittest.TestCase):
                 )
 
             self.assertEqual(report["status"], "acceptance_failed")
-            self.assertEqual(report["results"]["decode_step_autotune"], "skipped")
             self.assertEqual(report["acceptance"]["status"], "failed")
             failed_checks = [
                 check for check in report["acceptance"]["checks"]
@@ -7605,7 +6497,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -7878,10 +6769,6 @@ class ValidateDirectTest(unittest.TestCase):
             )
             self.assertEqual(
                 report["results"]["decode_depth_sweep"],
-                "skipped",
-            )
-            self.assertEqual(
-                report["results"]["decode_step_autotune"],
                 "skipped",
             )
             self.assertEqual(
@@ -8161,7 +7048,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8256,7 +7142,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8355,7 +7240,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8440,7 +7324,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8526,7 +7409,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8617,7 +7499,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8706,7 +7587,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8811,7 +7691,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -8904,7 +7783,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9001,7 +7879,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9092,7 +7969,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9183,7 +8059,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9265,7 +8140,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9347,7 +8221,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9435,7 +8308,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9519,7 +8391,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
                     )
@@ -9600,7 +8471,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -9679,7 +8549,6 @@ class ValidateDirectTest(unittest.TestCase):
                         trace=True,
                         trace_iterations=2,
                         require_trace=True,
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -9772,7 +8641,6 @@ class ValidateDirectTest(unittest.TestCase):
                         trace=True,
                         trace_iterations=2,
                         require_trace=True,
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=_make_fake_ttnn(),
                         torch_module=_fake_torch(),
@@ -9845,7 +8713,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         ttnn_module=fake_ttnn,
                         torch_module=_fake_torch(),
@@ -9917,7 +8784,6 @@ class ValidateDirectTest(unittest.TestCase):
                     batch_size=2,
                     cache_len=16,
                     device="p150a",
-                    skip_autotune=True,
                     min_tokens_per_second_per_user=0.0,
                     require_decode_shell_numeric_reference=True,
                     ttnn_module=_make_fake_ttnn(),
@@ -10008,7 +8874,6 @@ class ValidateDirectTest(unittest.TestCase):
                         batch_size=2,
                         cache_len=16,
                         device="p150a",
-                        skip_autotune=True,
                         min_tokens_per_second_per_user=0.0,
                         require_decode_shell_numeric_reference=True,
                         ttnn_module=_make_fake_ttnn(),

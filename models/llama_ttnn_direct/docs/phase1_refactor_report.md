@@ -65,9 +65,9 @@ false. The after unreferenced-file report is empty.
 
 `docs/future/custom_ops.md` remains because diagnostics tests reference it.
 The following Phase 1 protected areas also remain because they are reachable
-or explicitly deferred: `future/historical_search`, hidden CLI handlers,
-generated-runner legacy modes, smoke modules, diagnostics tests, autotune
-modules, and runtime compatibility facades.
+or explicitly deferred: hidden CLI handlers, generated-runner legacy modes,
+smoke modules, diagnostics tests, autotune modules, and runtime compatibility
+facades.
 
 ## Correctness
 

@@ -64,26 +64,6 @@ from ..reports.artifacts import (
     required_validate_direct_artifacts_exist as _required_validate_direct_artifacts_exist,
     validate_direct_artifact_observed as _validate_direct_artifact_observed,
 )
-from ..reports.autotune import (
-    autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
-    autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
-    autotune_candidate_complete as _autotune_candidate_complete,
-    autotune_candidate_ids as _autotune_candidate_ids,
-    autotune_candidate_summaries as _autotune_candidate_summaries,
-    autotune_candidates_complete as _autotune_candidates_complete,
-    autotune_candidates_observed as _autotune_candidates_observed,
-    autotune_default_knobs_varied as _autotune_default_knobs_varied,
-    autotune_expected_output_kinds as _autotune_expected_output_kinds,
-    autotune_knob_coverage_complete as _autotune_knob_coverage_complete,
-    autotune_knob_coverage_observed as _autotune_knob_coverage_observed,
-    autotune_knob_variation_observed as _autotune_knob_variation_observed,
-    autotune_leaderboard_complete as _autotune_leaderboard_complete,
-    autotune_leaderboard_entry_complete as _autotune_leaderboard_entry_complete,
-    autotune_leaderboard_observed as _autotune_leaderboard_observed,
-    autotune_missing_varied_knobs as _autotune_missing_varied_knobs,
-    autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
-    autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
-)
 from ..reports.config import (
     config_gap_issue_complete as _config_gap_issue_complete,
     config_gap_summary_complete as _config_gap_summary_complete,
@@ -101,7 +81,6 @@ from ..reports.depth import (
 from ..reports.evidence import (
     artifact_evidence as _artifact_evidence,
     artifact_index as _artifact_index,
-    candidate_reference_status_counts as _candidate_reference_status_counts,
     dump_validation_report,
     real_decode_cli_args as _real_decode_cli_args,
     real_decode_evidence_manifest as _real_decode_evidence_manifest,
@@ -225,15 +204,8 @@ from ..reports.validation import (
     step_synthetic_runtime_input_count as _step_synthetic_runtime_input_count,
     validate_direct_acceptance as _validate_direct_acceptance,
 )
-from ..future.historical_search.decode_step_autotune import (
-    DECODE_STEP_AUTOTUNE_KNOBS,
-    run_decode_step_autotune,
-)
 from .decode_depth_sweep import run_decode_depth_sweep
 from .generate_depth_sweep import run_generate_depth_sweep
-from ..future.historical_search.report import dump_search_report
-from ..future.historical_search.runner import run_lm_head_search
-from ..future.historical_search.space import load_search_space
 from ..semantic.dump import dump_graph_json
 from ..semantic.graph import LlamaModelGraph
 from ..semantic.importer_hf_llama import import_hf_llama
@@ -269,30 +241,6 @@ def default_official_template_path() -> Path:
     )
 
 
-def default_search_space_path() -> Path:
-    return (
-        Path(__file__).resolve().parent.parent
-        / "future"
-        / "historical_search"
-        / "spaces"
-        / "lm_head_minimal.json"
-    )
-
-
-def default_decode_step_search_space_path() -> Path:
-    return (
-        Path(__file__).resolve().parent.parent
-        / "future"
-        / "historical_search"
-        / "spaces"
-        / "decode_step_minimal.json"
-    )
-
-
-def _same_path(lhs: Path, rhs: Path) -> bool:
-    return lhs.resolve() == rhs.resolve()
-
-
 def validate_direct(
     *,
     model_path: str | Path,
@@ -300,8 +248,6 @@ def validate_direct(
     out_dir: str | Path,
     official_template_path: str | Path | None = None,
     official_config_path: str | Path | None = None,
-    search_space_path: str | Path | None = None,
-    decode_step_search_space_path: str | Path | None = None,
     metric: str = "latency_ms",
 ) -> dict[str, Any]:
     """Run all device-free TTNN Direct scaffold checks and write a report."""
@@ -320,21 +266,6 @@ def validate_direct(
         if official_config_path is not None
         else default_official_parity_config_path()
     )
-    search_space_path = (
-        Path(search_space_path)
-        if search_space_path is not None
-        else default_search_space_path()
-    )
-    decode_step_search_space_path = (
-        Path(decode_step_search_space_path)
-        if decode_step_search_space_path is not None
-        else default_decode_step_search_space_path()
-    )
-    decode_step_search_space_is_default = _same_path(
-        decode_step_search_space_path,
-        default_decode_step_search_space_path(),
-    )
-
     paths = {
         "semantic_json": root / "semantic_graph.json",
         "execution_plan": root / "execution_plan.json",
@@ -350,12 +281,6 @@ def validate_direct(
         "single_layer_decode_report": root / "single_layer_decode_report.json",
         "decode_step_smoke_report": root / "decode_step_smoke_report.json",
         "decode_step_profile_report": root / "decode_step_profile_report.json",
-        "search_report": root / "search_report.json",
-        "search_candidates_dir": root / "search_candidates",
-        "decode_step_autotune_report": root / "decode_step_autotune_report.json",
-        "decode_step_autotune_candidates_dir": (
-            root / "decode_step_autotune_candidates"
-        ),
         "package_dir": root / "package",
         "report": report_path,
     }
@@ -369,11 +294,6 @@ def validate_direct(
         "out_dir": str(root),
         "official_template": str(official_template_path),
         "official_config": str(official_config_path),
-        "search_space": str(search_space_path),
-        "decode_step_search_space": str(decode_step_search_space_path),
-        "decode_step_search_space_is_default": (
-            decode_step_search_space_is_default
-        ),
         "metric": metric,
         "results": {step: "pending" for step in VALIDATION_STEPS},
         "steps": {},
@@ -698,73 +618,6 @@ def validate_direct(
             **_reference_summary(profile_report),
         }
 
-    def search_step() -> dict[str, Any]:
-        _require(graph, "import_llama")
-        search_report = run_lm_head_search(
-            graph=graph,
-            base_config=template_config,
-            space=load_search_space(search_space_path),
-            metric=metric,
-            out=paths["search_report"],
-            candidates_dir=paths["search_candidates_dir"],
-            dry_run=True,
-        )
-        dump_search_report(search_report, paths["search_report"])
-        return {
-            "search_report": str(paths["search_report"]),
-            "candidates_dir": str(paths["search_candidates_dir"]),
-            "candidate_count": search_report["candidate_count"],
-            "dry_run": search_report["dry_run"],
-        }
-
-    def decode_step_autotune_dry_run_step() -> dict[str, Any]:
-        autotune_report = run_decode_step_autotune(
-            program_dir=paths["program_dir"],
-            space=load_search_space(decode_step_search_space_path),
-            out=paths["decode_step_autotune_report"],
-            layers=_validation_decode_layers(),
-            batch_size=int(template_config["batch_size"]),
-            cache_len=int(template_config["max_cache_len"]),
-            metric=metric,
-            candidates_dir=paths["decode_step_autotune_candidates_dir"],
-            dry_run=True,
-            device=_validation_device(),
-            trace=True,
-            trace_iterations=1,
-        )
-        dump_search_report(autotune_report, paths["decode_step_autotune_report"])
-        return {
-            "decode_step_autotune_report": str(
-                paths["decode_step_autotune_report"]
-            ),
-            "candidates_dir": str(
-                paths["decode_step_autotune_candidates_dir"]
-            ),
-            "candidate_count": autotune_report["candidate_count"],
-            "metric": autotune_report.get("metric"),
-            "metric_direction": autotune_report.get("metric_direction"),
-            "status_counts": autotune_report.get("status_counts", {}),
-            "reference_status_counts": autotune_report.get(
-                "reference_status_counts",
-                {},
-            ),
-            "trace_status_counts": autotune_report.get(
-                "trace_status_counts",
-                {},
-            ),
-            "knob_coverage": autotune_report.get("knob_coverage"),
-            "default_search_space": decode_step_search_space_is_default,
-            "all_knobs_varied": (
-                autotune_report.get("knob_coverage") or {}
-            ).get("all_knobs_varied"),
-            "missing_varied_knobs": (
-                autotune_report.get("knob_coverage") or {}
-            ).get("missing_varied_knobs", []),
-            "search_space": autotune_report.get("search_space"),
-            "dry_run": autotune_report["dry_run"],
-            "trace_enabled": autotune_report["trace_enabled"],
-        }
-
     def package_step() -> dict[str, Any]:
         package_paths = package_ttnn_direct_program(
             paths["program_dir"],
@@ -793,10 +646,6 @@ def validate_direct(
         "single_layer_decode_dry_run": single_layer_decode_dry_run_step,
         "decode_step_smoke_dry_run": decode_step_smoke_dry_run_step,
         "decode_step_profile_dry_run": decode_step_profile_dry_run_step,
-        "search_dry_run": search_step,
-        "decode_step_autotune_dry_run": (
-            decode_step_autotune_dry_run_step
-        ),
         "package_program": package_step,
     }
 
@@ -817,7 +666,6 @@ def preflight_real_decode(
     model_path: str | Path,
     out: str | Path,
     official_config_path: str | Path | None = None,
-    decode_step_search_space_path: str | Path | None = None,
     performance_baselines_path: str | Path | None = None,
     layers: int = 1,
     batch_size: int | None = None,
@@ -829,7 +677,6 @@ def preflight_real_decode(
     trace: bool = False,
     trace_iterations: int = 1,
     metric: str = "latency_ms",
-    skip_autotune: bool = False,
     skip_profile_decode_step: bool = False,
     require_full_decode_step: bool = False,
     require_model_end_to_end: bool = False,
@@ -863,11 +710,6 @@ def preflight_real_decode(
         Path(official_config_path)
         if official_config_path is not None
         else default_official_parity_config_path()
-    )
-    decode_step_search_space_path = (
-        Path(decode_step_search_space_path)
-        if decode_step_search_space_path is not None
-        else default_decode_step_search_space_path()
     )
     performance_baselines_path = (
         Path(performance_baselines_path)
@@ -945,16 +787,6 @@ def preflight_real_decode(
             ),
             observed=min_baseline_ratio,
             expected="> 0.0",
-        )
-        add(
-            "requirements.official_performance_autotune_enabled",
-            not skip_autotune,
-            observed={"skip_autotune": skip_autotune},
-            expected="skip_autotune=false",
-            message=(
-                "official performance parity requires decode-step autotune "
-                "evidence; use --skip-autotune only for bring-up"
-            ),
         )
         add(
             "requirements.official_performance_profile_enabled",
@@ -1282,13 +1114,6 @@ def preflight_real_decode(
                 expected="diff can be computed",
                 required=normalized["require_official_config_match"],
             )
-    if not skip_autotune:
-        add(
-            "decode_step_search_space.exists",
-            decode_step_search_space_path.is_file(),
-            observed=str(decode_step_search_space_path),
-            expected="file exists",
-        )
     add(
         "performance_baselines.exists",
         performance_baselines_path.is_file(),
@@ -1490,7 +1315,6 @@ def preflight_real_decode(
         model_path=model_path,
         out_dir=out.parent,
         official_config_path=official_config_path,
-        decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
         prompt=prompt,
         tokenizer_path=tokenizer_path,
@@ -1504,7 +1328,6 @@ def preflight_real_decode(
         trace=normalized["trace"],
         trace_iterations=rerun_trace_iterations,
         metric=metric,
-        skip_autotune=skip_autotune,
         skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
@@ -1540,7 +1363,6 @@ def preflight_real_decode(
         model_path=model_path,
         out_dir=out.parent,
         official_config_path=official_config_path,
-        decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
         prompt=prompt,
         tokenizer_path=tokenizer_path,
@@ -1554,7 +1376,6 @@ def preflight_real_decode(
         trace=normalized["trace"],
         trace_iterations=rerun_trace_iterations,
         metric=metric,
-        skip_autotune=skip_autotune,
         skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=normalized["require_full_decode_step"],
         require_model_end_to_end=normalized["require_model_end_to_end"],
@@ -1594,7 +1415,6 @@ def preflight_real_decode(
         "program_dir": str(program_dir),
         "model_path": str(model_path),
         "official_config": str(official_config_path),
-        "decode_step_search_space": str(decode_step_search_space_path),
         "performance_baselines": str(performance_baselines_path),
         "device": device,
         "device_id": device_id,
@@ -1636,7 +1456,6 @@ def preflight_real_decode(
         "guard_device_health": guard_device_health,
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
-            skip_autotune=skip_autotune,
             skip_profile_decode_step=skip_profile_decode_step,
             require_full_decode_step=normalized[
                 "require_full_decode_step"
@@ -1693,7 +1512,6 @@ def validate_real_decode(
     model_path: str | Path,
     out_dir: str | Path,
     official_config_path: str | Path | None = None,
-    decode_step_search_space_path: str | Path | None = None,
     layers: int = 1,
     batch_size: int | None = None,
     cache_len: int | None = None,
@@ -1706,7 +1524,6 @@ def validate_real_decode(
     trace_iterations: int = 1,
     metric: str = "latency_ms",
     dry_run: bool = False,
-    skip_autotune: bool = False,
     skip_profile_decode_step: bool = False,
     require_full_decode_step: bool = False,
     require_model_end_to_end: bool = False,
@@ -1780,11 +1597,6 @@ def validate_real_decode(
             raise ValueError(
                 "require_official_performance_parity requires positive "
                 "min_baseline_ratio"
-            )
-        if skip_autotune:
-            raise ValueError(
-                "require_official_performance_parity cannot be used with "
-                "skip_autotune"
             )
         if skip_profile_decode_step:
             raise ValueError(
@@ -1868,15 +1680,6 @@ def validate_real_decode(
         requested=cache_len,
         fallback=program_config.get("max_cache_len"),
     )
-    decode_step_search_space_path = (
-        Path(decode_step_search_space_path)
-        if decode_step_search_space_path is not None
-        else default_decode_step_search_space_path()
-    )
-    decode_step_search_space_is_default = _same_path(
-        decode_step_search_space_path,
-        default_decode_step_search_space_path(),
-    )
     official_config_path = (
         Path(official_config_path)
         if official_config_path is not None
@@ -1938,8 +1741,6 @@ def validate_real_decode(
         "generate_depth_reports_dir": root / "generate_depth_reports",
         "decode_depth_sweep_report": root / "decode_depth_sweep_report.json",
         "decode_depth_profiles_dir": root / "decode_depth_profiles",
-        "autotune_report": root / "decode_step_autotune_report.json",
-        "autotune_candidates_dir": root / "decode_step_autotune_candidates",
         "evidence_manifest": root / "real_decode_evidence_manifest.json",
         "report": report_path,
     }
@@ -1948,7 +1749,6 @@ def validate_real_decode(
         model_path=model_path,
         out_dir=root,
         official_config_path=official_config_path,
-        decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
         prompt=prompt,
         tokenizer_path=tokenizer_path,
@@ -1964,7 +1764,6 @@ def validate_real_decode(
         trace_iterations=trace_iterations,
         metric=metric,
         dry_run=dry_run,
-        skip_autotune=skip_autotune,
         skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=require_full_decode_step,
         require_model_end_to_end=require_model_end_to_end,
@@ -1992,7 +1791,6 @@ def validate_real_decode(
         model_path=model_path,
         out_dir=root,
         official_config_path=official_config_path,
-        decode_step_search_space_path=decode_step_search_space_path,
         performance_baselines_path=performance_baselines_path,
         prompt=prompt,
         tokenizer_path=tokenizer_path,
@@ -2006,7 +1804,6 @@ def validate_real_decode(
         trace=trace,
         trace_iterations=trace_iterations,
         metric=metric,
-        skip_autotune=skip_autotune,
         skip_profile_decode_step=skip_profile_decode_step,
         require_full_decode_step=require_full_decode_step,
         require_model_end_to_end=require_model_end_to_end,
@@ -2065,10 +1862,6 @@ def validate_real_decode(
         "performance_baselines": str(performance_baselines_path),
         "baseline_reference": baseline_reference,
         "baseline_reference_entry": baseline_reference_entry,
-        "decode_step_search_space": str(decode_step_search_space_path),
-        "decode_step_search_space_is_default": (
-            decode_step_search_space_is_default
-        ),
         "program_num_layers": program_num_layers,
         "program_batch_size": program_batch_size,
         "program_cache_len": program_cache_len,
@@ -2095,7 +1888,6 @@ def validate_real_decode(
         "trace_iterations": trace_iterations,
         "metric": metric,
         "dry_run": dry_run,
-        "skip_autotune": skip_autotune,
         "skip_profile_decode_step": skip_profile_decode_step,
         "require_full_decode_step": require_full_decode_step,
         "require_model_end_to_end": require_model_end_to_end,
@@ -2138,7 +1930,6 @@ def validate_real_decode(
         ),
         "final_acceptance_plan": _real_decode_final_acceptance_plan(
             metric=metric,
-            skip_autotune=skip_autotune,
             skip_profile_decode_step=skip_profile_decode_step,
             require_full_decode_step=require_full_decode_step,
             require_model_end_to_end=require_model_end_to_end,
@@ -4213,121 +4004,6 @@ def validate_real_decode(
             detail["isolated_subprocess"] = isolated
         return detail
 
-    def autotune_step() -> dict[str, Any]:
-        if skip_autotune or skip_profile_decode_step:
-            reason = (
-                "skip_profile_decode_step requested; "
-                "decode-step autotune requires profile-decode-step"
-                if skip_profile_decode_step
-                else "skip_autotune requested"
-            )
-            return {
-                "status": "skipped",
-                "reason": reason,
-            }
-        autotune_report = run_decode_step_autotune(
-            program_dir=program_dir,
-            model_path=None if dry_run else model_path,
-            space=load_search_space(decode_step_search_space_path),
-            out=paths["autotune_report"],
-            layers=layer_count,
-            batch_size=resolved_batch_size,
-            cache_len=resolved_cache_len,
-            metric=metric,
-            candidates_dir=paths["autotune_candidates_dir"],
-            dry_run=dry_run,
-            device=device,
-            device_id=device_id,
-            dtype_seed=dtype_seed,
-            trace=trace,
-            trace_iterations=trace_iterations,
-            prompt=prompt,
-            tokenizer_path=tokenizer_path,
-            tokenizer_module=tokenizer_module,
-            ttnn_module=ttnn_module,
-            torch_module=torch_module,
-        )
-        dump_search_report(autotune_report, paths["autotune_report"])
-        return {
-            "status": (
-                "dry_run"
-                if dry_run
-                else "pass"
-                if autotune_report.get("best") is not None
-                else "fail"
-            ),
-            "autotune_report": str(paths["autotune_report"]),
-            "candidates_dir": str(paths["autotune_candidates_dir"]),
-            "candidate_count": autotune_report["candidate_count"],
-            "metric_direction": autotune_report.get("metric_direction"),
-            "status_counts": autotune_report.get("status_counts", {}),
-            "passed_candidate_count": autotune_report.get(
-                "passed_candidate_count",
-                0,
-            ),
-            "failed_candidate_count": autotune_report.get(
-                "failed_candidate_count",
-                0,
-            ),
-            "best": autotune_report.get("best", {}).get("id")
-            if autotune_report.get("best") is not None
-            else None,
-            "best_reference_status": (
-                autotune_report.get("best", {}).get("reference_status")
-                if autotune_report.get("best") is not None
-                else None
-            ),
-            "best_trace_status": (
-                autotune_report.get("best", {}).get("trace_status")
-                if autotune_report.get("best") is not None
-                else None
-            ),
-            "best_parameter_source": (
-                autotune_report.get("best", {}).get("parameter_source")
-                if autotune_report.get("best") is not None
-                else None
-            ),
-            "best_metric": (
-                autotune_report.get("best", {}).get("metric")
-                if autotune_report.get("best") is not None
-                else None
-            ),
-            "reference_status_counts": autotune_report.get(
-                "reference_status_counts",
-                _candidate_reference_status_counts(autotune_report),
-            ),
-            "trace_status_counts": autotune_report.get(
-                "trace_status_counts",
-                {},
-            ),
-            "output_kind_counts": autotune_report.get(
-                "output_kind_counts",
-                {},
-            ),
-            "candidate_summaries": _autotune_candidate_summaries(
-                autotune_report.get("candidates")
-            ),
-            "leaderboard": autotune_report.get("leaderboard", []),
-            "best_candidate_summary": autotune_report.get(
-                "best_candidate_summary"
-            ),
-            "knob_coverage": autotune_report.get("knob_coverage"),
-            "default_search_space": decode_step_search_space_is_default,
-            "all_knobs_varied": (
-                autotune_report.get("knob_coverage") or {}
-            ).get("all_knobs_varied"),
-            "missing_varied_knobs": (
-                autotune_report.get("knob_coverage") or {}
-            ).get("missing_varied_knobs", []),
-            "search_space": autotune_report.get("search_space"),
-            "best_output_kind": (
-                autotune_report.get("best", {}).get("output_kind")
-                if autotune_report.get("best") is not None
-                else None
-            ),
-            "dry_run": autotune_report["dry_run"],
-        }
-
     step_actions = {
         "official_config_diff": official_config_diff_step,
         "materialize_parameters": materialize_step,
@@ -4342,7 +4018,6 @@ def validate_real_decode(
         "profile_generate": profile_generate_step,
         "generate_depth_sweep": generate_depth_sweep_step,
         "decode_depth_sweep": decode_depth_sweep_step,
-        "decode_step_autotune": autotune_step,
     }
 
     for step in REAL_DECODE_VALIDATION_STEPS:

@@ -69,6 +69,24 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
         self.assertEqual(observed, AUTOTUNE_SMOKE_DEBT)
     def test_phase3_facades_are_absent(self) -> None:
         self.assertEqual([name for name in REMOVED if (ROOT / name).exists()], [])
+
+    def test_retired_search_package_has_no_source_or_test_references(self) -> None:
+        forbidden_package = f"{PACKAGE}.future"
+        retired_marker = "historical" + "_search"
+        violations = []
+        self.assertFalse((ROOT / "future").exists())
+        for path in sorted(ROOT.rglob("*.py")):
+            imports = _imports(path)
+            if any(
+                imported == forbidden_package
+                or imported.startswith(f"{forbidden_package}.")
+                for imported in imports
+            ):
+                violations.append(path.relative_to(ROOT).as_posix())
+            if retired_marker in path.read_text():
+                violations.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(violations, [])
+
     def test_internal_cli_subprocesses_use_product_commands(self) -> None:
         violations = []
         for path in ROOT.rglob("*.py"):
@@ -135,6 +153,6 @@ def _smoke(module: str) -> bool:
 
 
 def _legacy(module: str) -> bool:
-    return _smoke(module) or module.startswith(f"{PACKAGE}.future.historical_search") or module.endswith(
+    return _smoke(module) or module.endswith(
         (".legacy_decode_loop", ".decode_loop", ".profile_template")
     )

@@ -18,8 +18,6 @@ REQUIRED_VALIDATE_DIRECT_ARTIFACTS = (
     "single_layer_decode_report",
     "decode_step_smoke_report",
     "decode_step_profile_report",
-    "search_report",
-    "decode_step_autotune_report",
     "package_dir",
 )
 

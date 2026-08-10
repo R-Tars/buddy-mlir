@@ -19,21 +19,6 @@ from .artifacts import (
     required_validate_direct_artifacts_exist as _required_validate_direct_artifacts_exist,
     validate_direct_artifact_observed as _validate_direct_artifact_observed,
 )
-from .autotune import (
-    DECODE_STEP_AUTOTUNE_KNOBS,
-    autotune_best_candidate_summary_complete as _autotune_best_candidate_summary_complete,
-    autotune_best_candidate_summary_observed as _autotune_best_candidate_summary_observed,
-    autotune_candidates_complete as _autotune_candidates_complete,
-    autotune_candidates_observed as _autotune_candidates_observed,
-    autotune_default_knobs_varied as _autotune_default_knobs_varied,
-    autotune_knob_coverage_complete as _autotune_knob_coverage_complete,
-    autotune_knob_coverage_observed as _autotune_knob_coverage_observed,
-    autotune_knob_variation_observed as _autotune_knob_variation_observed,
-    autotune_leaderboard_complete as _autotune_leaderboard_complete,
-    autotune_leaderboard_observed as _autotune_leaderboard_observed,
-    autotune_output_kind_counts_complete as _autotune_output_kind_counts_complete,
-    autotune_output_kind_counts_observed as _autotune_output_kind_counts_observed,
-)
 from .config import (
     PARITY_SECTIONS,
     config_gap_summary_complete as _config_gap_summary_complete,
@@ -144,8 +129,6 @@ VALIDATION_STEPS = (
     "single_layer_decode_dry_run",
     "decode_step_smoke_dry_run",
     "decode_step_profile_dry_run",
-    "search_dry_run",
-    "decode_step_autotune_dry_run",
     "package_program",
 )
 
@@ -163,7 +146,6 @@ REAL_DECODE_VALIDATION_STEPS = (
     "profile_generate",
     "generate_depth_sweep",
     "decode_depth_sweep",
-    "decode_step_autotune",
 )
 
 
@@ -859,7 +841,6 @@ def model_end_to_end_readiness(
 def real_decode_final_acceptance_plan(
     *,
     metric: str,
-    skip_autotune: bool,
     skip_profile_decode_step: bool,
     require_full_decode_step: bool,
     require_model_end_to_end: bool,
@@ -889,17 +870,13 @@ def real_decode_final_acceptance_plan(
         step
         for step in REAL_DECODE_VALIDATION_STEPS
         if not (
-            (skip_autotune and step == "decode_step_autotune")
-            or (
-                skip_profile_decode_step
-                and step
-                in {
-                    "profile_decode_step",
-                    "profile_generate",
-                    "decode_depth_sweep",
-                    "decode_step_autotune",
-                }
-            )
+            skip_profile_decode_step
+            and step
+            in {
+                "profile_decode_step",
+                "profile_generate",
+                "decode_depth_sweep",
+            }
         )
     ]
     effective_requirements = {
@@ -966,9 +943,6 @@ def real_decode_final_acceptance_plan(
             "profile_decode_step.official_baseline_reference",
             "profile_decode_step.official_min_baseline_ratio_positive",
             "profile_decode_step.min_baseline_ratio",
-            "decode_step_autotune.metric",
-            "decode_step_autotune.status",
-            "decode_step_autotune.best_candidate_summary",
         ]
 
     model_end_to_end_gate_names = []
@@ -1108,14 +1082,6 @@ def real_decode_acceptance_scope(
             "profile_decode_step.official_baseline_reference",
         )
     )
-    official_metric = (
-        accepted
-        and report.get("require_official_performance_parity") is True
-        and acceptance_check_passed(
-            acceptance,
-            "decode_step_autotune.metric",
-        )
-    )
     official_config_match = (
         accepted
         and report.get("require_official_config_match") is True
@@ -1166,17 +1132,11 @@ def real_decode_acceptance_scope(
         )
     elif not official_baseline:
         missing_parity.append("official Llama 3.1 8B batch32 baseline")
-    if not official_metric:
-        missing_parity.append(
-            f"--metric {OFFICIAL_PERFORMANCE_PARITY_METRIC}"
-        )
-
     official_performance_parity_ready = (
         full_decode_ready
         and model_end_to_end
         and official_config_match
         and official_baseline
-        and official_metric
         and performance_floor
     )
 
@@ -1215,7 +1175,6 @@ def real_decode_acceptance_scope(
         "model_end_to_end_proven": model_end_to_end,
         "official_config_match_proven": official_config_match,
         "official_performance_baseline_proven": official_baseline,
-        "official_performance_metric_proven": official_metric,
         "official_positive_baseline_ratio_floor_proven": (
             official_positive_floor
             if report.get("require_official_performance_parity") is True
@@ -1243,8 +1202,6 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
     single_layer = steps.get("single_layer_decode_dry_run", {})
     smoke = steps.get("decode_step_smoke_dry_run", {})
     profile = steps.get("decode_step_profile_dry_run", {})
-    search = steps.get("search_dry_run", {})
-    autotune = steps.get("decode_step_autotune_dry_run", {})
     package = steps.get("package_program", {})
 
     checks = [
@@ -1391,44 +1348,6 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
             expected="dry_run",
         ),
         _acceptance_check(
-            "search_dry_run.candidate_count",
-            search.get("dry_run") is True
-            and _positive_number(search.get("candidate_count")),
-            observed={
-                "dry_run": search.get("dry_run"),
-                "candidate_count": search.get("candidate_count"),
-            },
-            minimum=1,
-        ),
-        _acceptance_check(
-            "decode_step_autotune_dry_run.knob_coverage",
-            _autotune_knob_coverage_complete(
-                autotune.get("knob_coverage"),
-                candidate_count=autotune.get("candidate_count"),
-            ),
-            observed=_autotune_knob_coverage_observed(
-                autotune.get("knob_coverage")
-            ),
-            expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
-        ),
-        _acceptance_check(
-            "decode_step_autotune_dry_run.status_counts",
-            autotune.get("dry_run") is True
-            and autotune.get("trace_enabled") is True
-            and _status_count_matches_total(
-                autotune.get("status_counts"),
-                "dry_run_planned",
-                autotune.get("candidate_count"),
-            ),
-            observed={
-                "dry_run": autotune.get("dry_run"),
-                "trace_enabled": autotune.get("trace_enabled"),
-                "status_counts": autotune.get("status_counts"),
-                "candidate_count": autotune.get("candidate_count"),
-            },
-            expected={"dry_run_planned": autotune.get("candidate_count")},
-        ),
-        _acceptance_check(
             "package_program.manifest",
             _path_exists(
                 (package.get("artifacts") or {}).get("manifest.json")
@@ -1454,25 +1373,10 @@ def validate_direct_acceptance(report: dict[str, Any]) -> dict[str, Any]:
                 "single_layer_decode_report",
                 "decode_step_smoke_report",
                 "decode_step_profile_report",
-                "search_report",
-                "decode_step_autotune_report",
                 "package_dir",
             ],
         ),
     ]
-    if report.get("decode_step_search_space_is_default"):
-        checks.append(
-            _acceptance_check(
-                "decode_step_autotune_dry_run.default_knob_variation",
-                _autotune_default_knobs_varied(
-                    autotune.get("knob_coverage")
-                ),
-                observed=_autotune_knob_variation_observed(
-                    autotune.get("knob_coverage")
-                ),
-                expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
-            )
-        )
 
     passed = all(check["passed"] for check in checks)
     return {
@@ -1551,7 +1455,6 @@ def real_decode_acceptance(
     generate_step = steps.get("generate_prefill_decode", {})
     profile_generate = steps.get("profile_generate", {})
     depth_sweep = steps.get("decode_depth_sweep", {})
-    autotune = steps.get("decode_step_autotune", {})
     decode_contract = report.get("decode_step_contract") or {}
     single_layer_tensorization = _step_tensorization_summary(single_layer)
     decode_shell_tensorization = _step_tensorization_summary(decode_shell)
@@ -1617,7 +1520,6 @@ def real_decode_acceptance(
         None,
         "skipped",
     }
-    skip_autotune = bool(report.get("skip_autotune"))
     checks = [
         _acceptance_check(
             "official_config_diff.status",
@@ -3405,14 +3307,6 @@ def real_decode_acceptance(
                 expected="> 0.0",
             )
         )
-        checks.append(
-            _acceptance_check(
-                "decode_step_autotune.metric",
-                autotune.get("metric") == OFFICIAL_PERFORMANCE_PARITY_METRIC,
-                observed=autotune.get("metric"),
-                expected=OFFICIAL_PERFORMANCE_PARITY_METRIC,
-            )
-        )
     if min_baseline_ratio is not None:
         checks.append(
             _acceptance_check(
@@ -3429,169 +3323,6 @@ def real_decode_acceptance(
                 ),
             )
         )
-
-    if not skip_autotune:
-        checks.extend(
-            [
-                _acceptance_check(
-                    "decode_step_autotune.status",
-                    autotune.get("status") == "pass",
-                    observed=autotune.get("status"),
-                    expected="pass",
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.candidate_count",
-                    _positive_number(autotune.get("candidate_count")),
-                    observed=autotune.get("candidate_count"),
-                    minimum=1,
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.knob_coverage",
-                    _autotune_knob_coverage_complete(
-                        autotune.get("knob_coverage"),
-                        candidate_count=autotune.get("candidate_count"),
-                    ),
-                    observed=_autotune_knob_coverage_observed(
-                        autotune.get("knob_coverage")
-                    ),
-                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.output_kind_counts",
-                    _autotune_output_kind_counts_complete(
-                        autotune.get("output_kind_counts"),
-                        autotune.get("knob_coverage"),
-                    ),
-                    observed=_autotune_output_kind_counts_observed(
-                        autotune.get("output_kind_counts"),
-                        autotune.get("knob_coverage"),
-                    ),
-                    expected="output kinds implied by generation_template",
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.candidates",
-                    _autotune_candidates_complete(
-                        autotune.get("candidate_summaries"),
-                        candidate_count=autotune.get("candidate_count"),
-                        layer_count=expected_layers,
-                        batch_size=expected_batch_size,
-                        seq_len=program_seq_len,
-                        cache_len=expected_cache_len,
-                        vocab_size=report.get("program_vocab_size"),
-                        num_kv_heads=program_num_kv_heads,
-                        head_dim=program_head_dim,
-                        page_block_size=decode_contract.get(
-                            "kv_page_block_size"
-                        ),
-                        out_dir=report.get("out_dir"),
-                        require_trace=require_trace,
-                    ),
-                    observed=_autotune_candidates_observed(
-                        autotune.get("candidate_summaries")
-                    ),
-                    expected={
-                        "candidate_count": autotune.get("candidate_count"),
-                        "status": "profiled",
-                        "passed": True,
-                        "parameter_source": "hf_model",
-                        "reference_status": "passed",
-                        "trace_status": (
-                            "captured_and_executed"
-                            if require_trace
-                            else None
-                        ),
-                    },
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.leaderboard",
-                    _autotune_leaderboard_complete(
-                        autotune.get("leaderboard"),
-                        candidate_count=autotune.get("candidate_count"),
-                        candidate_summaries=autotune.get(
-                            "candidate_summaries"
-                        ),
-                        best=autotune.get("best"),
-                        require_trace=require_trace,
-                    ),
-                    observed=_autotune_leaderboard_observed(
-                        autotune.get("leaderboard")
-                    ),
-                    expected={
-                        "candidate_count": autotune.get("candidate_count"),
-                        "best": autotune.get("best"),
-                    },
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.best_candidate_summary",
-                    _autotune_best_candidate_summary_complete(
-                        autotune.get("best_candidate_summary"),
-                        best=autotune.get("best"),
-                        require_trace=require_trace,
-                    ),
-                    observed=_autotune_best_candidate_summary_observed(
-                        autotune.get("best_candidate_summary")
-                    ),
-                    expected={
-                        "best": autotune.get("best"),
-                        "parameter_source": "hf_model",
-                        "reference_status": "passed",
-                    },
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.passed_candidate_count",
-                    _positive_number(autotune.get("passed_candidate_count")),
-                    observed=autotune.get("passed_candidate_count"),
-                    minimum=1,
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.best",
-                    _non_empty_string(autotune.get("best")),
-                    observed=autotune.get("best"),
-                    required=True,
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.best_reference_status",
-                    autotune.get("best_reference_status") == "passed",
-                    observed=autotune.get("best_reference_status"),
-                    expected="passed",
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.best_parameter_source",
-                    autotune.get("best_parameter_source") == "hf_model",
-                    observed=autotune.get("best_parameter_source"),
-                    expected="hf_model",
-                ),
-                _acceptance_check(
-                    "decode_step_autotune.best_metric",
-                    _nonnegative_number(autotune.get("best_metric")),
-                    observed=autotune.get("best_metric"),
-                    minimum=0,
-                ),
-            ]
-        )
-        if report.get("decode_step_search_space_is_default"):
-            checks.append(
-                _acceptance_check(
-                    "decode_step_autotune.default_knob_variation",
-                    _autotune_default_knobs_varied(
-                        autotune.get("knob_coverage")
-                    ),
-                    observed=_autotune_knob_variation_observed(
-                        autotune.get("knob_coverage")
-                    ),
-                    expected=list(DECODE_STEP_AUTOTUNE_KNOBS),
-                )
-            )
-        if require_trace:
-            checks.append(
-                _acceptance_check(
-                    "decode_step_autotune.best_trace_status",
-                    autotune.get("best_trace_status")
-                    == "captured_and_executed",
-                    observed=autotune.get("best_trace_status"),
-                    expected="captured_and_executed",
-                )
-            )
 
     passed = all(check["passed"] for check in checks)
     return {
