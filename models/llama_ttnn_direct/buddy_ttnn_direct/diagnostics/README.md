@@ -96,7 +96,9 @@ The campaign keeps schema-v2 candidate identity and frozen precision/execution
 contracts, measures legal operator proposals with the canonical active
 scheduler, and uses hierarchical search followed by matched 5x100x3
 confirmation. Hardware profile evaluations run in isolated subprocesses.
-Add `--dry-run` to serialize the search plan without opening a device.
+Non-dry runs also require `--official-tt-metal-root` for the candidate quality
+gate; add `--dry-run` to serialize the search plan without opening a device or
+requiring the official checkout.
 
 Full decode execution-graph comparison:
 

@@ -3,10 +3,18 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from contextlib import contextmanager
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import campaign
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import model_evaluator
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.confirmation import (
+    ConfirmationArm,
+    ConfirmationPolicy,
+    confirm_matched_ab,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     candidate_fingerprint,
 )
@@ -23,6 +31,9 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
     SearchCandidate,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import (
+    candidate_quality_gate,
+)
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = PACKAGE_ROOT / "configs" / "p150a_llama31_8b_b32.json"
@@ -68,6 +79,8 @@ class CanonicalAutotuneCampaignTest(unittest.TestCase):
         self.assertTrue(first["passed"])
         self.assertEqual(first["algorithm"], "hierarchical_constrained_beam_search")
         self.assertEqual(first["pipeline_stages"], list(PIPELINE_STAGES))
+        self.assertEqual(first["pipeline_stage_status"]["layout_beam"], "skipped")
+        self.assertEqual(first["pipeline_stage_status"]["template_search"], "passed")
         self.assertEqual(first["search_space_schema_version"], 2)
         self.assertFalse(first["cartesian_exhaustive_search"])
         self.assertNotIn("levels", first)
@@ -120,6 +133,8 @@ class CanonicalAutotuneCampaignTest(unittest.TestCase):
             resumed["resume_identity"]["run_id"],
         )
         self.assertTrue(resumed["search_report"]["resume"]["completed_report_reused"])
+        reproduce = Path(first["search_report"]["artifacts"]["reproduce_build"])
+        self.assertIn(".cli build ", reproduce.read_text())
 
     def test_schema_v2_candidate_identity_freezes_precision_and_execution(self) -> None:
         context = campaign._context(
@@ -181,6 +196,171 @@ class CanonicalAutotuneCampaignTest(unittest.TestCase):
                 dtype_seed="fp32",
                 dry_run=True,
             )
+
+    def test_default_evaluator_preserves_contract_and_fails_closed(self) -> None:
+        context = campaign._context(
+            self.model_path, CONFIG_PATH, "default evaluator prompt", 2,
+            None, None, None, "p150a", 0,
+        )
+        evaluator = _make_evaluator(self.root / "default-measurement", context)
+        with _fake_profile_process():
+            report = evaluator.full_model_evaluator(SearchCandidate(space=context["base_space"]))
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["warmup"], 5)
+        self.assertEqual(report["iterations"], 50)
+        self.assertEqual(report["execution_mode"], "trace")
+        self.assertEqual(report["runtime_input_mode"], "persistent")
+        self.assertTrue(report["after_prefill"])
+        self.assertEqual(report["sampling"], "force_argmax")
+        self.assertEqual(report["page_table"], "fixed")
+        self.assertTrue(Path(report["program_dir"]).is_dir())
+        self.assertEqual(report["gate_status"], "not_evaluated")
+        self.assertFalse(report["correctness_passed"])
+        self.assertFalse(report["quality_passed"])
+
+    def test_default_confirmation_uses_contract_and_passed_gate(self) -> None:
+        context = campaign._context(
+            self.model_path, CONFIG_PATH, "confirmation prompt", 2,
+            None, None, None, "p150a", 0,
+        )
+        evidence = self.root / "gate-evidence.json"
+
+        def gate(**values: object) -> dict[str, object]:
+            evidence.write_text("evidence")
+            return {
+                "status": "passed", "passed": True,
+                "correctness_passed": True, "quality_passed": True,
+                "evidence_path": str(evidence), "evidence_sha256": "a" * 64,
+                "cache_identity": {"candidate_fingerprint": values["candidate_fingerprint"]},
+            }
+
+        evaluator = _make_evaluator(
+            self.root / "confirmation-measurement", context, candidate_gate_runner=gate
+        )
+        candidate = SearchCandidate(space=context["base_space"])
+        policy = ConfirmationPolicy()
+        with _fake_profile_process():
+            full = evaluator.full_model_evaluator(candidate)
+            reports = {
+                "incumbent": tuple(
+                    evaluator.confirmation_runner(candidate, "incumbent", index, policy.measurement_contract)
+                    for index in range(3)
+                ),
+                "challenger": tuple(
+                    evaluator.confirmation_runner(candidate, "challenger", index, policy.measurement_contract)
+                    for index in range(3)
+                ),
+            }
+        candidate_config = evaluator.candidate_config(candidate, policy.measurement_contract)
+        confirmation = confirm_matched_ab(
+            incumbent=ConfirmationArm(
+                label="incumbent", candidate=candidate_config,
+                reports=reports["incumbent"],
+                correctness_passed=full["correctness_passed"],
+                quality_passed=full["quality_passed"],
+            ),
+            challenger=ConfirmationArm(
+                label="challenger", candidate=candidate_config,
+                reports=reports["challenger"],
+                correctness_passed=full["correctness_passed"],
+                quality_passed=full["quality_passed"],
+            ),
+            policy=policy,
+        )
+        self.assertTrue(full["correctness_passed"])
+        self.assertTrue(full["quality_passed"])
+        self.assertTrue(all(item["reports_valid"] for item in confirmation["arms"].values()))
+        self.assertTrue(confirmation["passed"])
+
+    def test_failed_quality_gate_blocks_faster_challenger(self) -> None:
+        context = campaign._context(
+                self.model_path, CONFIG_PATH, "gate prompt", 2,
+                None, None, None, "p150a", 0,
+        )
+        candidate = SearchCandidate(space=context["base_space"])
+        policy = ConfirmationPolicy()
+        candidate_config = _make_evaluator(
+            self.root / "gate-measurement", context
+        ).candidate_config(candidate, policy.measurement_contract)
+        reports = tuple(
+            {
+                "status": "passed", "passed": True,
+                "warmup": 5, "iterations": 100,
+                "execution_mode": "trace", "runtime_input_mode": "persistent",
+                "after_prefill": True,
+                "tokens_per_second_per_user": 100.0 + (5.0 if label == "challenger" else 0.0),
+            }
+            for label in ("incumbent", "challenger")
+            for _ in range(3)
+        )
+        result = confirm_matched_ab(
+            incumbent=ConfirmationArm(
+                label="incumbent", candidate=candidate_config, reports=reports[:3],
+                correctness_passed=True, quality_passed=True,
+            ),
+            challenger=ConfirmationArm(
+                label="challenger", candidate=candidate_config, reports=reports[3:],
+                correctness_passed=False, quality_passed=False,
+            ),
+            policy=policy,
+        )
+        self.assertEqual(result["relative_improvement"], 0.05)
+        self.assertFalse(result["promotion"]["promoted"])
+        self.assertEqual(result["promotion"]["selected_arm"], "incumbent")
+        self.assertIn("confirmation.challenger.correctness", result["failed_checks"])
+
+    def test_missing_official_root_fails_before_campaign_dispatch(self) -> None:
+        arguments = [
+            "diagnose", "--stage", "autotune", "--model-path", str(self.model_path),
+            "--config", str(CONFIG_PATH), "--prompt", "preflight", "--layers", "2",
+            "--out", str(self.out),
+        ]
+        with patch.object(campaign, "run_autotune_campaign") as run_campaign:
+            self.assertEqual(main(arguments), 1)
+        run_campaign.assert_not_called()
+        report = json.loads(self.out.read_text())
+        self.assertIn("--official-tt-metal-root", report["error"])
+
+    def test_candidate_quality_gate_uses_acceptance_checks_and_cache_identity(self) -> None:
+        official = self.root / "official"
+        reference = official / candidate_quality_gate.DEFAULT_REFERENCE
+        reference.parent.mkdir(parents=True)
+        reference.write_bytes(b"reference")
+        gate_root = self.root / "gates"
+        candidate = SimpleNamespace(runtime_commit="runtime")
+        fingerprint = "b" * 64
+        values = {
+            "candidate": candidate, "candidate_fingerprint": fingerprint,
+            "program_dir": self.root / "program", "model_path": self.model_path,
+            "tokenizer_path": self.model_path, "layers": 2, "batch_size": 32,
+            "prefill_len": 256, "cache_len": 1024, "device": "p150a", "device_id": 0,
+        }
+        acceptance = {
+            "status": "passed", "passed": True,
+            "checks": {
+                name: True for name in (
+                    *candidate_quality_gate.CORRECTNESS_CHECKS,
+                    "official_buddy_min_user_greedy_agreement",
+                )
+            },
+        }
+        with patch.object(candidate_quality_gate, "_git_commit", return_value="official"), patch.object(
+            candidate_quality_gate, "run_performance_correctness",
+            return_value={"status": "passed", "passed": True, "acceptance": acceptance},
+        ):
+            gate = candidate_quality_gate.build_candidate_quality_gate(
+                official_tt_metal_root=official, official_python=None,
+                accuracy_tokens=500, gate_root=gate_root,
+            )
+            first = gate(**values)
+            second = gate(**values)
+        self.assertTrue(first["passed"])
+        self.assertTrue(first["correctness_passed"])
+        self.assertTrue(first["quality_passed"])
+        self.assertFalse(first["resumed"])
+        self.assertTrue(second["resumed"])
+        self.assertEqual(first["cache_identity"], second["cache_identity"])
 
     def test_mock_measurement_runs_active_search_and_confirmation(self) -> None:
         calls: dict[str, list[object]] = {
@@ -312,6 +492,51 @@ class CanonicalAutotuneCampaignTest(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertFalse(report["passed"])
         self.assertIn("requires --prompt", report["error"])
+
+def _make_evaluator(
+    root: Path,
+    context: dict[str, object],
+    candidate_gate_runner=None,
+) -> ModelCandidateEvaluator:
+    return ModelCandidateEvaluator(
+        context={
+            **context,
+            "prompt": "test evaluator prompt",
+            "tokenizer_path": None,
+            "runtime_commit": "phase5.1-test-runtime",
+        },
+        output_root=root,
+        candidate_spaces={},
+        candidate_gate_runner=candidate_gate_runner,
+    )
+
+
+@contextmanager
+def _fake_profile_process():
+    def write_bundle(**kwargs: object) -> None:
+        Path(kwargs["out_dir"]).mkdir(parents=True, exist_ok=True)
+
+    def run(command: list[str], **_kwargs: object) -> SimpleNamespace:
+        output = Path(command[command.index("--out") + 1])
+        output.parent.mkdir(parents=True, exist_ok=True)
+        value = 105.0 if "challenger" in output.as_posix() else 100.0
+        output.write_text(
+            json.dumps({
+                "status": "passed", "passed": True,
+                "decode_step_ms_p50": 10.0,
+                "decode_step_ms_mean": 10.0,
+                "decode_step_ms_max": 10.0,
+                "decode_step_ms_samples": [10.0] * 5,
+                "tokens_per_second_per_user": value,
+            })
+        )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with (
+        patch.object(model_evaluator, "write_decode_program_bundle", write_bundle),
+        patch.object(model_evaluator.subprocess, "run", run),
+    ):
+        yield
 
 
 def _passed_result(value: float) -> dict[str, object]:

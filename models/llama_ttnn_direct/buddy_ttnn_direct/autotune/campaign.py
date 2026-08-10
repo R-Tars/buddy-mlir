@@ -11,7 +11,7 @@ from .confirmation import ConfirmationPolicy
 from .legality import DeviceDescriptor, WorkloadSpec
 from .matmul import MATMUL_OPERATORS, enumerate_matmul_programs, rank_matmul_measurement_candidates
 from .measurement import file_sha256, prompt_corpus_sha256, resolve_runtime_commit
-from .model_evaluator import ModelCandidateEvaluator
+from .model_evaluator import CandidateGateRunner, ModelCandidateEvaluator
 from .schema import ExecutionContract, PrecisionContract, sha256_json
 from .sdpa import enumerate_sdpa_programs, rank_sdpa_measurement_candidates
 from .search import (
@@ -57,6 +57,7 @@ def run_autotune_campaign(
     callbacks: SearchCallbacks | None = None,
     measurement_runner: Callable[..., Mapping[str, Any]] | None = None,
     active_full_model_runner: Callable[..., Mapping[str, Any]] | None = None,
+    candidate_gate_runner: CandidateGateRunner | None = None,
 ) -> dict[str, Any]:
     """Compose canonical schema-v2 enumeration, measurement, and search APIs."""
     output = Path(out)
@@ -122,6 +123,7 @@ def run_autotune_campaign(
             output_root=root / "model_measurements",
             candidate_spaces=enumerations["candidate_spaces"],
             resume=resume,
+            candidate_gate_runner=candidate_gate_runner,
         )
         active = run_active_measurement_scheduler(
             candidate_groups=enumerations["active_inputs"]["groups"],
@@ -439,6 +441,11 @@ def _finish(
     report.update(status=status, passed=bool(passed))
     if search is not None:
         report["search_report"] = search
+        report["pipeline_stage_status"] = {
+            str(stage.get("name")): str(stage.get("status", "unknown"))
+            for stage in search.get("stages", [])
+            if isinstance(stage, Mapping) and stage.get("name")
+        }
         report["hierarchical_search_report"] = str(
             Path(report["candidates_dir"]) / "hierarchical" / "search_report.json"
         )

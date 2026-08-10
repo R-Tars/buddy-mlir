@@ -2121,7 +2121,7 @@ class _HierarchicalSearchOrchestrator:
             ': "${MODEL:?set MODEL to the Hugging Face model directory}"\n'
             ': "${PROGRAM:?set PROGRAM to the output program directory}"\n'
             "python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli "
-            f'build-program --model-path "$MODEL" --config "{best_config_path}" '
+            f'build --model-path "$MODEL" --config "{best_config_path}" '
             '--out-dir "$PROGRAM"\n',
         )
         reproduce_path.chmod(0o755)

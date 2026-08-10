@@ -418,8 +418,20 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "autotune":
         _require_args(args, "model_path", "config")
+        candidate_gate_runner = None
         if not args.dry_run:
-            _require_args(args, "prompt")
+            _require_args(args, "prompt", "official_tt_metal_root")
+            from .candidate_quality_gate import build_candidate_quality_gate
+
+            candidates_root = args.candidates_dir or (
+                args.out.parent / f"{args.out.stem}_candidates"
+            )
+            candidate_gate_runner = build_candidate_quality_gate(
+                official_tt_metal_root=args.official_tt_metal_root,
+                official_python=args.official_python,
+                accuracy_tokens=args.accuracy_tokens,
+                gate_root=candidates_root / "quality_gates",
+            )
         from ..autotune.campaign import run_autotune_campaign
 
         return run_autotune_campaign(
@@ -442,6 +454,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             min_relative_improvement=args.min_relative_improvement,
             dry_run=args.dry_run,
             resume=not args.no_resume,
+            candidate_gate_runner=candidate_gate_runner,
         )
     raise ValueError(f"unsupported diagnose stage: {args.stage}")
 

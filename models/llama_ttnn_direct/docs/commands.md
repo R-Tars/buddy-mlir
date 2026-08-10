@@ -398,6 +398,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --stage autotune \
   --model-path "$MODEL" \
   --config "$CONFIG" \
+  --official-tt-metal-root "$OFFICIAL_TT_METAL_ROOT" \
   --prompt "Hello from TTNN Direct" \
   --layers 32 \
   --batch-size 32 \
