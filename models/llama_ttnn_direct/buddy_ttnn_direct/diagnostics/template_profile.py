@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import importlib
 import json
+import math
+import statistics
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from ..autotune.microbench import summarize_samples
-from ..autotune.schema import MeasurementContract
 from ..runtime.reports import write_report
 from ..smoke_mlp import (
     MLP_SMOKE_OPS, NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError, managed_mlp_device,
@@ -19,6 +20,30 @@ PCC_THRESHOLD = 0.99
 TRACE_APIS = ("begin_trace_capture", "end_trace_capture", "execute_trace", "release_trace")
 
 
+@dataclass(frozen=True)
+class ProfileMeasurementContract:
+    warmup: int
+    iterations: int
+
+    def __post_init__(self) -> None:
+        if self.warmup < 0:
+            raise ValueError("measurement warmup must be non-negative")
+        if self.iterations <= 0:
+            raise ValueError("measurement iterations must be positive")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "kind": "candidate_search",
+            "scope": "post_prefill_steady_decode",
+            "metric": "tokens_per_second_per_user",
+            "warmup": self.warmup,
+            "iterations": self.iterations,
+            "repetitions": 1,
+            "synchronize_device": True,
+        }
+
+
 def profile_template(
     *, template: str, config_path: str | Path, out: str | Path,
     warmup: int, iterations: int, trace: bool = False, dry_run: bool = False,
@@ -27,7 +52,7 @@ def profile_template(
 ) -> dict[str, Any]:
     if template != "mlp_decode":
         raise ValueError("template-profile only supports template=mlp_decode")
-    contract = MeasurementContract(warmup=warmup, iterations=iterations)
+    contract = ProfileMeasurementContract(warmup=warmup, iterations=iterations)
     shape = _shape(json.loads(Path(config_path).read_text()))
     report = {
         "schema_version": 3, "template": template, **shape,
@@ -67,7 +92,7 @@ def profile_template(
     return _emit(out, report)
 
 def _measure(ttnn: Any, torch: Any, device: Any, shape: dict[str, Any],
-             contract: MeasurementContract, trace: bool, dtype_seed: str
+             contract: ProfileMeasurementContract, trace: bool, dtype_seed: str
              ) -> dict[str, Any]:
     execute, measure_pcc = prepare_mlp_smoke_on_device(
         ttnn=ttnn, torch=torch, ttnn_device=device,
@@ -106,7 +131,7 @@ def _measure(ttnn: Any, torch: Any, device: Any, shape: dict[str, Any],
     }
 
 def _trace_measure(ttnn: Any, device: Any, execute: Callable[[], Any],
-                   measure_pcc: Callable[[Any], float], contract: MeasurementContract
+                   measure_pcc: Callable[[Any], float], contract: ProfileMeasurementContract
                    ) -> tuple[list[float] | None, float | None, dict[str, Any], bool]:
     trace_id = None
     error: Exception | None = None
@@ -183,7 +208,7 @@ def _trace_measure(ttnn: Any, device: Any, execute: Callable[[], Any],
     }, fallback_allowed
 
 def _eager_measure(ttnn: Any, device: Any, execute: Callable[[], Any],
-                   contract: MeasurementContract):
+                   contract: ProfileMeasurementContract):
     for _ in range(contract.warmup):
         execute()
         _synchronize(ttnn, device)
@@ -213,8 +238,25 @@ def _synchronize(ttnn: Any, device: Any) -> None:
         synchronize(device)
 
 def _latency(samples: list[float]) -> dict[str, float]:
-    stats = summarize_samples(samples)
-    return {key: float(stats[key]) for key in ("mean", "p50", "p90")}
+    values = sorted(float(sample) for sample in samples)
+    return {
+        "mean": statistics.fmean(values),
+        "p50": _percentile(values, 0.50),
+        "p90": _percentile(values, 0.90),
+    }
+
+
+def _percentile(values: list[float], quantile: float) -> float:
+    if not values:
+        raise ValueError("cannot summarize an empty sample set")
+    if len(values) == 1:
+        return values[0]
+    position = (len(values) - 1) * quantile
+    lower, upper = math.floor(position), math.ceil(position)
+    if lower == upper:
+        return values[lower]
+    weight = position - lower
+    return values[lower] * (1.0 - weight) + values[upper] * weight
 
 def _failed(report: dict[str, Any], status: str, message: str, error: Exception):
     report.update(

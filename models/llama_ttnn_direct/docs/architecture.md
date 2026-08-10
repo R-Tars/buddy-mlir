@@ -183,7 +183,8 @@ post-prefill full decode trace with persistent inputs, fixed page tables, and
 force-argmax sampling. Candidate fingerprints include these contracts plus the
 semantic graph, model config, weights/recipe identity, runtime commit, device,
 workload, tunable state, and measurement counts. The legacy layered runner is
-an adapter to this contract and cannot search dtype or fidelity fields.
+gone; the canonical campaign composes schema-v2 enumeration, active
+measurement, hierarchical search, and matched A/B confirmation directly.
 
 `autotune/space.py` defines the lossless schema-v2 execution space: template
 choices, typed matmul and SDPA descriptors, memory placement and sharding,

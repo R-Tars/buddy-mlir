@@ -83,8 +83,6 @@ def add_diagnose_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--page-block-size", type=int, default=32)
     parser.add_argument("--benchmark-timeout", type=float, default=3600.0)
     parser.add_argument("--address-space-limit-gb", type=float, default=95.0)
-    parser.add_argument("--confirm-warmup", type=int, default=5)
-    parser.add_argument("--confirm-iterations", type=int, default=50)
     parser.add_argument("--min-relative-improvement", type=float, default=0.01)
     parser.add_argument("--no-resume", action="store_true")
 
@@ -422,9 +420,9 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         _require_args(args, "model_path", "config")
         if not args.dry_run:
             _require_args(args, "prompt")
-        from .autotune import run_layered_autotune
+        from ..autotune.campaign import run_autotune_campaign
 
-        return run_layered_autotune(
+        return run_autotune_campaign(
             model_path=args.model_path,
             config_path=args.config,
             out=args.out,
@@ -440,8 +438,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             dtype_seed=args.dtype_seed,
             warmup=args.warmup,
             iterations=args.iterations,
-            confirm_warmup=args.confirm_warmup,
-            confirm_iterations=args.confirm_iterations,
+            repetitions=args.repetitions,
             min_relative_improvement=args.min_relative_improvement,
             dry_run=args.dry_run,
             resume=not args.no_resume,

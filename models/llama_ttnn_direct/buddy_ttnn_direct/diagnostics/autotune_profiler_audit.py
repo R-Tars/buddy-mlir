@@ -12,8 +12,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ..autotune.schema import sha256_json
-
 SCHEMA_VERSION = 1
 REGION_ORDER = (
     "embedding",
@@ -120,6 +118,11 @@ _OPERATOR_CONFIG_KEYS = {
 
 class ProfilerAuditError(RuntimeError):
     pass
+
+
+def _sha256_json(value: Any) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def run_autotune_profiler_audit(
@@ -292,9 +295,9 @@ def build_autotune_profiler_audit(
                     "token_update"
                 ),
                 "precision": precision_contract,
-                "precision_contract_sha256": sha256_json(precision_contract),
+                "precision_contract_sha256": _sha256_json(precision_contract),
                 "trace_identity": trace_identity,
-                "trace_identity_sha256": sha256_json(trace_identity),
+                "trace_identity_sha256": _sha256_json(trace_identity),
             },
             "trace_selection": selection,
             "clock_normalization": normalization,

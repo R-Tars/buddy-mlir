@@ -405,19 +405,18 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --cache-len 1024 \
   --warmup 5 \
   --iterations 10 \
-  --confirm-warmup 5 \
-  --confirm-iterations 50 \
+  --repetitions 3 \
   --min-relative-improvement 0.01 \
   --candidates-dir "$AUTOTUNE/candidates" \
   --out "$AUTOTUNE/report.json"
 ```
 
-Hardware candidates run in isolated subprocesses and are resumable by state
-fingerprint. The default `1%` minimum relative improvement applies both during
-each short-measurement level and to matched 5/50 confirmations of the
-provisional winner and root incumbent. This prevents a noisy short-run delta
-from replacing the default. Add `--dry-run` to generate the four unique
-candidate bundles without opening a device.
+Hardware candidates run in isolated subprocesses and are resumable by the
+schema-v2 candidate fingerprint. Legal MatMul and SDPA candidates first pass
+active successive halving; hierarchical search then composes template,
+operator, and layout proposals. The default `1%` minimum relative improvement
+is applied by the final matched `5x100x3` A/B confirmation. Add `--dry-run` to
+serialize the canonical search plan and contracts without opening a device.
 
 ### Paper Artifact
 

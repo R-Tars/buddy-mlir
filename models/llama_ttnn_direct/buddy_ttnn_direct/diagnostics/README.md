@@ -72,7 +72,7 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --out "$REPORTS/diagnostics/depth_sweep.json"
 ```
 
-Layered autotune dry-run or P150A execution:
+Canonical semantic autotune dry-run or P150A execution:
 
 ```bash
 python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
@@ -86,16 +86,17 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
   --cache-len 1024 \
   --warmup 5 \
   --iterations 10 \
-  --confirm-warmup 5 \
-  --confirm-iterations 50 \
+  --repetitions 3 \
   --candidates-dir "$AUTOTUNE/candidates" \
   --out "$AUTOTUNE/report.json"
 ```
 
-Autotune checks device ownership before each unique candidate and runs every
-hardware profile in a separate process so 8B parameter mappings and TTNN state
-are released between candidates. Add `--dry-run` to build all candidate bundles
-without opening a device.
+The command dispatches lazily to `buddy_ttnn_direct/autotune/campaign.py`.
+The campaign keeps schema-v2 candidate identity and frozen precision/execution
+contracts, measures legal operator proposals with the canonical active
+scheduler, and uses hierarchical search followed by matched 5x100x3
+confirmation. Hardware profile evaluations run in isolated subprocesses.
+Add `--dry-run` to serialize the search plan without opening a device.
 
 Full decode execution-graph comparison:
 
