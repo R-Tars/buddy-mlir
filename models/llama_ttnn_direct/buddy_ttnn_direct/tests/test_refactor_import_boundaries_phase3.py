@@ -19,6 +19,9 @@ AUTOTUNE_SMOKE_DEBT = {
     ("autotune/layout_campaign.py", f"{PACKAGE}.smoke_mlp"),
     ("autotune/layout_graph.py", f"{PACKAGE}.smoke_mlp"),
 }
+DIAGNOSTICS_AUTOTUNE_ENTRYPOINT = {
+    ("diagnostics/cli.py", f"{PACKAGE}.autotune.campaign"),
+}
 REMOVED = ("generate.py", "runtime_inputs.py", "validation.py", "codegen/python_ttnn.py", "decode_loop.py", "profile_template.py")
 class Phase3ImportBoundaryTest(unittest.TestCase):
     def test_product_modules_have_no_new_reverse_dependencies(self) -> None:
@@ -67,6 +70,42 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
                         unexpected.append(edge)
         self.assertEqual(unexpected, [])
         self.assertEqual(observed, AUTOTUNE_SMOKE_DEBT)
+
+    def test_semantic_autotune_is_the_only_tuning_owner(self) -> None:
+        self.assertFalse((ROOT / "diagnostics" / "autotune").exists())
+        reverse_edges = []
+        for path in _python_files(("autotune",)):
+            for imported in _imports(path):
+                if _domain(imported) == "diagnostics":
+                    reverse_edges.append((path.relative_to(ROOT).as_posix(), imported))
+        self.assertEqual(reverse_edges, [])
+
+        observed, unexpected = set(), []
+        for path in _python_files(("diagnostics",)):
+            relative = path.relative_to(ROOT).as_posix()
+            for imported in _imports(path):
+                if _domain(imported) != "autotune":
+                    continue
+                edge = (relative, imported)
+                observed.add(edge)
+                if edge not in DIAGNOSTICS_AUTOTUNE_ENTRYPOINT:
+                    unexpected.append(edge)
+        self.assertEqual(unexpected, [])
+        self.assertEqual(observed, DIAGNOSTICS_AUTOTUNE_ENTRYPOINT)
+
+    def test_retired_layered_tuner_symbols_are_absent(self) -> None:
+        markers = (
+            "AUTO" + "TUNE_LEVELS",
+            "run_" + "layered_autotune",
+            "_select_" + "winner",
+            "_confirmation_" + "promotion_decision",
+        )
+        violations = []
+        for path in sorted(ROOT.rglob("*.py")):
+            text = path.read_text()
+            if any(marker in text for marker in markers):
+                violations.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(violations, [])
     def test_phase3_facades_are_absent(self) -> None:
         self.assertEqual([name for name in REMOVED if (ROOT / name).exists()], [])
 
