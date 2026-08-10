@@ -132,7 +132,7 @@ device, execute model stages, or import `buddy_ttnn_direct/diagnostics/`.
 - `performance.py`: baseline and milestone summaries.
 - `evidence.py`: compact reproducibility/evidence manifests.
 - `runtime.py`, `profiling.py`, `tensorization.py`: report contract checks.
-- `attention.py`, `depth.py`, `autotune.py`: diagnostics report checks.
+- `attention.py`, `depth.py`: diagnostics report checks.
 - `config.py`, `artifacts.py`: config coverage and artifact checks.
 
 `buddy_ttnn_direct/correctness/` owns numerical reference artifacts and
@@ -166,13 +166,12 @@ not load the legacy workflow.
 
 ### Diagnostics
 
-Smoke, sweep, layered autotune, and legacy decode workflows are development
-tools. The visible CLI exposes them only through `diagnose --stage ...`; their
-tests live under `tests_diagnostics/` and are excluded from the default product
-suite. `diagnostics/cli.py` is loaded only when `diagnose` executes. Current
-autotune runs one axis at a time with isolated post-prefill
-steady-decode subprocesses. Historical phase-era search was removed after the
-semantic autotuner became canonical.
+Smoke, sweep, and legacy decode workflows are development tools. The visible
+CLI exposes them only through `diagnose --stage ...`; their tests live under
+`tests_diagnostics/` and are excluded from the default product suite.
+`diagnostics/cli.py` is loaded only when `diagnose` executes and exposes the
+autotune diagnostic entrypoint without owning tuning semantics. All tuning
+semantics belong to the canonical `buddy_ttnn_direct/autotune/` package.
 
 ### Semantic autotune contracts
 
