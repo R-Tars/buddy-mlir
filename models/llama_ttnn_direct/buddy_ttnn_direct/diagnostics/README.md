@@ -185,7 +185,8 @@ the normal autoregressive generate path.
 
 Phase-era validation orchestration was retired after
 `build`/`generate`/`profile`/`validate`/`inspect`/`diagnose` became the
-supported surfaces.
+supported surfaces. Shared reports are limited to current product validation
+contracts; each diagnose stage owns its stage-specific output.
 
 ## Tests
 

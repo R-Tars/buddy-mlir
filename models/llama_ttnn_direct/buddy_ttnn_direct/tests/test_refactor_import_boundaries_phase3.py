@@ -26,6 +26,19 @@ RETIRED_VALIDATION_MODULES = (
     f"{PACKAGE}.diagnostics.validation_workflow",
     f"{PACKAGE}.diagnostics.legacy_validation",
 )
+RETIRED_REPORT_HELPERS = tuple(
+    f"{PACKAGE}.reports.{name}"
+    for name in (
+        "artifacts",
+        "attention",
+        "config",
+        "depth",
+        "evidence",
+        "performance",
+        "runtime_diagnostics",
+        "tensorization",
+    )
+)
 REMOVED = ("generate.py", "runtime_inputs.py", "validation.py", "codegen/python_ttnn.py", "decode_loop.py", "profile_template.py")
 class Phase3ImportBoundaryTest(unittest.TestCase):
     def test_product_modules_have_no_new_reverse_dependencies(self) -> None:
@@ -120,6 +133,22 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
                 if any(
                     imported == retired or imported.startswith(f"{retired}.")
                     for retired in RETIRED_VALIDATION_MODULES
+                ):
+                    violations.append(
+                        (path.relative_to(ROOT).as_posix(), imported)
+                    )
+        self.assertEqual(violations, [])
+
+    def test_phase7_orphan_report_helpers_are_absent(self) -> None:
+        for retired in RETIRED_REPORT_HELPERS:
+            filename = f"{retired.rsplit('.', 1)[-1]}.py"
+            self.assertFalse((ROOT / "reports" / filename).exists())
+        violations = []
+        for path in sorted(ROOT.rglob("*.py")):
+            for imported in _imports(path):
+                if any(
+                    imported == retired or imported.startswith(f"{retired}.")
+                    for retired in RETIRED_REPORT_HELPERS
                 ):
                     violations.append(
                         (path.relative_to(ROOT).as_posix(), imported)

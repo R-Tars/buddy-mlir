@@ -124,16 +124,14 @@ package-root generate compatibility facade.
 
 ### Reports and validation
 
-`buddy_ttnn_direct/reports/` owns report-only logic. The modules do not open a
-device, execute model stages, or import `buddy_ttnn_direct/diagnostics/`.
+`buddy_ttnn_direct/reports/` owns the compact product validation contract. The
+modules do not open a device, execute model stages, or import
+`buddy_ttnn_direct/diagnostics/`.
 
+- `contracts.py`: constants shared by current product and diagnostic callers.
 - `schema.py`: shared field, path, number, and acceptance helpers.
+- `runtime.py`, `profiling.py`: current report contract checks.
 - `validation.py`: compact product validation suites.
-- `performance.py`: baseline and milestone summaries.
-- `evidence.py`: compact reproducibility/evidence manifests.
-- `runtime.py`, `profiling.py`, `tensorization.py`: report contract checks.
-- `attention.py`, `depth.py`: diagnostics report checks.
-- `config.py`, `artifacts.py`: config coverage and artifact checks.
 
 `buddy_ttnn_direct/correctness/` owns numerical reference artifacts and
 comparison metrics. HF reference capture runs on CPU, supports a truncated

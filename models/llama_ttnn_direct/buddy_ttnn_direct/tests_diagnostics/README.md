@@ -1,8 +1,8 @@
 # TTNN Direct diagnostics tests
 
-This directory contains legacy validation, smoke, sweep, search, and
-component-level bring-up tests. They are intentionally excluded from the
-default product test command:
+This directory contains smoke, sweep, environment, search, and component-level
+bring-up tests. They are intentionally excluded from the default product test
+command:
 
 ```bash
 pytest models/llama_ttnn_direct/buddy_ttnn_direct/tests -q
