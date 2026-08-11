@@ -9,11 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from ..autotune.microbench import MLP_SMOKE_OPS, prepare_mlp_smoke_on_device
+from ..runtime.device import managed_ttnn_device
+from ..runtime.errors import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
 from ..runtime.reports import write_report
-from ..smoke_mlp import (
-    MLP_SMOKE_OPS, NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError, managed_mlp_device,
-    prepare_mlp_smoke_on_device,
-)
 
 MLP_PROFILE_OPS = [{"name": name, "count": 1} for name in ("linear.gate", "linear.up", "mul.silu", "linear.down")]
 PCC_THRESHOLD = 0.99
@@ -61,7 +60,7 @@ def profile_template(
         "dry_run": dry_run, "dtype_seed": dtype_seed, "ops": MLP_PROFILE_OPS,
         "ttnn_ops": list(MLP_SMOKE_OPS),
         "autotune_measurement_contract": contract.to_dict(),
-        "worker": "smoke_mlp.prepare_mlp_smoke_on_device",
+        "worker": "autotune.microbench.prepare_mlp_smoke_on_device",
         "tensor_lifecycle": {"persistent_tensor_reuse": True, "tensor_recreation_per_iteration": False},
     }
     if dry_run:
@@ -81,7 +80,7 @@ def profile_template(
     except ImportError as error:
         return _emit(out, _failed(report, "missing_torch", "torch is required.", error))
     try:
-        with managed_mlp_device(ttnn, device_id) as device:
+        with managed_ttnn_device(ttnn, device_id) as device:
             report.update(_measure(ttnn, torch, device, shape, contract, trace, dtype_seed))
         report["device_lifecycle"] = {"open_count": 1, "close_count": 1,
             "shared_across_warmup_and_measurement": True}

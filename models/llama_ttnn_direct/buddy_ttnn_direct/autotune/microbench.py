@@ -37,6 +37,81 @@ _WORKER_ENTRYPOINT = (
 )
 _GRANULARITIES = {"op", "region"}
 
+# Shared by the canonical MLP microbenchmark and template-profile diagnostics.
+# Keeping this probe here prevents autotune from depending on diagnostics.
+MLP_SMOKE_OPS = ["linear", "linear", "mul_silu", "linear"]
+
+
+def prepare_mlp_smoke_on_device(
+    *,
+    ttnn: Any,
+    torch: Any,
+    ttnn_device: Any,
+    batch_size: int,
+    hidden_size: int,
+    intermediate_size: int,
+    dtype_seed: str,
+    seed: int,
+) -> tuple[Callable[[], Any], Callable[[Any], float]]:
+    """Prepare persistent MLP tensors and return execute/PCC callbacks."""
+    torch.manual_seed(seed)
+    torch_dtype = torch.bfloat16 if dtype_seed == "bf16" else torch.float32
+    hidden = torch.randn((batch_size, 1, hidden_size), dtype=torch_dtype).to(torch.float32)
+    gate_weight = torch.randn((hidden_size, intermediate_size), dtype=torch_dtype).to(torch.float32)
+    up_weight = torch.randn((hidden_size, intermediate_size), dtype=torch_dtype).to(torch.float32)
+    down_weight = torch.randn((intermediate_size, hidden_size), dtype=torch_dtype).to(torch.float32)
+    reference = torch.nn.functional.silu(hidden @ gate_weight)
+    reference = reference * (hidden @ up_weight)
+    reference = reference @ down_weight
+    dtype = _mlp_ttnn_dtype(ttnn, dtype_seed)
+    layout = getattr(ttnn, "TILE_LAYOUT", None)
+    tensors = [
+        ttnn.from_torch(value, dtype=dtype, layout=layout, device=ttnn_device)
+        for value in (hidden, gate_weight, up_weight, down_weight)
+    ]
+
+    def execute() -> Any:
+        hidden_tt, gate_weight_tt, up_weight_tt, down_weight_tt = tensors
+        gate = ttnn.linear(hidden_tt, gate_weight_tt)
+        up = ttnn.linear(hidden_tt, up_weight_tt)
+        mid = _mlp_mul_silu(ttnn, gate, up)
+        return ttnn.linear(mid, down_weight_tt)
+
+    def pcc(output: Any) -> float:
+        actual = ttnn.to_torch(output).to(torch.float32)
+        return mlp_pearson_corr(torch, reference, actual)
+
+    return execute, pcc
+
+
+def _mlp_mul_silu(ttnn: Any, gate: Any, up: Any) -> Any:
+    kwargs: dict[str, Any] = {}
+    unary_with_param = getattr(ttnn, "UnaryWithParam", None)
+    unary_op_type = getattr(ttnn, "UnaryOpType", None)
+    if unary_with_param is not None and unary_op_type is not None:
+        silu = getattr(unary_op_type, "SILU", None)
+        if silu is not None:
+            kwargs["input_tensor_a_activations"] = [unary_with_param(silu)]
+    mul = getattr(ttnn, "mul", None) or getattr(ttnn, "multiply", None)
+    if mul is None:
+        raise AttributeError("ttnn must provide mul or multiply")
+    return mul(gate, up, **kwargs)
+
+
+def _mlp_ttnn_dtype(ttnn: Any, dtype_seed: str) -> Any:
+    return getattr(ttnn, "bfloat16", None) if dtype_seed == "bf16" else getattr(ttnn, "float32", None)
+
+
+def mlp_pearson_corr(torch: Any, expected: Any, actual: Any) -> float:
+    lhs = expected.reshape(-1).to(torch.float32)
+    rhs = actual.reshape(-1).to(torch.float32)
+    lhs = lhs - torch.mean(lhs)
+    rhs = rhs - torch.mean(rhs)
+    denom = torch.sqrt(torch.sum(lhs * lhs) * torch.sum(rhs * rhs))
+    if float(denom) == 0.0:
+        return 0.0
+    return float(torch.sum(lhs * rhs) / denom)
+
 
 class MicrobenchmarkError(ValueError):
     """Raised when a benchmark request or isolated worker result is invalid."""

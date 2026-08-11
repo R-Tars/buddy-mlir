@@ -220,7 +220,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             "hidden_size",
             "intermediate_size",
         )
-        from ..smoke_mlp import run_smoke_mlp
+        from .mlp import run_smoke_mlp
 
         return run_smoke_mlp(
             out=args.out,
@@ -242,7 +242,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
             "num_kv_heads",
             "head_dim",
         )
-        from ..smoke_attention_primitive import run_smoke_attention_primitive
+        from .attention_primitive import run_smoke_attention_primitive
 
         return run_smoke_attention_primitive(
             out=args.out,
@@ -260,7 +260,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "attention-layer":
         _require_args(args, "program_dir")
-        from ..smoke_attention_layer import run_smoke_attention_layer
+        from .attention_layer import run_smoke_attention_layer
 
         return run_smoke_attention_layer(
             out=args.out,
@@ -275,13 +275,16 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "prefill":
         _require_args(args, "program_dir")
-        from ..smoke_prefill import run_smoke_prefill
+        from .prefill import run_smoke_prefill
 
         return run_smoke_prefill(
             out=args.out,
             program_dir=args.program_dir,
             layers=args.layers,
             prefill_len=args.prefill_len,
+            model_path=args.model_path,
+            prompt=args.prompt,
+            tokenizer_path=args.tokenizer_path,
             device=args.device,
             device_id=args.device_id,
             batch_size=args.batch_size,
@@ -291,7 +294,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "decode-step":
         _require_args(args, "program_dir")
-        from ..smoke_single_layer_decode import run_smoke_decode_step
+        from .decode_step import run_smoke_decode_step
 
         return run_smoke_decode_step(
             out=args.out,
@@ -311,7 +314,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "decode-shell":
         _require_args(args, "program_dir")
-        from ..smoke_decode_shell import run_smoke_decode_shell
+        from .decode_shell import run_smoke_decode_shell
 
         return run_smoke_decode_shell(
             out=args.out,
@@ -330,7 +333,7 @@ def run_stage(args: argparse.Namespace) -> dict[str, object]:
         )
     if args.stage == "decode-step-profile":
         _require_args(args, "program_dir")
-        from ..smoke_single_layer_decode import profile_decode_step
+        from .decode_step import profile_decode_step
 
         return profile_decode_step(
             out=args.out,

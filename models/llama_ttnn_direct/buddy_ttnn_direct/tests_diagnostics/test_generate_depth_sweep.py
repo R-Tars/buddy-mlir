@@ -11,23 +11,17 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.generate_depth_sweep
     _generate_record,
     run_generate_depth_sweep,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_generate_dryrun import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.fakes import (
     _make_generate_fake_ttnn,
+    _fake_torch,
+    _fake_tokenizer_module,
+    _write_fake_model_config,
+    _write_template_config,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_parameters_tensorizer import (
     _fake_torch_and_safetensors,
     _fake_weight_specs,
     _write_fake_model_weights,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
-    _fake_torch,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_decode_shell import (
-    _write_fake_model_config,
-    _write_template_config,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_single_layer_decode import (
-    _fake_tokenizer_module,
 )
 
 

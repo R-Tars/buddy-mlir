@@ -2,67 +2,31 @@ from __future__ import annotations
 
 import importlib
 import json
-import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from .runtime_environment import collect_ttnn_environment
-from .runtime.plans import (
-    prefill_op_sequence as _runtime_prefill_op_sequence,
-    prefill_plan as _runtime_prefill_plan,
+from ..runtime_environment import collect_ttnn_environment
+from ..runtime.plans import decode_step_plan as _runtime_decode_step_plan
+from ..runtime.plans import prefill_plan as _runtime_prefill_plan
+from ..runtime.prefill import run_prefill_prompt as _runtime_run_prefill_prompt
+from ..runtime.reports import planned_cache_population as _planned_cache_population
+from ..runtime.session import build_runtime_session as _build_runtime_session
+
+from ..runtime.errors import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
+from ..runtime.device import managed_ttnn_device as _maybe_managed_device
+from ..ttnn_compat import UnsupportedTTNNOp
+from .support import synthetic_tensor_factory as _synthetic_tensor_factory
+from .support import (
+    dtype as _dtype,
+    dry_run_reference as _dry_run_reference,
+    failed_diagnostic_report as _failed_diagnostic_report,
+    generated_model as _load_generated_model,
+    runtime_int_tensor as _runtime_int_tensor,
+    shape as _shape,
+    to_namespace as _to_namespace,
+    write_report as _write_report,
 )
-from .smoke_attention_primitive import _maybe_managed_device
-from .smoke_decode_shell import (
-    _dry_run_reference,
-    _dtype,
-    _dtype_check,
-    _generated_observed_op_sequence,
-    _load_generated_model,
-    _op_sequence_coverage_check,
-    _runtime_int_tensor,
-    _shape,
-    _shape_check,
-    _to_namespace,
-    _value_check,
-)
-from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
-from .smoke_single_layer_decode import (
-    _embedding_weight_shape,
-    _lm_head_split_shapes,
-    _linear_weight_shape,
-    _norm_weight_shape,
-    _synthetic_tensor_factory,
-    _write_report,
-)
-from .ttnn_compat import UnsupportedTTNNOp
-
-
-PREFILL_LAYER_OPS = [
-    "rms_norm.attn",
-    "qkv_linear",
-    "split_query_key_value_heads_prefill",
-    "rotary_embedding_prefill",
-    "scaled_dot_product_attention",
-    "fill_cache.k",
-    "fill_cache.v",
-    "concat_heads_prefill",
-    "o_proj_linear",
-    "residual_add.attn",
-    "rms_norm.mlp",
-    "mlp_gate",
-    "mlp_up",
-    "mul_silu",
-    "mlp_down",
-    "residual_add.mlp",
-]
-
-PREFILL_FINAL_OPS = [
-    "rms_norm.final",
-    "split_lm_head",
-    "argmax_or_sampling",
-]
-
 
 def run_smoke_prefill(
     *,
@@ -70,6 +34,9 @@ def run_smoke_prefill(
     program_dir: str | Path,
     layers: int = 1,
     prefill_len: int | None = None,
+    model_path: str | Path | None = None,
+    prompt: str | None = None,
+    tokenizer_path: str | Path | None = None,
     device: str,
     device_id: int = 0,
     batch_size: int | None = None,
@@ -81,6 +48,7 @@ def run_smoke_prefill(
     parameters: Any | None = None,
     token_ids: Any | None = None,
     kv_cache: Any | None = None,
+    tokenizer_module: Any | None = None,
 ) -> dict[str, Any]:
     program_root = Path(program_dir)
     config = json.loads((program_root / "config.json").read_text())
@@ -101,7 +69,7 @@ def run_smoke_prefill(
     )
     if prefill_len <= 0:
         raise ValueError("prefill_len must be positive")
-    plan = _prefill_plan(
+    plan = _runtime_prefill_plan(
         layers=layer_count,
         batch_size=batch_size,
         prefill_len=prefill_len,
@@ -195,7 +163,38 @@ def run_smoke_prefill(
 
     try:
         with _maybe_managed_device(ttnn, device_id, ttnn_module) as ttnn_device:
-            if parameters is None:
+            runtime_context = None
+            if model_path is not None:
+                if prompt is None:
+                    raise ValueError("prompt is required with model_path")
+                session = _build_runtime_session(
+                    ttnn=ttnn,
+                    torch=torch,
+                    device=ttnn_device,
+                    dtype_seed=dtype_seed,
+                    decode_plan=_runtime_decode_step_plan(
+                        layers=layer_count,
+                        batch_size=batch_size,
+                        cache_len=cache_len,
+                        config=config,
+                    ),
+                    prefill_plan=plan,
+                    program_dir=program_root,
+                    model_path=Path(model_path),
+                    prompt=prompt,
+                    tokenizer_path=tokenizer_path or model_path,
+                    tokenizer_module=tokenizer_module,
+                    config=config,
+                    layer_count=layer_count,
+                    batch_size=batch_size,
+                    cache_len=cache_len,
+                    prefill_len=prefill_len,
+                )
+                runtime_context = session.context
+                tensor_conversion_count = runtime_context.tensor_conversion_count
+                parameter_source = runtime_context.parameter_source
+                input_source = runtime_context.input_source
+            elif parameters is None:
                 assert torch is not None
                 state = _build_synthetic_prefill_state(
                     ttnn=ttnn,
@@ -231,6 +230,7 @@ def run_smoke_prefill(
                 kv_cache=kv_cache,
                 tensor_conversion_count=tensor_conversion_count,
                 plan=plan,
+                runtime_context=runtime_context,
             )
             report.update(
                 {
@@ -307,6 +307,25 @@ def run_smoke_prefill(
     return report
 
 
+class _DiagnosticPrefillContext:
+    """Minimal context adapter required by the canonical prefill runtime."""
+
+    def __init__(self, model: Any, token_ids: Any, kv_cache: Any, prefill_len: int) -> None:
+        self.generated_model = model
+        self.prefill_token_ids = token_ids
+        self.prefill_page_table = None
+        self.kv_cache = kv_cache
+        self.prefill_tokenization = {
+            "effective_token_count": int(prefill_len),
+        }
+
+    def update_kv_cache(self, kv_cache: Any) -> None:
+        self.kv_cache = kv_cache
+
+    def update_decode_token(self, token_ids: Any) -> None:
+        self.token_ids = token_ids
+
+
 def _run_generated_prefill(
     *,
     ttnn: Any,
@@ -319,65 +338,48 @@ def _run_generated_prefill(
     kv_cache: Any,
     tensor_conversion_count: int,
     plan: dict[str, Any],
+    runtime_context: Any | None = None,
 ) -> dict[str, Any]:
-    generated = _load_generated_model(program_dir / "model.py", ttnn)
-    prefill_config = dict(config)
-    prefill_config["num_layers"] = layer_count
-    prefill_config["batch_size"] = int(plan["batch_size"])
-    prefill_config["max_cache_len"] = int(plan["cache_len"])
-    prefill_config["prefill"] = dict(prefill_config.get("prefill") or {})
-    prefill_config["prefill"]["seq_len"] = int(plan["prefill_len"])
-    model = generated.BuddyLlama31TTNN(
-        device=device,
-        parameters=parameters,
-        config=_to_namespace(prefill_config),
-    )
+    if runtime_context is None:
+        generated = _load_generated_model(program_dir / "model.py", ttnn)
+        prefill_config = dict(config)
+        prefill_config.update(
+            num_layers=layer_count,
+            batch_size=int(plan["batch_size"]),
+            max_cache_len=int(plan["cache_len"]),
+        )
+        prefill_config["prefill"] = dict(prefill_config.get("prefill") or {})
+        prefill_config["prefill"]["seq_len"] = int(plan["prefill_len"])
+        model = generated.BuddyLlama31TTNN(
+            device=device,
+            parameters=parameters,
+            config=_to_namespace(prefill_config),
+        )
+        runtime_context = _DiagnosticPrefillContext(
+            model, token_ids, kv_cache, int(plan["prefill_len"])
+        )
+    else:
+        model = runtime_context.generated_model
     model.ops.enable_recording()
-
-    start = time.perf_counter()
-    token, kv_cache, cache_reports = model.prefill_prompt(
-        token_ids,
-        kv_cache,
-        valid_seq_len=int(plan["prefill_len"]),
-    )
-    synchronize = getattr(ttnn, "synchronize_device", None)
-    if callable(synchronize):
-        synchronize(device)
-    latency_ms = (time.perf_counter() - start) * 1000.0
-
-    output_shapes = {
-        "token": _shape(token),
-        "key_cache": _shape(kv_cache[0].k),
-        "value_cache": _shape(kv_cache[0].v),
-        "kv_cache_layers": [
-            {
-                "layer_id": layer_id,
-                "key_cache": _shape(layer_cache.k),
-                "value_cache": _shape(layer_cache.v),
-            }
-            for layer_id, layer_cache in enumerate(kv_cache[:layer_count])
-        ],
-    }
-    reference = _prefill_reference(
-        plan=plan,
+    execution = _runtime_run_prefill_prompt(
+        context=runtime_context,
+        ttnn=ttnn,
+        device=device,
+        prefill_plan=plan,
         layer_count=layer_count,
-        output_shapes=output_shapes,
-        output={"kind": "token", "shape": _shape(token), "dtype": _dtype(token)},
-        observed_ops=_generated_observed_op_sequence(model, ttnn),
     )
+    token = execution.prefill_token
+    kv_cache = execution.kv_cache
+    reference = execution.reference
     passed = bool(reference["passed"])
     return {
         "passed": passed,
         "status": "passed" if passed else "reference_mismatch",
         "prefill_status": "passed" if passed else "reference_mismatch",
         "kv_cache_source": "prefill",
-        "latency_ms": latency_ms,
-        "output_shapes": output_shapes,
-        "cache_population": _observed_cache_population(
-            plan=plan,
-            cache_reports=cache_reports,
-            output_shapes=output_shapes,
-        ),
+        "latency_ms": execution.latency_ms,
+        "output_shapes": execution.output_shapes,
+        "cache_population": execution.cache_population,
         "output": {
             "kind": "token",
             "shape": _shape(token),
@@ -388,6 +390,7 @@ def _run_generated_prefill(
         "error": None if passed else "prefill structural reference mismatch",
         "ttnn_version": getattr(ttnn, "__version__", None),
         "ttnn_environment": collect_ttnn_environment(ttnn),
+        "prefill_execution": execution.execution_report,
         "reference": reference,
     }
 
@@ -534,146 +537,23 @@ def _build_synthetic_prefill_state(
     )
 
 
-def _prefill_plan(
-    *,
-    layers: int,
-    batch_size: int,
-    prefill_len: int,
-    cache_len: int,
-    config: dict[str, Any],
-) -> dict[str, Any]:
-    hidden_size = int(config["hidden_size"])
-    intermediate_size = int(config["intermediate_size"])
-    num_heads = int(config["num_attention_heads"])
-    num_kv_heads = int(config["num_key_value_heads"])
-    head_dim = int(config["head_dim"])
-    vocab_size = int(config["vocab_size"])
-    qkv_size = (num_heads + 2 * num_kv_heads) * head_dim
-    kv_cache_config = config.get("kv_cache") or {}
-    if not isinstance(kv_cache_config, dict):
-        kv_cache_config = {}
-    page_block_size = int(kv_cache_config.get("page_block_size", 32))
-    page_count = max(1, (cache_len + page_block_size - 1) // page_block_size)
-    max_num_blocks = batch_size * page_count
-    kv_cache_shape = [
-        max_num_blocks,
-        num_kv_heads,
-        page_block_size,
-        head_dim,
-    ]
-    lm_head_splits = _lm_head_split_shapes(config, hidden_size, vocab_size)
-    input_shapes = {
-        "token_ids": [batch_size, prefill_len],
-        "key_cache": kv_cache_shape,
-        "value_cache": kv_cache_shape,
-    }
-    layer_parameter_shapes = {
-        "input_norm": _norm_weight_shape(hidden_size),
-        "post_attention_norm": _norm_weight_shape(hidden_size),
-        "attention_wqkv": _linear_weight_shape(hidden_size, qkv_size),
-        "attention_o_proj": _linear_weight_shape(
-            num_heads * head_dim,
-            hidden_size,
-        ),
-        "rotary_cos_matrix": [1, 1, prefill_len, head_dim],
-        "rotary_sin_matrix": [1, 1, prefill_len, head_dim],
-        "rotary_transformation_matrix": _prefill_rotary_transform_shape(),
-        "mlp_gate": _linear_weight_shape(hidden_size, intermediate_size),
-        "mlp_up": _linear_weight_shape(hidden_size, intermediate_size),
-        "mlp_down": _linear_weight_shape(intermediate_size, hidden_size),
-    }
-    parameter_shapes = {
-        "embedding": _embedding_weight_shape(vocab_size, hidden_size),
-        **layer_parameter_shapes,
-        "final_norm": _norm_weight_shape(hidden_size),
-        "lm_head_splits": lm_head_splits,
-    }
-    return {
-        "layers": layers,
-        "batch_size": batch_size,
-        "prefill_len": prefill_len,
-        "cache_len": cache_len,
-        "vocab_size": vocab_size,
-        "input_shapes": input_shapes,
-        "parameter_shapes": parameter_shapes,
-        "layer_parameter_shapes": layer_parameter_shapes,
-        "rotary": dict(config.get("rotary") or {}),
-        "expected_intermediate_shapes": {
-            "embedding": [batch_size, prefill_len, hidden_size],
-            "qkv": [batch_size, prefill_len, qkv_size],
-            "query": [batch_size, num_heads, prefill_len, head_dim],
-            "key": [batch_size, num_kv_heads, prefill_len, head_dim],
-            "value": [batch_size, num_kv_heads, prefill_len, head_dim],
-            "attention": [batch_size, num_heads, prefill_len, head_dim],
-            "concat_heads": [batch_size, prefill_len, num_heads * head_dim],
-            "attention_output": [batch_size, prefill_len, hidden_size],
-            "mlp_intermediate": [batch_size, prefill_len, intermediate_size],
-        },
-        "expected_output_shapes": {
-            "token": [batch_size, 1],
-            "key_cache": kv_cache_shape,
-            "value_cache": kv_cache_shape,
-        },
-        "kv_cache": {
-            "policy": kv_cache_config.get("policy", "paged"),
-            "template": kv_cache_config.get("template", "paged_kv_cache"),
-            "page_block_size": page_block_size,
-            "page_count": page_count,
-            "max_num_blocks": max_num_blocks,
-            "physical_shape": kv_cache_shape,
-            "logical_shape": [batch_size, cache_len, num_kv_heads, head_dim],
-            "source": "prefill",
-            "write_policy": "fill_cache_per_user",
-            "planned_user_count": batch_size,
-        },
-        "tensor_conversion_count": 4 + len(lm_head_splits) + 12 * layers,
-        "op_sequence": _prefill_op_sequence(layers),
-    }
-
-
-def _prefill_op_sequence(layers: int) -> list[str]:
-    ops = ["embedding"]
-    for _ in range(layers):
-        ops.extend(PREFILL_LAYER_OPS)
-    ops.extend(PREFILL_FINAL_OPS)
-    return ops
-
-
-_prefill_op_sequence = _runtime_prefill_op_sequence
-_prefill_plan = _runtime_prefill_plan
-
-
-def _prefill_rotary_transform_shape() -> list[int]:
-    return [1, 1, 32, 32]
-
-
-def _base_report(
-    *,
-    program_dir: Path,
-    layers: int,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    prefill_len: int,
-    cache_len: int,
-    dtype_seed: str,
-    dry_run: bool,
-    plan: dict[str, Any],
-) -> dict[str, Any]:
+def _base_report(**kwargs: Any) -> dict[str, Any]:
+    plan = kwargs["plan"]
+    dtype_seed = kwargs["dtype_seed"]
     return {
         "schema_version": 1,
         "template": "prefill_smoke",
-        "program_dir": str(program_dir),
-        "layers": layers,
-        "device": device,
-        "device_id": device_id,
-        "batch_size": batch_size,
-        "prefill_len": prefill_len,
-        "cache_len": cache_len,
+        "program_dir": str(kwargs["program_dir"]),
+        "layers": kwargs["layers"],
+        "device": kwargs["device"],
+        "device_id": kwargs["device_id"],
+        "batch_size": kwargs["batch_size"],
+        "prefill_len": kwargs["prefill_len"],
+        "cache_len": kwargs["cache_len"],
         "dtype_seed": dtype_seed,
         "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
         "layout": "tile",
-        "dry_run": dry_run,
+        "dry_run": kwargs["dry_run"],
         "op_sequence": plan["op_sequence"],
         "input_shapes": plan["input_shapes"],
         "parameter_shapes": plan["parameter_shapes"],
@@ -686,171 +566,33 @@ def _base_report(
     }
 
 
-def _unavailable_report(
-    *,
-    program_dir: Path,
-    layers: int,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    prefill_len: int,
-    cache_len: int,
-    dtype_seed: str,
-    plan: dict[str, Any],
-    status: str,
-    message: str,
-    detail: str,
-    ttnn_version: str | None = None,
-    ttnn_module: Any | None = None,
-) -> dict[str, Any]:
-    report = _base_report(
-        program_dir=program_dir,
-        layers=layers,
-        device=device,
-        device_id=device_id,
-        batch_size=batch_size,
-        prefill_len=prefill_len,
-        cache_len=cache_len,
-        dtype_seed=dtype_seed,
-        dry_run=False,
-        plan=plan,
-    )
-    report.update(
-        {
-            "passed": False,
-            "status": status,
-            "prefill_status": status,
+def _unavailable_report(**kwargs: Any) -> dict[str, Any]:
+    error_keys = {
+        "status", "message", "detail", "ttnn_version", "ttnn_module"
+    }
+    base_kwargs = {
+        key: value for key, value in kwargs.items() if key not in error_keys
+    }
+    plan = kwargs["plan"]
+    base = _base_report(**base_kwargs, dry_run=False)
+    return _failed_diagnostic_report(
+        base,
+        status=kwargs["status"],
+        message=kwargs["message"],
+        detail=kwargs["detail"],
+        ttnn_version=kwargs.get("ttnn_version"),
+        ttnn_module=kwargs.get("ttnn_module"),
+        extra={
+            "prefill_status": kwargs["status"],
             "kv_cache_source": "prefill",
-            "latency_ms": None,
             "output_shapes": None,
             "cache_population": _planned_cache_population(plan),
             "tensor_conversion_count": 0,
-            "error": message,
-            "detail": detail,
-            "ttnn_version": ttnn_version,
-            "ttnn_environment": collect_ttnn_environment(ttnn_module),
             "reference": {
                 "kind": "prefill_smoke",
                 "status": "not_run",
                 "passed": False,
                 "checks": [],
             },
-        }
+        },
     )
-    return report
-
-
-def _prefill_reference(
-    *,
-    plan: dict[str, Any],
-    layer_count: int,
-    output_shapes: dict[str, Any],
-    output: dict[str, Any],
-    observed_ops: list[str] | None,
-) -> dict[str, Any]:
-    expected_outputs = plan["expected_output_shapes"]
-    checks: list[dict[str, Any]] = [
-        _value_check("layer_count", layer_count, plan["layers"]),
-        _shape_check(
-            "output.token",
-            output_shapes.get("token"),
-            accepted=[
-                expected_outputs["token"],
-                [expected_outputs["token"][0], 1],
-                [expected_outputs["token"][0]],
-            ],
-        ),
-        _dtype_check("output.token", output.get("dtype")),
-    ]
-    for layer in output_shapes.get("kv_cache_layers", []):
-        layer_id = int(layer["layer_id"])
-        checks.extend(
-            [
-                _shape_check(
-                    f"kv_cache_layers.{layer_id}.key_cache",
-                    layer.get("key_cache"),
-                    expected=expected_outputs["key_cache"],
-                ),
-                _shape_check(
-                    f"kv_cache_layers.{layer_id}.value_cache",
-                    layer.get("value_cache"),
-                    expected=expected_outputs["value_cache"],
-                ),
-            ]
-        )
-    checks.append(
-        _op_sequence_coverage_check(
-            planned_ops=plan["op_sequence"],
-            observed_ops=observed_ops,
-        )
-    )
-    passed = all(check["passed"] for check in checks)
-    return {
-        "kind": "prefill_structural_shape_dtype_op_sequence",
-        "status": "passed" if passed else "failed",
-        "passed": passed,
-        "planned_ops": plan["op_sequence"],
-        "observed_ops": observed_ops,
-        "checks": checks,
-    }
-
-
-def _planned_cache_population(plan: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {
-            "layer_id": layer_id,
-            "status": "planned",
-            "key_cache_shape": plan["expected_output_shapes"]["key_cache"],
-            "value_cache_shape": plan["expected_output_shapes"]["value_cache"],
-            "write_policy": "fill_cache_per_user",
-            "update_shape_layout": "batch_heads_seq_head_dim",
-            "planned_user_count": plan["batch_size"],
-        }
-        for layer_id in range(int(plan["layers"]))
-    ]
-
-
-def _observed_cache_population(
-    *,
-    plan: dict[str, Any],
-    cache_reports: list[dict[str, Any]],
-    output_shapes: dict[str, Any],
-) -> list[dict[str, Any]]:
-    by_layer = {
-        int(report.get("layer_id", index)): dict(report)
-        for index, report in enumerate(cache_reports)
-        if isinstance(report, dict)
-    }
-    population = []
-    for layer in output_shapes.get("kv_cache_layers", []):
-        layer_id = int(layer["layer_id"])
-        generated_report = by_layer.get(layer_id, {})
-        population.append(
-            {
-                "layer_id": layer_id,
-                "status": "filled",
-                "key_cache_shape": layer.get("key_cache"),
-                "value_cache_shape": layer.get("value_cache"),
-                "expected_key_cache_shape": plan["expected_output_shapes"][
-                    "key_cache"
-                ],
-                "expected_value_cache_shape": plan["expected_output_shapes"][
-                    "value_cache"
-                ],
-                "write_policy": generated_report.get(
-                    "write_policy",
-                    "fill_cache_per_user",
-                ),
-                "update_shape_layout": generated_report.get(
-                    "update_shape_layout",
-                    "batch_heads_seq_head_dim",
-                ),
-                "planned_user_count": plan["batch_size"],
-                "filled_user_count": generated_report.get(
-                    "filled_user_count"
-                ),
-                "users": generated_report.get("users", []),
-                "generated_report": generated_report,
-            }
-        )
-    return population

@@ -1,41 +1,55 @@
 from __future__ import annotations
 
 import importlib
-import importlib.util
 import json
-import sys
 import time
-from contextlib import contextmanager
-from pathlib import Path
 from types import SimpleNamespace
+from pathlib import Path
 from typing import Any
 
-from .codegen.parameters import (
+from ..codegen.parameters import (
     ParameterMaterializationError,
     load_llama_parameters_from_manifests,
 )
-from .codegen.ttnn_tensorizer import (
+from ..codegen.ttnn_tensorizer import (
     TTNNTensorizationError,
     load_parameter_config_from_program,
     to_ttnn_parameters,
 )
-from .runtime.tokenizer import PromptTokenizationError, tokenize_prompt_for_decode
-from .runtime.model_loader import (
+from ..runtime.tokenizer import PromptTokenizationError, tokenize_prompt_for_decode
+from ..runtime.config_runtime import realize_ttnn_config
+from ..runtime.device import managed_ttnn_device as _maybe_managed_device
+from ..runtime.model_loader import (
     load_generated_model as _runtime_load_generated_model,
     to_namespace as _runtime_to_namespace,
 )
-from .runtime.tensor_meta import (
+from ..runtime.model_setup import materialization_summary, tensorization_summary
+from ..runtime.plans import DECODE_PARAMETER_ROLES
+from ..runtime.tensor_meta import (
     runtime_int_tensor as _runtime_runtime_int_tensor,
     tensor_dtype as _runtime_tensor_dtype,
     tensor_shape as _runtime_tensor_shape,
 )
-from .smoke_mlp import (
+from ..ttnn_compat import UnsupportedTTNNOp
+from .support import (
     NO_TTNN_DEVICE_MESSAGE,
     NoTTNNDeviceError,
-    _managed_ttnn_device,
+    dtype as _dtype,
+    dtype_check as _dtype_check,
+    dry_run_reference as _dry_run_reference,
+    failed_diagnostic_report as _failed_diagnostic_report,
+    generated_model as _load_generated_model,
+    generated_observed_op_sequence as _generated_observed_op_sequence,
+    observed_op_sequence as _observed_op_sequence,
+    op_sequence_coverage_check as _op_sequence_coverage_check,
+    runtime_int_tensor as _runtime_int_tensor,
+    shape as _shape,
+    shape_check as _shape_check,
+    tensor_shape as _tensor_shape,
+    to_namespace as _to_namespace,
+    value_check as _value_check,
+    write_report as _write_report,
 )
-
-
 DECODE_SHELL_OPS = [
     "embedding",
     "rms_norm.mlp",
@@ -170,8 +184,8 @@ def run_smoke_decode_shell(
                 assert tensorization_result.parameters is not None
                 shell_params = tensorization_result.parameters
                 parameter_setup = {
-                    "materialization": _materialization_summary(host_params),
-                    "tensorization": _tensorization_summary(
+                    "materialization": materialization_summary(host_params),
+                    "tensorization": tensorization_summary(
                         tensorization_result.report
                     ),
                 }
@@ -225,6 +239,7 @@ def run_smoke_decode_shell(
                 torch_module=torch_module,
                 reference_parameters=host_reference_params,
                 pcc_threshold=pcc_threshold,
+                realize_config=ttnn_module is None,
             )
             report["parameter_source"] = parameter_source
             report["input_source"] = input_source
@@ -309,12 +324,14 @@ def _run_generated_decode_shell(
     torch_module: Any | None,
     reference_parameters: Any | None,
     pcc_threshold: float,
+    realize_config: bool = False,
 ) -> dict[str, Any]:
     generated = _load_generated_model(program_dir / "model.py", ttnn)
+    model_config = realize_ttnn_config(config, ttnn) if realize_config else config
     model = generated.BuddyLlama31TTNN(
         device=device,
         parameters=parameters,
-        config=_to_namespace(config),
+        config=_to_namespace(model_config),
     )
     model.ops.enable_recording()
     if token_ids is None:
@@ -324,6 +341,10 @@ def _run_generated_decode_shell(
     hidden = model.embed(token_ids)
     layer_reports = []
     for layer_id in range(layer_count):
+        hidden = model.ops.reshape_decode_hidden_for_layer(
+            hidden,
+            op_name="reshape_hidden_decode",
+        )
         residual = hidden
         normalized = model.rmsnorm(hidden, layer_id, kind="mlp")
         mlp_out = model.mlp_decode(layer_id, normalized)
@@ -387,7 +408,7 @@ def _tensorize_shell_parameters(
         host_params,
         device,
         parameter_config,
-        roles=["embedding", "norm", "mlp", "lm_head"],
+        roles=DECODE_PARAMETER_ROLES,
         layers=range(layer_count),
         ttnn_module=ttnn,
     )
@@ -501,237 +522,9 @@ def _token_ids_tensor(
     return _runtime_int_tensor(torch, token_ids, name=name)
 
 
-def _runtime_int_tensor(
-    torch: Any,
-    values: Any,
-    *,
-    name: str,
-) -> Any:
-    dtype = getattr(torch, "int32", None)
-    tensor_fn = getattr(torch, "tensor", None)
-    if callable(tensor_fn):
-        try:
-            tensor = tensor_fn(values, dtype=dtype)
-        except TypeError:
-            tensor = tensor_fn(values)
-    else:
-        zeros = getattr(torch, "zeros", None)
-        if not callable(zeros):
-            raise ValueError("torch module must provide tensor or zeros")
-        shape = _nested_int_shape(values)
-        tensor = zeros(shape, dtype=dtype) if dtype is not None else zeros(shape)
-    try:
-        tensor.name = name
-    except AttributeError:
-        pass
-    return tensor
-
-
-def _nested_int_shape(values: Any) -> list[int]:
-    if not isinstance(values, list):
-        return []
-    shape = [len(values)]
-    current = values
-    while current and isinstance(current[0], list):
-        current = current[0]
-        shape.append(len(current))
-    return shape
-
-
 def _decode_shell_input_shapes(config: dict[str, Any]) -> dict[str, list[int]]:
     return {
         "token_ids": [int(config["batch_size"]), int(config["seq_len"])]
-    }
-
-
-def _materialization_summary(params: Any) -> dict[str, Any]:
-    metadata = dict(getattr(params, "metadata", {}))
-    tensors = metadata.get("tensors", {})
-    key_paths = [
-        path
-        for path in _decode_shell_key_tensor_paths()
-        if isinstance(tensors, dict) and path in tensors
-    ]
-    return {
-        "backend": metadata.get("backend"),
-        "model_name": metadata.get("model_name"),
-        "num_layers": metadata.get("num_layers"),
-        "materialized_layer_ids": list(
-            metadata.get("materialized_layer_ids", [])
-        ),
-        "tensor_count": metadata.get("tensor_count"),
-        "key_paths": key_paths,
-    }
-
-
-def _tensorization_summary(report: dict[str, Any]) -> dict[str, Any]:
-    tensors = [
-        record
-        for record in report.get("tensors", [])
-        if isinstance(record, dict)
-    ]
-    tensor_paths = sorted(
-        str(record["path"])
-        for record in tensors
-        if record.get("path") is not None
-    )
-    key_paths = [
-        record["path"]
-        for record in tensors
-        if record.get("path") in _decode_shell_key_tensor_paths()
-    ]
-    key_tensor_records = {}
-    for record in tensors:
-        path = record.get("path")
-        if path not in key_paths:
-            continue
-        key_tensor_records[path] = {
-            "role": record.get("role"),
-            "role_group": record.get("role_group"),
-            "target_dtype": record.get("target_dtype"),
-            "layout": record.get("layout"),
-            "memory_config": record.get("memory_config"),
-            "ttnn_dtype": record.get("ttnn_dtype"),
-            "ttnn_layout": record.get("ttnn_layout"),
-            "ttnn_memory_config": record.get("ttnn_memory_config"),
-            "transform": record.get("transform"),
-            "source_shape": record.get("source_shape"),
-            "shape": record.get("shape"),
-        }
-    return {
-        "status": report.get("status"),
-        "backend": "ttnn",
-        "roles": list(report.get("roles", [])),
-        "tensor_count": report.get("tensor_count"),
-        "target_dtype_counts": _field_counts(tensors, "target_dtype"),
-        "layout_counts": _field_counts(tensors, "layout"),
-        "memory_config_counts": _field_counts(tensors, "memory_config"),
-        "transform_counts": _field_counts(tensors, "transform"),
-        "transform_paths_by_kind": _paths_by_field_value(
-            tensors,
-            "transform",
-        ),
-        "ttnn_dtype_counts": _field_counts(tensors, "ttnn_dtype"),
-        "ttnn_layout_counts": _field_counts(tensors, "ttnn_layout"),
-        "ttnn_memory_config_counts": _field_counts(
-            tensors,
-            "ttnn_memory_config",
-        ),
-        "tensor_paths": tensor_paths,
-        "key_paths": key_paths,
-        "key_tensors": key_tensor_records,
-    }
-
-
-def _decode_shell_key_tensor_paths() -> tuple[str, ...]:
-    return (
-        "embedding.weight",
-        "layers.0.input_norm.weight",
-        "layers.0.post_attention_norm.weight",
-        "layers.0.mlp.gate_proj.weight",
-        "layers.0.mlp.up_proj.weight",
-        "layers.0.mlp.down_proj.weight",
-        "final_norm.weight",
-        "lm_head.splits.0.weight",
-    )
-
-
-def _field_counts(records: list[dict[str, Any]], field: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for record in records:
-        value = record.get(field)
-        if value is None:
-            continue
-        value = str(value)
-        counts[value] = counts.get(value, 0) + 1
-    return counts
-
-
-def _paths_by_field_value(
-    records: list[dict[str, Any]],
-    field: str,
-) -> dict[str, list[str]]:
-    paths: dict[str, list[str]] = {}
-    for record in records:
-        value = record.get(field)
-        path = record.get("path")
-        if value is None or path is None:
-            continue
-        value = str(value)
-        paths.setdefault(value, []).append(str(path))
-    return {value: sorted(items) for value, items in sorted(paths.items())}
-
-
-@contextmanager
-def _maybe_managed_device(ttnn: Any, device_id: int, injected_ttnn: Any | None):
-    if injected_ttnn is not None:
-        yield f"fake_device:{device_id}"
-        return
-    with _managed_ttnn_device(ttnn, device_id) as device:
-        yield device
-
-
-def _load_generated_model(path: Path, ttnn: Any):
-    module_name = "generated_buddy_ttnn_decode_shell"
-    old_ttnn = sys.modules.get("ttnn")
-    sys.modules["ttnn"] = ttnn
-    try:
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"cannot load generated model: {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = module
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            sys.modules.pop(module_name, None)
-        return module
-    finally:
-        if old_ttnn is None:
-            sys.modules.pop("ttnn", None)
-        else:
-            sys.modules["ttnn"] = old_ttnn
-
-
-def _to_namespace(value: Any) -> Any:
-    if isinstance(value, dict):
-        return SimpleNamespace(
-            **{key: _to_namespace(item) for key, item in value.items()}
-        )
-    if isinstance(value, list):
-        return [_to_namespace(item) for item in value]
-    return value
-
-
-def _shape(tensor: Any) -> list[int] | None:
-    shape = getattr(tensor, "shape", None)
-    if shape is None:
-        return None
-    return [int(dim) for dim in shape]
-
-
-def _dtype(tensor: Any) -> str | None:
-    dtype = getattr(tensor, "dtype", None)
-    return str(dtype) if dtype is not None else None
-
-
-_dtype = _runtime_tensor_dtype
-_load_generated_model = _runtime_load_generated_model
-_runtime_int_tensor = _runtime_runtime_int_tensor
-_shape = _runtime_tensor_shape
-_to_namespace = _runtime_to_namespace
-
-
-def _dry_run_reference(kind: str) -> dict[str, Any]:
-    return {
-        "kind": kind,
-        "status": "dry_run",
-        "passed": None,
-        "numeric_reference": {
-            "status": "not_run",
-            "reason": NUMERIC_REFERENCE_NOT_RUN_REASON,
-        },
-        "checks": [],
     }
 
 
@@ -757,6 +550,7 @@ def _decode_shell_reference(
     accepted_hidden_shapes = [
         expected_hidden_shape,
         [1, batch_size, seq_len, hidden_size],
+        [1, seq_len, batch_size, hidden_size],
     ]
     accepted_token_shapes = [
         [batch_size, seq_len],
@@ -827,47 +621,6 @@ def _decode_shell_reference(
     }
 
 
-def _generated_observed_op_sequence(model: Any, ttnn: Any) -> list[str] | None:
-    ops = getattr(model, "ops", None)
-    op_log = getattr(ops, "op_log", None)
-    if isinstance(op_log, list):
-        return [str(item) for item in op_log]
-    return _observed_op_sequence(ttnn)
-
-
-def _op_sequence_coverage_check(
-    *,
-    planned_ops: list[str],
-    observed_ops: list[str] | None,
-) -> dict[str, Any]:
-    if not isinstance(observed_ops, list):
-        return {
-            "name": "observed_op_sequence",
-            "type": "sequence_coverage",
-            "actual": None,
-            "expected": planned_ops,
-            "passed": False,
-            "reason": "generated op instrumentation was not available",
-        }
-
-    planned_index = 0
-    for observed in observed_ops:
-        if (
-            planned_index < len(planned_ops)
-            and observed == planned_ops[planned_index]
-        ):
-            planned_index += 1
-    missing = planned_ops[planned_index:]
-    return {
-        "name": "observed_op_sequence",
-        "type": "sequence_coverage",
-        "actual": observed_ops,
-        "expected": planned_ops,
-        "missing_from_ordered_coverage": missing,
-        "passed": planned_index == len(planned_ops),
-    }
-
-
 def _decode_shell_numeric_reference(
     *,
     ttnn: Any,
@@ -910,7 +663,17 @@ def _decode_shell_numeric_reference(
         expected_hidden_shape = _shape(expected.final_hidden)
         accepted_hidden_shapes = [expected_hidden_shape]
         if expected_hidden_shape is not None and len(expected_hidden_shape) == 3:
-            accepted_hidden_shapes.append([1, *expected_hidden_shape])
+            accepted_hidden_shapes.extend(
+                [
+                    [1, *expected_hidden_shape],
+                    [
+                        1,
+                        expected_hidden_shape[1],
+                        expected_hidden_shape[0],
+                        expected_hidden_shape[2],
+                    ],
+                ]
+            )
         checks = [
             {
                 "name": "final_hidden.pcc",
@@ -1020,6 +783,9 @@ def _parameter_weight(parameter: Any) -> Any:
 
 def _torch_embedding(torch: Any, token_ids: Any, weight: Any) -> Any:
     weight = _torch_embedding_weight(weight)
+    to_long = getattr(token_ids, "long", None)
+    if callable(to_long):
+        token_ids = to_long()
     functional = getattr(getattr(torch, "nn", None), "functional", None)
     embedding = getattr(functional, "embedding", None)
     if callable(embedding):
@@ -1160,140 +926,40 @@ def _flatten_nested(value: Any) -> list[Any]:
     return [value]
 
 
-def _shape_check(
-    name: str,
-    actual: list[int] | None,
-    *,
-    expected: list[int] | None = None,
-    accepted: list[list[int]] | None = None,
-) -> dict[str, Any]:
-    accepted_shapes = accepted if accepted is not None else [expected]
-    accepted_shapes = [
-        shape for shape in accepted_shapes if shape is not None
-    ]
-    return {
-        "name": name,
-        "type": "shape",
-        "actual": actual,
-        "expected": expected,
-        "accepted": accepted_shapes,
-        "passed": actual in accepted_shapes,
-    }
-
-
-def _dtype_check(name: str, actual: str | None) -> dict[str, Any]:
-    return {
-        "name": name,
-        "type": "dtype",
-        "actual": actual,
-        "passed": actual is not None,
-    }
-
-
-def _value_check(name: str, actual: Any, expected: Any) -> dict[str, Any]:
-    return {
-        "name": name,
-        "type": "value",
-        "actual": actual,
-        "expected": expected,
-        "passed": actual == expected,
-    }
-
-
-def _observed_op_sequence(ttnn: Any) -> list[str] | None:
-    calls = getattr(ttnn, "calls", None)
-    if not isinstance(calls, list):
-        return None
-    observed = []
-    for call in calls:
-        if isinstance(call, dict) and "op" in call:
-            observed.append(str(call["op"]))
-        else:
-            observed.append(str(call))
-    return observed
-
-
-def _base_report(
-    *,
-    program_dir: Path,
-    device: str,
-    device_id: int,
-    layers: int,
-    disable_attention: bool,
-    dry_run: bool,
-) -> dict[str, Any]:
+def _base_report(**kwargs: Any) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "template": "decode_shell",
-        "program_dir": str(program_dir),
-        "device": device,
-        "device_id": device_id,
-        "layers_requested": layers,
-        "disable_attention": disable_attention,
-        "dry_run": dry_run,
+        "program_dir": str(kwargs["program_dir"]),
+        "device": kwargs["device"],
+        "device_id": kwargs["device_id"],
+        "layers_requested": kwargs["layers"],
+        "disable_attention": kwargs["disable_attention"],
+        "dry_run": kwargs["dry_run"],
         "ttnn_ops": list(DECODE_SHELL_OPS),
     }
 
 
-def _no_device_report(
-    *,
-    program_dir: Path,
-    device: str,
-    device_id: int,
-    layers: int,
-    disable_attention: bool,
-    detail: str,
-) -> dict[str, Any]:
-    report = _base_report(
-        program_dir=program_dir,
-        device=device,
-        device_id=device_id,
-        layers=layers,
-        disable_attention=disable_attention,
+def _error_report(**kwargs: Any) -> dict[str, Any]:
+    error_keys = {"status", "message", "detail", "ttnn_version", "ttnn_module"}
+    base = _base_report(
+        **{key: value for key, value in kwargs.items() if key not in error_keys},
         dry_run=False,
     )
-    report.update(
-        {
-            "passed": False,
-            "status": "no_device",
-            "error": NO_TTNN_DEVICE_MESSAGE,
-            "detail": detail,
-            "latency_ms": None,
-        }
+    return _failed_diagnostic_report(
+        base,
+        status=kwargs["status"],
+        message=kwargs["message"],
+        detail=kwargs.get("detail", kwargs["message"]),
+        ttnn_version=kwargs.get("ttnn_version"),
+        ttnn_module=kwargs.get("ttnn_module"),
     )
-    return report
 
 
-def _failed_report(
-    *,
-    program_dir: Path,
-    device: str,
-    device_id: int,
-    layers: int,
-    disable_attention: bool,
-    status: str,
-    message: str,
-) -> dict[str, Any]:
-    report = _base_report(
-        program_dir=program_dir,
-        device=device,
-        device_id=device_id,
-        layers=layers,
-        disable_attention=disable_attention,
-        dry_run=False,
-    )
-    report.update(
-        {
-            "passed": False,
-            "status": status,
-            "error": message,
-            "latency_ms": None,
-        }
-    )
-    return report
+def _no_device_report(**kwargs: Any) -> dict[str, Any]:
+    kwargs.update(status="no_device", message=NO_TTNN_DEVICE_MESSAGE)
+    return _error_report(**kwargs)
 
 
-def _write_report(out: str | Path, report: dict[str, Any]) -> None:
-    out_path = Path(out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2) + "\n")
+def _failed_report(**kwargs: Any) -> dict[str, Any]:
+    return _error_report(**kwargs)

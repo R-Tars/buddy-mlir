@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import template_profile
-from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_mlp import NO_TTNN_DEVICE_MESSAGE
+from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.errors import NO_TTNN_DEVICE_MESSAGE
 
 
 class ProfileTemplateTest(unittest.TestCase):
@@ -26,7 +26,7 @@ class ProfileTemplateTest(unittest.TestCase):
         return template_profile.profile_template(**args)
 
     def hardware_profile(self, fake, *, trace):
-        with patch.object(template_profile, "managed_mlp_device", fake.managed), \
+        with patch.object(template_profile, "managed_ttnn_device", fake.managed), \
              patch.object(template_profile, "prepare_mlp_smoke_on_device", fake.prepare):
             return self.profile(trace=trace, ttnn_module=fake, torch_module=object())
 

@@ -957,7 +957,7 @@ def write_layout_search_report(
 def layout_conversion_worker(request: Mapping[str, Any]) -> dict[str, Any]:
     """Measure one real TTNN memory-layout conversion in an isolated worker."""
     from ..runtime.config_runtime import realize_ttnn_config
-    from ..smoke_mlp import _managed_ttnn_device
+    from ..runtime.device import managed_ttnn_device
     from .microbench import make_worker_response
 
     payload = request.get("payload")
@@ -997,7 +997,7 @@ def layout_conversion_worker(request: Mapping[str, Any]) -> dict[str, Any]:
     host_tensor = torch.randn(shape, dtype=torch.bfloat16)
 
     samples: list[float] = []
-    with _managed_ttnn_device(ttnn, device_id) as device:
+    with managed_ttnn_device(ttnn, device_id) as device:
         source = ttnn.from_torch(
             host_tensor,
             dtype=dtype,

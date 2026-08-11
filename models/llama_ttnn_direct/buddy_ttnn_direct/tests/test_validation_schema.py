@@ -40,7 +40,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.reports.validation import (
     validate_functional,
     validate_performance,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_decode_shell import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.fakes import (
     _write_fake_model_config,
     _write_template_config,
 )

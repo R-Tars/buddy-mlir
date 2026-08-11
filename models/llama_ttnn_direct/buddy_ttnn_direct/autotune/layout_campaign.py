@@ -365,7 +365,7 @@ def build_layout_conversion_payload(
 
 def layout_conversion_matrix_worker(request: Mapping[str, Any]) -> dict[str, Any]:
     from ..runtime.config_runtime import realize_ttnn_config
-    from ..smoke_mlp import _managed_ttnn_device
+    from ..runtime.device import managed_ttnn_device
 
     payload = _mapping(request.get("payload"), "payload")
     candidate = _mapping(request.get("candidate"), "candidate")
@@ -390,7 +390,7 @@ def layout_conversion_matrix_worker(request: Mapping[str, Any]) -> dict[str, Any
 
     transition_reports: list[dict[str, Any]] = []
     successful_samples: list[list[float]] = []
-    with _managed_ttnn_device(ttnn, device_id) as device:
+    with managed_ttnn_device(ttnn, device_id) as device:
         for raw_probe in raw_probes:
             if not isinstance(raw_probe, Mapping):
                 raise LayoutGraphError("conversion matrix probe must be an object")

@@ -2,29 +2,47 @@ from __future__ import annotations
 
 import copy
 import importlib
-import json
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
-from .smoke_mlp import (
-    NO_TTNN_DEVICE_MESSAGE,
-    NoTTNNDeviceError,
-    _managed_ttnn_device,
+from ..runtime_environment import collect_ttnn_environment
+from ..runtime.errors import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
+from ..runtime.device import managed_ttnn_device as _maybe_managed_device
+from ..reports.contracts import ATTENTION_PRIMITIVES
+from ..ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
+from .attention_support import (
+    decode_head_shape as _decode_head_shape,
+    decode_hidden_shape as _decode_hidden_shape,
+    decode_rotary_cos_sin_shape as _decode_rotary_cos_sin_shape,
+    decode_rotary_transform_shape as _decode_rotary_transform_shape,
+    height_sharded_memory_config as _height_sharded_memory_config,
+    input_tensor_contracts as _input_tensor_contracts,
+    linear_weight_shape as _linear_weight_shape,
+    memory_config as _memory_config,
+    page_state_from_plan as _page_state_from_plan,
+    realize_sdpa_runtime_config as _realize_sdpa_runtime_config,
+    rotary_cos_sin_height_sharded_memory_config as _rotary_cos_sin_height_sharded_memory_config,
+    rotary_transform_height_sharded_memory_config as _rotary_transform_height_sharded_memory_config,
+    runtime_index_tensor as _runtime_index_tensor,
+    sharded_height_memory_config as _sharded_height_memory_config,
+    ttnn_dtype as _ttnn_dtype,
+    validate_args as _validate_args,
+    without_none as _without_none,
+    zeros as _zeros,
 )
-from .smoke_decode_shell import (
+from .support import (
     NUMERIC_REFERENCE_NOT_RUN_REASON,
-    _dry_run_reference,
-    _op_sequence_coverage_check,
-    _observed_op_sequence,
-    _shape_check,
+    dry_run_reference as _dry_run_reference,
+    observed_op_sequence as _observed_op_sequence,
+    op_sequence_coverage_check as _op_sequence_coverage_check,
+    output_shapes as _output_shapes,
+    failed_diagnostic_report as _failed_diagnostic_report,
+    shape_check as _shape_check,
+    shape as _shape,
+    write_report as _write_report,
+    randn as _randn,
 )
-from .runtime_environment import collect_ttnn_environment
-from .runtime.config_runtime import realize_ttnn_config
-from .runtime.inputs import build_decode_runtime_state
-from .reports.contracts import ATTENTION_PRIMITIVES
-from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
 
 PRIMITIVE_EXPECTED_OBSERVED_OPS = {
@@ -435,28 +453,6 @@ def _run_primitive(
     raise AssertionError(f"unhandled primitive: {primitive}")
 
 
-def _realize_sdpa_runtime_config(
-    value: Mapping[str, Any] | None,
-    ttnn: Any,
-) -> dict[str, Any]:
-    if value is None:
-        return {}
-    allowed = {
-        "program_config",
-        "kernel_output_memory_config",
-        "post_sdpa_output_memory_config",
-    }
-    unknown = set(value) - allowed
-    if unknown:
-        raise ValueError(f"unknown SDPA runtime config fields: {sorted(unknown)}")
-    result = {}
-    for key, descriptor in value.items():
-        if not isinstance(descriptor, Mapping):
-            raise ValueError(f"SDPA runtime config {key} must be a descriptor")
-        result[key] = realize_ttnn_config(dict(descriptor), ttnn)
-    return result
-
-
 def _primitive_plan(
     *,
     primitive: str,
@@ -582,69 +578,26 @@ def _primitive_plan(
     return plan
 
 
-def _decode_hidden_shape(batch_size: int, hidden_size: int) -> list[int]:
-    return [1, 1, batch_size, hidden_size]
-
-
-def _decode_head_shape(
-    batch_size: int,
-    num_heads: int,
-    head_dim: int,
-) -> list[int]:
-    return [1, batch_size, num_heads, head_dim]
-
-
-def _linear_weight_shape(in_features: int, out_features: int) -> list[int]:
-    return [1, 1, in_features, out_features]
-
-
-def _decode_rotary_cos_sin_shape(
-    batch_size: int,
-    head_dim: int,
-) -> list[int]:
-    return [1, batch_size, 1, head_dim]
-
-
-def _decode_rotary_transform_shape(
-    batch_size: int,
-    *,
-    tile_size: int = 32,
-) -> list[int]:
-    return [1, 1, batch_size * tile_size, tile_size]
-
-
-def _base_report(
-    *,
-    primitive: str,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    max_cache_len: int,
-    dtype_seed: str,
-    dry_run: bool,
-    plan: dict[str, Any],
-) -> dict[str, Any]:
+def _base_report(**kwargs: Any) -> dict[str, Any]:
+    plan = kwargs["plan"]
+    dtype_seed = kwargs["dtype_seed"]
     return {
         "schema_version": 1,
         "template": "attention_primitive",
-        "primitive": primitive,
-        "device": device,
-        "device_id": device_id,
-        "batch_size": batch_size,
-        "hidden_size": hidden_size,
-        "num_heads": num_heads,
-        "num_kv_heads": num_kv_heads,
-        "head_dim": head_dim,
-        "max_cache_len": max_cache_len,
+        "primitive": kwargs["primitive"],
+        "device": kwargs["device"],
+        "device_id": kwargs["device_id"],
+        "batch_size": kwargs["batch_size"],
+        "hidden_size": kwargs["hidden_size"],
+        "num_heads": kwargs["num_heads"],
+        "num_kv_heads": kwargs["num_kv_heads"],
+        "head_dim": kwargs["head_dim"],
+        "max_cache_len": kwargs["max_cache_len"],
         "dtype_seed": dtype_seed,
         "dtype": "bfloat16" if dtype_seed == "bf16" else "float32",
         "layout": "tile",
         "memory_config": "default_or_l1",
-        "dry_run": dry_run,
+        "dry_run": kwargs["dry_run"],
         "input_shapes": plan["input_shapes"],
         "input_tensor_contracts": plan["input_tensor_contracts"],
         "expected_output_shapes": plan["expected_output_shapes"],
@@ -654,94 +607,34 @@ def _base_report(
     }
 
 
-def _no_device_report(
-    *,
-    primitive: str,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    max_cache_len: int,
-    dtype_seed: str,
-    plan: dict[str, Any],
-    detail: str,
-) -> dict[str, Any]:
-    report = _base_report(
-        primitive=primitive,
-        device=device,
-        device_id=device_id,
-        batch_size=batch_size,
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        max_cache_len=max_cache_len,
-        dtype_seed=dtype_seed,
+def _error_report(**kwargs: Any) -> dict[str, Any]:
+    error_keys = {"status", "message", "detail", "ttnn_version", "ttnn_module"}
+    base = _base_report(
+        **{key: value for key, value in kwargs.items() if key not in error_keys},
         dry_run=False,
-        plan=plan,
     )
-    report.update(
-        {
-            "passed": False,
-            "status": "no_device",
-            "latency_ms": None,
-            "error": NO_TTNN_DEVICE_MESSAGE,
-            "detail": detail,
-            "ttnn_version": None,
-            "ttnn_environment": collect_ttnn_environment(None),
-        }
+    return _failed_diagnostic_report(
+        base,
+        status=kwargs["status"],
+        message=kwargs["message"],
+        detail=kwargs["detail"],
+        ttnn_version=kwargs.get("ttnn_version"),
+        ttnn_module=kwargs.get("ttnn_module"),
     )
-    return report
 
 
-def _failed_report(
-    *,
-    primitive: str,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    max_cache_len: int,
-    dtype_seed: str,
-    plan: dict[str, Any],
-    status: str,
-    message: str,
-    detail: str,
-    ttnn_version: str | None = None,
-    ttnn_module: Any | None = None,
-) -> dict[str, Any]:
-    report = _base_report(
-        primitive=primitive,
-        device=device,
-        device_id=device_id,
-        batch_size=batch_size,
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        max_cache_len=max_cache_len,
-        dtype_seed=dtype_seed,
-        dry_run=False,
-        plan=plan,
+def _no_device_report(**kwargs: Any) -> dict[str, Any]:
+    kwargs.update(
+        status="no_device",
+        message=NO_TTNN_DEVICE_MESSAGE,
+        ttnn_version=None,
+        ttnn_module=None,
     )
-    report.update(
-        {
-            "passed": False,
-            "status": status,
-            "latency_ms": None,
-            "error": message,
-            "detail": detail,
-            "ttnn_version": ttnn_version,
-            "ttnn_environment": collect_ttnn_environment(ttnn_module),
-        }
-    )
-    return report
+    return _error_report(**kwargs)
+
+
+def _failed_report(**kwargs: Any) -> dict[str, Any]:
+    return _error_report(**kwargs)
 
 
 def _attention_primitive_reference(
@@ -793,395 +686,3 @@ def _primitive_observed_ops(
     if observed_ops is not None:
         return observed_ops, "ttnn_module_instrumentation"
     return list(PRIMITIVE_EXPECTED_OBSERVED_OPS[primitive]), "direct_primitive_call"
-
-
-def _output_shapes(
-    outputs: Any,
-    *,
-    expected_names: Any | None = None,
-) -> dict[str, list[int] | None]:
-    names = list(expected_names or [])
-    if isinstance(outputs, tuple):
-        if len(names) != len(outputs):
-            names = ["query", "key", "value"] if len(outputs) == 3 else ["query", "key"]
-        return {
-            names[index]: _shape(tensor)
-            for index, tensor in enumerate(outputs)
-        }
-    if len(names) == 1:
-        return {names[0]: _shape(outputs)}
-    return {"output": _shape(outputs)}
-
-
-def _shape(tensor: Any) -> list[int] | None:
-    shape = getattr(tensor, "shape", None)
-    if shape is None:
-        return None
-    return [int(dim) for dim in shape]
-
-
-def _randn(
-    torch: Any,
-    shape: list[int],
-    dtype_seed: str,
-    *,
-    name: str | None = None,
-) -> Any:
-    dtype = (
-        getattr(torch, "bfloat16", None)
-        if dtype_seed == "bf16"
-        else getattr(torch, "float32", None)
-    )
-    try:
-        tensor = torch.randn(tuple(shape), dtype=dtype)
-    except TypeError:
-        tensor = torch.randn(tuple(shape))
-    if name is not None:
-        try:
-            tensor.name = name
-        except AttributeError:
-            pass
-    return tensor
-
-
-def _runtime_index_tensor(
-    torch: Any,
-    *,
-    name: str,
-    shape: list[int],
-    page_state: Any | None,
-) -> Any:
-    dtype = getattr(torch, "int32", None)
-    if name == "page_table" and page_state is not None:
-        return _tensor_from_values(
-            torch,
-            page_state.page_table,
-            dtype=dtype,
-            name=name,
-            fallback_shape=shape,
-        )
-    if name == "cache_position" and page_state is not None:
-        return _tensor_from_values(
-            torch,
-            page_state.cache_position,
-            dtype=dtype,
-            name=name,
-            fallback_shape=shape,
-        )
-    return _zeros(torch, shape, dtype=dtype, name=name)
-
-
-def _tensor_from_values(
-    torch: Any,
-    values: Any,
-    *,
-    dtype: Any,
-    name: str,
-    fallback_shape: list[int],
-) -> Any:
-    tensor_fn = getattr(torch, "tensor", None)
-    if callable(tensor_fn):
-        try:
-            tensor = tensor_fn(values, dtype=dtype)
-        except TypeError:
-            tensor = tensor_fn(values)
-    else:
-        tensor = _zeros(torch, fallback_shape, dtype=dtype, name=name)
-    try:
-        tensor.name = name
-    except AttributeError:
-        pass
-    return tensor
-
-
-def _zeros(
-    torch: Any,
-    shape: list[int],
-    *,
-    dtype: Any | None = None,
-    name: str | None = None,
-) -> Any:
-    try:
-        tensor = torch.zeros(tuple(shape), dtype=dtype)
-    except TypeError:
-        tensor = torch.zeros(tuple(shape))
-    if name is not None:
-        try:
-            tensor.name = name
-        except AttributeError:
-            pass
-    return tensor
-
-
-def _ttnn_dtype(ttnn: Any, dtype_seed: str) -> Any:
-    if dtype_seed == "bf16":
-        return getattr(ttnn, "bfloat16", None)
-    return getattr(ttnn, "float32", None)
-
-
-def _memory_config(ttnn: Any) -> Any | None:
-    return getattr(ttnn, "L1_MEMORY_CONFIG", None)
-
-
-def _height_sharded_memory_config(
-    ttnn: Any,
-    device: Any,
-    *,
-    batch_size: int,
-    head_dim: int,
-) -> Any | None:
-    create_sharded = getattr(ttnn, "create_sharded_memory_config", None)
-    if callable(create_sharded):
-        core_grid = _batch_core_grid(ttnn, device, batch_size=batch_size)
-        shard_strategy = getattr(getattr(ttnn, "ShardStrategy", None), "HEIGHT", None)
-        shard_orientation = getattr(
-            getattr(ttnn, "ShardOrientation", None),
-            "ROW_MAJOR",
-            None,
-        )
-        tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
-        if core_grid is not None and shard_strategy is not None:
-            try:
-                return create_sharded(
-                    shape=(tile_size, head_dim),
-                    core_grid=core_grid,
-                    strategy=shard_strategy,
-                    orientation=shard_orientation,
-                    use_height_and_width_as_shard_shape=True,
-                )
-            except Exception:
-                pass
-    return getattr(
-        ttnn,
-        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
-        _memory_config(ttnn),
-    )
-
-
-def _rotary_cos_sin_height_sharded_memory_config(
-    ttnn: Any,
-    device: Any,
-    *,
-    batch_size: int,
-    head_dim: int,
-) -> Any | None:
-    tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
-    return _sharded_height_memory_config(
-        ttnn,
-        device,
-        batch_size=batch_size,
-        shard_shape=(tile_size, head_dim),
-    ) or _height_sharded_memory_config(
-        ttnn,
-        device,
-        batch_size=batch_size,
-        head_dim=head_dim,
-    )
-
-
-def _rotary_transform_height_sharded_memory_config(
-    ttnn: Any,
-    device: Any,
-    *,
-    batch_size: int,
-) -> Any | None:
-    tile_size = int(getattr(ttnn, "TILE_SIZE", 32))
-    return _sharded_height_memory_config(
-        ttnn,
-        device,
-        batch_size=batch_size,
-        shard_shape=(tile_size, tile_size),
-    ) or getattr(
-        ttnn,
-        "L1_HEIGHT_SHARDED_MEMORY_CONFIG",
-        _memory_config(ttnn),
-    )
-
-
-def _sharded_height_memory_config(
-    ttnn: Any,
-    device: Any,
-    *,
-    batch_size: int,
-    shard_shape: tuple[int, int],
-) -> Any | None:
-    create_sharded = getattr(ttnn, "create_sharded_memory_config", None)
-    if callable(create_sharded):
-        core_grid = _batch_core_grid(ttnn, device, batch_size=batch_size)
-        shard_strategy = getattr(getattr(ttnn, "ShardStrategy", None), "HEIGHT", None)
-        shard_orientation = getattr(
-            getattr(ttnn, "ShardOrientation", None),
-            "ROW_MAJOR",
-            None,
-        )
-        if core_grid is not None and shard_strategy is not None:
-            try:
-                return create_sharded(
-                    shape=shard_shape,
-                    core_grid=core_grid,
-                    strategy=shard_strategy,
-                    orientation=shard_orientation,
-                    use_height_and_width_as_shard_shape=True,
-                )
-            except Exception:
-                pass
-    return None
-
-
-def _batch_core_grid(
-    ttnn: Any,
-    device: Any,
-    *,
-    batch_size: int,
-) -> Any | None:
-    core_grid_type = getattr(ttnn, "CoreGrid", None)
-    if not callable(core_grid_type):
-        return None
-    compute_grid = None
-    compute_with_storage_grid_size = getattr(
-        device,
-        "compute_with_storage_grid_size",
-        None,
-    )
-    if callable(compute_with_storage_grid_size):
-        try:
-            compute_grid = compute_with_storage_grid_size()
-        except Exception:
-            compute_grid = None
-    physical_x = int(getattr(compute_grid, "x", 8) or 8)
-    physical_y = int(getattr(compute_grid, "y", 8) or 8)
-    grid_x = max(1, min(batch_size, physical_x))
-    while grid_x > 1 and batch_size % grid_x != 0:
-        grid_x -= 1
-    grid_y = max(1, (batch_size + grid_x - 1) // grid_x)
-    if grid_y > physical_y:
-        return None
-    try:
-        return core_grid_type(y=grid_y, x=grid_x)
-    except TypeError:
-        return core_grid_type(grid_y, grid_x)
-
-
-def _page_state_from_plan(plan: dict[str, Any]) -> Any | None:
-    input_shapes = plan["input_shapes"]
-    page_table_shape = input_shapes.get("page_table")
-    cache_position_shape = input_shapes.get("cache_position")
-    if not page_table_shape or not cache_position_shape:
-        return None
-    page_count = int(page_table_shape[1])
-    return build_decode_runtime_state(
-        batch_size=int(page_table_shape[0]),
-        cache_len=page_count * int(plan["page_block_size"]),
-        page_block_size=int(plan["page_block_size"]),
-        prompt_token_count=1,
-    )
-
-
-def _input_tensor_contracts(
-    primitive: str,
-    *,
-    input_shapes: dict[str, list[int]],
-) -> dict[str, dict[str, str]]:
-    contracts = {
-        name: {
-            "dtype": "bfloat16_or_float32",
-            "layout": "tile",
-            "memory_config": "default_or_l1",
-        }
-        for name in input_shapes
-    }
-    for name in ("page_table", "cache_position"):
-        if name in contracts:
-            contracts[name] = {
-                "dtype": "int32",
-                "layout": "row_major",
-                "memory_config": "default_or_dram",
-            }
-
-    height_sharded_inputs = {
-        "rotary_embedding_decode": {
-            "query",
-            "key",
-        },
-        "paged_update_cache": {"update"},
-        "paged_scaled_dot_product_attention_decode": {"query"},
-        "nlp_concat_heads_decode": {"attention"},
-    }.get(primitive, set())
-    for name in height_sharded_inputs:
-        if name in contracts:
-            contracts[name] = {
-                "dtype": "bfloat16_or_float32",
-                "layout": "tile",
-                "memory_config": "height_sharded_l1",
-            }
-    if primitive == "rotary_embedding_decode":
-        for name in ("cos_matrix", "sin_matrix"):
-            if name in contracts:
-                contracts[name] = {
-                    "dtype": "bfloat16_or_float32",
-                    "layout": "tile",
-                    "memory_config": "rotary_cos_sin_height_sharded_l1",
-                }
-        if "transformation_matrix" in contracts:
-            contracts["transformation_matrix"] = {
-                "dtype": "bfloat16_or_float32",
-                "layout": "tile",
-                "memory_config": "rotary_transform_height_sharded_l1",
-            }
-
-    for name in ("cache", "key_cache", "value_cache"):
-        if name in contracts:
-            contracts[name]["memory_config"] = "dram"
-    return contracts
-
-
-def _without_none(kwargs: dict[str, Any]) -> dict[str, Any]:
-    return {name: value for name, value in kwargs.items() if value is not None}
-
-
-@contextmanager
-def _maybe_managed_device(ttnn: Any, device_id: int, injected_ttnn: Any | None):
-    if injected_ttnn is not None:
-        yield f"fake_device:{device_id}"
-        return
-    with _managed_ttnn_device(ttnn, device_id) as device:
-        yield device
-
-
-def _validate_args(
-    *,
-    primitive: str,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    max_cache_len: int,
-    dtype_seed: str,
-) -> None:
-    if primitive not in ATTENTION_PRIMITIVES:
-        raise ValueError(
-            f"primitive must be one of {list(ATTENTION_PRIMITIVES)}"
-        )
-    for name, value in (
-        ("batch_size", batch_size),
-        ("hidden_size", hidden_size),
-        ("num_heads", num_heads),
-        ("num_kv_heads", num_kv_heads),
-        ("head_dim", head_dim),
-        ("max_cache_len", max_cache_len),
-    ):
-        if value <= 0:
-            raise ValueError(f"{name} must be positive")
-    if num_heads % num_kv_heads != 0:
-        raise ValueError("num_heads must be divisible by num_kv_heads")
-    if num_heads * head_dim != hidden_size:
-        raise ValueError("hidden_size must equal num_heads * head_dim")
-    if dtype_seed not in {"bf16", "fp32"}:
-        raise ValueError("dtype_seed must be one of: bf16, fp32")
-
-
-def _write_report(out: str | Path, report: dict[str, Any]) -> None:
-    out_path = Path(out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2) + "\n")

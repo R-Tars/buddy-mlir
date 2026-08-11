@@ -163,12 +163,20 @@ supported surfaces.
 
 ### Diagnostics
 
-Smoke, sweep, and legacy decode workflows are development tools. The visible
-CLI exposes them only through `diagnose --stage ...`; their tests live under
-`tests_diagnostics/` and are excluded from the default product suite.
+Focused probes, sweeps, and legacy decode workflows are development tools owned
+under `diagnostics/`. The visible CLI exposes them only through
+`diagnose --stage ...`; their tests live under `tests_diagnostics/` and are
+excluded from the default product suite. Diagnostic stages reuse canonical
+runtime model-loading, tensor-metadata, structural, prefill, decode, trace, and
+profiling helpers. Shared attention-only scaffolding remains in diagnostics,
+the reusable MLP microbenchmark lives in `autotune/microbench.py`, and generic
+device ownership lives in `runtime/device.py`. There are no top-level
+`smoke_*.py` compatibility modules.
+
 `diagnostics/cli.py` is loaded only when `diagnose` executes and exposes the
 autotune diagnostic entrypoint without owning tuning semantics. All tuning
-semantics belong to the canonical `buddy_ttnn_direct/autotune/` package.
+semantics belong to the canonical `buddy_ttnn_direct/autotune/` package, which
+does not import diagnostics.
 
 ### Semantic autotune contracts
 

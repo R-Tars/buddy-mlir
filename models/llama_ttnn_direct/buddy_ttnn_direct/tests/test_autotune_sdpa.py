@@ -17,10 +17,10 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
     realize_ttnn_config,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_layer import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.attention_layer import (
     run_smoke_attention_layer,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.smoke_attention_primitive import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.attention_primitive import (
     run_smoke_attention_primitive,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
@@ -33,7 +33,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_autotune_space import
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_ttnn_compat import (
     _fake_config_ttnn,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.test_smoke_attention_primitive import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.fakes import (
     _fake_torch,
     _fake_ttnn,
 )

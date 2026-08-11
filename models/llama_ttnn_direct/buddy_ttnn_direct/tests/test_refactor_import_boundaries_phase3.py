@@ -15,12 +15,12 @@ PRODUCT_AUTOTUNE_DEBT = {
     ("codegen/parameters.py", f"{PACKAGE}.autotune.templates"),
     ("codegen/ttnn_tensorizer.py", f"{PACKAGE}.autotune.templates"),
 }
-AUTOTUNE_SMOKE_DEBT = {
-    ("autotune/layout_campaign.py", f"{PACKAGE}.smoke_mlp"),
-    ("autotune/layout_graph.py", f"{PACKAGE}.smoke_mlp"),
-}
+AUTOTUNE_SMOKE_DEBT = set()
 DIAGNOSTICS_AUTOTUNE_ENTRYPOINT = {
     ("diagnostics/cli.py", f"{PACKAGE}.autotune.campaign"),
+}
+DIAGNOSTICS_SHARED_AUTOTUNE = {
+    f"{PACKAGE}.autotune.microbench",
 }
 RETIRED_VALIDATION_MODULES = (
     f"{PACKAGE}.diagnostics.validation_workflow",
@@ -86,7 +86,7 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
                     if edge not in AUTOTUNE_SMOKE_DEBT:
                         unexpected.append(edge)
         self.assertEqual(unexpected, [])
-        self.assertEqual(observed, AUTOTUNE_SMOKE_DEBT)
+        self.assertEqual(observed, set())
 
     def test_semantic_autotune_is_the_only_tuning_owner(self) -> None:
         self.assertFalse((ROOT / "diagnostics" / "autotune").exists())
@@ -105,10 +105,19 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
                     continue
                 edge = (relative, imported)
                 observed.add(edge)
-                if edge not in DIAGNOSTICS_AUTOTUNE_ENTRYPOINT:
+                if imported not in DIAGNOSTICS_SHARED_AUTOTUNE and edge not in DIAGNOSTICS_AUTOTUNE_ENTRYPOINT:
                     unexpected.append(edge)
         self.assertEqual(unexpected, [])
-        self.assertEqual(observed, DIAGNOSTICS_AUTOTUNE_ENTRYPOINT)
+        self.assertEqual(
+            observed,
+            DIAGNOSTICS_AUTOTUNE_ENTRYPOINT
+            | {
+                (path.relative_to(ROOT).as_posix(), imported)
+                for path in _python_files(("diagnostics",))
+                for imported in _imports(path)
+                if imported in DIAGNOSTICS_SHARED_AUTOTUNE
+            },
+        )
 
     def test_retired_layered_tuner_symbols_are_absent(self) -> None:
         markers = (
@@ -157,6 +166,21 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
 
     def test_phase3_facades_are_absent(self) -> None:
         self.assertEqual([name for name in REMOVED if (ROOT / name).exists()], [])
+
+    def test_phase8_smoke_ownership_boundary_is_closed(self) -> None:
+        smoke_files = sorted(ROOT.glob("smoke_*.py"))
+        self.assertEqual(smoke_files, [])
+        forbidden_prefix = f"{PACKAGE}.smoke_"
+        violations = []
+        for path in sorted(ROOT.rglob("*.py")):
+            for imported in _imports(path):
+                if imported == forbidden_prefix.rstrip("_") or imported.startswith(
+                    forbidden_prefix
+                ):
+                    violations.append(
+                        (path.relative_to(ROOT).as_posix(), imported)
+                    )
+        self.assertEqual(violations, [])
 
     def test_retired_search_package_has_no_source_or_test_references(self) -> None:
         forbidden_package = f"{PACKAGE}.future"

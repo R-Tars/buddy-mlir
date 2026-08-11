@@ -7,37 +7,42 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .smoke_attention_primitive import (
-    _decode_head_shape,
-    _decode_hidden_shape,
-    _decode_rotary_cos_sin_shape,
-    _decode_rotary_transform_shape,
-    _height_sharded_memory_config,
-    _linear_weight_shape,
-    _memory_config,
-    _maybe_managed_device,
-    _page_state_from_plan,
-    _randn,
-    _rotary_cos_sin_height_sharded_memory_config,
-    _rotary_transform_height_sharded_memory_config,
-    _runtime_index_tensor,
-    _realize_sdpa_runtime_config,
-    _ttnn_dtype,
-    _validate_args,
-    _without_none,
+from .attention_support import (
+    decode_head_shape as _decode_head_shape,
+    decode_hidden_shape as _decode_hidden_shape,
+    decode_rotary_cos_sin_shape as _decode_rotary_cos_sin_shape,
+    decode_rotary_transform_shape as _decode_rotary_transform_shape,
+    height_sharded_memory_config as _height_sharded_memory_config,
+    linear_weight_shape as _linear_weight_shape,
+    memory_config as _memory_config,
+    page_state_from_plan as _page_state_from_plan,
+    realize_sdpa_runtime_config as _realize_sdpa_runtime_config,
+    rotary_cos_sin_height_sharded_memory_config as _rotary_cos_sin_height_sharded_memory_config,
+    rotary_transform_height_sharded_memory_config as _rotary_transform_height_sharded_memory_config,
+    runtime_index_tensor as _runtime_index_tensor,
+    ttnn_dtype as _ttnn_dtype,
+    validate_args as _validate_args,
+    without_none as _without_none,
 )
-from .smoke_decode_shell import (
+from .support import (
     NUMERIC_REFERENCE_NOT_RUN_REASON,
-    _dry_run_reference,
-    _observed_op_sequence,
-    _op_sequence_coverage_check,
-    _shape_check,
-    _value_check,
+    dtype_name as _dtype_name,
+    dry_run_reference as _dry_run_reference,
+    failed_diagnostic_report as _failed_diagnostic_report,
+    observed_op_sequence as _observed_op_sequence,
+    op_sequence_coverage_check as _op_sequence_coverage_check,
+    output_shapes as _output_shapes,
+    randn as _randn,
+    shape as _shape,
+    shape_check as _shape_check,
+    value_check as _value_check,
+    write_report as _write_report,
 )
-from .smoke_mlp import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
-from .runtime_environment import collect_ttnn_environment
-from .reports.contracts import ATTENTION_LAYER_OPS
-from .ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
+from ..runtime.errors import NO_TTNN_DEVICE_MESSAGE, NoTTNNDeviceError
+from ..runtime.device import managed_ttnn_device as _maybe_managed_device
+from ..runtime_environment import collect_ttnn_environment
+from ..reports.contracts import ATTENTION_LAYER_OPS
+from ..ttnn_compat import UnsupportedTTNNOp, ops as ttnn_ops
 
 
 ATTENTION_LAYER_EXPECTED_OBSERVED_OPS = [
@@ -604,7 +609,7 @@ def _time_op(
             "output_shapes": output_shapes,
             "dtype": dtype,
             "layout": "tile",
-            "memory_config": _string_or_none(memory_config),
+            "memory_config": None if memory_config is None else str(memory_config),
         }
     )
     return output
@@ -765,40 +770,26 @@ def _op_expected_output_shapes(
     }
 
 
-def _base_report(
-    *,
-    program_dir: Path,
-    layer: int,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    cache_len: int,
-    dtype_seed: str,
-    dry_run: bool,
-    plan: dict[str, Any],
-) -> dict[str, Any]:
+def _base_report(**kwargs: Any) -> dict[str, Any]:
+    plan = kwargs["plan"]
     return {
         "schema_version": 1,
         "template": "attention_layer",
-        "program_dir": str(program_dir),
-        "layer": layer,
-        "device": device,
-        "device_id": device_id,
-        "batch_size": batch_size,
-        "hidden_size": hidden_size,
-        "num_heads": num_heads,
-        "num_kv_heads": num_kv_heads,
-        "head_dim": head_dim,
-        "cache_len": cache_len,
-        "dtype_seed": dtype_seed,
-        "dtype": _dtype_name(dtype_seed),
+        "program_dir": str(kwargs["program_dir"]),
+        "layer": kwargs["layer"],
+        "device": kwargs["device"],
+        "device_id": kwargs["device_id"],
+        "batch_size": kwargs["batch_size"],
+        "hidden_size": kwargs["hidden_size"],
+        "num_heads": kwargs["num_heads"],
+        "num_kv_heads": kwargs["num_kv_heads"],
+        "head_dim": kwargs["head_dim"],
+        "cache_len": kwargs["cache_len"],
+        "dtype_seed": kwargs["dtype_seed"],
+        "dtype": _dtype_name(kwargs["dtype_seed"]),
         "layout": "tile",
         "memory_config": "default_or_l1",
-        "dry_run": dry_run,
+        "dry_run": kwargs["dry_run"],
         "op_sequence": list(ATTENTION_LAYER_OPS),
         "input_shapes": plan["input_shapes"],
         "expected_intermediate_shapes": plan["expected_intermediate_shapes"],
@@ -808,106 +799,52 @@ def _base_report(
     }
 
 
-def _no_device_report(
-    *,
-    program_dir: Path,
-    layer: int,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    cache_len: int,
-    dtype_seed: str,
-    plan: dict[str, Any],
-    detail: str,
-) -> dict[str, Any]:
-    report = _base_report(
-        program_dir=program_dir,
-        layer=layer,
-        device=device,
-        device_id=device_id,
-        batch_size=batch_size,
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        cache_len=cache_len,
-        dtype_seed=dtype_seed,
+def _error_report(**kwargs: Any) -> dict[str, Any]:
+    error_keys = {
+        "status", "message", "detail", "ttnn_version", "ttnn_module", "extra"
+    }
+    base = _base_report(
+        **{key: value for key, value in kwargs.items() if key not in error_keys},
         dry_run=False,
-        plan=plan,
     )
-    report.update(
-        {
-            "passed": False,
-            "status": "no_device",
-            "latency_ms": None,
+    return _failed_diagnostic_report(
+        base,
+        status=kwargs["status"],
+        message=kwargs["message"],
+        detail=kwargs["detail"],
+        ttnn_version=kwargs.get("ttnn_version"),
+        ttnn_module=kwargs.get("ttnn_module"),
+        extra=kwargs.get("extra"),
+    )
+
+
+def _no_device_report(**kwargs: Any) -> dict[str, Any]:
+    kwargs.update(
+        status="no_device",
+        message=NO_TTNN_DEVICE_MESSAGE,
+        ttnn_version=None,
+        ttnn_module=None,
+        extra={
             "primitive_reports": [],
             "output_shapes": None,
             "tensor_conversion_count": 0,
             "memory_config_conversion_count": 0,
-            "error": NO_TTNN_DEVICE_MESSAGE,
-            "detail": detail,
-            "ttnn_version": None,
-            "ttnn_environment": collect_ttnn_environment(None),
-        }
+        },
     )
-    return report
+    return _error_report(**kwargs)
 
 
-def _failed_report(
-    *,
-    program_dir: Path,
-    layer: int,
-    device: str,
-    device_id: int,
-    batch_size: int,
-    hidden_size: int,
-    num_heads: int,
-    num_kv_heads: int,
-    head_dim: int,
-    cache_len: int,
-    dtype_seed: str,
-    plan: dict[str, Any],
-    status: str,
-    message: str,
-    detail: str,
-    ttnn_version: str | None = None,
-    ttnn_module: Any | None = None,
-) -> dict[str, Any]:
-    report = _base_report(
-        program_dir=program_dir,
-        layer=layer,
-        device=device,
-        device_id=device_id,
-        batch_size=batch_size,
-        hidden_size=hidden_size,
-        num_heads=num_heads,
-        num_kv_heads=num_kv_heads,
-        head_dim=head_dim,
-        cache_len=cache_len,
-        dtype_seed=dtype_seed,
-        dry_run=False,
-        plan=plan,
-    )
-    report.update(
+def _failed_report(**kwargs: Any) -> dict[str, Any]:
+    kwargs.setdefault(
+        "extra",
         {
-            "passed": False,
-            "status": status,
-            "latency_ms": None,
             "primitive_reports": [],
             "output_shapes": None,
             "tensor_conversion_count": 0,
             "memory_config_conversion_count": 0,
-            "error": message,
-            "detail": detail,
-            "ttnn_version": ttnn_version,
-            "ttnn_environment": collect_ttnn_environment(ttnn_module),
-        }
+        },
     )
-    return report
+    return _error_report(**kwargs)
 
 
 def _attention_layer_reference(
@@ -974,46 +911,3 @@ def _attention_layer_reference(
         "observed_ops_source": observed_ops_source,
         "checks": checks,
     }
-
-
-def _output_shapes(
-    output: Any,
-    *,
-    expected_names: Any | None = None,
-) -> dict[str, list[int] | None]:
-    names = list(expected_names or [])
-    if isinstance(output, tuple):
-        if len(names) != len(output):
-            names = (
-                ["query", "key", "value"]
-                if len(output) == 3
-                else ["query", "key"]
-            )
-        return {
-            names[index]: _shape(tensor)
-            for index, tensor in enumerate(output)
-        }
-    if len(names) == 1:
-        return {names[0]: _shape(output)}
-    return {"output": _shape(output)}
-
-
-def _shape(tensor: Any) -> list[int] | None:
-    shape = getattr(tensor, "shape", None)
-    if shape is None:
-        return None
-    return [int(dim) for dim in shape]
-
-
-def _string_or_none(value: Any | None) -> str | None:
-    return None if value is None else str(value)
-
-
-def _dtype_name(dtype_seed: str) -> str:
-    return "bfloat16" if dtype_seed == "bf16" else "float32"
-
-
-def _write_report(out: str | Path, report: dict[str, Any]) -> None:
-    out_path = Path(out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(report, indent=2) + "\n")

@@ -11,7 +11,7 @@ from ..reports.contracts import (
     PROFILE_LAYER_LATENCY_KEYS,
     PROFILE_SECTION_LATENCY_KEYS,
 )
-from ..smoke_single_layer_decode import profile_decode_step
+from .decode_step import profile_decode_step
 
 
 DEFAULT_DECODE_DEPTH_TARGETS = (1, 2, 4, "full")
