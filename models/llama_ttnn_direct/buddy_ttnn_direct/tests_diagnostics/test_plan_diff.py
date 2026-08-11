@@ -18,45 +18,19 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.templates.registry import (
 )
 
 
-REFERENCE = {
-    "layer_ops": [
-        "rmsnorm.attn",
-        "linear.qkv_packed",
-        "nlp_create_qkv_heads_decode",
-        "rotary_embedding_decode",
-        "paged_update_cache",
-        "paged_scaled_dot_product_attention_decode",
-        "nlp_concat_heads_decode",
-        "linear.o_proj",
-        "residual_add",
-        "rmsnorm.mlp",
-        "linear.mlp_gate",
-        "linear.mlp_up",
-        "mul.silu",
-        "linear.mlp_down",
-        "residual_add",
-    ],
-    "final_ops": [
-        "rmsnorm.final",
-        "split_lm_head",
-        "argmax_or_sampling",
-    ],
-}
+LAYER_OPS = """
+rmsnorm.attn linear.qkv_packed nlp_create_qkv_heads_decode
+rotary_embedding_decode paged_update_cache
+paged_scaled_dot_product_attention_decode nlp_concat_heads_decode linear.o_proj
+residual_add rmsnorm.mlp linear.mlp_gate linear.mlp_up mul.silu linear.mlp_down
+residual_add
+""".split()
+FINAL_OPS = ["rmsnorm.final", "split_lm_head", "argmax_or_sampling"]
+REFERENCE = {"layer_ops": LAYER_OPS, "final_ops": FINAL_OPS}
+FULL_LOGITS_REFERENCE = {"layer_ops": LAYER_OPS, "final_ops": FINAL_OPS[:-1]}
 
 
-FULL_LOGITS_REFERENCE = {
-    **REFERENCE,
-    "final_ops": [
-        "rmsnorm.final",
-        "split_lm_head",
-    ],
-}
-
-
-def _fake_plan(
-    *,
-    generation_template: str = "device_argmax_greedy",
-) -> dict[str, object]:
+def _fake_plan(generation_template: str = "device_argmax_greedy") -> dict[str, object]:
     graph = import_hf_llama(
         "/tmp/fake-plan-diff",
         config={
@@ -99,28 +73,21 @@ def _fake_plan(
 
 
 class PlanDiffTest(unittest.TestCase):
+    def assertCleanDiff(self, diff: dict[str, object]) -> None:
+        self.assertEqual(
+            {key: diff[key] for key in ("missing_ops", "extra_ops", "order_mismatch")},
+            {"missing_ops": [], "extra_ops": [], "order_mismatch": []},
+        )
+
     def test_generated_plan_matches_reference_after_expansion(self) -> None:
         diff = diff_plan_against_official(_fake_plan(), REFERENCE)
-
-        self.assertEqual(diff["missing_ops"], [])
-        self.assertEqual(diff["extra_ops"], [])
-        self.assertEqual(diff["order_mismatch"], [])
-        self.assertEqual(diff["expanded"]["layer_ops"], REFERENCE["layer_ops"])
-        self.assertEqual(diff["expanded"]["final_ops"], REFERENCE["final_ops"])
+        self.assertCleanDiff(diff)
+        self.assertEqual(diff["expanded"], REFERENCE)
 
     def test_full_logits_plan_matches_reference_without_argmax(self) -> None:
-        diff = diff_plan_against_official(
-            _fake_plan(generation_template="full_logits"),
-            FULL_LOGITS_REFERENCE,
-        )
-
-        self.assertEqual(diff["missing_ops"], [])
-        self.assertEqual(diff["extra_ops"], [])
-        self.assertEqual(diff["order_mismatch"], [])
-        self.assertEqual(
-            diff["expanded"]["final_ops"],
-            FULL_LOGITS_REFERENCE["final_ops"],
-        )
+        diff = diff_plan_against_official(_fake_plan("full_logits"), FULL_LOGITS_REFERENCE)
+        self.assertCleanDiff(diff)
+        self.assertEqual(diff["expanded"]["final_ops"], FINAL_OPS[:-1])
 
     def test_reports_missing_and_extra_ops(self) -> None:
         plan = _fake_plan()
@@ -130,90 +97,55 @@ class PlanDiffTest(unittest.TestCase):
             "residual_add",
         ]
         diff = diff_plan_against_official(plan, REFERENCE)
-
-        self.assertIn("linear.qkv_packed", diff["missing_ops"])
-        self.assertIn("rmsnorm.mlp", diff["missing_ops"])
-        self.assertEqual(diff["extra_ops"], [])
-        self.assertEqual(diff["order_mismatch"], [])
+        self.assertTrue({"linear.qkv_packed", "rmsnorm.mlp"} <= set(diff["missing_ops"]))
+        self.assertEqual((diff["extra_ops"], diff["order_mismatch"]), ([], []))
 
     def test_reports_order_mismatch_when_op_multiset_matches(self) -> None:
-        reference = {
-            "layer_ops": [
-                "rmsnorm.attn",
-                "linear.qkv_packed",
-                "nlp_create_qkv_heads_decode",
-                "rotary_embedding_decode",
-                "paged_update_cache",
-                "paged_scaled_dot_product_attention_decode",
-                "nlp_concat_heads_decode",
-                "linear.o_proj",
-                "residual_add",
-                "rmsnorm.mlp",
-                "linear.mlp_up",
-                "linear.mlp_gate",
-                "mul.silu",
-                "linear.mlp_down",
-                "residual_add",
-            ],
-            "final_ops": REFERENCE["final_ops"],
-        }
-
-        diff = diff_plan_against_official(_fake_plan(), reference)
-
-        self.assertEqual(diff["missing_ops"], [])
-        self.assertEqual(diff["extra_ops"], [])
+        reordered = list(LAYER_OPS)
+        reordered[10:12] = reversed(reordered[10:12])
+        diff = diff_plan_against_official(
+            _fake_plan(), {"layer_ops": reordered, "final_ops": FINAL_OPS}
+        )
+        self.assertEqual((diff["missing_ops"], diff["extra_ops"]), ([], []))
         self.assertEqual(
             diff["order_mismatch"],
             [
-                {
-                    "index": 10,
-                    "ours": "linear.mlp_gate",
-                    "official": "linear.mlp_up",
-                },
-                {
-                    "index": 11,
-                    "ours": "linear.mlp_up",
-                    "official": "linear.mlp_gate",
-                },
+                {"index": 10, "ours": "linear.mlp_gate", "official": "linear.mlp_up"},
+                {"index": 11, "ours": "linear.mlp_up", "official": "linear.mlp_gate"},
             ],
         )
 
     def test_cli_diff_plan_writes_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
-            program_dir = root / "program"
-            reference_json = root / "official.json"
-            inspect_json = root / "inspect.json"
-            program_dir.mkdir()
-            dump_execution_plan(_fake_plan(), program_dir / "execution_plan.json")
-            (program_dir / "config.json").write_text("{}")
+            program = root / "program"
+            program.mkdir()
+            dump_execution_plan(_fake_plan(), program / "execution_plan.json")
             for artifact in (
+                "config.json",
                 "README.md",
                 "model.py",
                 "run_decode.py",
                 "semantic_graph.json",
                 "weights_manifest.json",
             ):
-                (program_dir / artifact).write_text("{}")
-            reference_json.write_text(json.dumps(REFERENCE))
-
+                (program / artifact).write_text("{}")
+            reference = root / "official.json"
+            output = root / "inspect.json"
+            reference.write_text(json.dumps(REFERENCE))
             exit_code = main(
                 [
                     "inspect",
                     "--program-dir",
-                    str(program_dir),
+                    str(program),
                     "--official-template",
-                    str(reference_json),
+                    str(reference),
                     "--out",
-                    str(inspect_json),
+                    str(output),
                 ]
             )
-
             self.assertEqual(exit_code, 0)
-            dumped = json.loads(inspect_json.read_text())["plan_diff"]
-            self.assertEqual(dumped["missing_ops"], [])
-            self.assertEqual(dumped["extra_ops"], [])
-            self.assertEqual(dumped["order_mismatch"], [])
+            self.assertCleanDiff(json.loads(output.read_text())["plan_diff"])
 
 
 if __name__ == "__main__":

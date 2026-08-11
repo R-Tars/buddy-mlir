@@ -12,190 +12,51 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.package import (
     package_dry_run_report,
     package_ttnn_direct_program,
 )
-from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import (
-    PROGRAM_ARTIFACTS,
-)
+from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.program import PROGRAM_ARTIFACTS
+from models.llama_ttnn_direct.buddy_ttnn_direct.tests_diagnostics.fakes import _write_fake_model_config, _write_template_config
 
 
 class PackageProgramTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.model, self.template, self.program = self.root / "model", self.root / "template.json", self.root / "program"
+        _write_fake_model_config(self.model)
+        config = json.loads((self.model / "config.json").read_text()); config["_name_or_path"] = "fake-package-program"
+        (self.model / "config.json").write_text(json.dumps(config))
+        _write_template_config(self.template)
+        self.assertEqual(main(["build", "--model-path", str(self.model), "--config", str(self.template), "--out-dir", str(self.program)]), 0)
+
     def test_package_program_writes_direct_package_manifest(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            package_dir = root / "package"
-            _write_fake_model_config(model_dir)
-            _write_template_config(config_json)
-
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
-            package_ttnn_direct_program(program_dir, package_dir)
-
-            expected_files = set(PROGRAM_ARTIFACTS)
-            expected_files.update({"manifest.json", "PACKAGE_README.md"})
-            self.assertEqual(
-                {path.name for path in package_dir.iterdir()},
-                expected_files,
-            )
-            manifest = json.loads((package_dir / "manifest.json").read_text())
-            self.assertEqual(manifest["backend"], PACKAGE_BACKEND)
-            self.assertEqual(manifest["program_type"], PACKAGE_PROGRAM_TYPE)
-            self.assertEqual(manifest["entrypoint"], "model.py")
-            self.assertEqual(manifest["semantic_graph"], "semantic_graph.json")
-            self.assertEqual(
-                manifest["execution_plan"], "execution_plan.json"
-            )
-            self.assertEqual(
-                manifest["weights_manifest"], "weights_manifest.json"
-            )
-            self.assertTrue(manifest["runtime"]["buddy_cli_supported"])
-            self.assertTrue(manifest["runtime"]["python_runner_supported"])
-            self.assertEqual(manifest["runtime"]["python_runner"], "run_decode.py")
-            self.assertEqual(
-                manifest["runtime"]["runner_modes"],
-                [
-                    "build",
-                    "generate",
-                    "profile",
-                    "validate",
-                    "inspect",
-                    "diagnose",
-                ],
-            )
-            self.assertEqual(
-                manifest["runtime"]["legacy_mode_mappings"]["smoke"],
-                "diagnose --stage decode-step",
-            )
-            self.assertTrue(manifest["runtime"]["dry_run_supported"])
-            self.assertTrue(
-                manifest["runtime"]["real_weight_validation_supported"]
-            )
-            self.assertEqual(manifest["model_name"], "fake-package-program")
-            self.assertEqual(manifest["num_layers"], 2)
-            package_readme = (package_dir / "PACKAGE_README.md").read_text()
-            self.assertIn("TTNN_DIRECT_PACKAGE_DIR", package_readme)
-            self.assertIn("TT_METAL_LOGS_PATH", package_readme)
-            self.assertIn('run_decode.py" inspect', package_readme)
-            self.assertIn("--stage decode-step", package_readme)
-            self.assertIn("--stage prefill", package_readme)
-            self.assertIn("profile --mode generate", package_readme)
-            self.assertIn("validate --suite dryrun", package_readme)
-            self.assertNotIn("/tmp", package_readme)
+        out = self.root / "package"
+        package_ttnn_direct_program(self.program, out)
+        self.assertEqual({path.name for path in out.iterdir()}, {*PROGRAM_ARTIFACTS, "manifest.json", "PACKAGE_README.md"})
+        manifest = json.loads((out / "manifest.json").read_text())
+        expected = {"backend": PACKAGE_BACKEND, "program_type": PACKAGE_PROGRAM_TYPE, "entrypoint": "model.py", "semantic_graph": "semantic_graph.json", "execution_plan": "execution_plan.json", "weights_manifest": "weights_manifest.json", "model_name": "fake-package-program", "num_layers": 2}
+        self.assertEqual({key: manifest[key] for key in expected}, expected)
+        runtime = manifest["runtime"]
+        self.assertEqual({key: runtime[key] for key in ("buddy_cli_supported", "python_runner_supported", "python_runner", "runner_modes", "dry_run_supported", "real_weight_validation_supported")}, {
+            "buddy_cli_supported": True, "python_runner_supported": True, "python_runner": "run_decode.py",
+            "runner_modes": ["build", "generate", "profile", "validate", "inspect", "diagnose"],
+            "dry_run_supported": True, "real_weight_validation_supported": True,
+        })
+        self.assertEqual(runtime["legacy_mode_mappings"]["smoke"], "diagnose --stage decode-step")
+        readme = (out / "PACKAGE_README.md").read_text()
+        for marker in ("TTNN_DIRECT_PACKAGE_DIR", "TT_METAL_LOGS_PATH", 'run_decode.py" inspect', "--stage decode-step", "--stage prefill", "profile --mode generate", "validate --suite dryrun"):
+            self.assertIn(marker, readme)
+        self.assertNotIn("/tmp", readme)
 
     def test_package_program_dry_run_reports_manifest_json(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            root = Path(tmpdir)
-            model_dir = root / "fake_model"
-            config_json = root / "template_config.json"
-            program_dir = root / "program"
-            package_dir = root / "package"
-            _write_fake_model_config(model_dir)
-            _write_template_config(config_json)
-            self.assertEqual(
-                main(
-                    [
-                        "build",
-                        "--model-path",
-                        str(model_dir),
-                        "--config",
-                        str(config_json),
-                        "--out-dir",
-                        str(program_dir),
-                    ]
-                ),
-                0,
-            )
+        out = self.root / "package"
+        report = package_dry_run_report(self.program, out)
+        self.assertFalse(out.exists())
+        self.assertEqual((report["dry_run"], report["backend"], report["program_type"], report["manifest"]["entrypoint"], report["manifest"]["runtime"]["python_runner_supported"]), (True, PACKAGE_BACKEND, PACKAGE_PROGRAM_TYPE, "model.py", True))
+        self.assertIn("manifest.json", report["artifacts"])
 
-            report = package_dry_run_report(program_dir, package_dir)
-            self.assertFalse(package_dir.exists())
-
-            self.assertTrue(report["dry_run"])
-            self.assertEqual(report["backend"], PACKAGE_BACKEND)
-            self.assertEqual(report["program_type"], PACKAGE_PROGRAM_TYPE)
-            self.assertEqual(
-                report["manifest"]["entrypoint"],
-                "model.py",
-            )
-            self.assertTrue(
-                report["manifest"]["runtime"]["python_runner_supported"]
-            )
-            self.assertIn("manifest.json", report["artifacts"])
-
-    def test_cmake_target_is_additive_and_separate_from_llama31_tt_rax(
-        self,
-    ) -> None:
-        repo_root = Path(__file__).parents[4]
-        top_cmake = (repo_root / "CMakeLists.txt").read_text()
-        models_cmake = (repo_root / "models" / "CMakeLists.txt").read_text()
-        direct_cmake = (
-            repo_root / "models" / "llama_ttnn_direct" / "CMakeLists.txt"
-        ).read_text()
-
-        self.assertIn("BUDDY_BUILD_LLAMA31_TTNN_DIRECT_MODEL", top_cmake)
-        self.assertIn("add_subdirectory(llama_ttnn_direct)", models_cmake)
-        self.assertIn("llama31_ttnn_direct_program", direct_cmake)
-        self.assertIn("llama31_ttnn_direct_package", direct_cmake)
-        self.assertIn("runtime_artifacts", direct_cmake)
-        self.assertIn("evidence_archive", direct_cmake)
-        self.assertIn("build\n", direct_cmake)
-        self.assertNotIn("llama31_tt_rax", direct_cmake)
-
-
-def _write_fake_model_config(model_dir: Path) -> None:
-    model_dir.mkdir(parents=True)
-    (model_dir / "config.json").write_text(
-        json.dumps(
-            {
-                "_name_or_path": "fake-package-program",
-                "model_type": "llama",
-                "num_hidden_layers": 2,
-                "hidden_size": 16,
-                "intermediate_size": 32,
-                "num_attention_heads": 4,
-                "num_key_value_heads": 2,
-                "vocab_size": 128,
-                "rms_norm_eps": 1e-5,
-                "rope_theta": 500000.0,
-                "tie_word_embeddings": False,
-            }
-        )
-    )
-
-
-def _write_template_config(path: Path) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "device": "p150a",
-                "model": "llama3.1-8b",
-                "batch_size": 32,
-                "decode_seq_len": 1,
-                "prefill_seq_len": 128,
-                "max_cache_len": 1024,
-                "attention_template": "official_paged_attention_decode",
-                "mlp_template": "official_gated_mlp_decode",
-                "lm_head_template": "official_split_lm_head",
-                "kv_cache_template": "paged_kv_cache",
-                "generation_template": "device_argmax_greedy",
-                "lm_head_split_count": 8,
-                "dtype_recipe": "official_like_performance_seed",
-            }
-        )
-    )
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_cmake_target_is_additive_and_separate_from_llama31_tt_rax(self) -> None:
+        repo = Path(__file__).parents[4]
+        files = ((repo / "CMakeLists.txt", ("BUDDY_BUILD_LLAMA31_TTNN_DIRECT_MODEL",)), (repo / "models/CMakeLists.txt", ("add_subdirectory(llama_ttnn_direct)",)), (repo / "models/llama_ttnn_direct/CMakeLists.txt", ("llama31_ttnn_direct_program", "llama31_ttnn_direct_package", "runtime_artifacts", "evidence_archive", "build\n")))
+        for path, markers in files:
+            source = path.read_text()
+            for marker in markers:
+                self.assertIn(marker, source)
+        self.assertNotIn("llama31_tt_rax", files[-1][0].read_text())
