@@ -586,6 +586,10 @@ acceptance path. See
 [`buddy_ttnn_direct/diagnostics/README.md`](../buddy_ttnn_direct/diagnostics/README.md)
 for stages and examples.
 
+Phase-era validation orchestration was retired after
+`build`/`generate`/`profile`/`validate`/`inspect`/`diagnose` became the
+supported surfaces.
+
 ## Exit Codes
 
 - `0`: command or validation passed.

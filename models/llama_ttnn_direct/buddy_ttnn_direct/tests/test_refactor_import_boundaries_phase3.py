@@ -22,6 +22,10 @@ AUTOTUNE_SMOKE_DEBT = {
 DIAGNOSTICS_AUTOTUNE_ENTRYPOINT = {
     ("diagnostics/cli.py", f"{PACKAGE}.autotune.campaign"),
 }
+RETIRED_VALIDATION_MODULES = (
+    f"{PACKAGE}.diagnostics.validation_workflow",
+    f"{PACKAGE}.diagnostics.legacy_validation",
+)
 REMOVED = ("generate.py", "runtime_inputs.py", "validation.py", "codegen/python_ttnn.py", "decode_loop.py", "profile_template.py")
 class Phase3ImportBoundaryTest(unittest.TestCase):
     def test_product_modules_have_no_new_reverse_dependencies(self) -> None:
@@ -106,6 +110,22 @@ class Phase3ImportBoundaryTest(unittest.TestCase):
             if any(marker in text for marker in markers):
                 violations.append(path.relative_to(ROOT).as_posix())
         self.assertEqual(violations, [])
+
+    def test_phase_era_validation_orchestration_is_absent(self) -> None:
+        self.assertFalse((ROOT / "diagnostics" / "validation_workflow.py").exists())
+        self.assertFalse((ROOT / "diagnostics" / "legacy_validation.py").exists())
+        violations = []
+        for path in sorted(ROOT.rglob("*.py")):
+            for imported in _imports(path):
+                if any(
+                    imported == retired or imported.startswith(f"{retired}.")
+                    for retired in RETIRED_VALIDATION_MODULES
+                ):
+                    violations.append(
+                        (path.relative_to(ROOT).as_posix(), imported)
+                    )
+        self.assertEqual(violations, [])
+
     def test_phase3_facades_are_absent(self) -> None:
         self.assertEqual([name for name in REMOVED if (ROOT / name).exists()], [])
 

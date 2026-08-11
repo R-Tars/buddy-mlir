@@ -128,7 +128,7 @@ package-root generate compatibility facade.
 device, execute model stages, or import `buddy_ttnn_direct/diagnostics/`.
 
 - `schema.py`: shared field, path, number, and acceptance helpers.
-- `validation.py`: product suites and retained legacy acceptance assembly.
+- `validation.py`: compact product validation suites.
 - `performance.py`: baseline and milestone summaries.
 - `evidence.py`: compact reproducibility/evidence manifests.
 - `runtime.py`, `profiling.py`, `tensorization.py`: report contract checks.
@@ -159,10 +159,9 @@ The product CLI uses five compact suites:
 - `correctness`: HF top-token, logits, hidden-state, and sampled prefill
   KV-cache comparisons against observations captured from P150A.
 
-Legacy phase gates remain available to diagnostics, but they are not registered
-as hidden top-level commands. Their orchestration lives only in
-`diagnostics/validation_workflow.py`. Importing or parsing the product CLI does
-not load the legacy workflow.
+Phase-era validation orchestration was retired after
+`build`/`generate`/`profile`/`validate`/`inspect`/`diagnose` became the
+supported surfaces.
 
 ### Diagnostics
 
@@ -486,10 +485,6 @@ into preamble, model core, attention, MLP, LM-head, and constants. The small
 `compiler/source_templates.py` renderer composes those fragments. Generated
 programs import `TTNNCompatOps` from `ttnn_compat/model_ops.py` instead of
 embedding a private copy of the compatibility layer.
-
-Legacy validation remains available under diagnostics for compatibility but
-is not part of product validation or default tests. It can be simplified
-without changing the visible command or report contracts described here.
 
 The product parser registers exactly `build`, `generate`, `profile`,
 `validate`, `inspect`, and `diagnose`. Product modules must not import

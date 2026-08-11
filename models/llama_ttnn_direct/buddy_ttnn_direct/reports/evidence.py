@@ -15,11 +15,6 @@ from .tensorization import (
     step_tensorization_summary,
     tensorized_physical_shape_mismatches,
 )
-from .validation import (
-    final_acceptance_gate_matrix,
-    model_end_to_end_readiness,
-    real_decode_acceptance_scope,
-)
 from .runtime_diagnostics import real_decode_runtime_diagnostics
 
 
@@ -253,6 +248,14 @@ def real_decode_evidence_manifest(
     report: dict[str, Any],
     paths: dict[str, Path],
 ) -> dict[str, Any]:
+    # This orphaned phase-era formatter is retained for Phase 7 inventory.
+    # Keep its retired acceptance dependencies out of module import paths.
+    from .validation import (
+        final_acceptance_gate_matrix,
+        model_end_to_end_readiness,
+        real_decode_acceptance_scope,
+    )
+
     steps = report.get("steps", {})
     official_config_diff = steps.get("official_config_diff", {})
     materialize = steps.get("materialize_parameters", {})

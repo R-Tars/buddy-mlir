@@ -18,14 +18,18 @@ Available stages are:
 - `attention-primitive`
 - `attention-layer`
 - `prefill`
+- `decode-shell`
 - `decode-step`
+- `decode-step-profile`
 - `decode-loop-legacy`
 - `depth-sweep`
 - `generate-depth-sweep`
 - `autotune`
+- `autotune-profiler-audit`
 - `benchmark-parity`
 - `execution-graph-diff`
 - `performance-correctness`
+- `template-profile`
 
 Use `--dry-run` whenever the selected stage supports it and no device should be
 opened.
@@ -179,16 +183,13 @@ python -m models.llama_ttnn_direct.buddy_ttnn_direct.cli diagnose \
 This diagnostic is intentionally eager and teacher-forced. It does not change
 the normal autoregressive generate path.
 
-## Legacy Compatibility
-
-Historical low-level subcommands remain internally callable while refactoring
-continues, but they are hidden from top-level help and are not documented as
-user workflows. New automation should use the six product commands and
-`diagnose --stage ...`.
+Phase-era validation orchestration was retired after
+`build`/`generate`/`profile`/`validate`/`inspect`/`diagnose` became the
+supported surfaces.
 
 ## Tests
 
-Run diagnostics and legacy compatibility coverage explicitly:
+Run diagnostics coverage explicitly:
 
 ```bash
 pytest models/llama_ttnn_direct/buddy_ttnn_direct/tests_diagnostics -q
