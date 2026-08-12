@@ -4,12 +4,15 @@ import ast
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = "models.llama_ttnn_direct.buddy_ttnn_direct"
 PRODUCT_DIRS = ("semantic", "compiler", "codegen", "runtime", "ttnn_compat", "reports")
 PRODUCT_COMMANDS = {"build", "generate", "profile", "validate", "inspect", "diagnose"}
 CLI_MODULE = f"{PACKAGE}.cli"
+COMPARISON_STAGES = {
+    f"{PACKAGE}.diagnostics.{name}"
+    for name in ("benchmark_parity", "performance_correctness", "execution_graph_diff")
+}
 PRODUCT_AUTOTUNE_DEBT = {
     ("compiler/tuning.py", f"{PACKAGE}.autotune.space"),
     ("codegen/parameters.py", f"{PACKAGE}.autotune.templates"),
@@ -41,6 +44,15 @@ RETIRED_REPORT_HELPERS = tuple(
 )
 REMOVED = ("generate.py", "runtime_inputs.py", "validation.py", "codegen/python_ttnn.py", "decode_loop.py", "profile_template.py")
 class Phase3ImportBoundaryTest(unittest.TestCase):
+    def test_phase10_comparison_stages_have_no_cross_stage_imports(self) -> None:
+        violations = []
+        for stage in COMPARISON_STAGES:
+            path = ROOT / "diagnostics" / f"{stage.rsplit('.', 1)[-1]}.py"
+            for imported in _imports(path):
+                if imported in COMPARISON_STAGES:
+                    violations.append((path.name, imported))
+        self.assertEqual(violations, [])
+
     def test_product_modules_have_no_new_reverse_dependencies(self) -> None:
         observed, unexpected = set(), []
         for path in _python_files(PRODUCT_DIRS):
@@ -239,13 +251,11 @@ def _function_imports(path: Path) -> set[tuple[str, str, tuple[str, ...]]]:
                 result.update((function.name, alias.name, ()) for alias in node.names)
     return result
 
-
 def _module(path: Path) -> str:
     parts = list(path.relative_to(ROOT).with_suffix("").parts)
     if parts[-1] == "__init__":
         parts.pop()
     return ".".join((PACKAGE, *parts))
-
 
 def _resolve(module: str, is_package: bool, node: ast.ImportFrom) -> str:
     if node.level == 0:
@@ -254,15 +264,12 @@ def _resolve(module: str, is_package: bool, node: ast.ImportFrom) -> str:
     parts = parts[: len(parts) - node.level + 1]
     return ".".join(parts + (node.module.split(".") if node.module else []))
 
-
 def _domain(module: str) -> str | None:
     prefix = f"{PACKAGE}."
     return module[len(prefix) :].split(".", 1)[0] if module.startswith(prefix) else None
 
-
 def _smoke(module: str) -> bool:
     return any(part.startswith("smoke_") for part in module.split("."))
-
 
 def _legacy(module: str) -> bool:
     return _smoke(module) or module.endswith(

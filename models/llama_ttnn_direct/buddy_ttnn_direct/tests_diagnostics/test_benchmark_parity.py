@@ -21,7 +21,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity imp
     run_benchmark_parity,
 )
 
-
 def _run(profile: str, tpsu: float) -> dict[str, object]:
     return {
         "profile": profile,
@@ -30,7 +29,6 @@ def _run(profile: str, tpsu: float) -> dict[str, object]:
         "first_decode_tokens_per_second_per_user": tpsu + 0.5,
         "decode_step_ms_samples": [1000.0 / tpsu] * 4,
     }
-
 
 def _resume_contract() -> dict[str, object]:
     return {
@@ -42,7 +40,6 @@ def _resume_contract() -> dict[str, object]:
         "requested_prefill_len": 128, "cache_len": 1024, "page_block_size": 32,
         "warmup": 5, "iterations": 100, "repetitions": 1,
     }
-
 
 class BenchmarkParityTest(unittest.TestCase):
     def setUp(self) -> None:

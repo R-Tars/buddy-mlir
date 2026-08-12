@@ -9,9 +9,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.performance_correctn
     run_performance_correctness,
 )
 
-
 MODULE = "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.performance_correctness"
-
 
 def _reference(token_count: int) -> dict[str, object]:
     targets = list(range(100, 100 + token_count))
@@ -29,7 +27,6 @@ def _reference(token_count: int) -> dict[str, object]:
         ],
         "token_count": token_count,
     }
-
 
 def _run_case(
     reference: dict[str, object],
@@ -92,7 +89,6 @@ def _run_case(
             )
     return report, buddy_calls
 
-
 class PerformanceCorrectnessTest(unittest.TestCase):
     def test_runs_official_then_buddy_and_applies_contract(self) -> None:
         reference = _reference(3)
@@ -133,7 +129,6 @@ class PerformanceCorrectnessTest(unittest.TestCase):
             [[256, 256], [257, 257], [100, 100], [101, 101]],
         )
         self.assertEqual(report["fixed_corpus"]["buddy_prompt_replay_decode_token_count"], 2)
-
 
 if __name__ == "__main__":
     unittest.main()
