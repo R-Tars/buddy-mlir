@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity import (
+    _collect_metadata,
     _execute_planned_run,
     _finalize_report,
     _latency_statistics,
@@ -115,6 +116,50 @@ class BenchmarkParityTest(unittest.TestCase):
         self.assertAlmostEqual(report["buddy_ratio_of_local_official"], 27.3 / 21.7)
         self.assertAlmostEqual(report["buddy_ratio_of_release_official"], 27.3 / 33.1)
         self.assertFalse(report["semantic_match"]["release_reference_directly_comparable_to_buddy"])
+
+    def test_mismatched_local_commit_suppresses_accepted_ratio(self) -> None:
+        report = {
+            "official_local_runs": [_run("official-demo", 21.0), _run("official-greedy", 22.0)],
+            "buddy_local_runs": [_run("buddy-greedy", 35.0)],
+            "repetitions": 1, "iterations": 4, "same_tt_metal_commit": True,
+            "same_runtime_commit_comparable": False,
+        }
+        _finalize_report(report)
+        self.assertIsNone(report["buddy_ratio_of_local_official"])
+        self.assertFalse(report["passed"])
+        self.assertIn("same-runtime-commit-comparable", report["acceptance"]["failed_checks"])
+
+    @patch("models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity._token_lengths", return_value=[16])
+    @patch("models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity._current_main_commit", return_value="C")
+    @patch("models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity.git_commit_ancestry", return_value={"contains_ancestor": False, "exit_status": 1, "error": None})
+    @patch("models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity._git_value")
+    def test_collect_metadata_records_mismatched_runtime_provenance(
+        self, git_value: object, _ancestry: object, _main: object, _tokens: object
+    ) -> None:
+        program, official, model, prompts = (
+            self.root / "program", self.root / "official", self.root / "model", self.root / "prompts.json"
+        )
+        for path in (program, official, model):
+            path.mkdir()
+        (program / "config.json").write_text('{"num_layers": 32}')
+        prompts.write_text('["prompt"]')
+        python = self.write("python", "")
+        git_value.side_effect = ["C", "A", "B"]
+        context = {
+            "program_root": program, "official_root": official, "model_root": model,
+            "tokenizer_root": model, "prompts_path": prompts, "official_python": python,
+            "release_root": None, "release_python": None, "release_runtime_root": None,
+            "batch_size": 1, "prefill_len": 128, "cache_len": 1024,
+            "repetitions": 1, "warmup": 1, "iterations": 3, "device": "p150a",
+        }
+        with patch.dict("os.environ", {"TT_METAL_HOME": str(self.root / "buddy-runtime")}):
+            metadata = _collect_metadata(context)
+        self.assertFalse(metadata["same_tt_metal_commit"])
+        self.assertFalse(metadata["same_runtime_commit_comparable"])
+        self.assertEqual(
+            metadata["official_reference_provenance"]["same_runtime_commit"]["reason"],
+            "version_mismatch",
+        )
 
     def test_failure_is_written_before_return(self) -> None:
         out = self.root / "parity.json"

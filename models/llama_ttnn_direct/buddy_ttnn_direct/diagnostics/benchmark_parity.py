@@ -15,14 +15,18 @@ from typing import Any, Callable, Sequence
 from ..runtime.reports import write_report
 from .official_support import (
     DEFAULT_PROMPTS,
+    FORCE_ARGMAX_FIX_COMMIT,
     failed_latency_report as _failed_parse,
+    git_commit_ancestry,
     latency_report_from_samples as _parsed_samples,
+    measurement_provenance,
     official_pytest_command,
     official_source_environment,
     parse_official_accuracy_samples,
     parse_official_latency_report as _parse_official_log,
     pytest_collection_modifyitems,
     pytest_configure,
+    reference_provenance,
 )
 from .process_support import (
     absolute_path as _absolute_path,
@@ -344,13 +348,44 @@ def _collect_metadata(context: Mapping[str, Any]) -> dict[str, Any]:
     buddy_tt_metal_commit = _git_value(buddy_tt_metal_root, "rev-parse", "HEAD")
     buddy_commit = _git_value(repo_root, "rev-parse", "HEAD")
     same_tt_metal_commit = official_commit == buddy_tt_metal_commit
-    if not same_tt_metal_commit:
-        raise ValueError(f"official and Buddy tt-metal commits differ: {official_commit} != {buddy_tt_metal_commit}")
 
+    local_fix = git_commit_ancestry(official_root)
+    current_main_commit = _current_main_commit(official_root)
+    current_main_fix = (
+        local_fix["contains_ancestor"] if current_main_commit == official_commit else None
+    )
+    provenance = reference_provenance(
+        buddy_sha=buddy_tt_metal_commit,
+        local_official_sha=official_commit,
+        current_main_sha=current_main_commit,
+        pinned_release_sha=OFFICIAL_EXTERNAL_RELEASE_COMMIT,
+        pinned_release_tpsu=OFFICIAL_EXTERNAL_REFERENCE_TPSU,
+        local_force_argmax_fix_present=local_fix["contains_ancestor"],
+        current_main_force_argmax_fix_present=current_main_fix,
+    )
     return {
         "buddy_commit": buddy_commit, "official_tt_metal_commit": official_commit,
         "buddy_tt_metal_root": str(buddy_tt_metal_root),
         "buddy_tt_metal_commit": buddy_tt_metal_commit, "same_tt_metal_commit": same_tt_metal_commit,
+        "current_main_tt_metal_commit": current_main_commit,
+        **provenance,
+        "force_argmax_provenance": {
+            "force_argmax_fix_commit": FORCE_ARGMAX_FIX_COMMIT,
+            "force_argmax_fix_present": local_fix["contains_ancestor"],
+            "ancestry_exit_status": local_fix["exit_status"],
+            "ancestry_error": local_fix["error"],
+            "planned_device_count": 1, "actual_device_count": 1,
+            "device_count_source": "single-device benchmark contract",
+            "resolved_device_name": str(c["device"]).upper(),
+            "expected_sampling_path": (
+                "force_argmax_fast_path" if local_fix["contains_ancestor"]
+                else "legacy_topk_sampling_path" if local_fix["contains_ancestor"] is False
+                else "unknown"
+            ),
+        },
+        "measurement_provenance": measurement_provenance(
+            repetitions=c["repetitions"], warmup=c["warmup"], iterations=c["iterations"]
+        ),
         "official_release": (_release_identity(release_root, release_python, release_runtime_root)
                              if release_root is not None else None),
         "official_execution_features": _official_execution_features(official_root=official_root,
@@ -374,6 +409,14 @@ def _collect_metadata(context: Mapping[str, Any]) -> dict[str, Any]:
         },
         "trace_mode": {profile: "trace" for profile in ("official-demo", "official-greedy", "buddy")},
     }
+
+def _current_main_commit(root: Path) -> str | None:
+    try:
+        line = _git_value(root, "ls-remote", "origin", "refs/heads/main").splitlines()[0]
+    except (IndexError, ValueError):
+        return None
+    value = line.split()[0]
+    return value if len(value) == 40 else None
 
 def _release_identity(
     release_root: Path,
@@ -693,7 +736,13 @@ def _finalize_report(report: dict[str, Any]) -> None:
     cv = {f"{p.removesuffix('-demo') if p == 'official-release-demo' else p}-percent":
           _coefficient_of_variation_percent(v) for p, v in values.items()}
     latency_statistics = {profile: _latency_statistics(items) for profile, items in runs.items()}
-    local_ratio = buddy_median / greedy_median if buddy_median is not None and greedy_median else None
+    same_runtime_comparable = bool(report.get(
+        "same_runtime_commit_comparable", report.get("same_tt_metal_commit")
+    ))
+    local_ratio = (
+        buddy_median / greedy_median
+        if same_runtime_comparable and buddy_median is not None and greedy_median else None
+    )
     release_ratio = buddy_median / release_median if buddy_median is not None and release_median else None
     report.update(
         {
@@ -722,6 +771,9 @@ def _finalize_report(report: dict[str, Any]) -> None:
             },
             "semantic_match": {
                 "same_tt_metal_commit": report.get("same_tt_metal_commit"),
+                "same_runtime_commit_comparable": same_runtime_comparable,
+                "pinned_release_comparable": report.get("pinned_release_comparable"),
+                "current_main_comparable": report.get("current_main_comparable"),
                 "same_device": True, "same_model": True, "same_prompt_file": True,
                 "same_batch_size": True, "same_cache_len": True,
                 "same_page_block_size": True, "same_requested_prefill_len": True,
@@ -740,9 +792,13 @@ def _finalize_report(report: dict[str, Any]) -> None:
             },
             "comparison_contract": {
                 "primary_parity_ratio": "buddy_ratio_of_local_official",
-                "primary_reason": "Buddy and official-greedy use the same tt-metal commit",
+                "primary_reason": (
+                    "Buddy and official-greedy use the same tt-metal commit"
+                    if same_runtime_comparable else "unavailable: Buddy and local official versions differ"
+                ),
                 "release_reference_ratio": "buddy_ratio_of_release_official",
                 "release_reference_reason": "validates the published release speed but crosses tt-metal versions",
+                "same_runtime_does_not_imply_current_main": True,
             },
         }
     )
@@ -756,6 +812,8 @@ def _finalize_report(report: dict[str, Any]) -> None:
                for p in local_profiles]
     checks += [_check("same-tt-metal-commit", bool(report.get("same_tt_metal_commit")),
                       report.get("same_tt_metal_commit"), True),
+               _check("same-runtime-commit-comparable", same_runtime_comparable,
+                      same_runtime_comparable, True),
                _check("raw-samples", all(len(run["decode_step_ms_samples"]) == report["iterations"]
                      for p in local_profiles for run in runs[p]), None, report["iterations"])]
     if report.get("official_release") is not None:

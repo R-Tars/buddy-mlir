@@ -6,6 +6,7 @@ import math
 import os
 import re
 import statistics
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -19,9 +20,83 @@ PYTEST_GRAPH_CAPTURE_DIR_ENV = "BUDDY_PARITY_GRAPH_CAPTURE_DIR"
 EXACT_SAMPLE_PREFIX = "BUDDY_PARITY_SAMPLE"
 ACCURACY_SAMPLE_PREFIX = "BUDDY_ACCURACY_SAMPLE"
 OFFICIAL_PYTEST_PLUGIN = "models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.benchmark_parity"
+FORCE_ARGMAX_FIX_COMMIT = "0a0510e7fc197f599c9d5974a0f1f6776378db03"
 _EXACT_SAMPLE_RE = re.compile(rf"{EXACT_SAMPLE_PREFIX} token_iteration=(?P<iteration>\d+) duration_ms=(?P<duration_ms>\d+(?:\.\d+)?)")
 _ROUNDED_SAMPLE_RE = re.compile(r"Iteration (?P<iteration>\d+): (?P<duration_ms>\d+(?:\.\d+)?)ms @ (?P<tpsu>\d+(?:\.\d+)?) tok/s/user")
 _ACCURACY_SAMPLE_RE = re.compile(rf"{ACCURACY_SAMPLE_PREFIX} token_iteration=(?P<iteration>\d+) predicted_token=(?P<predicted_token>\d+)")
+
+def git_commit_ancestry(
+    root: str | Path,
+    ancestor: str = FORCE_ARGMAX_FIX_COMMIT,
+    descendant: str = "HEAD",
+) -> dict[str, Any]:
+    result = subprocess.run(
+        ["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
+        check=False, capture_output=True, text=True,
+    )
+    return {
+        "ancestor": ancestor,
+        "descendant": descendant,
+        "contains_ancestor": result.returncode == 0 if result.returncode in (0, 1) else None,
+        "exit_status": int(result.returncode),
+        "error": result.stderr.strip() or None,
+    }
+
+def measurement_provenance(*, repetitions: int, warmup: int, iterations: int) -> dict[str, Any]:
+    formal = (int(repetitions), int(warmup), int(iterations)) == (3, 5, 100)
+    return {
+        "classification": "formal_product_performance" if formal else "harness_smoke",
+        "measurement_contract": (
+            f"{int(repetitions)} repetitions / {int(warmup)} warmup / "
+            f"{int(iterations)} measured"
+        ),
+        "not_a_performance_baseline": not formal,
+        "baseline_comparable": formal,
+    }
+
+def reference_provenance(
+    *,
+    buddy_sha: str,
+    local_official_sha: str,
+    current_main_sha: str | None,
+    pinned_release_sha: str,
+    pinned_release_tpsu: float,
+    local_force_argmax_fix_present: bool | None,
+    current_main_force_argmax_fix_present: bool | None,
+) -> dict[str, Any]:
+    same_runtime = bool(buddy_sha and buddy_sha == local_official_sha)
+    pinned_release = bool(buddy_sha and buddy_sha == pinned_release_sha)
+    current_main = bool(current_main_sha and local_official_sha == current_main_sha)
+    return {
+        "same_runtime_commit_comparable": same_runtime,
+        "pinned_release_comparable": pinned_release,
+        "current_main_comparable": current_main,
+        "official_reference_provenance": {
+            "same_runtime_commit": {
+                "git_sha": local_official_sha,
+                "contains_single_chip_force_argmax_fix": local_force_argmax_fix_present,
+                "comparison_scope": "same-runtime-commit",
+                "comparable_to_buddy": same_runtime,
+                "reason": "same_sha" if same_runtime else "version_mismatch",
+            },
+            "pinned_release": {
+                "git_sha": pinned_release_sha,
+                "reference_tpsu": float(pinned_release_tpsu),
+                "comparison_scope": "cross-version-release-reference",
+                "comparable_to_buddy": pinned_release,
+                "reason": "same_sha" if pinned_release else "version_mismatch",
+            },
+            "current_main": {
+                "git_sha": current_main_sha,
+                "contains_single_chip_force_argmax_fix": current_main_force_argmax_fix_present,
+                "comparison_scope": "upstream-current-reference",
+                "comparable_to_local_official": current_main,
+                "reason": "same_sha" if current_main else (
+                    "version_mismatch" if current_main_sha else "current_main_sha_unavailable"
+                ),
+            },
+        },
+    }
 
 def pytest_configure(config: Any) -> None:
     if os.environ.get(PYTEST_PLUGIN_ENABLED_ENV) != "1":

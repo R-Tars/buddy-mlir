@@ -10,6 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import official_support
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.official_support import (
+    FORCE_ARGMAX_FIX_COMMIT,
+    git_commit_ancestry,
+    measurement_provenance,
+    reference_provenance,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.process_support import (
     git_value,
     run_logged_command,
@@ -155,6 +161,51 @@ class OfficialSupportTest(unittest.TestCase):
         payload.write_bytes(b"payload")
         self.assertEqual(len(sha256_file(payload) or ""), 64)
         self.assertEqual(len(git_value(Path.cwd(), "rev-parse", "HEAD")), 40)
+
+    def provenance(self, *, buddy: str = "A", local: str = "A", current: str | None = "B", fix: bool | None = False) -> dict[str, object]:
+        return reference_provenance(
+            buddy_sha=buddy, local_official_sha=local, current_main_sha=current,
+            pinned_release_sha="R", pinned_release_tpsu=33.1,
+            local_force_argmax_fix_present=fix,
+            current_main_force_argmax_fix_present=True,
+        )
+
+    def test_same_runtime_commit_does_not_imply_current_main(self) -> None:
+        report = self.provenance()
+        self.assertTrue(report["same_runtime_commit_comparable"])
+        self.assertFalse(report["current_main_comparable"])
+
+    def test_current_main_comparable_requires_same_sha(self) -> None:
+        self.assertFalse(self.provenance(local="A", current="B")["current_main_comparable"])
+        self.assertTrue(self.provenance(buddy="B", local="B", current="B")["current_main_comparable"])
+
+    @patch("models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.official_support.subprocess.run")
+    def test_force_argmax_fix_ancestry_is_reported(self, run_mock: object) -> None:
+        run_mock.return_value.returncode = 1
+        run_mock.return_value.stderr = ""
+        report = git_commit_ancestry(self.root)
+        self.assertEqual((report["ancestor"], report["contains_ancestor"], report["exit_status"]),
+                         (FORCE_ARGMAX_FIX_COMMIT, False, 1))
+
+    def test_old_local_commit_is_labeled_same_runtime_only(self) -> None:
+        report = self.provenance(fix=False)
+        scope = report["official_reference_provenance"]["same_runtime_commit"]
+        self.assertEqual(scope["comparison_scope"], "same-runtime-commit")
+        self.assertFalse(scope["contains_single_chip_force_argmax_fix"])
+
+    def test_short_harness_measurement_is_not_formal_baseline(self) -> None:
+        smoke = measurement_provenance(repetitions=1, warmup=1, iterations=3)
+        formal = measurement_provenance(repetitions=3, warmup=5, iterations=100)
+        self.assertEqual((smoke["classification"], smoke["not_a_performance_baseline"]),
+                         ("harness_smoke", True))
+        self.assertEqual((formal["classification"], formal["baseline_comparable"]),
+                         ("formal_product_performance", True))
+
+    def test_reference_provenance_has_local_release_current_scopes(self) -> None:
+        scopes = self.provenance()["official_reference_provenance"]
+        self.assertEqual(set(scopes), {"same_runtime_commit", "pinned_release", "current_main"})
+        self.assertEqual(scopes["pinned_release"]["comparison_scope"],
+                         "cross-version-release-reference")
 
 if __name__ == "__main__":
     unittest.main()
