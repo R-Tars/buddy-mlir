@@ -4,18 +4,22 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    HardwareRankingModel,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     MeasurementCandidate,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.ranking import (
+    HardwareRankingModel,
     RankingExample,
-    SuccessiveHalvingPolicy,
     build_profiler_ranking_features,
     build_ranking_phase_report,
     evaluate_ranking_leave_one_campaign_out,
     extract_ranking_features,
     ranking_examples_from_active_report,
-    run_active_measurement_scheduler,
     train_hardware_ranking_model,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
+    SuccessiveHalvingPolicy,
+    run_active_measurement_scheduler,
 )
 
 

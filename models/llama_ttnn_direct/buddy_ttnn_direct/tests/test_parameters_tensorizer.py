@@ -11,9 +11,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    SearchSpaceConfig,
-)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import SearchSpaceConfig
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.codegen.parameters import (
     TensorMetadataReference,

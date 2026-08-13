@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.prefetch import (
     LLAMA31_8B_PREFETCH_WEIGHTS,
     PrefetchAuditError,
     audit_official_llama31_8b_support,

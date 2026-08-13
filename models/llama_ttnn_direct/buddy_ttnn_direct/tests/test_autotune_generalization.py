@@ -5,11 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.generalization import (
     GeneralizationWorkload,
+    run_generalization_suite,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
     SearchProposal,
     SearchProposalGroup,
-    run_generalization_suite,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.tests.test_autotune_search import (
     _base_space,

@@ -4,10 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    ACTIVE_MEASUREMENT_MINIMUM_COVERAGE,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     MeasurementCandidate,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import (
     MeasurementContract,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
+    ACTIVE_MEASUREMENT_MINIMUM_COVERAGE,
     SuccessiveHalvingPolicy,
     run_active_measurement_scheduler,
 )

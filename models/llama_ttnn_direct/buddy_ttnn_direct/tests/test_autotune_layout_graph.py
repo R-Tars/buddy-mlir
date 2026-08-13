@@ -4,29 +4,35 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.layout_graph import (
     ATTENTION_DAG_NODES,
     ATTENTION_REGION,
-    DEFAULT_TEMPLATE_SELECTION,
     LM_HEAD_DAG_NODES,
     LM_HEAD_REGION,
     MLP_DAG_NODES,
     MLP_REGION,
     ConversionCostTable,
-    DeviceDescriptor,
     LayoutEdge,
     LayoutGraphError,
     LayoutMeasurement,
     LayoutNodeCandidate,
     LayoutRegionGraph,
-    MemoryConfig,
-    SearchSpaceConfig,
     apply_layout_result,
     build_llama_layout_graphs,
     confirm_whole_layer_no_regression,
     search_layout_graph,
     validate_layout_memory,
     write_layout_search_report,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
+    DeviceDescriptor,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import (
+    MemoryConfig,
+    SearchSpaceConfig,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
+    DEFAULT_TEMPLATE_SELECTION,
 )
 
 

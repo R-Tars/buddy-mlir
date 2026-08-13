@@ -6,12 +6,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+import models.llama_ttnn_direct.buddy_ttnn_direct.autotune.baseline as baseline_module
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.baseline import (
     build_baseline_artifact,
     verify_baseline_artifact,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    baseline as baseline_module,
 )
 
 

@@ -6,26 +6,38 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    DEFAULT_LAYER_GROUP,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
+    DeviceDescriptor,
+    WorkloadSpec,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.matmul import (
     MATMUL_OPERATORS,
     MATMUL_PROGRAM_FAMILIES,
+    enumerate_all_matmul_programs,
+    enumerate_matmul_programs,
+    rank_matmul_measurement_candidates,
+    select_matmul_microbenchmark_winner,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.microbench import (
     BenchmarkTarget,
+    run_microbenchmark,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import (
     CandidateConfig,
-    DeviceDescriptor,
     ExecutionContract,
     MeasurementContract,
     PrecisionContract,
-    SearchSpaceConfig,
-    WorkloadSpec,
-    build_active_measurement_inputs,
-    build_llama31_8b_transfer_plan,
-    enumerate_all_matmul_programs,
-    enumerate_matmul_programs,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.sdpa import (
     enumerate_sdpa_programs,
-    run_microbenchmark,
-    rank_matmul_measurement_candidates,
-    select_matmul_microbenchmark_winner,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
+    build_active_measurement_inputs,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import SearchSpaceConfig
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.transfer import (
+    DEFAULT_LAYER_GROUP,
+    build_llama31_8b_transfer_plan,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
     realize_ttnn_config,

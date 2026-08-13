@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 import csv
-import hashlib
 import io
 import json
 import os
@@ -12,6 +11,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from .measurement import file_sha256
 from .schema import sha256_json
 
 PAPER_ARTIFACT_SCHEMA_VERSION = 1
@@ -188,7 +188,7 @@ def verify_paper_artifact(artifact_dir: str | Path) -> dict[str, Any]:
             if not path.is_file():
                 errors.append(f"artifact file is missing: {filename}")
                 continue
-            observed = _file_sha256(path)
+            observed = file_sha256(path)
             if observed != expected.get("sha256"):
                 errors.append(f"artifact file hash mismatch: {filename}")
             if path.stat().st_size != expected.get("bytes"):
@@ -200,7 +200,7 @@ def verify_paper_artifact(artifact_dir: str | Path) -> dict[str, Any]:
             if not path.is_file():
                 errors.append(f"source evidence is missing: {label}")
                 continue
-            if _file_sha256(path) != record.get("sha256"):
+            if file_sha256(path) != record.get("sha256"):
                 errors.append(f"source evidence hash mismatch: {label}")
             if path.stat().st_size != record.get("bytes"):
                 errors.append(f"source evidence size mismatch: {label}")
@@ -335,7 +335,7 @@ def _source_manifest_record(
 ) -> dict[str, Any]:
     return {
         "path": str(path.resolve()),
-        "sha256": _file_sha256(path),
+        "sha256": file_sha256(path),
         "bytes": path.stat().st_size,
         "schema_version": decoded.get("schema_version") if decoded else None,
         "status": decoded.get("status") if decoded else None,
@@ -587,7 +587,7 @@ def _extract_metrics(sources: Mapping[str, Any]) -> dict[str, Any]:
             ),
             "passed": True,
         },
-        "selected_config_sha256": _file_sha256(sources["search_best_config"]),
+        "selected_config_sha256": file_sha256(sources["search_best_config"]),
     }
 
 
@@ -977,7 +977,7 @@ def _artifact_manifest(root: Path, *, filenames: Sequence[str]) -> dict[str, Any
     for filename in filenames:
         path = root / filename
         files[filename] = {
-            "sha256": _file_sha256(path),
+            "sha256": file_sha256(path),
             "bytes": path.stat().st_size,
         }
     return {
@@ -995,14 +995,6 @@ def _positive_float(value: Any, label: str) -> float:
     if result <= 0:
         raise PaperArtifactError(f"{label} must be positive")
     return result
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _read_json(path: Path) -> Any:

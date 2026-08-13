@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.artifact import (
     REQUIRED_ABLATIONS,
     build_paper_artifact,
     verify_paper_artifact,

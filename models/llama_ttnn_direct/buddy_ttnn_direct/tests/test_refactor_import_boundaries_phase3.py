@@ -9,6 +9,14 @@ PACKAGE = "models.llama_ttnn_direct.buddy_ttnn_direct"
 PRODUCT_DIRS = ("semantic", "compiler", "codegen", "runtime", "ttnn_compat", "reports")
 PRODUCT_COMMANDS = {"build", "generate", "profile", "validate", "inspect", "diagnose"}
 CLI_MODULE = f"{PACKAGE}.cli"
+AUTOTUNE_PACKAGE = f"{PACKAGE}.autotune"
+AUTOTUNE_ROOT_API = {
+    "PrecisionContract",
+    "atomic_write_json",
+    "build_final_campaign_report",
+    "dry_run_template",
+    "list_template_definitions",
+}
 COMPARISON_STAGES = {
     f"{PACKAGE}.diagnostics.{name}"
     for name in ("benchmark_parity", "performance_correctness", "execution_graph_diff")
@@ -52,6 +60,19 @@ RETIRED_REPORT_HELPERS = tuple(
 )
 REMOVED = ("generate.py", "runtime_inputs.py", "validation.py", "codegen/python_ttnn.py", "decode_loop.py", "profile_template.py")
 class Phase3ImportBoundaryTest(unittest.TestCase):
+    def test_autotune_root_has_only_intentional_public_exports(self) -> None:
+        module = __import__(AUTOTUNE_PACKAGE, fromlist=["__all__"])
+        self.assertEqual(set(module.__all__), AUTOTUNE_ROOT_API)
+
+        violations = []
+        for path in sorted(ROOT.rglob("*.py")):
+            if path == ROOT / "autotune" / "__init__.py":
+                continue
+            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+                if isinstance(node, ast.ImportFrom) and node.module == AUTOTUNE_PACKAGE:
+                    violations.append(path.relative_to(ROOT).as_posix())
+        self.assertEqual(violations, [])
+
     def test_phase10_comparison_stages_have_no_cross_stage_imports(self) -> None:
         violations = []
         for stage in COMPARISON_STAGES:

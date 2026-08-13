@@ -8,20 +8,22 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
     CompileValidationRequest,
-    CoreGrid,
     DeviceDescriptor,
     FusedQKRoPEWorkload,
-    MemoryConfig,
     PagedFusedUpdateWorkload,
-    SearchSpaceConfig,
     TensorSpec,
     WorkloadSpec,
     classify_validation_error,
     run_compile_validation,
     validate_candidate,
     write_legality_report,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import (
+    CoreGrid,
+    MemoryConfig,
+    SearchSpaceConfig,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.config import (
     build_codegen_config,

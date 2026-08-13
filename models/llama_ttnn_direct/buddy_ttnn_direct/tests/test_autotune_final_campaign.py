@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.final_campaign import (
     FinalCampaignPolicy,
     build_final_campaign_report,
 )

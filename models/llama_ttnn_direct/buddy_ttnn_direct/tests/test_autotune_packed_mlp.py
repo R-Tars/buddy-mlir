@@ -5,19 +5,25 @@ import json
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    DEFAULT_LAYER_GROUP,
-    OVERRIDE_LAYER_GROUP,
-    PACKED_GATE_UP,
-    PACKED_GATE_UP_OPERATOR,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
     DeviceDescriptor,
-    PrecisionContract,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.matmul import (
+    PACKED_GATE_UP_OPERATOR,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.packed_mlp import (
     apply_packed_gate_up_candidate,
     apply_packed_gate_up_layer_group_candidates,
     build_packed_gate_up_phase_report,
     enumerate_packed_gate_up_candidates,
     rank_packed_gate_up_region_candidates,
     select_packed_gate_up_region_winner,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import PrecisionContract
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import PACKED_GATE_UP
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.transfer import (
+    DEFAULT_LAYER_GROUP,
+    OVERRIDE_LAYER_GROUP,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
     GATE_UP_AXIS,

@@ -5,16 +5,16 @@ import json
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
+    candidate_fingerprint,
+    prompt_corpus_sha256,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import (
     CandidateConfig,
     ContractViolation,
     ExecutionContract,
     MeasurementContract,
     PrecisionContract,
-    candidate_fingerprint,
-)
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
-    prompt_corpus_sha256,
 )
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]

@@ -6,14 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
     DeviceDescriptor,
-    PrecisionContract,
-    SearchSpaceConfig,
     WorkloadSpec,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import PrecisionContract
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.sdpa import (
     enumerate_sdpa_programs,
     rank_sdpa_measurement_candidates,
 )
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import SearchSpaceConfig
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.config_runtime import (
     realize_ttnn_config,
 )

@@ -6,20 +6,24 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import (
     CandidateConfig,
-    CoreGrid,
     ExecutionContract,
     MeasurementContract,
     PrecisionContract,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.search import (
     ProposalScore,
     SearchBudget,
     SearchCallbacks,
     SearchProposalGroup,
-    SearchSpaceConfig,
     buildable_template_config,
     proposal_from_space,
     run_hierarchical_search,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import (
+    CoreGrid,
+    SearchSpaceConfig,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.config import (

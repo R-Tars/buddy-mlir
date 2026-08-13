@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import (
     CoreGrid,
     MatmulProgramConfig,
     MemoryConfig,

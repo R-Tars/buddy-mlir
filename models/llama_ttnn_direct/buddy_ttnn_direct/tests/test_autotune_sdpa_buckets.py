@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
     DeviceDescriptor,
-    PrecisionContract,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import PrecisionContract
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.sdpa_buckets import (
     apply_sdpa_bucket_winners,
     build_context_distribution,
     build_sdpa_bucket_phase_report,

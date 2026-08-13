@@ -8,8 +8,8 @@ from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import campaign
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import model_evaluator
+import models.llama_ttnn_direct.buddy_ttnn_direct.autotune.campaign as campaign
+import models.llama_ttnn_direct.buddy_ttnn_direct.autotune.model_evaluator as model_evaluator
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.confirmation import (
     ConfirmationArm,
     ConfirmationPolicy,

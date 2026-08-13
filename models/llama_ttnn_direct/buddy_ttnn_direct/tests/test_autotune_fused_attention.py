@@ -5,20 +5,24 @@ from pathlib import Path
 
 import pytest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.fused_attention import (
     FUSED_ATTENTION_REGION,
-    FUSED_PAGED_UPDATE,
-    FUSED_QK_ROPE,
-    KV_UPDATE_AXIS,
-    ROPE_AXIS,
-    DeviceDescriptor,
-    PrecisionContract,
     apply_fused_attention_layout_candidate,
     build_fused_attention_phase_report,
     build_fused_attention_region_payload,
     enumerate_fused_attention_layout_candidates,
     rank_fused_attention_region_candidates,
     select_fused_attention_region_winner,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
+    DeviceDescriptor,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import PrecisionContract
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
+    FUSED_PAGED_UPDATE,
+    FUSED_QK_ROPE,
+    KV_UPDATE_AXIS,
+    ROPE_AXIS,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.runtime.plans import (
     decode_step_plan,

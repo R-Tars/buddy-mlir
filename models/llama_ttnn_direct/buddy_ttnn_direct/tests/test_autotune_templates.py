@@ -6,7 +6,13 @@ from types import SimpleNamespace
 
 import torch
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
+    DeviceDescriptor,
+    WorkloadSpec,
+    validate_candidate,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import SearchSpaceConfig
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
     ACTIVATION_AXIS,
     DEFAULT_TEMPLATE_SELECTION,
     FUSED_PAGED_UPDATE,
@@ -20,10 +26,7 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     SEPARATE_GATE_UP,
     SEPARATE_PAGED_UPDATE,
     SEPARATE_QK_ROPE,
-    DeviceDescriptor,
-    SearchSpaceConfig,
     TemplateSelectionError,
-    WorkloadSpec,
     apply_template_selection,
     dry_run_template,
     evaluate_template_reference,
@@ -31,7 +34,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
     normalize_template_selection,
     probe_template_availability,
     template_registry_schema,
-    validate_candidate,
     validate_template_selection,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.compiler.templates.attention import (

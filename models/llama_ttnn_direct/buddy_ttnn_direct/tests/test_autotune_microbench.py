@@ -7,23 +7,29 @@ import unittest
 from pathlib import Path
 from typing import Any, Mapping
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    ActiveMicrobenchmarkRunner,
-    DEFAULT_LAYER_GROUP,
-    OVERRIDE_LAYER_GROUP,
-    BenchmarkTarget,
-    CandidateConfig,
-    ExecutionContract,
-    MeasurementContract,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     MeasurementCandidate,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.microbench import (
+    ActiveMicrobenchmarkRunner,
+    BenchmarkTarget,
     MicrobenchmarkError,
-    PrecisionContract,
-    build_llama31_8b_transfer_plan,
     build_microbench_report,
     make_worker_response,
     run_microbenchmark,
-    transfer_representative_states,
     write_microbench_report,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import (
+    CandidateConfig,
+    ExecutionContract,
+    MeasurementContract,
+    PrecisionContract,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.transfer import (
+    DEFAULT_LAYER_GROUP,
+    OVERRIDE_LAYER_GROUP,
+    build_llama31_8b_transfer_plan,
+    transfer_representative_states,
 )
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.measurement import (
     prompt_corpus_sha256,

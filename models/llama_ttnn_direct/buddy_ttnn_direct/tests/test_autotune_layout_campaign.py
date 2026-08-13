@@ -2,26 +2,34 @@ from __future__ import annotations
 
 import unittest
 
-from models.llama_ttnn_direct.buddy_ttnn_direct.autotune import (
-    DEFAULT_TEMPLATE_SELECTION,
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.layout_campaign import (
     LAYOUT_MEMORY_CLASSES,
     REQUIRED_LLAMA_LAYOUT_EDGES,
-    ConversionCostTable,
-    DeviceDescriptor,
-    LayoutGraphError,
-    MemoryConfig,
-    SearchSpaceConfig,
     build_layout_conversion_payload,
     build_layout_conversion_probes,
-    build_llama_layout_graphs,
     build_phase7_acceptance_report,
     build_profiled_layout_op_measurements,
     build_profiled_op_cost_report,
     canonical_layout_memories,
     collect_layout_conversion_costs,
     group_layout_conversion_probes,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.layout_graph import (
+    ConversionCostTable,
+    LayoutGraphError,
+    build_llama_layout_graphs,
     search_layout_graph,
     validate_layout_memory,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.legality import (
+    DeviceDescriptor,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.space import (
+    MemoryConfig,
+    SearchSpaceConfig,
+)
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
+    DEFAULT_TEMPLATE_SELECTION,
 )
 
 
