@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import ast
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.cli import main
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import decode_depth_sweep as decode_sweep
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import generate_depth_sweep as generate_sweep
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics import depth_sweep_support
+from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.depth_sweep_support import (
+    resolve_depths,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.generate_depth_sweep import (
     _generate_record,
     run_generate_depth_sweep,
@@ -47,13 +54,16 @@ class _SweepFixture(unittest.TestCase):
 
 
 class DecodeDepthSweepTest(_SweepFixture):
-    def test_resolve_decode_depths_defaults_to_review_progression(self) -> None:
-        cases = ((None, 2, [1, 2]), (None, 6, [1, 2, 4, 6]), ("1,2,full", 2, [1, 2]))
+    def test_resolve_depths_defaults_aliases_and_validation(self) -> None:
+        cases = ((None, 2, [1, 2]), (None, 6, [1, 2, 4, 6]),
+                 ("1,max,all,2", 2, [1, 2]))
         for value, layers, expected in cases:
             with self.subTest(value=value, layers=layers):
-                self.assertEqual(decode_sweep.resolve_decode_depths(value, program_num_layers=layers), expected)
+                self.assertEqual(resolve_depths(value, program_num_layers=layers,
+                                 defaults=decode_sweep.DEFAULT_DECODE_DEPTH_TARGETS), expected)
         with self.assertRaisesRegex(ValueError, "num_layers"):
-            decode_sweep.resolve_decode_depths("1,4", program_num_layers=2)
+            resolve_depths("1,4", program_num_layers=2,
+                           defaults=decode_sweep.DEFAULT_DECODE_DEPTH_TARGETS)
 
     def test_cli_decode_depth_sweep_dry_run_writes_report(self) -> None:
         self.build()
@@ -141,6 +151,40 @@ class DecodeDepthSweepTest(_SweepFixture):
         self.assertIn("decode_depth_sweep.profile_breakdown", report["acceptance"]["failed_checks"])
         check = next(item for item in report["acceptance"]["checks"] if item["name"] == "decode_depth_sweep.profile_breakdown")
         self.assertEqual(check["observed"][0]["lm_head_profile"], {})
+
+    def test_layer_profile_ids_fail_closed_on_malformed_entry(self) -> None:
+        self.assertEqual(decode_sweep._layer_profile_ids([{"layer_id": 0}, None]), [])
+
+    def test_decode_no_device_stops_later_depths(self) -> None:
+        self.minimal_program()
+        unavailable = {"status": "no_device", "passed": False, "error": "busy"}
+        with patch.object(decode_sweep, "profile_decode_step", return_value=unavailable) as mocked:
+            report = decode_sweep.run_decode_depth_sweep(
+                out=self.root / "depth.json", program_dir=self.program,
+                depths=[1, 2], require_full_depth=False,
+            )
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual((report["status"], [item["status"] for item in report["records"]]),
+                         ("no_device", ["no_device", "skipped"]))
+
+    def test_decode_isolation_preserves_subprocess_metadata(self) -> None:
+        self.minimal_program()
+        report_path = self.root / "profile.json"
+        report_path.write_text('{"status":"profiled","passed":true}\n')
+        completed = CompletedProcess([], 0, "profile stdout", "profile stderr")
+        with patch.object(depth_sweep_support.subprocess, "run", return_value=completed):
+            report = decode_sweep._run_isolated_profile_depth(
+                report_path=report_path, program_root=self.program, model_path=None,
+                depth=1, device="p150a", device_id=0, batch_size=2, cache_len=16,
+                dtype_seed="bf16", trace=True, trace_iterations=2,
+                prompt="hello", tokenizer_path=self.root / "tokenizer",
+            )
+        isolated = report["isolated_subprocess"]
+        self.assertEqual((isolated["enabled"], isolated["returncode"], isolated["stdout"]),
+                         (True, 0, "profile stdout"))
+        self.assertIn("decode-step-profile", isolated["command"])
+        self.assertLess(isolated["command"].index("--trace"),
+                        isolated["command"].index("--prompt"))
 
 
 class GenerateDepthSweepTest(_SweepFixture):
@@ -246,6 +290,55 @@ class GenerateDepthSweepTest(_SweepFixture):
         step = diagnostics["decode"]["failed_step"]
         self.assertEqual((step["step_index"], step["input_shapes"]["token_ids"], step["output_shapes"]["token"]), (0, [2, 1], [2, 1]))
         self.assertEqual((step["reference_failed_checks"], step["observed_ops"], step["error"]), (["decode.output_shape"], ["paged_scaled_dot_product_attention_decode"], "decode output shape mismatch"))
+
+    def test_generate_no_device_stops_and_writes_skipped_report(self) -> None:
+        self.minimal_program()
+        unavailable = _failed_generate(1) | {"status": "no_device"}
+        with patch.object(generate_sweep, "run_generate", return_value=unavailable) as mocked:
+            report = run_generate_depth_sweep(
+                out=self.root / "generate.json", program_dir=self.program,
+                reports_dir=self.root / "reports", depths=[1, 2],
+            )
+        self.assertEqual(mocked.call_count, 1)
+        self.assertEqual((report["status"], [item["status"] for item in report["records"]]),
+                         ("no_device", ["no_device", "skipped"]))
+        self.assertTrue(Path(report["records"][1]["generate_report"]).is_file())
+
+    def test_generate_isolation_preserves_subprocess_metadata(self) -> None:
+        self.minimal_program()
+        report_path = self.root / "generate-depth.json"
+        report_path.write_text('{"status":"passed","passed":true}\n')
+        completed = CompletedProcess([], 0, "generate stdout", "generate stderr")
+        with patch.object(depth_sweep_support.subprocess, "run", return_value=completed):
+            report = generate_sweep._run_isolated_generate_depth(
+                report_path=report_path, program_root=self.program, model_path=None,
+                prompt=None, tokenizer_path=None, max_new_tokens=2, depth=1,
+                prefill_len=8, device="p150a", device_id=0, batch_size=2,
+                cache_len=16, dtype_seed="bf16",
+            )
+        isolated = report["isolated_subprocess"]
+        self.assertEqual((isolated["enabled"], isolated["returncode"], isolated["stderr"]),
+                         (True, 0, "generate stderr"))
+        self.assertIn("generate", isolated["command"])
+
+
+class DepthSweepOwnershipTest(unittest.TestCase):
+    def test_stages_only_share_neutral_support(self) -> None:
+        modules = {
+            "decode_depth_sweep": decode_sweep.__file__,
+            "generate_depth_sweep": generate_sweep.__file__,
+        }
+        imports = {}
+        for name, source in modules.items():
+            tree = ast.parse(Path(source).read_text())
+            imports[name] = {node.module or "" for node in ast.walk(tree)
+                             if isinstance(node, ast.ImportFrom)}
+        self.assertFalse(any(module.endswith("generate_depth_sweep")
+                             for module in imports["decode_depth_sweep"]))
+        self.assertFalse(any(module.endswith("decode_depth_sweep")
+                             for module in imports["generate_depth_sweep"]))
+        self.assertTrue(all(any(module.endswith("depth_sweep_support") for module in values)
+                            for values in imports.values()))
 
 
 def _failed_generate(layers: int, *, detailed: bool = False) -> dict[str, object]:
