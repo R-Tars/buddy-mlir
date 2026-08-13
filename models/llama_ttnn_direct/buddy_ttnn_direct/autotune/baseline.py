@@ -458,6 +458,8 @@ def _validate_reports(
                 expected_trace_capture_count=1,
                 expected_trace_execute_count=105,
                 expected_workload=_EXPECTED_REPORT_FIELDS,
+                require_runtime_input_stability=False,
+                handoff_evidence="runtime_context",
             )
         except ContractViolation as exc:
             raise BaselineArtifactError(

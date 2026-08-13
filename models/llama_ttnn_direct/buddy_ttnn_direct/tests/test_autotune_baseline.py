@@ -62,19 +62,42 @@ class BaselineArtifactTest(unittest.TestCase):
                 (fixture["out_dir"] / "baseline_failure.json").is_file()
             )
 
-    def test_shared_decode_contract_rejects_host_token_handoff(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            fixture = self._fixture(Path(tmpdir))
-            path = fixture["reports"][0]
-            payload = json.loads(path.read_text())
-            payload["runtime_inputs"]["token_update"] = "host_copy"
-            _write_json(path, payload)
+    def test_phase11_runtime_context_acceptance_parity(self) -> None:
+        cases = {
+            "runtime_context_missing": lambda report: report.pop("runtime_context"),
+            "runtime_context_non_object": lambda report: report.__setitem__(
+                "runtime_context", "invalid"
+            ),
+            "handoff_missing": lambda report: report["runtime_context"].pop(
+                "decode_token_runtime_handoff"
+            ),
+            "host_handoff": lambda report: report["runtime_context"].__setitem__(
+                "decode_token_runtime_handoff", "host_tensor"
+            ),
+            "host_roundtrip": lambda report: report["runtime_context"].__setitem__(
+                "decode_token_host_roundtrip_per_step", True
+            ),
+            "valid_direct_device_context": lambda report: report.pop(
+                "runtime_inputs"
+            ),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmpdir:
+                fixture = self._fixture(Path(tmpdir))
+                path = fixture["reports"][0]
+                payload = json.loads(path.read_text())
+                mutate(payload)
+                _write_json(path, payload)
 
-            report = self._build(fixture)
+                report = self._build(fixture)
 
-            self.assertFalse(report["passed"])
-            self.assertEqual(report["error"]["type"], "BaselineArtifactError")
-            self.assertIn("runtime_inputs.token_update", report["error"]["message"])
+                expected = name == "valid_direct_device_context"
+                self.assertEqual(report["passed"], expected)
+                if not expected:
+                    self.assertEqual(
+                        report["error"]["type"], "BaselineArtifactError"
+                    )
+                    self.assertIn("runtime_context", report["error"]["message"])
 
     def test_verifier_detects_artifact_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

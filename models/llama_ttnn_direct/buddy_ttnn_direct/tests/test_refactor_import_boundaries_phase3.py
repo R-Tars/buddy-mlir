@@ -25,6 +25,10 @@ DIAGNOSTICS_AUTOTUNE_ENTRYPOINT = {
         "diagnostics/autotune_profiler_audit.py",
         f"{PACKAGE}.autotune.measurement",
     ),
+    (
+        "diagnostics/autotune_profiler_audit.py",
+        f"{PACKAGE}.autotune.templates",
+    ),
 }
 DIAGNOSTICS_SHARED_AUTOTUNE = {
     f"{PACKAGE}.autotune.microbench",

@@ -188,6 +188,8 @@ def validate_decode_profile_contract(
     expected_trace_capture_count: int,
     expected_trace_execute_count: int,
     expected_workload: Mapping[str, Any] | None = None,
+    require_runtime_input_stability: bool = True,
+    handoff_evidence: str = "runtime_inputs",
 ) -> dict[str, Any]:
     """Validate the production trace/persistent steady-decode contract."""
 
@@ -227,62 +229,58 @@ def validate_decode_profile_contract(
             "observed": persistent_count,
         }
 
-    runtime_inputs = profile.get("runtime_inputs")
-    if not isinstance(runtime_inputs, Mapping):
-        mismatches["runtime_inputs"] = {
-            "expected": "object",
-            "observed": type(runtime_inputs).__name__,
-        }
-        runtime_inputs = {}
-    for key, value in (
-        ("new_device_tensors_per_decode_step", 0),
-        ("host_to_device_updates_per_decode_step", 0),
-        ("page_table_reused", True),
-    ):
-        if runtime_inputs.get(key) != value:
-            mismatches[key] = {
-                "expected": value,
-                "observed": runtime_inputs.get(key),
-            }
+    if handoff_evidence not in {"runtime_inputs", "runtime_context"}:
+        raise ContractViolation(f"unsupported handoff evidence policy: {handoff_evidence}")
 
-    token_update_present = "token_update" in runtime_inputs
-    token_update = runtime_inputs.get("token_update")
-    if token_update_present and token_update != "captured_device_to_device_copy":
-        mismatches["runtime_inputs.token_update"] = {
-            "expected": "captured_device_to_device_copy",
-            "observed": token_update,
-        }
-    runtime_context = profile.get("runtime_context")
-    context_handoff_present = isinstance(runtime_context, Mapping) and any(
-        key in runtime_context
-        for key in (
-            "decode_token_runtime_handoff",
-            "decode_token_host_roundtrip_per_step",
-        )
-    )
-    if "runtime_context" in profile and not isinstance(runtime_context, Mapping):
-        mismatches["runtime_context"] = {
-            "expected": "object",
-            "observed": type(runtime_context).__name__,
-        }
-    elif context_handoff_present and (
-        runtime_context.get("decode_token_runtime_handoff") != "device_tensor_direct"
-        or runtime_context.get("decode_token_host_roundtrip_per_step") is not False
-    ):
-        mismatches["runtime_context.device_token_handoff"] = {
-            "expected": "device_tensor_direct without host roundtrip",
-            "observed": {
-                "handoff": runtime_context.get("decode_token_runtime_handoff"),
-                "host_roundtrip": runtime_context.get(
-                    "decode_token_host_roundtrip_per_step"
-                ),
-            },
-        }
-    if not token_update_present and not context_handoff_present:
-        mismatches["device_token_handoff"] = {
-            "expected": "captured device copy or direct device tensor handoff",
-            "observed": None,
-        }
+    runtime_inputs = profile.get("runtime_inputs")
+    if require_runtime_input_stability or handoff_evidence == "runtime_inputs":
+        if not isinstance(runtime_inputs, Mapping):
+            mismatches["runtime_inputs"] = {
+                "expected": "object",
+                "observed": type(runtime_inputs).__name__,
+            }
+            runtime_inputs = {}
+    if require_runtime_input_stability:
+        for key, value in (
+            ("new_device_tensors_per_decode_step", 0),
+            ("host_to_device_updates_per_decode_step", 0),
+            ("page_table_reused", True),
+        ):
+            if runtime_inputs.get(key) != value:
+                mismatches[key] = {
+                    "expected": value,
+                    "observed": runtime_inputs.get(key),
+                }
+
+    if handoff_evidence == "runtime_inputs":
+        token_update = runtime_inputs.get("token_update")
+        if token_update != "captured_device_to_device_copy":
+            mismatches["runtime_inputs.token_update"] = {
+                "expected": "captured_device_to_device_copy",
+                "observed": token_update,
+            }
+    else:
+        token_update = None
+        runtime_context = profile.get("runtime_context")
+        if not isinstance(runtime_context, Mapping):
+            mismatches["runtime_context"] = {
+                "expected": "object",
+                "observed": type(runtime_context).__name__,
+            }
+        elif (
+            runtime_context.get("decode_token_runtime_handoff")
+            != "device_tensor_direct"
+            or runtime_context.get("decode_token_host_roundtrip_per_step") is not False
+        ):
+            mismatches["runtime_context.device_token_handoff"] = {
+                "expected": "device_tensor_direct without host roundtrip",
+                "observed": {
+                    "handoff": runtime_context.get("decode_token_runtime_handoff"),
+                    "host_roundtrip": runtime_context.get(
+                        "decode_token_host_roundtrip_per_step"
+                    ),
+                },
+            }
     if not force_argmax_enabled(program_config):
         mismatches["force_argmax"] = {"expected": True, "observed": False}
     if mismatches:
@@ -304,9 +302,7 @@ def validate_decode_profile_contract(
         "trace_execute_count": expected_trace_execute_count,
         "force_argmax": True,
         "page_table_reused": True,
-        "device_token_handoff": (
-            token_update if token_update_present else "device_tensor_direct"
-        ),
+        "device_token_handoff": token_update or "device_tensor_direct",
     }
 
 

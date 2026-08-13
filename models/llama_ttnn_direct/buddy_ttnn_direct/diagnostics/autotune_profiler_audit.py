@@ -17,6 +17,15 @@ from ..autotune.measurement import (
     sha256_json,
     validate_decode_profile_contract,
 )
+from ..autotune.templates import (
+    FUSED_PAGED_UPDATE,
+    FUSED_QK_ROPE,
+    KV_UPDATE_AXIS,
+    ROPE_AXIS,
+    SEPARATE_PAGED_UPDATE,
+    SEPARATE_QK_ROPE,
+    template_choice_from_runtime_config,
+)
 from ..runtime.reports import write_report
 
 SCHEMA_VERSION = 1
@@ -67,10 +76,12 @@ _OP = {
     "embedding": "EmbeddingsDeviceOperation",
     "interleaved_to_sharded": "InterleavedToShardedDeviceOperation",
     "kv_update": "PagedUpdateCacheDeviceOperation",
+    "kv_update_fused": "PagedFusedUpdateCacheDeviceOperation",
     "layer_norm": "LayerNormDeviceOperation",
     "matmul": "MatmulDeviceOperation",
     "reshard": "ReshardDeviceOperation",
     "rope": "RotaryEmbeddingLlamaDeviceOperation",
+    "rope_fused_qk": "RotaryEmbeddingLlamaFusedQKDeviceOperation",
     "sdpa": "SdpaDecodeDeviceOperation",
     "sharded_to_interleaved": "ShardedToInterleavedDeviceOperation",
     "tilize": "TilizeDeviceOperation",
@@ -256,6 +267,8 @@ def build_autotune_profiler_audit(
                 "cache_len": 1024,
                 "prefill_execution_mode": "eager",
             },
+            require_runtime_input_stability=True,
+            handoff_evidence="runtime_inputs",
         )
         with csv_path.open(newline="", encoding="utf-8") as stream:
             rows = list(csv.DictReader(stream))
@@ -269,6 +282,7 @@ def build_autotune_profiler_audit(
             normalized_rows,
             num_layers=int(config["num_layers"]),
             lm_head_shards=_lm_head_shard_count(config),
+            program_config=config,
         )
         regions = _aggregate_regions(normalized_rows, assignments, config)
         total_ns = sum(float(row["_duration_ns"]) for row in normalized_rows)
@@ -488,10 +502,14 @@ def assign_decode_regions(
     *,
     num_layers: int,
     lm_head_shards: int,
+    program_config: Mapping[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     if num_layers <= 0 or lm_head_shards <= 0:
         raise ProfilerAuditError("invalid model depth or LM-head shard count")
     codes = [str(row.get("OP CODE", "")) for row in rows]
+    config = program_config or {}
+    rope_template = template_choice_from_runtime_config(config, ROPE_AXIS)
+    kv_update_template = template_choice_from_runtime_config(config, KV_UPDATE_AXIS)
     norm_indices = [i for i, code in enumerate(codes) if code == _OP["layer_norm"]]
     embedding_indices = [i for i, code in enumerate(codes) if code == _OP["embedding"]]
     if len(norm_indices) != num_layers * 2 + 1:
@@ -547,10 +565,33 @@ def assign_decode_regions(
             "create_heads",
             "create_heads",
         )
-        for _ in range(2):
-            cursor = expect(cursor, _OP["rope"], "rope", "rope")
-        for _ in range(2):
-            cursor = expect(cursor, _OP["kv_update"], "kv_update", "kv_update")
+        if rope_template == SEPARATE_QK_ROPE:
+            for _ in range(2):
+                cursor = expect(cursor, _OP["rope"], "rope", "rope")
+        elif rope_template == FUSED_QK_ROPE:
+            while cursor < len(codes) and codes[cursor] in _LAYOUT_OPS:
+                mark(cursor, "rope", "rope")
+                cursor += 1
+            cursor = expect(cursor, _OP["rope_fused_qk"], "rope", "rope")
+        else:
+            raise ProfilerAuditError(f"unsupported RoPE template: {rope_template}")
+
+        if kv_update_template == SEPARATE_PAGED_UPDATE:
+            for _ in range(2):
+                cursor = expect(
+                    cursor, _OP["kv_update"], "kv_update", "kv_update"
+                )
+        elif kv_update_template == FUSED_PAGED_UPDATE:
+            while cursor < len(codes) and codes[cursor] in _LAYOUT_OPS:
+                mark(cursor, "kv_update", "kv_update")
+                cursor += 1
+            cursor = expect(
+                cursor, _OP["kv_update_fused"], "kv_update", "kv_update"
+            )
+        else:
+            raise ProfilerAuditError(
+                f"unsupported KV-update template: {kv_update_template}"
+            )
         cursor = expect(cursor, _OP["sdpa"], "sdpa", "sdpa")
         while cursor < len(codes) and codes[cursor] in _LAYOUT_OPS:
             mark(cursor, "concat_heads", "concat_heads")

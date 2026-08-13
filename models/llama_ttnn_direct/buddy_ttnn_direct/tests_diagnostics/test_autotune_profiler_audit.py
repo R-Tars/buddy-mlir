@@ -6,6 +6,14 @@ from pathlib import Path
 
 import pytest
 
+from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.templates import (
+    FUSED_PAGED_UPDATE,
+    FUSED_QK_ROPE,
+    KV_UPDATE_AXIS,
+    ROPE_AXIS,
+    SEPARATE_PAGED_UPDATE,
+    SEPARATE_QK_ROPE,
+)
 from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.autotune_profiler_audit import (
     BOTTLENECK_CLASSES,
     REGION_ORDER,
@@ -35,6 +43,15 @@ BinaryNgDeviceOperation ReshardDeviceOperation LayerNormDeviceOperation MatmulDe
 ShardedToInterleavedDeviceOperation MatmulDeviceOperation ShardedToInterleavedDeviceOperation
 ConcatDeviceOperation UntilizeDeviceOperation ArgMaxDeviceOperation CopyDeviceOperation
 """.split()
+FUSED_OP_CODES = [
+    *OP_CODES[:6],
+    "ReshardDeviceOperation",
+    "RotaryEmbeddingLlamaFusedQKDeviceOperation",
+    "InterleavedToShardedDeviceOperation",
+    "ReshardDeviceOperation",
+    "PagedFusedUpdateCacheDeviceOperation",
+    *OP_CODES[10:],
+]
 
 
 def _row(index: int, code: str, trace: bool) -> dict[str, str]:
@@ -65,8 +82,10 @@ def _row(index: int, code: str, trace: bool) -> dict[str, str]:
     }
 
 
-def _rows(trace: bool = True) -> list[dict[str, str]]:
-    return [_row(index, code, trace) for index, code in enumerate(OP_CODES)]
+def _rows(
+    trace: bool = True, codes: list[str] = OP_CODES
+) -> list[dict[str, str]]:
+    return [_row(index, code, trace) for index, code in enumerate(codes)]
 
 
 def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
@@ -76,8 +95,13 @@ def _write_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
-def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, float]:
-    rows = _rows()
+def _write_fixture(
+    tmp_path: Path,
+    *,
+    codes: list[str] = OP_CODES,
+    templates: dict[str, str] | None = None,
+) -> tuple[Path, Path, Path, float]:
+    rows = _rows(codes=codes)
     csv_path = tmp_path / "ops.csv"
     _write_csv(csv_path, rows)
     total_ms = sum(10_000.0 + index for index in range(len(rows))) / 1_000_000.0
@@ -128,7 +152,7 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, float]:
     config = {
         "num_layers": 1,
         "generation": {"template": "device_argmax_greedy", "mode": "greedy"},
-        "autotune": {"operators": operators},
+        "autotune": {"operators": operators, "templates": templates or {}},
     }
     (program / "config.json").write_text(json.dumps(config), encoding="utf-8")
     return csv_path, profile_path, program, total_ms
@@ -171,6 +195,99 @@ def test_build_audit_writes_json_csv_and_budget_answers(tmp_path: Path) -> None:
     assert (qkv["classification"], qkv["program_family"]) == (
         "dram_bound", ["dram_sharded"]
     )
+
+
+def test_fused_attention_assigns_conversions_and_preserves_public_contract(
+    tmp_path: Path,
+) -> None:
+    templates = {
+        ROPE_AXIS: FUSED_QK_ROPE,
+        KV_UPDATE_AXIS: FUSED_PAGED_UPDATE,
+    }
+    csv_path, profile_path, program, _ = _write_fixture(
+        tmp_path, codes=FUSED_OP_CODES, templates=templates
+    )
+    config = json.loads((program / "config.json").read_text())
+    rows = _rows(codes=FUSED_OP_CODES)
+    assignments = assign_decode_regions(
+        rows,
+        num_layers=1,
+        lm_head_shards=2,
+        program_config=config,
+    )
+
+    fused_rope = FUSED_OP_CODES.index("RotaryEmbeddingLlamaFusedQKDeviceOperation")
+    fused_kv = FUSED_OP_CODES.index("PagedFusedUpdateCacheDeviceOperation")
+    assert len(assignments) == len(rows)
+    assert assignments[fused_rope - 1 : fused_rope + 1] == [
+        {"region": "rope", "semantic_stage": "rope"},
+        {"region": "rope", "semantic_stage": "rope"},
+    ]
+    assert assignments[fused_rope + 1 : fused_kv + 1] == [
+        {"region": "kv_update", "semantic_stage": "kv_update"},
+    ] * 3
+    assert set(REGION_ORDER).issubset({item["region"] for item in assignments})
+
+    report = build_autotune_profiler_audit(
+        profiler_csv=csv_path,
+        profile_report=profile_path,
+        program_dir=program,
+        out=tmp_path / "fused_audit.json",
+    )
+    assert report["passed"] is True
+    assert {row["region"] for row in report["regions"]} >= set(REGION_ORDER)
+    assert set(report["budget_answers"]) == {
+        "mlp", "attention_matmul", "sdpa", "lm_head", "kv_update_plus_rope"
+    }
+    assert report["budget_answers"]["kv_update_plus_rope"]["percent_of_decode"] > 0
+
+
+@pytest.mark.parametrize(
+    "case",
+    (
+        "fused_config_separate_trace",
+        "separate_config_fused_trace",
+        "missing_fused_qk",
+        "missing_fused_kv",
+        "unknown_before_fused_qk",
+        "unknown_before_fused_kv",
+    ),
+)
+def test_fused_attention_trace_mismatches_fail_closed(case: str) -> None:
+    codes = list(FUSED_OP_CODES)
+    templates = {
+        ROPE_AXIS: FUSED_QK_ROPE,
+        KV_UPDATE_AXIS: FUSED_PAGED_UPDATE,
+    }
+    if case == "fused_config_separate_trace":
+        codes = list(OP_CODES)
+    elif case == "separate_config_fused_trace":
+        templates = {
+            ROPE_AXIS: SEPARATE_QK_ROPE,
+            KV_UPDATE_AXIS: SEPARATE_PAGED_UPDATE,
+        }
+    elif case == "missing_fused_qk":
+        codes.remove("RotaryEmbeddingLlamaFusedQKDeviceOperation")
+    elif case == "missing_fused_kv":
+        codes.remove("PagedFusedUpdateCacheDeviceOperation")
+    elif case == "unknown_before_fused_qk":
+        codes.insert(
+            codes.index("RotaryEmbeddingLlamaFusedQKDeviceOperation"),
+            "UnknownDeviceOperation",
+        )
+    else:
+        codes.insert(
+            codes.index("PagedFusedUpdateCacheDeviceOperation"),
+            "UnknownDeviceOperation",
+        )
+
+    with pytest.raises(ProfilerAuditError, match="trace op"):
+        assign_decode_regions(
+            _rows(codes=codes),
+            num_layers=1,
+            lm_head_shards=2,
+            program_config={"autotune": {"templates": templates}},
+        )
 
 
 def test_missing_trace_replay_is_a_classified_failure(tmp_path: Path) -> None:
