@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -12,7 +11,9 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .legality import DeviceDescriptor
+from .measurement import file_sha256, validate_decode_profile_contract
 from .schema import (
+    ContractViolation,
     ExecutionContract,
     MeasurementContract,
     PrecisionContract,
@@ -94,7 +95,7 @@ def build_baseline_artifact(
             program_paths["execution_plan.json"], "execution plan"
         )
         seed = _read_json_object(resolved_seed_config, "seed config")
-        prompt_sha256 = _file_sha256(resolved_prompt_corpus)
+        prompt_sha256 = file_sha256(resolved_prompt_corpus)
         precision_contract = PrecisionContract.from_template_config(seed)
         execution_contract = ExecutionContract.from_template_config(
             seed, prompt_corpus_sha256=prompt_sha256
@@ -105,6 +106,7 @@ def build_baseline_artifact(
             reports,
             resolved_reports=resolved_reports,
             program_dir=resolved_program_dir,
+            program_config=config,
         )
 
         throughput = [
@@ -251,18 +253,18 @@ def build_baseline_artifact(
             "program": {
                 "directory": str(resolved_program_dir),
                 "config_sha256": baseline_config_hash,
-                "config_source_sha256": _file_sha256(program_paths["config.json"]),
+                "config_source_sha256": file_sha256(program_paths["config.json"]),
                 "execution_plan_sha256": sha256_json(execution_plan),
-                "execution_plan_source_sha256": _file_sha256(
+                "execution_plan_source_sha256": file_sha256(
                     program_paths["execution_plan.json"]
                 ),
-                "generated_model_sha256": _file_sha256(program_paths["model.py"]),
+                "generated_model_sha256": file_sha256(program_paths["model.py"]),
             },
             "precision_contract": precision_contract.to_dict(),
             "execution_contract": execution_contract.to_dict(),
             "trace_identity_sha256": trace_identity,
             "profile_report_sha256": [
-                _file_sha256(path) for path in resolved_reports
+                file_sha256(path) for path in resolved_reports
             ],
         }
 
@@ -441,24 +443,27 @@ def _validate_reports(
     *,
     resolved_reports: Sequence[Path],
     program_dir: Path,
+    program_config: Mapping[str, Any],
 ) -> list[dict[str, Any]]:
     expected_trace_key: Any = None
     expected_tt_metal_commit: str | None = None
     normalized: list[dict[str, Any]] = []
     for index, (report, path) in enumerate(zip(reports, resolved_reports)):
-        mismatches = {
-            key: {"expected": expected, "observed": report.get(key)}
-            for key, expected in _EXPECTED_REPORT_FIELDS.items()
-            if report.get(key) != expected
-        }
-        if report.get("status") != "profiled" or report.get("passed") is not True:
-            mismatches["status"] = {
-                "expected": {"status": "profiled", "passed": True},
-                "observed": {
-                    "status": report.get("status"),
-                    "passed": report.get("passed"),
-                },
-            }
+        try:
+            validate_decode_profile_contract(
+                report,
+                program_config=program_config,
+                expected_layers=_EXPECTED_REPORT_FIELDS["layers"],
+                measurement_contract=MeasurementContract.final_confirmation(),
+                expected_trace_capture_count=1,
+                expected_trace_execute_count=105,
+                expected_workload=_EXPECTED_REPORT_FIELDS,
+            )
+        except ContractViolation as exc:
+            raise BaselineArtifactError(
+                f"profile report {index} violates the baseline contract: {exc}"
+            ) from exc
+        mismatches: dict[str, Any] = {}
         reported_program_dir = Path(str(report.get("program_dir", ""))).resolve()
         if reported_program_dir != program_dir:
             mismatches["program_dir"] = {
@@ -470,26 +475,6 @@ def _validate_reports(
             mismatches["acceptance"] = {
                 "expected": "passed",
                 "observed": acceptance,
-            }
-        runtime_context = report.get("runtime_context")
-        if not isinstance(runtime_context, Mapping):
-            mismatches["runtime_context"] = {
-                "expected": "object",
-                "observed": type(runtime_context).__name__,
-            }
-        elif (
-            runtime_context.get("decode_token_runtime_handoff")
-            != "device_tensor_direct"
-            or runtime_context.get("decode_token_host_roundtrip_per_step") is not False
-        ):
-            mismatches["device_token_handoff"] = {
-                "expected": "device_tensor_direct without host roundtrip",
-                "observed": {
-                    "handoff": runtime_context.get("decode_token_runtime_handoff"),
-                    "host_roundtrip": runtime_context.get(
-                        "decode_token_host_roundtrip_per_step"
-                    ),
-                },
             }
         samples = report.get("decode_step_ms_samples")
         if (
@@ -549,7 +534,7 @@ def _validate_reports(
             {
                 "index": index,
                 "source_path": str(path),
-                "source_sha256": _file_sha256(path),
+                "source_sha256": file_sha256(path),
                 "tokens_per_second_per_user": float(throughput),
                 "decode_step_ms": _statistics(values),
                 "decode_step_ms_samples": values,
@@ -727,20 +712,12 @@ def _try_read_json(path: Path) -> Any:
 
 def _file_identity(path: Path, *, include_path: bool = True) -> dict[str, Any]:
     record: dict[str, Any] = {
-        "sha256": _file_sha256(path),
+        "sha256": file_sha256(path),
         "bytes": path.stat().st_size,
     }
     if include_path:
         record["path"] = str(path)
     return record
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _verify_file_record(
@@ -753,7 +730,7 @@ def _verify_file_record(
     if not path.is_file():
         errors.append(f"{label} file is missing: {path}")
         return
-    if _file_sha256(path) != record.get("sha256"):
+    if file_sha256(path) != record.get("sha256"):
         errors.append(f"{label} file hash mismatch: {path.name}")
     if path.stat().st_size != record.get("bytes"):
         errors.append(f"{label} file size mismatch: {path.name}")

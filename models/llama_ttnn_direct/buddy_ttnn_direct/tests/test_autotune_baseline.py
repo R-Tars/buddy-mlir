@@ -62,6 +62,20 @@ class BaselineArtifactTest(unittest.TestCase):
                 (fixture["out_dir"] / "baseline_failure.json").is_file()
             )
 
+    def test_shared_decode_contract_rejects_host_token_handoff(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fixture = self._fixture(Path(tmpdir))
+            path = fixture["reports"][0]
+            payload = json.loads(path.read_text())
+            payload["runtime_inputs"]["token_update"] = "host_copy"
+            _write_json(path, payload)
+
+            report = self._build(fixture)
+
+            self.assertFalse(report["passed"])
+            self.assertEqual(report["error"]["type"], "BaselineArtifactError")
+            self.assertIn("runtime_inputs.token_update", report["error"]["message"])
+
     def test_verifier_detects_artifact_tampering(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fixture = self._fixture(Path(tmpdir))
@@ -124,8 +138,13 @@ class BaselineArtifactTest(unittest.TestCase):
             program_dir / "config.json",
             {
                 "schema_version": 1,
+                "num_layers": 32,
                 "official_config_profile": seed["official_config_profile"],
                 "runtime_input_mode": "persistent",
+                "generation": {
+                    "template": "device_argmax_greedy",
+                    "mode": "greedy",
+                },
                 "autotune": {
                     "templates": {"attention.rope": "separate_qk_rope"},
                     "operators": {"attention.qkv": {"kind": "matmul"}},
@@ -193,6 +212,12 @@ class BaselineArtifactTest(unittest.TestCase):
                     "runtime_context": {
                         "decode_token_runtime_handoff": "device_tensor_direct",
                         "decode_token_host_roundtrip_per_step": False,
+                    },
+                    "runtime_inputs": {
+                        "new_device_tensors_per_decode_step": 0,
+                        "host_to_device_updates_per_decode_step": 0,
+                        "page_table_reused": True,
+                        "token_update": "captured_device_to_device_copy",
                     },
                     "ttnn_environment": {
                         "tt_metal_home": str(tt_metal_repo.resolve()),

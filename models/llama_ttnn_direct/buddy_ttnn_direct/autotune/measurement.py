@@ -169,6 +169,147 @@ def file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def force_argmax_enabled(program_config: Mapping[str, Any]) -> bool:
+    generation = program_config.get("generation")
+    if not isinstance(generation, Mapping):
+        return False
+    return (
+        "argmax" in str(generation.get("template", "")).lower()
+        and str(generation.get("mode", "")).lower() == "greedy"
+    )
+
+
+def validate_decode_profile_contract(
+    profile: Mapping[str, Any],
+    *,
+    program_config: Mapping[str, Any],
+    expected_layers: int,
+    measurement_contract: MeasurementContract,
+    expected_trace_capture_count: int,
+    expected_trace_execute_count: int,
+    expected_workload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate the production trace/persistent steady-decode contract."""
+
+    expected = {
+        **dict(expected_workload or {}),
+        "status": "profiled",
+        "passed": True,
+        "layers": expected_layers,
+        "warmup": measurement_contract.warmup,
+        "iterations": measurement_contract.iterations,
+        "execution_mode": "trace",
+        "runtime_input_mode": "persistent",
+        "after_prefill": True,
+        "trace_capture_count": expected_trace_capture_count,
+        "trace_execute_count": expected_trace_execute_count,
+        "program_compile_count_after_capture": 0,
+    }
+    mismatches = {
+        key: {"expected": value, "observed": profile.get(key)}
+        for key, value in expected.items()
+        if profile.get(key) != value
+    }
+    if program_config.get("num_layers") != expected_layers:
+        mismatches["program_num_layers"] = {
+            "expected": expected_layers,
+            "observed": program_config.get("num_layers"),
+        }
+
+    persistent_count = profile.get("persistent_input_count")
+    if (
+        not isinstance(persistent_count, int)
+        or isinstance(persistent_count, bool)
+        or persistent_count <= 0
+    ):
+        mismatches["persistent_input_count"] = {
+            "expected": "positive integer",
+            "observed": persistent_count,
+        }
+
+    runtime_inputs = profile.get("runtime_inputs")
+    if not isinstance(runtime_inputs, Mapping):
+        mismatches["runtime_inputs"] = {
+            "expected": "object",
+            "observed": type(runtime_inputs).__name__,
+        }
+        runtime_inputs = {}
+    for key, value in (
+        ("new_device_tensors_per_decode_step", 0),
+        ("host_to_device_updates_per_decode_step", 0),
+        ("page_table_reused", True),
+    ):
+        if runtime_inputs.get(key) != value:
+            mismatches[key] = {
+                "expected": value,
+                "observed": runtime_inputs.get(key),
+            }
+
+    token_update_present = "token_update" in runtime_inputs
+    token_update = runtime_inputs.get("token_update")
+    if token_update_present and token_update != "captured_device_to_device_copy":
+        mismatches["runtime_inputs.token_update"] = {
+            "expected": "captured_device_to_device_copy",
+            "observed": token_update,
+        }
+    runtime_context = profile.get("runtime_context")
+    context_handoff_present = isinstance(runtime_context, Mapping) and any(
+        key in runtime_context
+        for key in (
+            "decode_token_runtime_handoff",
+            "decode_token_host_roundtrip_per_step",
+        )
+    )
+    if "runtime_context" in profile and not isinstance(runtime_context, Mapping):
+        mismatches["runtime_context"] = {
+            "expected": "object",
+            "observed": type(runtime_context).__name__,
+        }
+    elif context_handoff_present and (
+        runtime_context.get("decode_token_runtime_handoff") != "device_tensor_direct"
+        or runtime_context.get("decode_token_host_roundtrip_per_step") is not False
+    ):
+        mismatches["runtime_context.device_token_handoff"] = {
+            "expected": "device_tensor_direct without host roundtrip",
+            "observed": {
+                "handoff": runtime_context.get("decode_token_runtime_handoff"),
+                "host_roundtrip": runtime_context.get(
+                    "decode_token_host_roundtrip_per_step"
+                ),
+            },
+        }
+    if not token_update_present and not context_handoff_present:
+        mismatches["device_token_handoff"] = {
+            "expected": "captured device copy or direct device tensor handoff",
+            "observed": None,
+        }
+    if not force_argmax_enabled(program_config):
+        mismatches["force_argmax"] = {"expected": True, "observed": False}
+    if mismatches:
+        raise ContractViolation(
+            "profile violates the decode measurement contract: "
+            + canonical_json(mismatches)
+        )
+
+    return {
+        "layers": expected_layers,
+        "batch_size": int(profile["batch_size"]),
+        "prefill_len": int(profile["prefill_len"]),
+        "cache_len": int(profile["cache_len"]),
+        "after_prefill": True,
+        "execution_mode": "trace",
+        "runtime_input_mode": "persistent",
+        "persistent_input_count": persistent_count,
+        "trace_capture_count": expected_trace_capture_count,
+        "trace_execute_count": expected_trace_execute_count,
+        "force_argmax": True,
+        "page_table_reused": True,
+        "device_token_handoff": (
+            token_update if token_update_present else "device_tensor_direct"
+        ),
+    }
+
+
 def weights_recipe_sha256(
     model_root: str | Path, precision_contract: PrecisionContract
 ) -> str:

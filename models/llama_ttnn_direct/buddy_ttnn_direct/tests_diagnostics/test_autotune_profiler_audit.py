@@ -10,6 +10,8 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.diagnostics.autotune_profiler_au
     BOTTLENECK_CLASSES,
     REGION_ORDER,
     ProfilerAuditError,
+    _PROFILER_MEASUREMENT,
+    _profiler_command,
     assign_decode_regions,
     build_autotune_profiler_audit,
     normalize_trace_timestamps,
@@ -81,13 +83,18 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, float]:
     total_ms = sum(10_000.0 + index for index in range(len(rows))) / 1_000_000.0
     profile = {
         "status": "profiled",
+        "passed": True,
+        "mode": "decode-steady",
         "layers": 1,
         "batch_size": 32,
         "prefill_len": 256,
         "cache_len": 1024,
         "after_prefill": True,
+        "warmup": 0,
+        "iterations": 1,
         "execution_mode": "trace",
         "runtime_input_mode": "persistent",
+        "prefill_execution_mode": "eager",
         "persistent_input_count": 7,
         "trace_capture_count": 1,
         "trace_execute_count": 1,
@@ -177,6 +184,79 @@ def test_missing_trace_replay_is_a_classified_failure(tmp_path: Path) -> None:
     )
     assert report["passed"] is False
     assert "no complete Metal trace replay" in report["error"]
+
+
+@pytest.mark.parametrize(
+    ("scope", "field", "value", "failure"),
+    [
+        ("profile", "execution_mode", "eager", "execution_mode"),
+        ("profile", "runtime_input_mode", "recreate", "runtime_input_mode"),
+        ("profile", "after_prefill", False, "after_prefill"),
+        ("runtime_inputs", "new_device_tensors_per_decode_step", 1, "new_device_tensors"),
+        ("runtime_inputs", "host_to_device_updates_per_decode_step", 1, "host_to_device"),
+        ("runtime_inputs", "page_table_reused", False, "page_table_reused"),
+        ("runtime_inputs", "token_update", "host_copy", "token_update"),
+        ("profile", "program_compile_count_after_capture", 1, "program_compile"),
+        ("profile", "trace_execute_count", None, "trace_execute_count"),
+        ("generation", "mode", "sampling", "force_argmax"),
+    ],
+)
+def test_decode_profile_contract_fails_closed(
+    tmp_path: Path,
+    scope: str,
+    field: str,
+    value: object,
+    failure: str,
+) -> None:
+    csv_path, profile_path, program, _ = _write_fixture(tmp_path)
+    target_path = program / "config.json" if scope == "generation" else profile_path
+    payload = json.loads(target_path.read_text())
+    target = payload[scope] if scope in {"runtime_inputs", "generation"} else payload
+    if value is None:
+        target.pop(field)
+    else:
+        target[field] = value
+    target_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    report = build_autotune_profiler_audit(
+        profiler_csv=csv_path,
+        profile_report=profile_path,
+        program_dir=program,
+        out=tmp_path / f"{failure}.json",
+    )
+
+    assert report["passed"] is False
+    assert failure in report["error"]
+
+
+def test_profiler_capture_uses_canonical_zero_by_one_by_one_contract() -> None:
+    command = _profiler_command(
+        program_dir=Path("/program"),
+        model_path=Path("/model"),
+        input_prompts=Path("/prompts.json"),
+        tokenizer_path=None,
+        instruct=False,
+        device="p150a",
+        device_id=0,
+        profile_report=Path("/profile.json"),
+        profiler_dir=Path("/profiler"),
+    )
+    options = dict(zip(command, command[1:]))
+
+    assert _PROFILER_MEASUREMENT.to_dict() == {
+        "schema_version": 1,
+        "kind": "profiler_audit_capture",
+        "scope": "post_prefill_steady_decode",
+        "metric": "tokens_per_second_per_user",
+        "warmup": 0,
+        "iterations": 1,
+        "repetitions": 1,
+        "synchronize_device": True,
+    }
+    assert options["--warmup"] == "0"
+    assert options["--iterations"] == "1"
+    for option in ("--after-prefill", "--runtime-input-mode", "--execution-mode"):
+        assert option in command
 
 
 def test_assign_rejects_truncated_model_trace() -> None:

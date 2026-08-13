@@ -21,6 +21,10 @@ PRODUCT_AUTOTUNE_DEBT = {
 AUTOTUNE_SMOKE_DEBT = set()
 DIAGNOSTICS_AUTOTUNE_ENTRYPOINT = {
     ("diagnostics/cli.py", f"{PACKAGE}.autotune.campaign"),
+    (
+        "diagnostics/autotune_profiler_audit.py",
+        f"{PACKAGE}.autotune.measurement",
+    ),
 }
 DIAGNOSTICS_SHARED_AUTOTUNE = {
     f"{PACKAGE}.autotune.microbench",

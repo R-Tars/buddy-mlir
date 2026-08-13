@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import math
 import os
@@ -12,7 +11,21 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from ..autotune.measurement import (
+    MeasurementContract,
+    file_sha256,
+    sha256_json,
+    validate_decode_profile_contract,
+)
+from ..runtime.reports import write_report
+
 SCHEMA_VERSION = 1
+_PROFILER_MEASUREMENT = MeasurementContract(
+    warmup=0,
+    iterations=1,
+    repetitions=1,
+    kind="profiler_audit_capture",
+)
 REGION_ORDER = (
     "embedding",
     "attention_rmsnorm",
@@ -118,11 +131,6 @@ _OPERATOR_CONFIG_KEYS = {
 
 class ProfilerAuditError(RuntimeError):
     pass
-
-
-def _sha256_json(value: Any) -> str:
-    encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 def run_autotune_profiler_audit(
@@ -234,7 +242,21 @@ def build_autotune_profiler_audit(
         profile = _read_json(profile_path)
         config_path = program / "config.json"
         config = _read_json(config_path)
-        _validate_measurement_contract(profile, config)
+        measurement = validate_decode_profile_contract(
+            profile,
+            program_config=config,
+            expected_layers=int(config["num_layers"]),
+            measurement_contract=_PROFILER_MEASUREMENT,
+            expected_trace_capture_count=1,
+            expected_trace_execute_count=1,
+            expected_workload={
+                "mode": "decode-steady",
+                "batch_size": 32,
+                "prefill_len": 256,
+                "cache_len": 1024,
+                "prefill_execution_mode": "eager",
+            },
+        )
         with csv_path.open(newline="", encoding="utf-8") as stream:
             rows = list(csv.DictReader(stream))
         trace_rows, selection = select_trace_replay(rows)
@@ -269,35 +291,19 @@ def build_autotune_profiler_audit(
             "passed": True,
             "source": {
                 "profiler_csv": str(csv_path),
-                "profiler_csv_sha256": _file_sha256(csv_path),
+                "profiler_csv_sha256": file_sha256(csv_path),
                 "profile_report": str(profile_path),
-                "profile_report_sha256": _file_sha256(profile_path),
+                "profile_report_sha256": file_sha256(profile_path),
                 "program_dir": str(program),
                 "program_config": str(config_path),
-                "program_config_sha256": _file_sha256(config_path),
+                "program_config_sha256": file_sha256(config_path),
             },
             "measurement_contract": {
-                "layers": int(config["num_layers"]),
-                "batch_size": int(profile["batch_size"]),
-                "prefill_len": int(profile["prefill_len"]),
-                "cache_len": int(profile["cache_len"]),
-                "after_prefill": bool(profile["after_prefill"]),
-                "execution_mode": profile["execution_mode"],
-                "runtime_input_mode": profile["runtime_input_mode"],
-                "persistent_input_count": int(profile["persistent_input_count"]),
-                "trace_capture_count": int(profile["trace_capture_count"]),
-                "trace_execute_count": int(profile["trace_execute_count"]),
-                "force_argmax": _force_argmax(config),
-                "page_table_reused": bool(
-                    (profile.get("runtime_inputs") or {}).get("page_table_reused")
-                ),
-                "device_token_handoff": (profile.get("runtime_inputs") or {}).get(
-                    "token_update"
-                ),
+                **measurement,
                 "precision": precision_contract,
-                "precision_contract_sha256": _sha256_json(precision_contract),
+                "precision_contract_sha256": sha256_json(precision_contract),
                 "trace_identity": trace_identity,
-                "trace_identity_sha256": _sha256_json(trace_identity),
+                "trace_identity_sha256": sha256_json(trace_identity),
             },
             "trace_selection": selection,
             "clock_normalization": normalization,
@@ -326,7 +332,7 @@ def build_autotune_profiler_audit(
             "metric_availability": _metric_availability(normalized_rows),
         }
         output_json, output_csv = _output_paths(Path(out))
-        _atomic_write_json(output_json, report)
+        write_report(output_json, report)
         _write_regions_csv(output_csv, regions)
         return report
     except (OSError, KeyError, TypeError, ValueError, ProfilerAuditError) as exc:
@@ -840,45 +846,6 @@ def _budget_answers(
     return answers
 
 
-def _validate_measurement_contract(
-    profile: Mapping[str, Any],
-    config: Mapping[str, Any],
-) -> None:
-    runtime_inputs = profile.get("runtime_inputs") or {}
-    checks = {
-        "profile status": profile.get("status") == "profiled",
-        "full model depth": int(profile.get("layers", -1))
-        == int(config.get("num_layers", -2)),
-        "trace execution": profile.get("execution_mode") == "trace",
-        "persistent runtime inputs": profile.get("runtime_input_mode") == "persistent",
-        "after prefill": profile.get("after_prefill") is True,
-        "single trace capture": int(profile.get("trace_capture_count", -1)) == 1,
-        "trace replay": int(profile.get("trace_execute_count", 0)) >= 1,
-        "persistent tensors": int(profile.get("persistent_input_count", 0)) > 0,
-        "no per-step tensor allocation": int(
-            runtime_inputs.get("new_device_tensors_per_decode_step", -1)
-        )
-        == 0,
-        "no per-step host transfer": int(
-            runtime_inputs.get("host_to_device_updates_per_decode_step", -1)
-        )
-        == 0,
-        "fixed page table": runtime_inputs.get("page_table_reused") is True,
-        "device token handoff": runtime_inputs.get("token_update")
-        == "captured_device_to_device_copy",
-        "no post-capture compilation": int(
-            profile.get("program_compile_count_after_capture", 0) or 0
-        )
-        == 0,
-        "device argmax": _force_argmax(config),
-    }
-    failed = [name for name, passed in checks.items() if not passed]
-    if failed:
-        raise ProfilerAuditError(
-            "profile violates the decode measurement contract: " + ", ".join(failed)
-        )
-
-
 def _metric_availability(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     requested = {
         **_METRIC_COLUMNS,
@@ -956,9 +923,9 @@ def _profiler_command(
         "--cache-len",
         "1024",
         "--warmup",
-        "0",
+        str(_PROFILER_MEASUREMENT.warmup),
         "--iterations",
-        "1",
+        str(_PROFILER_MEASUREMENT.iterations),
         "--after-prefill",
         "--runtime-input-mode",
         "persistent",
@@ -1030,7 +997,7 @@ def _write_failure(
             if value is not None
         },
     }
-    _atomic_write_json(output_json, report)
+    write_report(output_json, report)
     _write_regions_csv(output_csv, [])
     return report
 
@@ -1094,10 +1061,6 @@ def _write_regions_csv(path: Path, regions: Sequence[Mapping[str, Any]]) -> None
     _atomic_write_text(path, stream.getvalue())
 
 
-def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
-    _atomic_write_text(path, json.dumps(payload, indent=2, sort_keys=True) + "\n")
-
-
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
@@ -1110,14 +1073,6 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProfilerAuditError(f"expected a JSON object: {path}")
     return value
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _required_number(mapping: Mapping[str, Any], key: str) -> float:
@@ -1217,13 +1172,6 @@ def _lm_head_shard_count(config: Mapping[str, Any]) -> int:
     if programs:
         return len(programs)
     return int((config.get("lm_head") or {}).get("num_splits", 8))
-
-
-def _force_argmax(config: Mapping[str, Any]) -> bool:
-    generation = config.get("generation") or {}
-    template = str(generation.get("template", "")).lower()
-    mode = str(generation.get("mode", "")).lower()
-    return "argmax" in template and mode == "greedy"
 
 
 def _precision_contract(config: Mapping[str, Any]) -> dict[str, Any]:
