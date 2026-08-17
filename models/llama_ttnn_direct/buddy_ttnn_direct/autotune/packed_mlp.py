@@ -28,7 +28,6 @@ from .transfer import DEFAULT_LAYER_GROUP, OVERRIDE_LAYER_GROUP
 PACKED_MLP_SCHEMA_VERSION = 1
 PACKED_REGION_PROMOTION_GAIN = 0.03
 PACKED_REGION_PREFERRED_GAIN = 0.05
-FULL_MODEL_PROMOTION_GAIN = 0.01
 
 _LAYER_GROUPS = {
     0: DEFAULT_LAYER_GROUP,
@@ -47,7 +46,7 @@ _PACKED_RUNTIME_FIELDS = (
 
 
 class PackedMLPError(ValueError):
-    """Raised when a packed gate/up candidate or report is malformed."""
+    """Raised when a packed gate/up candidate is malformed."""
 
 
 @dataclass(frozen=True)
@@ -432,51 +431,6 @@ def select_packed_gate_up_region_winner(
     }
 
 
-def build_packed_gate_up_phase_report(
-    selections: Sequence[Mapping[str, Any]],
-    *,
-    full_model_gain: float | None = None,
-) -> dict[str, Any]:
-    by_group = {str(item.get("layer_group")): dict(item) for item in selections}
-    expected = {DEFAULT_LAYER_GROUP, OVERRIDE_LAYER_GROUP}
-    if set(by_group) != expected:
-        raise PackedMLPError(
-            "packed gate/up report requires layer 0 and layer 31 selections"
-        )
-    complete = all(item.get("status") == "selected" for item in by_group.values())
-    region_passed = complete and all(
-        item.get("region_gate_passed") is True for item in by_group.values()
-    )
-    weighted_incumbent = _weighted_group_latency(by_group, "incumbent")
-    weighted_challenger = _weighted_group_latency(by_group, "winner")
-    weighted_gain = None
-    if weighted_incumbent is not None and weighted_challenger is not None:
-        weighted_gain = (weighted_incumbent - weighted_challenger) / weighted_incumbent
-    full_model_passed = (
-        full_model_gain is not None and full_model_gain >= FULL_MODEL_PROMOTION_GAIN
-    )
-    return {
-        "schema_version": PACKED_MLP_SCHEMA_VERSION,
-        "stage": "packed-gate-up-independent-tuning",
-        "status": "passed" if region_passed else "not_promoted",
-        "operator": PACKED_GATE_UP_OPERATOR,
-        "layer_groups": by_group,
-        "weighted_region": {
-            "layer_weights": {
-                DEFAULT_LAYER_GROUP: 31,
-                OVERRIDE_LAYER_GROUP: 1,
-            },
-            "incumbent_latency_ms": weighted_incumbent,
-            "challenger_latency_ms": weighted_challenger,
-            "gain": weighted_gain,
-        },
-        "enter_full_model": region_passed,
-        "full_model_gain": full_model_gain,
-        "full_model_promotion_threshold": FULL_MODEL_PROMOTION_GAIN,
-        "default_promotion_allowed": region_passed and full_model_passed,
-    }
-
-
 def _packed_runtime_config(runtime_config: Mapping[str, Any]) -> dict[str, Any]:
     return apply_template_axis_updates(
         runtime_config,
@@ -507,19 +461,6 @@ def _measurement_latency(
         return None
     value = float(statistics[statistic])
     return value if math.isfinite(value) and value > 0 else None
-
-
-def _weighted_group_latency(
-    groups: Mapping[str, Mapping[str, Any]], key: str
-) -> float | None:
-    weights = {DEFAULT_LAYER_GROUP: 31, OVERRIDE_LAYER_GROUP: 1}
-    total = 0.0
-    for group, weight in weights.items():
-        item = groups[group].get(key)
-        if not isinstance(item, Mapping) or item.get("latency_ms") is None:
-            return None
-        total += float(item["latency_ms"]) * weight
-    return total
 
 
 def _search_field_coverage(

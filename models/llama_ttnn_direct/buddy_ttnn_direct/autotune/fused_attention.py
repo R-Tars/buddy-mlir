@@ -431,34 +431,6 @@ def select_fused_attention_region_winner(
     }
 
 
-def build_fused_attention_phase_report(
-    selection: Mapping[str, Any],
-    *,
-    full_model_gain: float | None = None,
-    full_model_evidence: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
-    selected = copy.deepcopy(dict(selection))
-    complete = selected.get("status") == "selected"
-    retained = selected.get("region_gate_passed") is True
-    if full_model_gain is not None and not math.isfinite(full_model_gain):
-        raise FusedAttentionError("full-model gain must be finite")
-    return {
-        "schema_version": FUSED_ATTENTION_SCHEMA_VERSION,
-        "stage": "fused-template-producer-layout-cosearch",
-        "status": "passed" if complete else "incomplete",
-        "operator": FUSED_ATTENTION_REGION,
-        "selection": selected,
-        "phase_completed": complete,
-        "candidate_retained": retained,
-        "full_model_gain": full_model_gain,
-        "full_model_evidence": (
-            copy.deepcopy(dict(full_model_evidence))
-            if full_model_evidence is not None
-            else None
-        ),
-    }
-
-
 def build_fused_attention_region_payload(
     *,
     enumeration: FusedAttentionEnumerationResult,

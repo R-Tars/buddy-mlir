@@ -221,6 +221,17 @@ class LayoutGraphSearchTest(unittest.TestCase):
                 beam_width=3,
             )
 
+    def test_structural_operator_cost_is_rejected(self) -> None:
+        graph = build_llama_layout_graphs(_llama_space())[1]
+        with self.assertRaisesRegex(LayoutGraphError, "measured operator costs"):
+            search_layout_graph(
+                graph,
+                conversion_costs=ConversionCostTable(),
+                device=DeviceDescriptor.p150a(),
+                beam_width=4,
+                require_measured_op_costs=True,
+            )
+
 
 class LlamaLayoutGraphTest(unittest.TestCase):
     def setUp(self) -> None:

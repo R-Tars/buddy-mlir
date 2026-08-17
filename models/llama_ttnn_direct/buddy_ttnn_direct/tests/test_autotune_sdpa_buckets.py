@@ -9,7 +9,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.schema import Precision
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.sdpa_buckets import (
     apply_sdpa_bucket_winners,
     build_context_distribution,
-    build_sdpa_bucket_phase_report,
     build_sdpa_context_buckets,
     enumerate_sdpa_context_buckets,
     select_sdpa_bucket_winner,
@@ -95,7 +94,7 @@ def test_context_distribution_uses_actual_prompt_positions() -> None:
     ) == pytest.approx(1.0)
 
 
-def test_winners_write_runtime_keys_and_weighted_report(
+def test_winners_write_runtime_keys(
     bucket_enumerations,
 ) -> None:
     runtime = _official_runtime_config()
@@ -128,21 +127,6 @@ def test_winners_write_runtime_keys_and_weighted_report(
         == runtime["attention"]["sdpa_program_config"]
     )
 
-    distribution = build_context_distribution(
-        prompt_context_lengths=[64, 200, 400, 800],
-        generated_tokens_per_user=1,
-        buckets=build_sdpa_context_buckets(1024),
-    )
-    report = build_sdpa_bucket_phase_report(
-        selections,
-        context_distribution=distribution,
-        trace_switch_overhead_ms=[0.002, 0.003],
-        full_model_gain=0.02,
-    )
-    assert report["phase_completed"] is True
-    assert report["promotion_allowed"] is True
-    assert report["full_decode_weighted_average"]["gain"] == pytest.approx(0.1)
-    assert report["trace_switch_overhead"]["max_ms"] == 0.003
 
 
 def _measurement(latency_ms: float) -> dict:

@@ -4,11 +4,9 @@ import unittest
 
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.prefetch import (
     LLAMA31_8B_PREFETCH_WEIGHTS,
-    PrefetchAuditError,
     audit_official_llama31_8b_support,
     audit_prefetch_scope,
     build_full_decode_prefetch_assessment,
-    build_prefetch_phase_report,
     build_prefetch_region_ab,
     classify_prefetch_failure,
     estimate_gcb_block_bytes,
@@ -126,57 +124,6 @@ class PrefetchPromotionTest(unittest.TestCase):
 
         self.assertTrue(candidate["promoted"])
         self.assertFalse(unstable["promoted"])
-
-    def test_phase_can_complete_without_illegal_runtime_promotion(self) -> None:
-        region = build_prefetch_region_ab(
-            off_samples_ms=[0.285, 0.286, 0.287],
-            on_samples_ms=[0.235, 0.236, 0.237],
-            off_correctness_passed=True,
-            on_correctness_passed=True,
-        )
-        assessments = [
-            build_full_decode_prefetch_assessment(
-                scope="mlp_only",
-                scope_audit=self.audits["mlp_only"],
-                status="hardware_rejected",
-                error="Kernel group cores do not match sub device cores",
-            ),
-            build_full_decode_prefetch_assessment(
-                scope="attention_projections",
-                scope_audit=self.audits["attention_projections"],
-                status="static_rejected",
-                error="Kernel group cores do not match sub device cores",
-            ),
-            build_full_decode_prefetch_assessment(
-                scope="all_major_linears",
-                scope_audit=self.audits["all_major_linears"],
-                status="hardware_rejected",
-                error="circular buffers clash with L1 buffers",
-            ),
-        ]
-        report = build_prefetch_phase_report(
-            official_ab={"completed": True, "on_effective": False},
-            buddy_region_ab=region,
-            full_decode_assessments=assessments,
-            execution_contract={"batch_size": 32, "trace": True},
-        )
-
-        self.assertTrue(report["phase_completed"])
-        self.assertTrue(report["local_region_opportunity_observed"])
-        self.assertFalse(report["promotion"]["default_enabled"])
-        self.assertFalse(report["production_runtime_changed"])
-
-    def test_missing_full_decode_scope_is_rejected(self) -> None:
-        with self.assertRaisesRegex(
-            PrefetchAuditError, "missing full-decode prefetch assessments"
-        ):
-            build_prefetch_phase_report(
-                official_ab={"completed": True},
-                buddy_region_ab={"status": "passed"},
-                full_decode_assessments=[],
-                execution_contract={},
-            )
-
 
 if __name__ == "__main__":
     unittest.main()

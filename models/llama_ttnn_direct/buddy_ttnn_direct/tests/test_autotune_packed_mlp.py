@@ -14,7 +14,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.matmul import (
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.packed_mlp import (
     apply_packed_gate_up_candidate,
     apply_packed_gate_up_layer_group_candidates,
-    build_packed_gate_up_phase_report,
     enumerate_packed_gate_up_candidates,
     rank_packed_gate_up_region_candidates,
     select_packed_gate_up_region_winner,
@@ -204,7 +203,6 @@ class PackedGateUpTuningTest(unittest.TestCase):
         )
 
     def test_region_gate_and_full_model_gate_are_kept_separate(self) -> None:
-        selections = []
         for result in (self.default, self.override):
             winner = result.candidates[0]
             measurements = {
@@ -215,14 +213,6 @@ class PackedGateUpTuningTest(unittest.TestCase):
             self.assertAlmostEqual(selection["representative_region_gain"], 0.04)
             self.assertTrue(selection["region_gate_passed"])
             self.assertFalse(selection["default_promotion_allowed"])
-            selections.append(selection)
-
-        region_only = build_packed_gate_up_phase_report(selections)
-        promoted = build_packed_gate_up_phase_report(selections, full_model_gain=0.011)
-        self.assertTrue(region_only["enter_full_model"])
-        self.assertFalse(region_only["default_promotion_allowed"])
-        self.assertTrue(promoted["default_promotion_allowed"])
-        self.assertAlmostEqual(promoted["weighted_region"]["gain"], 0.04)
 
     def test_region_gain_below_three_percent_does_not_enter_full_model(self) -> None:
         result = self.default

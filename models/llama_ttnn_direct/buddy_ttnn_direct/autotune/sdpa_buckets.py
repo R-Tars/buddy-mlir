@@ -18,7 +18,6 @@ from .sdpa import (
 from .space import SearchSpaceConfig
 
 SDPA_BUCKET_SCHEMA_VERSION = 1
-SDPA_BUCKET_PROMOTION_GAIN = 0.01
 DEFAULT_SDPA_CONTEXT_BUCKET_BOUNDS = (
     (1, 128),
     (129, 256),
@@ -344,79 +343,6 @@ def apply_sdpa_bucket_winners(
     return result
 
 
-def build_sdpa_bucket_phase_report(
-    selections: Sequence[Mapping[str, Any]],
-    *,
-    context_distribution: Mapping[str, Any],
-    trace_switch_overhead_ms: Sequence[float] = (),
-    full_model_gain: float | None = None,
-) -> dict[str, Any]:
-    by_bucket = {
-        str(item.get("bucket", {}).get("name")): copy.deepcopy(dict(item))
-        for item in selections
-    }
-    distribution = context_distribution.get("buckets")
-    if not isinstance(distribution, Mapping):
-        raise SDPABucketError("context distribution has no bucket weights")
-    if set(by_bucket) != set(distribution):
-        raise SDPABucketError(
-            "selection buckets do not match context distribution"
-        )
-    complete = all(
-        item.get("status") == "selected" for item in by_bucket.values()
-    )
-    incumbent_weighted = _weighted_latency(by_bucket, distribution, "incumbent")
-    winner_weighted = _weighted_latency(by_bucket, distribution, "winner")
-    weighted_gain = None
-    if incumbent_weighted is not None and winner_weighted is not None:
-        weighted_gain = (
-            incumbent_weighted - winner_weighted
-        ) / incumbent_weighted
-    switch_samples = [float(value) for value in trace_switch_overhead_ms]
-    if any(not math.isfinite(value) or value < 0 for value in switch_samples):
-        raise SDPABucketError("trace-switch overhead samples must be finite")
-    weighted_gate_passed = (
-        complete
-        and weighted_gain is not None
-        and weighted_gain >= SDPA_BUCKET_PROMOTION_GAIN
-    )
-    full_model_gate_passed = (
-        full_model_gain is not None
-        and math.isfinite(full_model_gain)
-        and full_model_gain >= SDPA_BUCKET_PROMOTION_GAIN
-    )
-    return {
-        "schema_version": SDPA_BUCKET_SCHEMA_VERSION,
-        "stage": "context-aware-sdpa-bucket-tuning",
-        "status": "passed" if complete else "incomplete",
-        "operator": SDPA_OPERATOR,
-        "bucket_selections": by_bucket,
-        "context_distribution": copy.deepcopy(dict(context_distribution)),
-        "full_decode_weighted_average": {
-            "incumbent_latency_ms": incumbent_weighted,
-            "winner_latency_ms": winner_weighted,
-            "gain": weighted_gain,
-        },
-        "trace_switch_overhead": {
-            "sample_count": len(switch_samples),
-            "samples_ms": switch_samples,
-            "mean_ms": (
-                sum(switch_samples) / len(switch_samples)
-                if switch_samples
-                else None
-            ),
-            "max_ms": max(switch_samples) if switch_samples else None,
-        },
-        "promotion_threshold": SDPA_BUCKET_PROMOTION_GAIN,
-        "weighted_distribution_gate_passed": weighted_gate_passed,
-        "enter_full_model": weighted_gate_passed,
-        "full_model_gain": full_model_gain,
-        "full_model_gate_passed": full_model_gate_passed,
-        "promotion_allowed": weighted_gate_passed and full_model_gate_passed,
-        "phase_completed": complete,
-    }
-
-
 def _measurement_latency(
     measurement: Mapping[str, Any] | None, statistic: str
 ) -> float | None:
@@ -430,26 +356,3 @@ def _measurement_latency(
         return None
     value = float(statistics[statistic])
     return value if math.isfinite(value) and value > 0 else None
-
-
-def _weighted_latency(
-    selections: Mapping[str, Mapping[str, Any]],
-    distribution: Mapping[str, Any],
-    arm: str,
-) -> float | None:
-    total = 0.0
-    for name, selection in selections.items():
-        bucket_distribution = distribution.get(name)
-        if not isinstance(bucket_distribution, Mapping):
-            return None
-        weight = float(bucket_distribution.get("weight", 0.0))
-        selected = selection.get(arm)
-        if (
-            not isinstance(selected, Mapping)
-            or selected.get("latency_ms") is None
-        ):
-            if weight == 0.0:
-                continue
-            return None
-        total += weight * float(selected["latency_ms"])
-    return total

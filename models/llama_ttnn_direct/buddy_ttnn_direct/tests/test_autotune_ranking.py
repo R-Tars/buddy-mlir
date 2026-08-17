@@ -11,7 +11,6 @@ from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.ranking import (
     HardwareRankingModel,
     RankingExample,
     build_profiler_ranking_features,
-    build_ranking_phase_report,
     evaluate_ranking_leave_one_campaign_out,
     extract_ranking_features,
     ranking_examples_from_active_report,
@@ -73,19 +72,10 @@ class RankingFeatureAndModelTest(unittest.TestCase):
             examples,
             ridge_strength=0.1,
         )
-        report = build_ranking_phase_report(
-            examples=examples,
-            model=model,
-            evaluation=evaluation,
-            historical_sources=["fixture"],
-        )
-
         self.assertTrue(evaluation["all_winners_recovered"])
         self.assertEqual(evaluation["top_k_winner_recall"], 1.0)
         self.assertGreaterEqual(evaluation["measurement_reduction"], 0.3)
         self.assertGreater(evaluation["mean_spearman_rank_correlation"], 0.9)
-        self.assertTrue(report["phase_completed"])
-        self.assertFalse(report["usage"]["substitutes_final_hardware_measurement"])
 
     def test_historical_scheduler_report_becomes_training_examples(self) -> None:
         report = {

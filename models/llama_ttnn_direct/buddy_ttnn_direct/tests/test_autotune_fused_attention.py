@@ -8,7 +8,6 @@ import pytest
 from models.llama_ttnn_direct.buddy_ttnn_direct.autotune.fused_attention import (
     FUSED_ATTENTION_REGION,
     apply_fused_attention_layout_candidate,
-    build_fused_attention_phase_report,
     build_fused_attention_region_payload,
     enumerate_fused_attention_layout_candidates,
     rank_fused_attention_region_candidates,
@@ -200,20 +199,11 @@ def test_region_gate_uses_measured_net_latency(enumeration) -> None:
             candidate.candidate_id: _measurement(0.995),
         },
     )
-    report = build_fused_attention_phase_report(
-        passing,
-        full_model_gain=0.003,
-        full_model_evidence={"status": "profiled"},
-    )
-
     assert passing["net_attention_subregion_gain"] == pytest.approx(0.02)
     assert passing["region_gate_passed"] is True
     assert passing["retained_candidate_id"] == candidate.candidate_id
     assert below_gate["region_gate_passed"] is False
     assert below_gate["retained_candidate_id"] is None
-    assert report["phase_completed"] is True
-    assert report["candidate_retained"] is True
-    assert report["full_model_gain"] == pytest.approx(0.003)
 
 
 def _measurement(latency_ms: float) -> dict:

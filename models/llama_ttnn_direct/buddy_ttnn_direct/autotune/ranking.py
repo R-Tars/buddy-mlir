@@ -742,65 +742,6 @@ def evaluate_ranking_leave_one_campaign_out(
     }
 
 
-def build_ranking_phase_report(
-    *,
-    examples: Sequence[RankingExample],
-    model: HardwareRankingModel,
-    evaluation: Mapping[str, Any],
-    historical_sources: Sequence[str],
-) -> dict[str, Any]:
-    campaign_count = len({example.campaign_id for example in examples})
-    passed = bool(evaluation.get("passed"))
-    return {
-        "schema_version": RANKING_SCHEMA_VERSION,
-        "stage": "hardware_calibrated_ranking_model",
-        "status": "passed" if passed else "failed",
-        "phase_completed": passed,
-        "model": model.scheduler_metadata(),
-        "feature_schema": {
-            "numeric": list(RANKING_NUMERIC_FEATURES),
-            "categorical": list(RANKING_CATEGORICAL_FEATURES),
-            "numeric_interactions": {
-                category: list(numeric_names)
-                for category, numeric_names in RANKING_NUMERIC_INTERACTIONS
-            },
-            "categorical_interactions": [
-                list(interaction) for interaction in RANKING_CATEGORICAL_INTERACTIONS
-            ],
-            "encoded_feature_count": len(model.encoded_feature_names),
-            "requested_feature_count": (
-                len(RANKING_NUMERIC_FEATURES) + len(RANKING_CATEGORICAL_FEATURES)
-            ),
-        },
-        "historical_data": {
-            "example_count": len(examples),
-            "campaign_count": campaign_count,
-            "sources": list(historical_sources),
-        },
-        "holdout_evaluation": dict(evaluation),
-        "usage": {
-            "candidate_ranking": True,
-            "next_batch_selection": True,
-            "substitutes_final_hardware_measurement": False,
-        },
-        "acceptance": {
-            "top_5_recall_reported": evaluation.get("top_k") == 5,
-            "rank_correlation_reported": (
-                evaluation.get("mean_spearman_rank_correlation") is not None
-            ),
-            "measurement_reduction_reported": (
-                evaluation.get("measurement_reduction") is not None
-            ),
-            "all_winners_recovered": bool(evaluation.get("all_winners_recovered")),
-            "measurement_reduction_at_least_30_percent": (
-                float(evaluation.get("measurement_reduction") or 0.0)
-                >= RANKING_MINIMUM_MEASUREMENT_REDUCTION
-            ),
-            "passed": passed,
-        },
-    }
-
-
 def _blend_rankings(
     values: Sequence[Any],
     *,

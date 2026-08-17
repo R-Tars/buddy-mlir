@@ -11,9 +11,6 @@ PRODUCT_COMMANDS = {"build", "generate", "profile", "validate", "inspect", "diag
 CLI_MODULE = f"{PACKAGE}.cli"
 AUTOTUNE_PACKAGE = f"{PACKAGE}.autotune"
 AUTOTUNE_ROOT_API = {
-    "PrecisionContract",
-    "atomic_write_json",
-    "build_final_campaign_report",
     "dry_run_template",
     "list_template_definitions",
 }
